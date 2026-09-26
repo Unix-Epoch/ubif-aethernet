@@ -1,5 +1,5 @@
 /*
-  Aethernet core — shared by every tool in this bundle.
+  Aethernet core — shared by every crystal (tool) in this bundle.
 
   - AE.settings: persisted in Tampermonkey storage (GM_*), so the portal and
     the Sprinklr form (a different site) see the same values.
@@ -8,8 +8,9 @@
   - Styling uses the portal's own design tokens (--aui-*), which switch with
     its light/dark theme; the fallbacks are the light-theme values, used on
     pages without the tokens (the Sprinklr form).
-  - AE.tool(): each tool registers here and runs in its own try/catch, only
-    if enabled in settings — one tool breaking can't take down the others.
+  - AE.crystal(): each crystal (our name for a tool) registers here and runs
+    in its own try/catch, only if enabled in settings — one crystal breaking
+    can't take down the others. Adding a new one = "crystallizing" it.
 */
 
 const AE_NAME = 'Aethernet';
@@ -19,7 +20,7 @@ const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
-    tools: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true },
+    crystals: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true },
     cleaningRate: { target: 75 },
     printLabels: { delayMs: 900 },
     // Blank = use the logged-in user / current store automatically.
@@ -45,7 +46,10 @@ const AE = (() => {
     }
     return out;
   };
-  const settings = merge(DEFAULTS, GM_getValue(SETTINGS_KEY, {}));
+  const stored = GM_getValue(SETTINGS_KEY, {});
+  // Pre-2.4 installs saved the on/off switches as `tools`; carry them over.
+  if (stored.tools && !stored.crystals) { stored.crystals = stored.tools; delete stored.tools; }
+  const settings = merge(DEFAULTS, stored);
   const saveSettings = (next) => GM_setValue(SETTINGS_KEY, next);
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -170,7 +174,7 @@ const AE = (() => {
 
   /*
     A progress panel (bottom-right card): spinner → ✓/✕/■, running clock,
-    ticked step list, a result message, and whatever action buttons the tool
+    ticked step list, a result message, and whatever action buttons the crystal
     sets. Used by auto-close and print-all-labels.
   */
   function progressPanel(title, { clock = true } = {}) {
@@ -256,7 +260,7 @@ const AE = (() => {
     return el;
   }
 
-  // Tools tell each other when a cleaning changes (e.g. auto-close finished)
+  // Crystals tell each other when a cleaning changes (e.g. auto-close finished)
   // so the badge and WO pill refresh without waiting for their timers.
   const emit = (name, detail) => document.dispatchEvent(new CustomEvent('aethernet:' + name, { detail }));
   const on = (name, fn) => document.addEventListener('aethernet:' + name, (e) => fn(e.detail));
@@ -345,13 +349,13 @@ const AE = (() => {
     return { workorders, arrivals, cleanings, belongs, imeiOf, custOf, nameOf };
   })();
 
-  // ------------------------------------------------------ tool registry
-  const tools = [];
-  function tool(def) { tools.push(def); }
+  // --------------------------------------------------- crystal registry
+  const crystals = [];
+  function crystal(def) { crystals.push(def); }
   function start() {
     ensureCss();
-    for (const t of tools) {
-      if (!settings.tools[t.id]) continue;
+    for (const t of crystals) {
+      if (!settings.crystals[t.id]) continue;
       if (t.sites && !t.sites.includes(location.hostname)) continue;
       try { t.run(); } catch (e) { console.error('[' + AE_NAME + '] ' + t.name + ' failed to start', e); }
     }
@@ -367,10 +371,10 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, tools, tool, start, every,
+    settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
     api, unwrap, Stopped, profile, sleep, esc, h, icon, ensureCss, progressPanel,
     confirm: confirmDialog, toast, emit, on, data,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
-    autoClose: null, // set by the auto-close tool when it's enabled
+    autoClose: null, // set by the auto-close crystal when it's enabled
   };
 })();

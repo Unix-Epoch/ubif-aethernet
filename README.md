@@ -1,9 +1,12 @@
-# Aethernet — add-on tools for NextGen Portal
+# Aethernet — crystals for NextGen Portal
 
 One Tampermonkey userscript, **`dist/aethernet.user.js`**, that bundles every
-portal tool in this folder:
+portal crystal in this folder.
 
-| Tool | Where it shows up |
+**Terminology:** each tool in Aethernet is a **crystal**, and adding a new one
+(or rolling an old standalone script in) is **crystallizing** it.
+
+| Crystal | Where it shows up |
 |---|---|
 | Live cleaning rate | Header badge left of "UBIF support" (just the % when the header is tight) |
 | Cleaning auto-close | Round purple ⚡ in a cleaning arrival's "Customer arrival" drawer |
@@ -13,7 +16,7 @@ portal tool in this folder:
 | Print all labels | Purple button next to "Generate Labels" on a PO Receive page |
 
 **Settings:** avatar menu (top right) → **Aethernet settings**, or the
-Tampermonkey menu. Turn tools on/off, set the cleaning target %, override the
+Tampermonkey menu. Turn crystals on/off, set the cleaning target %, override the
 Galaxy form fields, set the label delay. Saving reloads the page.
 
 **Nothing personal is hardcoded.** Name, email and store come from the
@@ -38,7 +41,7 @@ https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/r
 2. **Chrome / Edge only:** right-click the Tampermonkey icon → **Manage
    extension** → turn on **Allow User Scripts** (older versions: **Developer
    mode**). Without this the install succeeds but nothing appears.
-3. **Remove the old single-tool scripts** if you had them (Galaxy, Print all
+3. **Remove the old standalone scripts** if you had them (Galaxy, Print all
    labels, Cleaning auto-close, Cleaning rate, or a pasted-in Aethernet).
    Otherwise every button shows twice.
 4. Open the install link above → Tampermonkey's install page opens → **Install**
@@ -57,10 +60,10 @@ each person's own portal login.
 
 ### Editing
 
-Tools live in `src/`, one file each, loaded in filename order:
+Crystals live in `src/`, one file each, loaded in filename order:
 `00-core.js` (settings storage, profile, API helper, shared styles and progress
-panel), `05-settings.js`, then the tools. Each tool registers with
-`AE.tool({...})` and runs in its own try/catch, so one breaking can't take the
+panel), `05-settings.js`, then the crystals. Each crystal registers with
+`AE.crystal({...})` and runs in its own try/catch, so one breaking can't take the
 others down. To ship a change: bump `VERSION` in `build.py`, then
 `python3 build.py --release`. It builds, refuses to publish unless `VERSION` is
 higher than the published one (read via the GitHub API, since the raw URL can

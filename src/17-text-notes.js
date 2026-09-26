@@ -21,7 +21,7 @@
   The note is a regular (noteType 2) note tagged with the WO's current
   status, using the portal's own status → tag map.
 */
-AE.tool({
+AE.crystal({
   id: 'textNotes',
   name: 'Text → WO note',
   sites: ['portal.ubreakifix.net'],

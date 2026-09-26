@@ -14,7 +14,7 @@
   dropdowns, and the native value setter + input event for text fields
   (plain .value = doesn't register with React).
 */
-AE.tool({
+AE.crystal({
   id: 'galaxy',
   name: 'Galaxy Diagnostics exception',
   sites: ['portal.ubreakifix.net', 'forms-prod.sprinklr.com'],

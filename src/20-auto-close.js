@@ -13,7 +13,7 @@
   and PUT customer-devices (would blank the shared device's nickname and
   passcode on the parent WO). A Stop button halts before the next call.
 */
-AE.tool({
+AE.crystal({
   id: 'autoClose',
   name: 'Cleaning auto-close',
   sites: ['portal.ubreakifix.net'],

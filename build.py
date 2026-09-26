@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Bundle src/*.js into dist/aethernet.user.js — the one file to install.
 
-Edit the tools in src/ (one file each, loaded in filename order: core,
-settings, then tools), then:
+Edit the crystals in src/ (one file each, loaded in filename order: core,
+settings, then crystals), then:
 
   python3 build.py            build dist/aethernet.user.js only (for testing)
   python3 build.py --release  build, then publish to the Gist so every
@@ -22,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "2.3.2"
+VERSION = "2.4.0"
 
 # Secret Gist that hosts the published script (account: Unix-Epoch).
 # The raw URL has no commit hash, so it always serves the latest revision.
@@ -31,10 +31,10 @@ FILENAME = "aethernet.user.js"
 RAW_URL = f"https://gist.githubusercontent.com/Unix-Epoch/{GIST_ID}/raw/{FILENAME}"
 
 HEADER = f"""// ==UserScript==
-// @name         Aethernet — add-on tools for NextGen Portal
+// @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
 // @version      {VERSION}
-// @description  Live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, and print-all-labels for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
+// @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, and print-all-labels for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
 // @grant        GM_setValue

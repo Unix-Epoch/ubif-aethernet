@@ -9,10 +9,10 @@
 
   Pending cleanings count too: a cleaning arrival created today that hasn't
   been checked in yet (still in Arrivals) shows as "pending" and counts. Its
-  ⚡ runs the cleaning auto-close (after a confirmation) when that tool is on.
+  ⚡ runs the cleaning auto-close (after a confirmation) when that crystal is on.
   See AE.data in core for how WOs and arrivals are fetched and matched.
 */
-AE.tool({
+AE.crystal({
   id: 'cleaningRate',
   name: 'Live cleaning rate',
   sites: ['portal.ubreakifix.net'],

@@ -2,13 +2,13 @@
   Settings: a "Aethernet settings" item in the portal's avatar menu (cloned
   from the portal's own "View my account" item so it matches exactly), which
   opens a pop-out settings card. Also reachable from the Tampermonkey menu.
-  Tool on/off changes need a reload, so Save reloads the page.
+  Crystal on/off changes need a reload, so Save reloads the page.
 */
 (function settingsUi() {
   if (!AE_ON_PORTAL) return;
   const { h, esc, icon } = AE;
 
-  const TOOL_INFO = [
+  const CRYSTAL_INFO = [
     ['cleaningRate', 'Live cleaning rate', "Header badge with today's cleaning percentage."],
     ['woCleanings', 'WO cleanings pill', 'On a work order: shows whether its device has cleanings, with Create for available ones.'],
     ['textNotes', 'Text → WO note', 'When you text a customer from a WO, the text is added to the WO notes.'],
@@ -64,16 +64,16 @@
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
         h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 36) }),
-        h('div', { style: 'flex:1' }, h('h2', null, AE_NAME), h('div', { class: 'sg-soft' }, 'Add-on tools for NextGen Portal · v' + AE_VERSION)),
+        h('div', { style: 'flex:1' }, h('h2', null, AE_NAME), h('div', { class: 'sg-soft' }, 'Crystals for NextGen Portal · v' + AE_VERSION)),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => scrim.remove() }, '✕')),
 
       h('h3', null, 'Signed in as'), who,
-      h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Tools use these automatically.'),
+      h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.'),
 
-      h('h3', null, 'Tools'),
-      h('div', null, TOOL_INFO.map(([id, name, desc]) => h('div', { class: 'sg-row' },
+      h('h3', null, 'Crystals'),
+      h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => h('div', { class: 'sg-row' },
         h('div', null, h('b', null, name), h('span', { class: 'sg-soft' }, desc)),
-        toggle(!!s.tools[id], (v) => { s.tools[id] = v; })))),
+        toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; })))),
 
       h('h3', null, 'Live cleaning rate'),
       input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; }, 'number'),

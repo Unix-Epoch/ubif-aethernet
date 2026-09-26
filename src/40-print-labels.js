@@ -6,7 +6,7 @@
 
   If the portal renames its hooks, update SEL_MENU_BTN / SEL_PRINT_OPT.
 */
-AE.tool({
+AE.crystal({
   id: 'printLabels',
   name: 'Print all labels',
   sites: ['portal.ubreakifix.net'],
