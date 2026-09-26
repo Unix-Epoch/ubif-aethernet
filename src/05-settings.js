@@ -22,6 +22,13 @@
   .sg-scrim { position:fixed; inset:0; z-index:2147483646; background:var(--aui-scrim-overlay, #0c0e1180); display:flex; justify-content:flex-end; }
   .sg-sheet { display:flex; flex-direction:column; width:min(440px, 100vw); height:100%; overflow:auto; border-radius:16px 0 0 16px; border-right:0; padding:24px; animation: sg-slide .22s ease-out; }
   .sg-sheet > * { flex-shrink:0; }
+  /* "flow" in the subtitle: a purple→blue gradient that keeps flowing through the word */
+  .sg-flow { font-style:italic; font-weight:700; padding-right:1px;
+    background:linear-gradient(90deg, var(--aui-primary, #8223d2), var(--aui-brand-asurion-blue, #4a68f9), var(--aui-primary, #8223d2));
+    background-size:200% 100%; background-repeat:repeat; -webkit-background-clip:text; background-clip:text; color:transparent;
+    animation: sg-flow 3.5s linear infinite; }
+  @keyframes sg-flow { from { background-position:0% 50%; } to { background-position:200% 50%; } }
+  @media (prefers-reduced-motion: reduce) { .sg-flow { animation:none; } }
   @keyframes sg-slide { from { transform: translateX(40px); opacity:0; } to { transform:none; opacity:1; } }
   .sg-sheet h2 { font-size:22px; font-weight:700; margin:0; }
   .sg-sec { border-top:1px solid var(--aui-outline-soft, #eeedf1); margin-top:16px; }
@@ -101,7 +108,7 @@
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
         h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 36) }),
-        h('div', { style: 'flex:1' }, h('h2', null, AE_NAME), h('div', { class: 'sg-soft' }, 'Crystals for NextGen Portal · v' + AE_VERSION)),
+        h('div', { style: 'flex:1' }, h('h2', null, AE_NAME), h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen · v' + AE_VERSION })),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => scrim.remove() }, '✕')),
 
       section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
