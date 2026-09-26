@@ -288,11 +288,12 @@ When you text a customer from a work order, Aethernet adds a WO note:
 >
 > <the message>
 
-It watches the portal's own send (`POST …/messages/v1/send`) with a small
-`fetch` wrapper injected into the page as a `<script>` (v2.3.1; wrapping it
-from the userscript sandbox didn't work in Firefox/Zen), which reports each
-successful send back via a DOM event. The note is posted only after the portal
-reports the text as sent. Failed sends and texts sent outside a WO
-(no `workorderId`) are not logged. It never sends texts itself. The note is a
-regular note (`noteType: 2`) tagged with the WO's current status via the
+It watches the browser's own network log (`PerformanceObserver`) for the
+portal's `POST …/messages/v1/send`. When one happens on a WO page, it reads that
+customer's message history and logs each of *your* outbound messages from the
+last few minutes that isn't logged yet (message IDs are remembered, so nothing
+is logged twice). Finding the message in the history also confirms it went out.
+It never sends texts itself. (v2.3.2: wrapping `fetch` didn't work because the
+portal's messaging code keeps its own copy of `fetch` from load time.) The
+note is a regular note (`noteType: 2`) tagged with the WO's current status via the
 portal's own status → tag map. The Notes tab may need a refresh to show it.

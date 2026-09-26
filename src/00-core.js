@@ -75,6 +75,7 @@ const AE = (() => {
         // {isAuthenticated, user: {givenName, familyName, email, …}, currentStore: {storeId, storeName, email, …}}
         const u = (a && a.user) || {}, s = (a && a.currentStore) || {};
         return {
+          userId: u.userId,
           name: [u.givenName, u.familyName].filter(Boolean).join(' ').trim(),
           email: u.email || '',
           storeId: s.storeId,
