@@ -17,6 +17,7 @@ default), or immediately via Tampermonkey → Utilities → Check for userscript
 updates. Gist raw URLs can be cached for a few minutes after publishing.
 """
 
+import datetime
 import re
 import subprocess
 import sys
@@ -50,11 +51,29 @@ HEADER = f"""// ==UserScript==
 """
 
 
+def git_commit(root: Path) -> str:
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--", "src", "build.py"], cwd=root, capture_output=True, text=True).stdout.strip()
+        return sha + ("-dirty" if dirty else "")
+    except Exception:
+        return "unknown"
+
+
 def build(root: Path) -> Path:
+    stamps = {
+        "__VERSION__": VERSION,
+        "__BUILD_TIME__": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "__BUILD_COMMIT__": git_commit(root),
+        "__INSTALL_URL__": RAW_URL,
+    }
     parts = [HEADER, "(function aethernet() {\n'use strict';\n"]
     for f in sorted((root / "src").glob("*.js")):
         parts.append(f"\n// ===== {f.name} =====\n")
-        parts.append(f.read_text().replace("__VERSION__", VERSION))
+        text = f.read_text()
+        for k, v in stamps.items():
+            text = text.replace(k, v)
+        parts.append(text)
     parts.append("\nAE.start();\n})();\n")
     out = root / "dist" / FILENAME
     out.parent.mkdir(exist_ok=True)

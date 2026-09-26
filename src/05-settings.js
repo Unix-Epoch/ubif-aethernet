@@ -22,6 +22,23 @@
   .sg-scrim { position:fixed; inset:0; z-index:2147483646; background:var(--aui-scrim-overlay, #0c0e1180); display:flex; justify-content:flex-end; }
   .sg-sheet { display:flex; flex-direction:column; width:min(440px, 100vw); height:100%; overflow:auto; border-radius:16px 0 0 16px; border-right:0; padding:24px; animation: sg-slide .22s ease-out; }
   .sg-sheet > * { flex-shrink:0; }
+  .sg-about-link { display:block; margin:20px auto 4px; padding:6px 10px; border:0; background:none; cursor:pointer;
+    color:var(--aui-on-surface-soft, #5d5e61); font:400 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-decoration:underline; }
+  .sg-about-link:hover { color:var(--aui-primary, #8223d2); }
+  .sg-about-scrim { position:fixed; inset:0; z-index:2147483647; background:var(--aui-scrim-overlay, #0c0e1180);
+    display:flex; align-items:center; justify-content:center; padding:16px; animation: sg-in .15s ease-out; }
+  .sg-about { width:min(460px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:28px 24px 20px; font-size:14px; line-height:1.45; }
+  .sg-about .hero { display:flex; flex-direction:column; align-items:center; text-align:center; gap:4px; margin-bottom:18px; }
+  .sg-about .hero h2 { margin:6px 0 0; font-size:24px; font-weight:700; }
+  .sg-about h4 { margin:18px 0 6px; font-size:12px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-about .sg-kv { grid-template-columns:110px 1fr; }
+  .sg-about code { font:12px ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--aui-neutral-soft, #f1f0f4); padding:1px 5px; border-radius:4px; }
+  .sg-about .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .sg-about .chip-off { opacity:.5; text-decoration:line-through; }
+  .sg-about .link-row { display:flex; gap:8px; align-items:center; }
+  .sg-about .link-row input { flex:1; min-width:0; height:36px; padding:0 10px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px;
+    background:var(--aui-surface-variant, #faf9fc); color:var(--aui-on-surface, #1a1c1e); font:12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .sg-about .fine { margin-top:18px; text-align:center; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
   /* "flow" in the subtitle: a purple→blue gradient that keeps flowing through the word */
   .sg-flow { font-style:italic; font-weight:700; padding-right:1px;
     background:linear-gradient(90deg, var(--aui-primary, #8223d2), var(--aui-brand-asurion-blue, #4a68f9), var(--aui-primary, #8223d2));
@@ -63,6 +80,54 @@
     background:var(--aui-surface, #fff); border-top:1px solid var(--aui-outline-soft, #eeedf1); }
   .sg-sheet-foot .sg-btn { flex:1; }
   `;
+
+  // About — its own modal, above the settings panel.
+  function openAbout() {
+    document.getElementById('sg-about')?.remove();
+    const built = new Date(AE_BUILD_TIME);
+    const builtText = isNaN(built) ? AE_BUILD_TIME
+      : built.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    let manager = 'Unknown';
+    try { if (typeof GM_info !== 'undefined') manager = GM_info.scriptHandler + ' ' + GM_info.version; } catch (_) {}
+    const ua = navigator.userAgent;
+    const browser = /Zen\//.test(ua) ? 'Zen' : /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox (or a Firefox-based browser)'
+      : /Chrome\//.test(ua) ? 'Chrome (or a Chromium-based browser)' : /Safari\//.test(ua) ? 'Safari' : 'Unknown';
+    const on = AE.settings.crystals;
+    const kv = (...pairs) => h('dl', { class: 'sg-kv' }, pairs.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
+    const linkInput = h('input', { type: 'text', value: AE_INSTALL_URL, readonly: true, onfocus: (e) => e.target.select() });
+    const copyBtn = h('button', { type: 'button', class: 'sg-btn', onclick: async () => {
+      try { await navigator.clipboard.writeText(AE_INSTALL_URL); copyBtn.textContent = 'Copied'; }
+      catch (_) { linkInput.select(); copyBtn.textContent = 'Press ⌘C'; }
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+    } }, 'Copy');
+    const whoBox = h('span', null, '…');
+    AE.profile().then((p) => { whoBox.textContent = (p.name || '—') + (p.storeId ? ' · ' + p.storeId + ' ' + p.storeName : ''); }).catch(() => { whoBox.textContent = '—'; });
+
+    const card = h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
+      h('div', { class: 'hero' },
+        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
+        h('h2', null, AE_NAME),
+        h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen' })),
+      h('h4', null, 'This build'),
+      kv(['Version', 'v' + AE_VERSION], ['Built', builtText], ['Commit', h('code', null, AE_BUILD_COMMIT)]),
+      h('h4', null, 'Authored by'),
+      kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914'], ['With', 'Claude (Anthropic)']),
+      h('h4', null, 'Crystals'),
+      h('div', { class: 'chips' }, CRYSTAL_INFO.map(([id, name]) =>
+        h('span', { class: 'sg-chip' + (on[id] ? '' : ' chip-off'), title: on[id] ? 'On' : 'Off' }, name))),
+      h('h4', null, 'Your setup'),
+      kv(['Signed in', whoBox], ['Browser', browser], ['Script manager', manager]),
+      h('h4', null, 'Share with another store'),
+      h('div', { class: 'link-row' }, linkInput, copyBtn),
+      h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Open the link with Tampermonkey installed to add ' + AE_NAME + '. Installs update themselves.'),
+      h('div', { class: 'fine' }, 'A personal project. Not affiliated with or supported by Asurion or uBreakiFix.'),
+      h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')));
+    const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-about', onclick: (e) => { if (e.target === scrim) close(); } }, card);
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
+    document.addEventListener('keydown', onKey, true); // capture: Esc closes About, not Settings
+    document.body.appendChild(scrim);
+  }
 
   function open() {
     AE.ensureCss();
@@ -137,6 +202,8 @@
 
       section('printLabels', 'Print all labels', false, () => s.printLabels.delayMs + ' ms between labels',
         input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')),
+
+      h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…'),
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => scrim.remove() }, 'Cancel'),

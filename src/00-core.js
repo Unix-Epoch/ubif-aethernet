@@ -14,7 +14,10 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '__VERSION__'; // filled in by build.py
+const AE_VERSION = '__VERSION__';            // filled in by build.py
+const AE_BUILD_TIME = '__BUILD_TIME__';       // ISO time of the build
+const AE_BUILD_COMMIT = '__BUILD_COMMIT__';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_INSTALL_URL = '__INSTALL_URL__';     // where installs update from
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 
 const AE = (() => {
