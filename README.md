@@ -288,9 +288,11 @@ When you text a customer from a work order, Aethernet adds a WO note:
 >
 > <the message>
 
-It watches the portal's own send (`POST …/messages/v1/send`) by wrapping the
-page's `fetch` (hence `@grant unsafeWindow`), and posts the note only after
-the portal reports the text as sent. Failed sends and texts sent outside a WO
+It watches the portal's own send (`POST …/messages/v1/send`) with a small
+`fetch` wrapper injected into the page as a `<script>` (v2.3.1; wrapping it
+from the userscript sandbox didn't work in Firefox/Zen), which reports each
+successful send back via a DOM event. The note is posted only after the portal
+reports the text as sent. Failed sends and texts sent outside a WO
 (no `workorderId`) are not logged. It never sends texts itself. The note is a
 regular note (`noteType: 2`) tagged with the WO's current status via the
 portal's own status → tag map. The Notes tab may need a refresh to show it.

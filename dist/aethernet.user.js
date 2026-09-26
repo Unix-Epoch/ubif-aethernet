@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — add-on tools for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.3.0
+// @version      2.3.1
 // @description  Live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, and print-all-labels for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -9,7 +9,6 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
-// @grant        unsafeWindow
 // @run-at       document-idle
 // @updateURL    https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js
 // @downloadURL  https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js
@@ -35,7 +34,7 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.3.0'; // filled in by build.py
+const AE_VERSION = '2.3.1'; // filled in by build.py
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 
 const AE = (() => {
@@ -894,6 +893,12 @@ AE.tool({
   after the portal reports the text was sent does it post the note, so a
   failed send never gets logged. It never sends texts itself.
 
+  The fetch wrapper is injected into the page as a <script> and reports each
+  successful send back with a DOM event (JSON string detail). Userscripts
+  run sandboxed — in Firefox, replacing unsafeWindow.fetch from the sandbox
+  isn't seen by the page at all (v2.3.0 did nothing on Zen), so the hook has
+  to live in the page itself. The portal sends no CSP, so inline is allowed.
+
   Send body (from the portal's code): { customerId, workorderId,
   communicationType: 'SMS', message, messageDestination, messageSource,
   senderTechnicianId, storeId }. workorderId is set when the chat was opened
@@ -914,11 +919,6 @@ AE.tool({
       11: 'quality_check', 12: 'repair_summary', 13: 'ready_for_pickup', 14: 'sale_complete', 15: 'closed', 17: 'device_abandoned',
       22: 'request_buyout_replacement', 23: 'transferred_to_depot', 24: 'ready_for_diag', 25: 'cancelled', 26: 'send_to_depot', 27: 'shipped_by_depot',
     };
-    const SEND_RE = /\/messages\/v1\/send(?:[?#]|$)/;
-    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    if (page.__aethernetTextHook) return; // don't double-wrap
-    page.__aethernetTextHook = true;
-
     async function logText(sent) {
       const woId = sent.workorderId;
       const message = String(sent.message || '').trim();
@@ -945,27 +945,40 @@ AE.tool({
       }
     }
 
-    const origFetch = page.fetch;
-    page.fetch = function (input, init) {
-      const p = origFetch.apply(this, arguments);
-      try {
-        const isReq = typeof Request !== 'undefined' && input instanceof page.Request;
-        const url = isReq ? input.url : String(input);
-        const method = String((init && init.method) || (isReq && input.method) || 'GET').toUpperCase();
-        if (method === 'POST' && SEND_RE.test(url)) {
-          const bodyText = init && typeof init.body === 'string' ? Promise.resolve(init.body)
-            : isReq ? input.clone().text() : Promise.resolve('');
-          // After the portal's own request succeeds — never before, never on failure.
-          Promise.all([p, bodyText]).then(([res, text]) => {
-            if (!res || !res.ok) return;
-            let sent = null;
-            try { sent = JSON.parse(text); } catch (_) { return; }
-            if (sent && String(sent.communicationType || 'SMS').toUpperCase() === 'SMS') logText(sent);
-          }).catch(() => {});
-        }
-      } catch (_) { /* never interfere with the portal's request */ }
-      return p;
-    };
+    // Runs in the page (stringified and injected), not in the userscript.
+    function pageHook() {
+      if (window.__aethernetTextHook) return; // e.g. two copies installed
+      window.__aethernetTextHook = true;
+      const SEND_RE = /\/messages\/v1\/send(?:[?#]|$)/;
+      const origFetch = window.fetch;
+      window.fetch = function (input, init) {
+        const p = origFetch.apply(this, arguments);
+        try {
+          const isReq = input instanceof Request;
+          const url = isReq ? input.url : String(input);
+          const method = String((init && init.method) || (isReq && input.method) || 'GET').toUpperCase();
+          if (method === 'POST' && SEND_RE.test(url)) {
+            const bodyText = init && typeof init.body === 'string' ? Promise.resolve(init.body)
+              : isReq ? input.clone().text() : Promise.resolve('');
+            // After the portal's own request succeeds — never before, never on failure.
+            Promise.all([p, bodyText]).then(([res, text]) => {
+              if (res && res.ok && text) document.dispatchEvent(new CustomEvent('aethernet-text-sent', { detail: text }));
+            }).catch(() => {});
+          }
+        } catch (_) { /* never interfere with the portal's request */ }
+        return p;
+      };
+    }
+    const s = document.createElement('script');
+    s.textContent = '(' + pageHook.toString() + ')();';
+    (document.head || document.documentElement).appendChild(s);
+    s.remove();
+
+    document.addEventListener('aethernet-text-sent', (e) => {
+      let sent = null;
+      try { sent = JSON.parse(String(e.detail)); } catch (_) { return; }
+      if (sent && String(sent.communicationType || 'SMS').toUpperCase() === 'SMS') logText(sent);
+    });
   },
 });
 
