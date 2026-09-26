@@ -229,12 +229,17 @@ the skipped re-saves above are the first suspects.
 = cleanings linked to today's Asurion Mobility orders ÷ Asurion Mobility
 orders created today (local time). Each cleaning counts on its own, so it can
 go over 100%. Red below 75%, amber 75–99%, green at 100%+. Click it for each
-order with its cleanings (or **No cleanings**) and any of today's cleanings
-not linked to an order. Refreshes every 2 min (paused while the tab is hidden).
+order (customer name, WO, time) with its cleanings (or **No cleanings**), and
+any of today's cleanings not linked to an order.
+
+**Pending cleanings count** (v2.1): a cleaning arrival created today that
+hasn't been checked in yet shows as a dashed "· pending" chip linking to the
+arrival, and counts toward the rate. Once checked in it's counted as the WO
+instead (matched on IMEI + program), never twice. Refreshes every 2 min (paused while the tab is hidden).
 Raw percentage only: reason notes aren't considered.
 
-**How:** two read-only list calls per refresh (`POST /api/workorders`, Active
-and Closed), both scoped by the portal to the logged-in user's current store,
+**How:** read-only list calls per refresh (`POST /api/workorders` Active and
+Closed, plus `GET /api/arrivals/upcoming-arrivals?pageSize=100`), both scoped by the portal to the logged-in user's current store,
 so it works at any store with no setup. Cleanings link to orders by device
 IMEI, because AT&T cleanings are often under a different customer record.
 

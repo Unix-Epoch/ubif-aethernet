@@ -8,7 +8,7 @@ dist/aethernet.user.js into Tampermonkey.
 
 from pathlib import Path
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 HEADER = f"""// ==UserScript==
 // @name         Aethernet — add-on tools for NextGen Portal
