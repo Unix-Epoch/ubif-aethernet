@@ -20,10 +20,21 @@
 
   const MODAL_CSS = `
   .sg-scrim { position:fixed; inset:0; z-index:2147483646; background:var(--aui-scrim-overlay, #0c0e1180); display:flex; justify-content:flex-end; }
-  .sg-sheet { width:min(440px, 100vw); height:100%; overflow:auto; border-radius:16px 0 0 16px; border-right:0; padding:24px; animation: sg-slide .22s ease-out; }
+  .sg-sheet { display:flex; flex-direction:column; width:min(440px, 100vw); height:100%; overflow:auto; border-radius:16px 0 0 16px; border-right:0; padding:24px; animation: sg-slide .22s ease-out; }
+  .sg-sheet > * { flex-shrink:0; }
   @keyframes sg-slide { from { transform: translateX(40px); opacity:0; } to { transform:none; opacity:1; } }
   .sg-sheet h2 { font-size:22px; font-weight:700; margin:0; }
-  .sg-sheet h3 { font-size:14px; font-weight:700; margin:24px 0 8px; text-transform:none; }
+  .sg-sec { border-top:1px solid var(--aui-outline-soft, #eeedf1); margin-top:16px; }
+  .sg-sec-head { display:flex; align-items:center; gap:8px; width:100%; padding:14px 0 10px; border:0; background:none; cursor:pointer;
+    color:var(--aui-on-surface, #1a1c1e); font:700 14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:left; }
+  .sg-sec-head .sum { flex:1; font-weight:400; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); text-align:right; }
+  .sg-sec-head .chev { display:block; width:18px; height:18px; flex:none; color:var(--aui-on-surface-soft, #5d5e61); transition:transform .2s; }
+  .sg-sec.closed .sg-sec-head .chev { transform:rotate(-90deg); }
+  .sg-sec-head:focus-visible { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; border-radius:4px; }
+  .sg-sec-body { display:grid; grid-template-rows:1fr; transition:grid-template-rows .2s ease; }
+  .sg-sec.closed .sg-sec-body { grid-template-rows:0fr; }
+  .sg-sec-body > div { overflow:hidden; min-height:0; }
+  .sg-sec-body > div > :last-child { margin-bottom:8px; }
   .sg-row { display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--aui-outline-soft, #eeedf1); }
   .sg-row:first-of-type { border-top:0; }
   .sg-row > div { flex:1; min-width:0; }
@@ -41,7 +52,7 @@
   .sg-switch input:checked + i::after { transform:translateX(20px); }
   .sg-kv { display:grid; grid-template-columns: 90px 1fr; gap:6px 12px; font-size:14px; }
   .sg-kv dt { color:var(--aui-on-surface-soft, #5d5e61); } .sg-kv dd { margin:0; overflow-wrap:anywhere; }
-  .sg-sheet-foot { position:sticky; bottom:-24px; margin:24px -24px -24px; padding:16px 24px; display:flex; gap:8px;
+  .sg-sheet-foot { position:sticky; bottom:-24px; margin:auto -24px -24px; padding-top:16px; flex:none; padding:16px 24px; display:flex; gap:8px;
     background:var(--aui-surface, #fff); border-top:1px solid var(--aui-outline-soft, #eeedf1); }
   .sg-sheet-foot .sg-btn { flex:1; }
   `;
@@ -58,6 +69,31 @@
     const toggle = (checked, onChange) => h('label', { class: 'sg-switch' },
       h('input', { type: 'checkbox', checked, onchange: (e) => onChange(e.target.checked) }), h('i'));
 
+    // Collapsible section. Open/closed is remembered per browser (a viewer
+    // preference, not a setting — it isn't part of Save).
+    const SECTIONS_KEY = 'ae_settings_sections';
+    const openState = GM_getValue(SECTIONS_KEY, {});
+    const sums = [];
+    const section = (id, title, defaultOpen, summary, ...kids) => {
+      const isOpen = id in openState ? openState[id] : defaultOpen;
+      const sum = h('span', { class: 'sum' });
+      const head = h('button', { type: 'button', class: 'sg-sec-head', 'aria-expanded': String(isOpen) },
+        h('span', { html: '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>' }), title, sum);
+      const wrap = h('div', { class: 'sg-sec' + (isOpen ? '' : ' closed') }, head, h('div', { class: 'sg-sec-body' }, h('div', null, ...kids)));
+      const paintSum = () => { sum.textContent = summary && wrap.classList.contains('closed') ? summary() : ''; };
+      head.onclick = () => {
+        const nowOpen = wrap.classList.toggle('closed') === false;
+        head.setAttribute('aria-expanded', String(nowOpen));
+        openState[id] = nowOpen;
+        GM_setValue(SECTIONS_KEY, openState);
+        paintSum();
+      };
+      sums.push(paintSum);
+      paintSum();
+      return wrap;
+    };
+    const repaintSums = () => sums.forEach((f) => f());
+
     const who = h('dl', { class: 'sg-kv' }, h('dt', null, 'Loading…'));
     const galaxyAuto = { technicianName: '', email: '', location: '' };
     const galaxyInputs = {};
@@ -68,29 +104,32 @@
         h('div', { style: 'flex:1' }, h('h2', null, AE_NAME), h('div', { class: 'sg-soft' }, 'Crystals for NextGen Portal · v' + AE_VERSION)),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => scrim.remove() }, '✕')),
 
-      h('h3', null, 'Signed in as'), who,
-      h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.'),
+      section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
+        who,
+        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.')),
 
-      h('h3', null, 'Crystals'),
-      h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => h('div', { class: 'sg-row' },
-        h('div', null, h('b', null, name), h('span', { class: 'sg-soft' }, desc)),
-        toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; })))),
+      section('crystals', 'Crystals', true,
+        () => CRYSTAL_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + CRYSTAL_INFO.length + ' on',
+        h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => h('div', { class: 'sg-row' },
+          h('div', null, h('b', null, name), h('span', { class: 'sg-soft' }, desc)),
+          toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); }))))),
 
-      h('h3', null, 'Live cleaning rate'),
-      input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; }, 'number'),
+      section('cleaningRate', 'Live cleaning rate', false, () => 'Target ' + s.cleaningRate.target + '%',
+        input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; repaintSums(); }, 'number')),
 
-      h('h3', null, 'Galaxy Diagnostics exception'),
-      h('div', { class: 'sg-soft' }, 'Leave blank to use your login. Only fill in to override.'),
-      (galaxyInputs.technicianName = input('Technician name', s.galaxy.technicianName, '', (v) => { s.galaxy.technicianName = v.trim(); })),
-      (galaxyInputs.email = input('Your email', s.galaxy.email, '', (v) => { s.galaxy.email = v.trim(); })),
-      (galaxyInputs.location = input('UBIF location (as shown in the form)', s.galaxy.location, '', (v) => { s.galaxy.location = v.trim(); })),
-      input('Store email (optional)', s.galaxy.storeEmail, 'Left blank', (v) => { s.galaxy.storeEmail = v.trim(); }),
-      input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
-      input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
-      h('button', { class: 'sg-btn', style: 'margin-top:4px', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position'),
+      section('galaxy', 'Galaxy Diagnostics exception', false,
+        () => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
+        h('div', { class: 'sg-soft' }, 'Leave blank to use your login. Only fill in to override.'),
+        (galaxyInputs.technicianName = input('Technician name', s.galaxy.technicianName, '', (v) => { s.galaxy.technicianName = v.trim(); })),
+        (galaxyInputs.email = input('Your email', s.galaxy.email, '', (v) => { s.galaxy.email = v.trim(); })),
+        (galaxyInputs.location = input('UBIF location (as shown in the form)', s.galaxy.location, '', (v) => { s.galaxy.location = v.trim(); })),
+        input('Store email (optional)', s.galaxy.storeEmail, 'Left blank', (v) => { s.galaxy.storeEmail = v.trim(); }),
+        input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
+        input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
+        h('button', { class: 'sg-btn', style: 'margin-top:4px', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')),
 
-      h('h3', null, 'Print all labels'),
-      input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); }, 'number'),
+      section('printLabels', 'Print all labels', false, () => s.printLabels.delayMs + ' ms between labels',
+        input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')),
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => scrim.remove() }, 'Cancel'),
@@ -109,6 +148,7 @@
         h('dt', null, 'Store'), h('dd', null, loc || '—'));
       galaxyAuto.technicianName = p.name; galaxyAuto.email = p.email; galaxyAuto.location = loc;
       for (const k of Object.keys(galaxyAuto)) galaxyInputs[k].querySelector('input').placeholder = 'Auto: ' + (galaxyAuto[k] || '—');
+      repaintSums();
     }).catch((e) => { who.replaceChildren(h('dt', null, 'Error'), h('dd', null, esc(e.message))); });
   }
 
