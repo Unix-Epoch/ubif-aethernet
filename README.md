@@ -157,3 +157,29 @@ changes the option wording, update the matching string in `CONFIG` or the
 reading "GSPN No. ######", update the regex in `gspnTicketOnPage()` (Part A).
 
 _Built 2026-09-16. Not affiliated with or supported by Asurion/uBreakiFix._
+
+## cleaning-wo-autoclose — one-click close for cleaning arrivals
+
+**Problem:** cleaning-program WOs (Verizon Device Refresh / Sanitization, AT&T
+Enhanced Device Cleaning / Device Diagnostic / Performance Check) aren't
+physical repairs, but still take ~3 min of clicking: check-in, five status
+steps, and a $0 checkout.
+
+**What this does:** open a cleaning arrival (Arrivals → click the customer).
+A **⚡ Auto-close cleaning** button appears next to **Check-in**. One click
+checks it in, walks the WO to Ready for pickup (posting the same auto-notes
+the UI does), and completes the $0 sale. A panel shows each step, and **■ Stop**
+halts it before the next call; the panel links the WO wherever it stopped.
+
+- Refuses anything not in `CLEANING_PROGRAM_IDS`.
+- Stops before checkout if the cart isn't exactly $0.
+- IMEI comes from the arrival (all 15 digits); if validation fails it tries
+  the other last digits 0–9.
+- Skips the UI's customer-record and device re-saves (would blank the shared
+  device's nickname/passcode on the parent WO).
+
+Install: Tampermonkey → **Create a new script** → paste
+`cleaning-wo-autoclose.user.js` → save.
+
+**First run:** watch it on one real cleaning arrival. If it fails at check-in,
+the skipped re-saves above are the first suspects.
