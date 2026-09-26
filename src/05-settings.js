@@ -22,6 +22,9 @@
   .sg-scrim { position:fixed; inset:0; z-index:2147483646; background:var(--aui-scrim-overlay, #0c0e1180); display:flex; justify-content:flex-end; }
   .sg-sheet { display:flex; flex-direction:column; width:min(440px, 100vw); height:100%; overflow:auto; border-radius:16px 0 0 16px; border-right:0; padding:24px; animation: sg-slide .22s ease-out; }
   .sg-sheet > * { flex-shrink:0; }
+  /* "Aethernet" titles use AE.wordmark() — Runic MT outlines, no font file shipped */
+  .sg-wordmark { margin:0 0 4px; color:var(--aui-on-surface, #1a1c1e); line-height:0; }
+  .sg-about .hero h2.sg-wordmark { margin-top:8px; }
   .sg-about-link { display:block; margin:20px auto 4px; padding:6px 10px; border:0; background:none; cursor:pointer;
     color:var(--aui-on-surface-soft, #5d5e61); font:400 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-decoration:underline; }
   .sg-about-link:hover { color:var(--aui-primary, #8223d2); }
@@ -106,7 +109,7 @@
     const card = h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
       h('div', { class: 'hero' },
         h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
-        h('h2', null, AE_NAME),
+        h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
         h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen' })),
       h('h4', null, 'This build'),
       kv(['Version', 'v' + AE_VERSION], ['Built', builtText], ['Commit', h('code', null, AE_BUILD_COMMIT)]),
@@ -173,7 +176,7 @@
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
         h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 36) }),
-        h('div', { style: 'flex:1' }, h('h2', null, AE_NAME), h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen · v' + AE_VERSION })),
+        h('div', { style: 'flex:1' }, h('h2', { class: 'sg-wordmark', html: AE.wordmark(26) }), h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen · v' + AE_VERSION })),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => scrim.remove() }, '✕')),
 
       section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
