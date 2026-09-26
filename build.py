@@ -22,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 
 # Secret Gist that hosts the published script (account: Unix-Epoch).
 # The raw URL has no commit hash, so it always serves the latest revision.
@@ -41,6 +41,7 @@ HEADER = f"""// ==UserScript==
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
 // @run-at       document-idle
 // @updateURL    {RAW_URL}
 // @downloadURL  {RAW_URL}

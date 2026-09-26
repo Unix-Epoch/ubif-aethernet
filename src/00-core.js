@@ -19,7 +19,7 @@ const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
-    tools: { cleaningRate: true, woCleanings: true, autoClose: true, galaxy: true, printLabels: true },
+    tools: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true },
     cleaningRate: { target: 75 },
     printLabels: { delayMs: 900 },
     // Blank = use the logged-in user / current store automatically.
@@ -240,6 +240,21 @@ const AE = (() => {
     });
   }
 
+  // Small status card, bottom-left, auto-dismissing. kind: 'ok' | 'err' | 'busy'
+  function toast(title, text, kind = 'ok', ms = 6000) {
+    ensureCss();
+    const mark = kind === 'busy' ? '<span class="sg-spin" style="margin-top:2px"></span>'
+      : '<span class="sg-icon-state" style="color:' + (kind === 'ok' ? 'var(--aui-status-success,#136d31)' : 'var(--aui-status-error,#b91a24)') + '">' + (kind === 'ok' ? '✓' : '!') + '</span>';
+    const el = h('div', { class: 'sg sg-card sg-toast', role: 'status', style:
+      'position:fixed;z-index:2147483647;left:16px;bottom:16px;max-width:420px;padding:12px 16px;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4;animation:sg-in .2s ease-out' +
+      (kind === 'err' ? ';border-color:var(--aui-status-error,#b91a24)' : ''),
+      html: mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">' + esc(title) + '</b>' + esc(text) + '</div>' });
+    document.querySelectorAll('.sg-toast').forEach((t) => t.remove());
+    document.body.appendChild(el);
+    if (kind !== 'busy') setTimeout(() => el.remove(), ms);
+    return el;
+  }
+
   // Tools tell each other when a cleaning changes (e.g. auto-close finished)
   // so the badge and WO pill refresh without waiting for their timers.
   const emit = (name, detail) => document.dispatchEvent(new CustomEvent('aethernet:' + name, { detail }));
@@ -353,7 +368,7 @@ const AE = (() => {
   return {
     settings, saveSettings, DEFAULTS, merge, tools, tool, start, every,
     api, unwrap, Stopped, profile, sleep, esc, h, icon, ensureCss, progressPanel,
-    confirm: confirmDialog, emit, on, data,
+    confirm: confirmDialog, toast, emit, on, data,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close tool when it's enabled
   };

@@ -11,6 +11,7 @@
   const TOOL_INFO = [
     ['cleaningRate', 'Live cleaning rate', "Header badge with today's cleaning percentage."],
     ['woCleanings', 'WO cleanings pill', 'On a work order: shows whether its device has cleanings, with Create for available ones.'],
+    ['textNotes', 'Text → WO note', 'When you text a customer from a WO, the text is added to the WO notes.'],
     ['autoClose', 'Cleaning auto-close', 'One-click check-in → complete sale on cleaning arrivals.'],
     ['galaxy', 'Galaxy Diagnostics exception', 'Pre-fills the Sprinklr exception form from a Samsung WO.'],
     ['printLabels', 'Print all labels', 'Prints every serial label on a PO Receive page.'],

@@ -7,6 +7,7 @@ portal tool in this folder:
 |---|---|
 | Live cleaning rate | Header badge left of "UBIF support" (just the % when the header is tight) |
 | Cleaning auto-close | Round purple ⚡ in a cleaning arrival's "Customer arrival" drawer |
+| Text → WO note | Automatic: texting a customer from a WO adds a note "<you> sent a text message to <customer>." + the message |
 | WO cleanings pill | After the customer's name on a WO: **Cleanings available (n)** / **Cleanings done (n)** / **No cleanings**; click for the list, with **Create** on available ones |
 | Galaxy Diagnostics exception | Draggable purple pill on a Samsung WO once it has a GSPN ticket |
 | Print all labels | Purple button next to "Generate Labels" on a PO Receive page |
@@ -278,3 +279,18 @@ IMEI, because AT&T cleanings are often under a different customer record.
 **For other stores:** install Aethernet. Program IDs are in `src/00-core.js`
 (`CLEANING_PROGRAMS`); they're believed company-wide but have only been
 confirmed at store 914.
+
+## text-notes — texts logged as WO notes (v2.3)
+
+When you text a customer from a work order, Aethernet adds a WO note:
+
+> Garrett Green sent a text message to Grace Beech.
+>
+> <the message>
+
+It watches the portal's own send (`POST …/messages/v1/send`) by wrapping the
+page's `fetch` (hence `@grant unsafeWindow`), and posts the note only after
+the portal reports the text as sent. Failed sends and texts sent outside a WO
+(no `workorderId`) are not logged. It never sends texts itself. The note is a
+regular note (`noteType: 2`) tagged with the WO's current status via the
+portal's own status → tag map. The Notes tab may need a refresh to show it.
