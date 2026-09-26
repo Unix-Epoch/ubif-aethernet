@@ -183,3 +183,23 @@ Install: Tampermonkey → **Create a new script** → paste
 
 **First run:** watch it on one real cleaning arrival. If it fails at check-in,
 the skipped re-saves above are the first suspects.
+
+## cleaning-rate — live cleaning percentage badge
+
+**What it shows:** a badge in the portal header, e.g. `Cleanings 8/9 · 89%`
+= cleanings linked to today's Asurion Mobility orders ÷ Asurion Mobility
+orders created today (local time). Each cleaning counts on its own, so it can
+go over 100%. Red below 75%, amber 75–99%, green at 100%+. Click it for each
+order with its cleanings (or **No cleanings**) and any of today's cleanings
+not linked to an order. Refreshes every 2 min (paused while the tab is hidden).
+Raw percentage only: reason notes aren't considered.
+
+**How:** two read-only list calls per refresh (`POST /api/workorders`, Active
+and Closed), both scoped by the portal to the logged-in user's current store,
+so it works at any store with no setup. Cleanings link to orders by device
+IMEI, because AT&T cleanings are often under a different customer record.
+
+**For other stores:** install Tampermonkey → **Create a new script** → paste
+`cleaning-rate.user.js` → save → reload the portal. Program IDs are in
+`CONFIG` at the top; they're believed company-wide but have only been
+confirmed at store 914.
