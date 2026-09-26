@@ -7,6 +7,7 @@ portal tool in this folder:
 |---|---|
 | Live cleaning rate | Header badge left of "UBIF support" (just the % when the header is tight) |
 | Cleaning auto-close | Round purple ⚡ in a cleaning arrival's "Customer arrival" drawer |
+| WO cleanings pill | After the customer's name on a WO: **Cleanings available (n)** / **Cleanings done (n)** / **No cleanings**; click for the list, with **Create** on available ones |
 | Galaxy Diagnostics exception | Draggable purple pill on a Samsung WO once it has a GSPN ticket |
 | Print all labels | Purple button next to "Generate Labels" on a PO Receive page |
 
@@ -256,6 +257,12 @@ orders created today (local time). Each cleaning counts on its own, so it can
 go over 100%. Red below 75%, amber 75–99%, green at 100%+. Click it for each
 order (customer name, WO, time) with its cleanings (or **No cleanings**), and
 any of today's cleanings not linked to an order.
+
+**Create from the list** (v2.2): with auto-close on, each pending chip has a ⚡
+that runs the auto-close for that arrival. It (and the WO pill's **Create**)
+always asks first: "Are you sure you'd like to create this cleaning? Only use
+this if you are the one who repaired this device!" The drawer ⚡ doesn't ask,
+since you're looking at the arrival itself.
 
 **Pending cleanings count** (v2.1): a cleaning arrival created today that
 hasn't been checked in yet shows as a dashed "· pending" chip linking to the

@@ -152,8 +152,27 @@ AE.tool({
         panel.actions();
         running = false;
         if (btn) btn.disabled = false;
+        AE.emit('cleaning-changed', { arrivalId, woId }); // badge + WO pill refresh
       }
     }
+
+    // Also callable from the cleaning-rate list and the WO cleanings pill.
+    // Those are one step removed from the arrival itself, so they always ask
+    // first; the drawer button (you're looking at the arrival) doesn't.
+    AE.autoClose = {
+      isRunning: () => running,
+      async confirmAndRun({ arrivalId, programId, customerName }) {
+        if (running) { AE.confirm({ title: 'Already running', message: 'Another cleaning is being closed out — wait for it to finish.', confirmLabel: 'OK' }); return; }
+        const ok = await AE.confirm({
+          title: 'Create this cleaning?',
+          message: '<b>' + AE.esc(customerName || 'Customer') + '</b> · ' + AE.esc(AE.CLEANING_PROGRAMS[programId] || 'Cleaning') +
+            '<div class="sg-soft" style="margin-top:6px">Checks in arrival ' + arrivalId + ', walks it to Ready for pickup, and completes the $0 sale.</div>',
+          warning: "Are you sure you'd like to create this cleaning? Only use this if you are the one who repaired this device!",
+          confirmLabel: 'Yes, create cleaning',
+        });
+        if (ok) await onClick(arrivalId);
+      },
+    };
 
     const portalCheckinButton = () => [...document.querySelectorAll('button')].find((b) => b.offsetParent && b.textContent.trim() === 'Check-in');
 

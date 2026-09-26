@@ -19,7 +19,7 @@ const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
-    tools: { cleaningRate: true, autoClose: true, galaxy: true, printLabels: true },
+    tools: { cleaningRate: true, woCleanings: true, autoClose: true, galaxy: true, printLabels: true },
     cleaningRate: { target: 75 },
     printLabels: { delayMs: 900 },
     // Blank = use the logged-in user / current store automatically.
@@ -125,6 +125,13 @@ const AE = (() => {
   .sg-clock { font-variant-numeric:tabular-nums; color:var(--aui-on-surface-soft, #5d5e61); font-size:13px; }
   .sg-bar { height:6px; border-radius:3px; background:var(--aui-primary-soft, #faecff); overflow:hidden; margin:8px 0 12px; }
   .sg-bar > i { display:block; height:100%; width:0; background:var(--aui-primary, #8223d2); transition: width .3s; }
+  /* cleaning chips — shared by the cleaning-rate list and the WO pill */
+  .sg-chip { display:inline-flex; align-items:center; gap:6px; margin:0 0 4px 4px; padding:2px 8px; border-radius:10000rem; font-size:12px; font-weight:400;
+    background:var(--aui-primary-soft,#faecff); color:var(--aui-on-primary-soft,#590099) !important; text-decoration:none !important; white-space:nowrap; }
+  .sg-chip.pending { background:transparent; border:1px dashed var(--aui-primary,#8223d2); color:var(--aui-primary,#8223d2) !important; padding:1px 3px 1px 7px; }
+  .sg-chip .sg-mk { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border:0; padding:0; border-radius:50%;
+    background:var(--aui-primary,#8223d2); color:var(--aui-on-primary,#fff); cursor:pointer; }
+  .sg-chip .sg-mk:hover { filter:brightness(.9); }
   @keyframes sg-spin { to { transform: rotate(360deg); } }
   @keyframes sg-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
   @keyframes sg-flash { 0%,100% { box-shadow:0 8px 28px rgba(12,14,17,.18); } 50% { box-shadow:0 0 0 3px var(--aui-primary, #8223d2); } }
@@ -201,6 +208,127 @@ const AE = (() => {
     };
   }
 
+  /*
+    Confirmation dialog in the portal's style (never window.confirm — native
+    dialogs block the page). Resolves true only on the confirm button.
+  */
+  const CONFIRM_CSS = `
+  .sg-confirm-scrim { position:fixed; inset:0; z-index:2147483647; background:var(--aui-scrim-overlay, #0c0e1180);
+    display:flex; align-items:center; justify-content:center; padding:16px; animation: sg-in .15s ease-out; }
+  .sg-confirm { width:min(460px, 100%); padding:24px; font-size:15px; line-height:1.45; }
+  .sg-confirm h2 { margin:0 0 8px; font-size:20px; font-weight:700; }
+  .sg-confirm .sg-warn { margin:14px 0 20px; padding:10px 12px; border-radius:8px; font-weight:600;
+    background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
+  .sg-confirm .sg-actions .sg-btn { flex:1; }
+  `;
+  function confirmDialog({ title, message, warning, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) {
+    ensureCss();
+    if (!document.getElementById('sg-confirm-css')) document.head.append(h('style', { id: 'sg-confirm-css' }, CONFIRM_CSS));
+    return new Promise((resolve) => {
+      const done = (v) => { scrim.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
+      const ok = h('button', { type: 'button', class: 'sg-btn sg-lg sg-primary', onclick: () => done(true) }, confirmLabel);
+      const card = h('div', { class: 'sg sg-card sg-confirm', role: 'alertdialog', 'aria-modal': 'true' },
+        h('h2', null, title),
+        message ? h('div', { html: message }) : null,
+        warning ? h('div', { class: 'sg-warn' }, warning) : null,
+        h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => done(false) }, cancelLabel), ok));
+      const scrim = h('div', { class: 'sg sg-confirm-scrim', onclick: (e) => { if (e.target === scrim) done(false); } }, card);
+      const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(scrim);
+      ok.focus();
+    });
+  }
+
+  // Tools tell each other when a cleaning changes (e.g. auto-close finished)
+  // so the badge and WO pill refresh without waiting for their timers.
+  const emit = (name, detail) => document.dispatchEvent(new CustomEvent('aethernet:' + name, { detail }));
+  const on = (name, fn) => document.addEventListener('aethernet:' + name, (e) => fn(e.detail));
+
+  /*
+    Shared cleaning data. Everything is read-only and scoped by the portal to
+    the logged-in user's current store.
+  */
+  const data = (() => {
+    const OPEN_STATUS_IDS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 24, 26, 27]; // the portal's own "Active" set
+    const PAGE_SIZE = 100, PAGE_CAP = 10;
+
+    async function listPage(primaryFilter, page) {
+      const j = await api('POST', '/api/workorders', {
+        page, pageSize: PAGE_SIZE, deviceTypeIds: [], serviceOutcome: [], programIds: [], needsAttention: false, tab: 'All', primaryFilter,
+        // Closed only returns rows with empty status/program filters.
+        workOrderStatusIds: primaryFilter === 'Active' ? OPEN_STATUS_IDS : [],
+        order: primaryFilter === 'Active' ? 'nextUpdate,DESC' : 'createdAt,DESC',
+      });
+      return (j && j.workOrders) || [];
+    }
+    // All open WOs, plus closed WOs created since `sinceMs` (newest first,
+    // so paging stops once past it). maxClosedPages bounds old lookbacks.
+    async function workorders(sinceMs, maxClosedPages = PAGE_CAP) {
+      const byId = new Map();
+      for (let p = 1; p <= PAGE_CAP; p++) {
+        const rows = await listPage('Active', p);
+        rows.forEach((r) => byId.set(r.workorderId, r));
+        if (rows.length < PAGE_SIZE) break;
+      }
+      for (let p = 1; p <= maxClosedPages; p++) {
+        const rows = await listPage('Closed', p);
+        rows.forEach((r) => byId.set(r.workorderId, r));
+        const lastRow = rows[rows.length - 1];
+        if (rows.length < PAGE_SIZE || !lastRow || Date.parse(lastRow.createdAt) < sinceMs) break;
+      }
+      return [...byId.values()];
+    }
+    // Arrivals not yet checked in. pageSize=100 is honored (the UI uses 10).
+    async function arrivals() {
+      const out = [];
+      for (let p = 1; p <= PAGE_CAP; p++) {
+        const j = await api('GET', '/api/arrivals/upcoming-arrivals?page=' + p + '&pageSize=' + PAGE_SIZE);
+        const rows = (j && j.data) || [];
+        out.push(...rows);
+        if (rows.length < PAGE_SIZE || out.length >= ((j && j.rowCount) || 0)) break;
+      }
+      return out;
+    }
+
+    const imeiOf = (r) => { const i = String((r.customerDevice && r.customerDevice.imei) || (r.CustomerDevice && r.CustomerDevice.imei) || '').trim(); return /^\d{14,15}$/.test(i) ? i : null; };
+    const custOf = (r) => String((r.customer && (r.customer.customerId ?? r.customer.id)) || (r.customerDevice && r.customerDevice.customerId) || '');
+    const nameOf = (r) => {
+      const c = r.customer || {};
+      const n = (c.fullName || [c.givenName || c.firstName, c.familyName || c.lastName].filter(Boolean).join(' ')).trim();
+      // Many names are stored ALL CAPS; show those in Title Case, leave mixed case alone.
+      return n === n.toUpperCase() ? n.toLowerCase().replace(/(^|[\s'-])\S/g, (m) => m.toUpperCase()) : n;
+    };
+
+    /*
+      Cleanings as one list: cleaning WOs (done or in progress) plus cleaning
+      arrivals not yet checked in ("pending"). An arrival is dropped once a
+      cleaning WO with the same IMEI + program exists, so nothing is counted
+      twice. `keep` filters which records are considered (e.g. created today).
+    */
+    function cleanings(wos, arrs, keep = () => true) {
+      const woCleanings = wos.filter((r) => CLEANING_PROGRAMS[r.programId] && keep(r))
+        .map((r) => Object.assign({}, r, { key: 'wo' + r.workorderId, pending: false }));
+      const doneKeys = new Set(woCleanings.map((c) => imeiOf(c) + ':' + c.programId));
+      const pending = arrs
+        .filter((a) => a.program && CLEANING_PROGRAMS[a.program.programId] && keep(a))
+        .map((a) => ({ key: 'ar' + a.arrivalId, pending: true, arrivalId: a.arrivalId, programId: a.program.programId,
+          customer: a.customer, customerDevice: a.customerDevice, createdAt: a.createdAt }))
+        .filter((a) => !(imeiOf(a) && doneKeys.has(imeiOf(a) + ':' + a.programId)));
+      return [...woCleanings, ...pending];
+    }
+    // Does cleaning `c` belong to parent WO `p`? Same IMEI (AT&T cleanings are
+    // often under a different customer record); customer ID only without one.
+    function belongs(c, p) {
+      const pi = imeiOf(p), ci = imeiOf(c);
+      if (pi && ci) return pi === ci;
+      const pc = custOf(p);
+      return !!pc && custOf(c) === pc;
+    }
+
+    return { workorders, arrivals, cleanings, belongs, imeiOf, custOf, nameOf };
+  })();
+
   // ------------------------------------------------------ tool registry
   const tools = [];
   function tool(def) { tools.push(def); }
@@ -216,7 +344,8 @@ const AE = (() => {
   // Poll a route/DOM check — the portal is a single-page app, so pages
   // change without a load and the portal re-renders often.
   function every(ms, fn) {
-    const safe = () => { try { fn(); } catch (e) { console.error('[' + AE_NAME + ']', e); } };
+    // Promise.resolve so async callbacks' rejections are caught too.
+    const safe = () => Promise.resolve().then(fn).catch((e) => console.error('[' + AE_NAME + ']', e));
     setInterval(safe, ms);
     safe();
   }
@@ -224,6 +353,8 @@ const AE = (() => {
   return {
     settings, saveSettings, DEFAULTS, merge, tools, tool, start, every,
     api, unwrap, Stopped, profile, sleep, esc, h, icon, ensureCss, progressPanel,
+    confirm: confirmDialog, emit, on, data,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
+    autoClose: null, // set by the auto-close tool when it's enabled
   };
 })();
