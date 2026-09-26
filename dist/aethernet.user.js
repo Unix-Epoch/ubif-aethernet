@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.5.0
+// @version      2.6.0
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -35,7 +35,10 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.5.0'; // filled in by build.py
+const AE_VERSION = '2.6.0';            // filled in by build.py
+const AE_BUILD_TIME = '2026-09-26T18:11:28-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = 'fe19b59';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';     // where installs update from
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 
 const AE = (() => {
@@ -190,6 +193,19 @@ const AE = (() => {
     aetheryte: '<ellipse cx="12" cy="11" rx="10.5" ry="3.2" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".55"/><path fill="currentColor" d="M12 1.5 6 10l6 12.5L18 10z"/><path fill="#fff" opacity=".4" d="M12 1.5 9.2 10l2.8 12.5z"/><path fill="currentColor" d="M3.5 3.5 2 6l1.5 2.5L5 6zM20.5 15.5 19 18l1.5 2.5L22 18z" opacity=".7"/>',
     grip: '<g fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></g>',
   };
+  /*
+    The "Aethernet" wordmark, drawn in Runic MT Std Condensed. Stored as
+    vector outlines of just this one word (a logo), so it renders the same
+    everywhere without installing or shipping the font. Regenerate with
+    fontTools from the .otf if the name ever changes.
+  */
+  const WORDMARK = { viewBox: '10 -807 1968 817', d: 'M157 -803H91L29 -15C20 -9 17 -9 14 -9V0H98V-9C90 -11 85 -14 82 -19L89 -178H142L148 -15C144 -13 137 -9 132 -9V0H235V-9C228 -9 223 -11 217 -15ZM139 -230H91L114 -750L116 -749ZM455 -176 378 -243 374 -238C392 -206 392 -197 392 -109C392 -58 388 -34 363 -34C339 -34 336 -66 336 -81V-309H455V-488C455 -553 431 -611 364 -611C288 -611 273 -542 273 -496V-95C273 -43 298 6 362 6C431 6 455 -53 455 -99ZM336 -350V-509C336 -539 338 -569 364 -569C389 -569 394 -546 394 -514V-350ZM510 -560V-45C510 -16 536 6 562 6C573 6 602 -2 619 -16L610 -61C604 -57 597 -51 587 -51C579 -51 573 -57 573 -67V-560H619V-605H573V-710L510 -668V-605H487V-560ZM842 -519C842 -544 838 -613 790 -613C754 -613 738 -573 726 -534H724V-798H637V-790C640 -789 652 -785 661 -779V-20C653 -14 645 -11 637 -9V0H748V-9C733 -13 728 -17 724 -20V-439C724 -500 738 -557 765 -557C778 -557 780 -546 780 -534V-20C775 -16 769 -13 756 -9V0H867V-9C852 -13 847 -16 842 -20ZM1091 -176 1014 -243 1010 -238C1028 -206 1028 -197 1028 -109C1028 -58 1024 -34 999 -34C975 -34 972 -66 972 -81V-309H1091V-488C1091 -553 1067 -611 1000 -611C924 -611 909 -542 909 -496V-95C909 -43 934 6 998 6C1067 6 1091 -53 1091 -99ZM972 -350V-509C972 -539 974 -569 1000 -569C1025 -569 1030 -546 1030 -514V-350ZM1151 -21C1143 -15 1134 -11 1126 -9V0H1237V-9C1223 -13 1216 -18 1213 -21V-433C1213 -487 1230 -561 1253 -561C1265 -561 1271 -561 1271 -473C1271 -446 1271 -400 1260 -378L1263 -371L1333 -436V-509C1333 -542 1324 -610 1278 -611C1246 -610 1233 -575 1215 -515H1213V-605H1126V-597C1141 -593 1147 -589 1151 -586ZM1561 -530C1561 -578 1541 -613 1509 -613C1470 -613 1453 -564 1442 -526H1440V-605H1354V-597C1357 -596 1369 -593 1378 -586V-20C1369 -13 1358 -10 1354 -9V0H1465V-9C1455 -12 1449 -14 1440 -20V-418C1440 -471 1453 -557 1483 -557C1495 -557 1498 -547 1498 -526V-20C1489 -13 1478 -10 1474 -9V0H1585V-9C1572 -13 1566 -16 1561 -20ZM1810 -176 1733 -243 1729 -238C1747 -206 1747 -197 1747 -109C1747 -58 1743 -34 1718 -34C1694 -34 1691 -66 1691 -81V-309H1810V-488C1810 -553 1786 -611 1719 -611C1643 -611 1628 -542 1628 -496V-95C1628 -43 1653 6 1717 6C1786 6 1810 -53 1810 -99ZM1691 -350V-509C1691 -539 1693 -569 1719 -569C1744 -569 1749 -546 1749 -514V-350ZM1865 -560V-45C1865 -16 1891 6 1917 6C1928 6 1957 -2 1974 -16L1965 -61C1959 -57 1952 -51 1942 -51C1934 -51 1928 -57 1928 -67V-560H1974V-605H1928V-710L1865 -668V-605H1842V-560Z' };
+  const wordmark = (height = 28) => {
+    const [, , w, h2] = WORDMARK.viewBox.split(' ').map(Number);
+    return '<svg role="img" aria-label="' + AE_NAME + '" viewBox="' + WORDMARK.viewBox + '" height="' + height + '" width="' +
+      Math.round(height * w / h2) + '" style="display:block;overflow:visible"><title>' + AE_NAME + '</title><path fill="currentColor" d="' + WORDMARK.d + '"/></svg>';
+  };
+
   const icon = (name, size = 16) =>
     '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '" aria-hidden="true" style="flex:none;display:block">' + ICONS[name] + '</svg>';
 
@@ -393,7 +409,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
-    api, unwrap, Stopped, profile, sleep, esc, h, icon, ensureCss, progressPanel,
+    api, unwrap, Stopped, profile, sleep, esc, h, icon, wordmark, ensureCss, progressPanel,
     confirm: confirmDialog, toast, emit, on, data,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close crystal when it's enabled
@@ -423,10 +439,48 @@ const AE = (() => {
 
   const MODAL_CSS = `
   .sg-scrim { position:fixed; inset:0; z-index:2147483646; background:var(--aui-scrim-overlay, #0c0e1180); display:flex; justify-content:flex-end; }
-  .sg-sheet { width:min(440px, 100vw); height:100%; overflow:auto; border-radius:16px 0 0 16px; border-right:0; padding:24px; animation: sg-slide .22s ease-out; }
+  .sg-sheet { display:flex; flex-direction:column; width:min(440px, 100vw); height:100%; overflow:auto; border-radius:16px 0 0 16px; border-right:0; padding:24px; animation: sg-slide .22s ease-out; }
+  .sg-sheet > * { flex-shrink:0; }
+  /* "Aethernet" titles use AE.wordmark() — Runic MT outlines, no font file shipped */
+  .sg-wordmark { margin:0 0 4px; color:var(--aui-on-surface, #1a1c1e); line-height:0; }
+  .sg-about .hero h2.sg-wordmark { margin-top:8px; }
+  .sg-about-link { display:block; margin:20px auto 4px; padding:6px 10px; border:0; background:none; cursor:pointer;
+    color:var(--aui-on-surface-soft, #5d5e61); font:400 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-decoration:underline; }
+  .sg-about-link:hover { color:var(--aui-primary, #8223d2); }
+  .sg-about-scrim { position:fixed; inset:0; z-index:2147483647; background:var(--aui-scrim-overlay, #0c0e1180);
+    display:flex; align-items:center; justify-content:center; padding:16px; animation: sg-in .15s ease-out; }
+  .sg-about { width:min(460px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:28px 24px 20px; font-size:14px; line-height:1.45; }
+  .sg-about .hero { display:flex; flex-direction:column; align-items:center; text-align:center; gap:4px; margin-bottom:18px; }
+  .sg-about .hero h2 { margin:6px 0 0; font-size:24px; font-weight:700; }
+  .sg-about h4 { margin:18px 0 6px; font-size:12px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-about .sg-kv { grid-template-columns:110px 1fr; }
+  .sg-about code { font:12px ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--aui-neutral-soft, #f1f0f4); padding:1px 5px; border-radius:4px; }
+  .sg-about .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .sg-about .chip-off { opacity:.5; text-decoration:line-through; }
+  .sg-about .link-row { display:flex; gap:8px; align-items:center; }
+  .sg-about .link-row input { flex:1; min-width:0; height:36px; padding:0 10px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px;
+    background:var(--aui-surface-variant, #faf9fc); color:var(--aui-on-surface, #1a1c1e); font:12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .sg-about .fine { margin-top:18px; text-align:center; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  /* "flow" in the subtitle: a purple→blue gradient that keeps flowing through the word */
+  .sg-flow { font-style:italic; font-weight:700; padding-right:1px;
+    background:linear-gradient(90deg, var(--aui-primary, #8223d2), var(--aui-brand-asurion-blue, #4a68f9), var(--aui-primary, #8223d2));
+    background-size:200% 100%; background-repeat:repeat; -webkit-background-clip:text; background-clip:text; color:transparent;
+    animation: sg-flow 3.5s linear infinite; }
+  @keyframes sg-flow { from { background-position:0% 50%; } to { background-position:200% 50%; } }
+  @media (prefers-reduced-motion: reduce) { .sg-flow { animation:none; } }
   @keyframes sg-slide { from { transform: translateX(40px); opacity:0; } to { transform:none; opacity:1; } }
   .sg-sheet h2 { font-size:22px; font-weight:700; margin:0; }
-  .sg-sheet h3 { font-size:14px; font-weight:700; margin:24px 0 8px; text-transform:none; }
+  .sg-sec { border-top:1px solid var(--aui-outline-soft, #eeedf1); margin-top:16px; }
+  .sg-sec-head { display:flex; align-items:center; gap:8px; width:100%; padding:14px 0 10px; border:0; background:none; cursor:pointer;
+    color:var(--aui-on-surface, #1a1c1e); font:700 14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:left; }
+  .sg-sec-head .sum { flex:1; font-weight:400; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); text-align:right; }
+  .sg-sec-head .chev { display:block; width:18px; height:18px; flex:none; color:var(--aui-on-surface-soft, #5d5e61); transition:transform .2s; }
+  .sg-sec.closed .sg-sec-head .chev { transform:rotate(-90deg); }
+  .sg-sec-head:focus-visible { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; border-radius:4px; }
+  .sg-sec-body { display:grid; grid-template-rows:1fr; transition:grid-template-rows .2s ease; }
+  .sg-sec.closed .sg-sec-body { grid-template-rows:0fr; }
+  .sg-sec-body > div { overflow:hidden; min-height:0; }
+  .sg-sec-body > div > :last-child { margin-bottom:8px; }
   .sg-row { display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--aui-outline-soft, #eeedf1); }
   .sg-row:first-of-type { border-top:0; }
   .sg-row > div { flex:1; min-width:0; }
@@ -444,10 +498,58 @@ const AE = (() => {
   .sg-switch input:checked + i::after { transform:translateX(20px); }
   .sg-kv { display:grid; grid-template-columns: 90px 1fr; gap:6px 12px; font-size:14px; }
   .sg-kv dt { color:var(--aui-on-surface-soft, #5d5e61); } .sg-kv dd { margin:0; overflow-wrap:anywhere; }
-  .sg-sheet-foot { position:sticky; bottom:-24px; margin:24px -24px -24px; padding:16px 24px; display:flex; gap:8px;
+  .sg-sheet-foot { position:sticky; bottom:-24px; margin:auto -24px -24px; padding-top:16px; flex:none; padding:16px 24px; display:flex; gap:8px;
     background:var(--aui-surface, #fff); border-top:1px solid var(--aui-outline-soft, #eeedf1); }
   .sg-sheet-foot .sg-btn { flex:1; }
   `;
+
+  // About — its own modal, above the settings panel.
+  function openAbout() {
+    document.getElementById('sg-about')?.remove();
+    const built = new Date(AE_BUILD_TIME);
+    const builtText = isNaN(built) ? AE_BUILD_TIME
+      : built.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    let manager = 'Unknown';
+    try { if (typeof GM_info !== 'undefined') manager = GM_info.scriptHandler + ' ' + GM_info.version; } catch (_) {}
+    const ua = navigator.userAgent;
+    const browser = /Zen\//.test(ua) ? 'Zen' : /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox (or a Firefox-based browser)'
+      : /Chrome\//.test(ua) ? 'Chrome (or a Chromium-based browser)' : /Safari\//.test(ua) ? 'Safari' : 'Unknown';
+    const on = AE.settings.crystals;
+    const kv = (...pairs) => h('dl', { class: 'sg-kv' }, pairs.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
+    const linkInput = h('input', { type: 'text', value: AE_INSTALL_URL, readonly: true, onfocus: (e) => e.target.select() });
+    const copyBtn = h('button', { type: 'button', class: 'sg-btn', onclick: async () => {
+      try { await navigator.clipboard.writeText(AE_INSTALL_URL); copyBtn.textContent = 'Copied'; }
+      catch (_) { linkInput.select(); copyBtn.textContent = 'Press ⌘C'; }
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+    } }, 'Copy');
+    const whoBox = h('span', null, '…');
+    AE.profile().then((p) => { whoBox.textContent = (p.name || '—') + (p.storeId ? ' · ' + p.storeId + ' ' + p.storeName : ''); }).catch(() => { whoBox.textContent = '—'; });
+
+    const card = h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
+      h('div', { class: 'hero' },
+        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
+        h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
+        h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen' })),
+      h('h4', null, 'This build'),
+      kv(['Version', 'v' + AE_VERSION], ['Built', builtText], ['Commit', h('code', null, AE_BUILD_COMMIT)]),
+      h('h4', null, 'Authored by'),
+      kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914'], ['With', 'Claude (Anthropic)']),
+      h('h4', null, 'Crystals'),
+      h('div', { class: 'chips' }, CRYSTAL_INFO.map(([id, name]) =>
+        h('span', { class: 'sg-chip' + (on[id] ? '' : ' chip-off'), title: on[id] ? 'On' : 'Off' }, name))),
+      h('h4', null, 'Your setup'),
+      kv(['Signed in', whoBox], ['Browser', browser], ['Script manager', manager]),
+      h('h4', null, 'Share with another store'),
+      h('div', { class: 'link-row' }, linkInput, copyBtn),
+      h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Open the link with Tampermonkey installed to add ' + AE_NAME + '. Installs update themselves.'),
+      h('div', { class: 'fine' }, 'A personal project. Not affiliated with or supported by Asurion or uBreakiFix.'),
+      h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')));
+    const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-about', onclick: (e) => { if (e.target === scrim) close(); } }, card);
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
+    document.addEventListener('keydown', onKey, true); // capture: Esc closes About, not Settings
+    document.body.appendChild(scrim);
+  }
 
   function open() {
     AE.ensureCss();
@@ -461,6 +563,31 @@ const AE = (() => {
     const toggle = (checked, onChange) => h('label', { class: 'sg-switch' },
       h('input', { type: 'checkbox', checked, onchange: (e) => onChange(e.target.checked) }), h('i'));
 
+    // Collapsible section. Open/closed is remembered per browser (a viewer
+    // preference, not a setting — it isn't part of Save).
+    const SECTIONS_KEY = 'ae_settings_sections';
+    const openState = GM_getValue(SECTIONS_KEY, {});
+    const sums = [];
+    const section = (id, title, defaultOpen, summary, ...kids) => {
+      const isOpen = id in openState ? openState[id] : defaultOpen;
+      const sum = h('span', { class: 'sum' });
+      const head = h('button', { type: 'button', class: 'sg-sec-head', 'aria-expanded': String(isOpen) },
+        h('span', { html: '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>' }), title, sum);
+      const wrap = h('div', { class: 'sg-sec' + (isOpen ? '' : ' closed') }, head, h('div', { class: 'sg-sec-body' }, h('div', null, ...kids)));
+      const paintSum = () => { sum.textContent = summary && wrap.classList.contains('closed') ? summary() : ''; };
+      head.onclick = () => {
+        const nowOpen = wrap.classList.toggle('closed') === false;
+        head.setAttribute('aria-expanded', String(nowOpen));
+        openState[id] = nowOpen;
+        GM_setValue(SECTIONS_KEY, openState);
+        paintSum();
+      };
+      sums.push(paintSum);
+      paintSum();
+      return wrap;
+    };
+    const repaintSums = () => sums.forEach((f) => f());
+
     const who = h('dl', { class: 'sg-kv' }, h('dt', null, 'Loading…'));
     const galaxyAuto = { technicianName: '', email: '', location: '' };
     const galaxyInputs = {};
@@ -468,32 +595,37 @@ const AE = (() => {
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
         h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 36) }),
-        h('div', { style: 'flex:1' }, h('h2', null, AE_NAME), h('div', { class: 'sg-soft' }, 'Crystals for NextGen Portal · v' + AE_VERSION)),
+        h('div', { style: 'flex:1' }, h('h2', { class: 'sg-wordmark', html: AE.wordmark(26) }), h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen · v' + AE_VERSION })),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => scrim.remove() }, '✕')),
 
-      h('h3', null, 'Signed in as'), who,
-      h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.'),
+      section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
+        who,
+        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.')),
 
-      h('h3', null, 'Crystals'),
-      h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => h('div', { class: 'sg-row' },
-        h('div', null, h('b', null, name), h('span', { class: 'sg-soft' }, desc)),
-        toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; })))),
+      section('crystals', 'Crystals', true,
+        () => CRYSTAL_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + CRYSTAL_INFO.length + ' on',
+        h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => h('div', { class: 'sg-row' },
+          h('div', null, h('b', null, name), h('span', { class: 'sg-soft' }, desc)),
+          toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); }))))),
 
-      h('h3', null, 'Live cleaning rate'),
-      input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; }, 'number'),
+      section('cleaningRate', 'Live cleaning rate', false, () => 'Target ' + s.cleaningRate.target + '%',
+        input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; repaintSums(); }, 'number')),
 
-      h('h3', null, 'Galaxy Diagnostics exception'),
-      h('div', { class: 'sg-soft' }, 'Leave blank to use your login. Only fill in to override.'),
-      (galaxyInputs.technicianName = input('Technician name', s.galaxy.technicianName, '', (v) => { s.galaxy.technicianName = v.trim(); })),
-      (galaxyInputs.email = input('Your email', s.galaxy.email, '', (v) => { s.galaxy.email = v.trim(); })),
-      (galaxyInputs.location = input('UBIF location (as shown in the form)', s.galaxy.location, '', (v) => { s.galaxy.location = v.trim(); })),
-      input('Store email (optional)', s.galaxy.storeEmail, 'Left blank', (v) => { s.galaxy.storeEmail = v.trim(); }),
-      input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
-      input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
-      h('button', { class: 'sg-btn', style: 'margin-top:4px', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position'),
+      section('galaxy', 'Galaxy Diagnostics exception', false,
+        () => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
+        h('div', { class: 'sg-soft' }, 'Leave blank to use your login. Only fill in to override.'),
+        (galaxyInputs.technicianName = input('Technician name', s.galaxy.technicianName, '', (v) => { s.galaxy.technicianName = v.trim(); })),
+        (galaxyInputs.email = input('Your email', s.galaxy.email, '', (v) => { s.galaxy.email = v.trim(); })),
+        (galaxyInputs.location = input('UBIF location (as shown in the form)', s.galaxy.location, '', (v) => { s.galaxy.location = v.trim(); })),
+        input('Store email (optional)', s.galaxy.storeEmail, 'Left blank', (v) => { s.galaxy.storeEmail = v.trim(); }),
+        input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
+        input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
+        h('button', { class: 'sg-btn', style: 'margin-top:4px', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')),
 
-      h('h3', null, 'Print all labels'),
-      input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); }, 'number'),
+      section('printLabels', 'Print all labels', false, () => s.printLabels.delayMs + ' ms between labels',
+        input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')),
+
+      h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…'),
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => scrim.remove() }, 'Cancel'),
@@ -512,6 +644,7 @@ const AE = (() => {
         h('dt', null, 'Store'), h('dd', null, loc || '—'));
       galaxyAuto.technicianName = p.name; galaxyAuto.email = p.email; galaxyAuto.location = loc;
       for (const k of Object.keys(galaxyAuto)) galaxyInputs[k].querySelector('input').placeholder = 'Auto: ' + (galaxyAuto[k] || '—');
+      repaintSums();
     }).catch((e) => { who.replaceChildren(h('dt', null, 'Error'), h('dd', null, esc(e.message))); });
   }
 
