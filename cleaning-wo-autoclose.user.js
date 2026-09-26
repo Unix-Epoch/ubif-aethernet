@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         UBIF Portal — Cleaning WO one-click close
 // @namespace    garrett.ubif
-// @version      1.2
+// @version      1.3
 // @description  On a cleaning-program arrival, adds a button next to "Check-in" that checks it in, walks the WO to Ready for pickup, and completes the $0 sale — with a Stop button while it runs.
 // @match        https://portal.ubreakifix.net/*
 // @grant        none
@@ -302,15 +302,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     const checkin = portalCheckinButton();
     if (!checkin || document.getElementById(BTN_ID)) return;
+    // The drawer footer is a full-width flex row justified to flex-end; as its
+    // first child with margin-right:auto, the button sits alone at the far left.
+    let footer = checkin.parentElement;
+    for (let el = checkin.parentElement; el && el !== document.body; el = el.parentElement) {
+      if (getComputedStyle(el).justifyContent === 'flex-end') { footer = el; break; }
+    }
+    const size = checkin.offsetHeight || 48;
     const b = document.createElement('button');
     b.id = BTN_ID;
     b.type = 'button';
-    b.textContent = '⚡ Auto-close cleaning';
-    b.title = 'Check in, walk to Ready for pickup, and complete the $0 sale';
-    b.style.cssText = 'margin-right:8px;padding:0 18px;height:' + (checkin.offsetHeight || 40) + 'px;border-radius:999px;border:2px solid #6700b8;' +
-      'background:#fff;color:#6700b8;font:600 14px system-ui,sans-serif;cursor:pointer';
+    b.title = 'Auto-close cleaning: check in, walk to Ready for pickup, and complete the $0 sale';
+    b.setAttribute('aria-label', 'Auto-close cleaning');
+    b.style.cssText = 'margin-right:auto;flex:none;align-self:center;width:' + size + 'px;height:' + size + 'px;padding:0;border:0;' +
+      'border-radius:50%;background:#8223D2;display:flex;align-items:center;justify-content:center;cursor:pointer'; // Asurion purple, same as Check-in
+    const bolt = Math.round(size * 0.5);
+    b.innerHTML = '<svg viewBox="0 0 24 24" width="' + bolt + '" height="' + bolt + '" aria-hidden="true">' +
+      '<path fill="#fff" d="M13.5 2 4 13.5h6.5L9.5 22 20 9.5h-6.5z"/></svg>';
     b.onclick = () => onClick(arrivalId);
-    checkin.parentElement.insertBefore(b, checkin);
+    footer.insertBefore(b, footer.firstChild);
   }
 
   setInterval(tick, 1000); // SPA — poll for route/DOM changes

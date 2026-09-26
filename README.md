@@ -166,7 +166,7 @@ physical repairs, but still take ~3 min of clicking: check-in, five status
 steps, and a $0 checkout.
 
 **What this does:** open a cleaning arrival (Arrivals → click the customer).
-A **⚡ Auto-close cleaning** button appears next to **Check-in**. One click
+A round purple ⚡ button appears at the far left of the drawer footer. One click
 checks it in, walks the WO to Ready for pickup (posting the same auto-notes
 the UI does), and completes the $0 sale. A panel shows each step, and **■ Stop**
 halts it before the next call; the panel links the WO wherever it stopped.
