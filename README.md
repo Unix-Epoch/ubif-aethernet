@@ -22,14 +22,36 @@ store. The Galaxy fields can still be overridden in settings.
 so it follows the portal's light/dark theme. The settings menu item is a clone
 of the portal's own "View my account" item.
 
-### Install
+### Install (auto-updates)
 
-1. Chrome → install the **Tampermonkey** extension.
-2. **Remove the old single-tool scripts** if you had them (Galaxy, Print all
-   labels, Cleaning auto-close, Cleaning rate). They're in `legacy/` now, and
-   keeping them installed would show every button twice.
-3. Tampermonkey → **Create a new script** → paste `dist/aethernet.user.js` →
-   save → reload the portal.
+**Install link:**
+https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js
+
+1. Install **Tampermonkey** for your browser. Violentmonkey also works;
+   **Greasemonkey does not** (its storage API breaks settings and the Galaxy
+   handoff).
+   - Chrome, Brave, Vivaldi, Opera, Arc: Chrome Web Store
+   - Edge: Microsoft Edge Add-ons
+   - Firefox and forks (Zen, LibreWolf, Waterfox, Floorp): addons.mozilla.org
+2. **Chrome / Edge only:** right-click the Tampermonkey icon → **Manage
+   extension** → turn on **Allow User Scripts** (older versions: **Developer
+   mode**). Without this the install succeeds but nothing appears.
+3. **Remove the old single-tool scripts** if you had them (Galaxy, Print all
+   labels, Cleaning auto-close, Cleaning rate, or a pasted-in Aethernet).
+   Otherwise every button shows twice.
+4. Open the install link above → Tampermonkey's install page opens → **Install**
+   → reload the portal.
+
+Updates arrive automatically: Tampermonkey checks the link daily, or
+immediately via **Tampermonkey → Utilities → Check for userscript updates**.
+
+Tested in Chrome. Edge (same engine) should behave the same. Firefox is
+likely fine but untested; the two things to check there are that the cleaning
+badge loads, and that the Galaxy form fills on a GSPN WO.
+
+The Gist is **secret**: it isn't listed or searchable, but anyone with the link
+can read the code (true of any userscript). Nothing secret is in it; it uses
+each person's own portal login.
 
 ### Editing
 
@@ -37,8 +59,11 @@ Tools live in `src/`, one file each, loaded in filename order:
 `00-core.js` (settings storage, profile, API helper, shared styles and progress
 panel), `05-settings.js`, then the tools. Each tool registers with
 `AE.tool({...})` and runs in its own try/catch, so one breaking can't take the
-others down. After editing, bump `VERSION` in `build.py`, run
-`python3 build.py`, and paste the new `dist/aethernet.user.js` over the old one.
+others down. To ship a change: bump `VERSION` in `build.py`, then
+`python3 build.py --release`. It builds, refuses to publish unless `VERSION` is
+higher than the published one (read via the GitHub API, since the raw URL can
+be cached), and uploads to the Gist with `gh` (signed in as Unix-Epoch).
+`python3 build.py` alone just builds `dist/` for local testing.
 
 The print-labels **bookmarklet** (no Tampermonkey needed) stays separate:
 `print-all-labels.bookmarklet.*`.

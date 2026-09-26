@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — add-on tools for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.1.0
+// @version      2.1.1
 // @description  Live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, and print-all-labels for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -10,6 +10,8 @@
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @run-at       document-idle
+// @updateURL    https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js
+// @downloadURL  https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js
 // ==/UserScript==
 
 /* Built by build.py from src/ — edit those files, not this one. */
@@ -32,7 +34,7 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.1.0'; // filled in by build.py
+const AE_VERSION = '2.1.1'; // filled in by build.py
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 
 const AE = (() => {
