@@ -14,6 +14,7 @@ portal crystal in this folder.
 | WO cleanings pill | After the customer's name on a WO: **Cleanings available (n)** / **Cleanings done (n)** / **No cleanings**; click for the list, with **Create** on available ones |
 | Galaxy Diagnostics exception | Draggable purple pill on a Samsung WO once it has a GSPN ticket |
 | Print all labels | Purple button next to "Generate Labels" on a PO Receive page |
+| Buyback add-all | **Add all Apple devices (TLC)** / **Add all Samsung/Google parts (UROC)** in a buyback order's Add Buyback parts popout (Buybacks tab) |
 
 **Settings:** avatar menu (top right) → **Aethernet settings**, or the
 Tampermonkey menu. Turn crystals on/off, set the cleaning target %, override the
@@ -42,7 +43,8 @@ https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/r
    extension** → turn on **Allow User Scripts** (older versions: **Developer
    mode**). Without this the install succeeds but nothing appears.
 3. **Remove the old standalone scripts** if you had them (Galaxy, Print all
-   labels, Cleaning auto-close, Cleaning rate, or a pasted-in Aethernet).
+   labels, Cleaning auto-close, Cleaning rate, Select All - Buybacks, or a
+   pasted-in Aethernet).
    Otherwise every button shows twice.
 4. Open the install link above → Tampermonkey's install page opens → **Install**
    → reload the portal.
@@ -300,3 +302,21 @@ It never sends texts itself. (v2.3.2: wrapping `fetch` didn't work because the
 portal's messaging code keeps its own copy of `fetch` from load time.) The
 note is a regular note (`noteType: 2`) tagged with the WO's current status via the
 portal's own status → tag map. The Notes tab may need a refresh to show it.
+
+## buybacks — bulk add on buyback orders (v2.5)
+
+Crystallized from the standalone **Select All - Buybacks** v1.1.1 (it lived only
+in Tampermonkey on Zen; source preserved in `legacy/select-all-buybacks.user.js`).
+On a buyback order's **Add Buyback parts** popout, Buybacks tab, adds **Add all
+Apple devices (TLC)** (destination "Asurion Reverse Logistics") and **Add all
+Samsung/Google parts (UROC)**, each with a live count, plus **Stop** while running.
+It clicks each row's own add button by serial number, waits for the row to
+leave and the list to refill, and stops itself on stalls, a 500-click cap or 10
+minutes.
+
+**Fixed in the crystal:** the old script's buttons often didn't appear, because
+its `@match` was only `/boh/inventory/buyback-order/*` and Tampermonkey injects
+only on a real page load. Arriving from any other portal page meant it never
+ran, which is why removing and re-adding it "fixed" it. The crystal runs
+portal-wide and checks the path itself. Verified live: the toolbar appeared on
+two buyback orders in a row, reached by in-portal navigation.

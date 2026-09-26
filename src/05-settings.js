@@ -14,6 +14,7 @@
     ['textNotes', 'Text → WO note', 'When you text a customer from a WO, the text is added to the WO notes.'],
     ['autoClose', 'Cleaning auto-close', 'One-click check-in → complete sale on cleaning arrivals.'],
     ['galaxy', 'Galaxy Diagnostics exception', 'Pre-fills the Sprinklr exception form from a Samsung WO.'],
+    ['buybacks', 'Buyback add-all', 'Bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
     ['printLabels', 'Print all labels', 'Prints every serial label on a PO Receive page.'],
   ];
 
