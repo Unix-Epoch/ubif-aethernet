@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         UBIF Portal — Cleaning WO one-click close
 // @namespace    garrett.ubif
-// @version      1.0
+// @version      1.1
 // @description  On a cleaning-program arrival, adds a button next to "Check-in" that checks it in, walks the WO to Ready for pickup, and completes the $0 sale — with a Stop button while it runs.
 // @match        https://portal.ubreakifix.net/*
 // @grant        none
@@ -189,9 +189,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     p.id = PANEL_ID;
     p.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:2147483647;width:320px;background:#fff;color:#111;' +
       'border:2px solid #6700b8;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.25);font:13px/1.4 system-ui,sans-serif;padding:12px';
-    p.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
-      '<b>Cleaning WO auto-close</b><span data-x style="cursor:pointer;display:none;font-size:16px">✕</span></div>' +
-      '<ol data-log style="margin:0 0 10px 18px;padding:0;max-height:220px;overflow:auto"></ol>' +
+    if (!document.getElementById(PANEL_ID + '-css')) {
+      const css = document.createElement('style');
+      css.id = PANEL_ID + '-css';
+      css.textContent =
+        '@keyframes cwo-spin{to{transform:rotate(360deg)}}' +
+        '@keyframes cwo-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}' +
+        '#' + PANEL_ID + ' [data-spin]{width:16px;height:16px;flex:none;box-sizing:border-box;border:2px solid #e3d1f2;border-top-color:#6700b8;border-radius:50%;animation:cwo-spin .7s linear infinite}' +
+        '#' + PANEL_ID + ' [data-spin].done{animation:none;border:0;width:auto;height:auto;font-size:15px;line-height:16px}' +
+        '#' + PANEL_ID + ' [data-log] li{display:flex;gap:8px;align-items:baseline;padding:2px 0;animation:cwo-in .2s ease-out}' +
+        '#' + PANEL_ID + ' [data-log] li::before{content:"✓";color:#2e7d32;font-weight:700;flex:none}';
+      document.head.appendChild(css);
+    }
+    p.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
+      '<span data-spin></span><b style="flex:1">Cleaning WO auto-close</b>' +
+      '<span data-clock style="font-variant-numeric:tabular-nums;color:#555">0.0s</span>' +
+      '<span data-x style="cursor:pointer;display:none;font-size:16px;margin-left:4px">✕</span></div>' +
+      '<ul data-log style="list-style:none;margin:0 0 10px;padding:0;max-height:220px;overflow:auto"></ul>' +
       '<div data-msg style="display:none;border-radius:6px;padding:6px 8px;margin-bottom:8px"></div>' +
       '<button data-stop style="width:100%;padding:10px;border:0;border-radius:8px;background:#c62828;color:#fff;font-weight:600;font-size:14px;cursor:pointer">■ Stop</button>';
     p.querySelector('[data-stop]').onclick = () => {
@@ -225,7 +239,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       list.appendChild(li);
       list.scrollTop = list.scrollHeight;
     };
-    const finish = (html, ok) => {
+    // Runtime clock — ticks while running, frozen by finish().
+    const clock = p.querySelector('[data-clock]');
+    const t0 = performance.now();
+    const fmt = (ms) => {
+      const s = ms / 1000;
+      return s < 60 ? s.toFixed(1) + 's' : Math.floor(s / 60) + 'm ' + String(Math.floor(s % 60)).padStart(2, '0') + 's';
+    };
+    const clockTimer = setInterval(() => { clock.textContent = fmt(performance.now() - t0); }, 100);
+    const finish = (html, ok, icon) => {
+      clearInterval(clockTimer);
+      clock.textContent = fmt(performance.now() - t0);
+      const spin = p.querySelector('[data-spin]');
+      spin.classList.add('done');
+      spin.textContent = icon;
+      spin.style.color = ok ? '#2e7d32' : '#c62828';
       msg.style.display = 'block';
       msg.style.background = ok ? '#e8f5e9' : '#ffebee';
       msg.style.color = ok ? '#1b5e20' : '#b71c1c';
@@ -237,10 +265,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     if (btn) btn.disabled = true;
     try {
       const id = await run(arrivalId, log);
-      finish('✓ Done — ' + woLink(id) + ' checked in, completed, and sold at $0.', true);
+      finish('✓ Done — ' + woLink(id) + ' checked in, completed, and sold at $0.', true, '✓');
     } catch (e) {
       const where = woId ? ' ' + woLink(woId) + ' was left at the last step listed above.' : ' No work order was created.';
-      finish(e instanceof Stopped ? '■ Stopped.' + where : '✕ ' + String(e.message).replace(/</g, '&lt;') + where, false);
+      const stopped = e instanceof Stopped;
+      finish(stopped ? '■ Stopped.' + where : '✕ ' + String(e.message).replace(/</g, '&lt;') + where, false, stopped ? '■' : '✕');
     } finally {
       running = false;
       if (btn) btn.disabled = false;
