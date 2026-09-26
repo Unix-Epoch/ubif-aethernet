@@ -1,6 +1,6 @@
-# Stargate — add-on tools for NextGen Portal
+# Aethernet — add-on tools for NextGen Portal
 
-One Tampermonkey userscript, **`dist/stargate.user.js`**, that bundles every
+One Tampermonkey userscript, **`dist/aethernet.user.js`**, that bundles every
 portal tool in this folder:
 
 | Tool | Where it shows up |
@@ -10,7 +10,7 @@ portal tool in this folder:
 | Galaxy Diagnostics exception | Draggable purple pill on a Samsung WO once it has a GSPN ticket |
 | Print all labels | Purple button next to "Generate Labels" on a PO Receive page |
 
-**Settings:** avatar menu (top right) → **Stargate settings**, or the
+**Settings:** avatar menu (top right) → **Aethernet settings**, or the
 Tampermonkey menu. Turn tools on/off, set the cleaning target %, override the
 Galaxy form fields, set the label delay. Saving reloads the page.
 
@@ -28,7 +28,7 @@ of the portal's own "View my account" item.
 2. **Remove the old single-tool scripts** if you had them (Galaxy, Print all
    labels, Cleaning auto-close, Cleaning rate). They're in `legacy/` now, and
    keeping them installed would show every button twice.
-3. Tampermonkey → **Create a new script** → paste `dist/stargate.user.js` →
+3. Tampermonkey → **Create a new script** → paste `dist/aethernet.user.js` →
    save → reload the portal.
 
 ### Editing
@@ -36,9 +36,9 @@ of the portal's own "View my account" item.
 Tools live in `src/`, one file each, loaded in filename order:
 `00-core.js` (settings storage, profile, API helper, shared styles and progress
 panel), `05-settings.js`, then the tools. Each tool registers with
-`SG.tool({...})` and runs in its own try/catch, so one breaking can't take the
+`AE.tool({...})` and runs in its own try/catch, so one breaking can't take the
 others down. After editing, bump `VERSION` in `build.py`, run
-`python3 build.py`, and paste the new `dist/stargate.user.js` over the old one.
+`python3 build.py`, and paste the new `dist/aethernet.user.js` over the old one.
 
 The print-labels **bookmarklet** (no Tampermonkey needed) stays separate:
 `print-all-labels.bookmarklet.*`.
@@ -65,9 +65,9 @@ attached LabelWriter. So this only actually prints on a machine where **DYMO
 Connect is installed and running** with a LabelWriter attached — the same
 requirement as clicking the buttons by hand.
 
-### Option A — Stargate (adds a real button to the page)
+### Option A — Aethernet (adds a real button to the page)
 
-1. Install Stargate (see the top of this file).
+1. Install Aethernet (see the top of this file).
 2. Open any PO → Receive page. A purple **"⎙ Print all labels"** button appears
    next to *Generate Labels*.
 3. Click it → panel shows the count → **Print N** → walk away. **Stop** halts it;
@@ -139,7 +139,7 @@ not click Submit** — that's still on you, since it's a real support ticket.
 
 Needs Tampermonkey (this one only comes as a userscript — the two halves live
 on different sites and have to share data through Tampermonkey's storage,
-which a bare bookmarklet can't do). Part of Stargate.
+which a bare bookmarklet can't do). Part of Aethernet.
 
 ### How the two halves talk to each other
 
@@ -176,7 +176,7 @@ to back fills each tab with its own WO.
 |---|---|
 | GSPN Ticket Number, IMEI, Portal WO Number | pulled live from `/api/workorder/<id>` |
 | Device Full SKU | the device's human-readable catalog name (e.g. "Samsung Galaxy Fold7 Blue Shadow") — Garrett confirmed that's what goes in this field, not a real Samsung SM-xxxx SKU |
-| Your email, Technician Name | the logged-in user (overridable in Stargate settings) |
+| Your email, Technician Name | the logged-in user (overridable in Aethernet settings) |
 | UBIF Location | `{storeId} {storeName}` of the current store, e.g. "914 Newport News" (overridable) |
 | Tool Version, Description | settings (default "Latest", "ER") |
 | Store email address | settings (blank by default) |
@@ -218,7 +218,7 @@ halts it before the next call; the panel links the WO wherever it stopped.
 - Skips the UI's customer-record and device re-saves (would blank the shared
   device's nickname/passcode on the parent WO).
 
-Part of Stargate.
+Part of Aethernet.
 
 **First run:** watch it on one real cleaning arrival. If it fails at check-in,
 the skipped re-saves above are the first suspects.
@@ -238,6 +238,6 @@ and Closed), both scoped by the portal to the logged-in user's current store,
 so it works at any store with no setup. Cleanings link to orders by device
 IMEI, because AT&T cleanings are often under a different customer record.
 
-**For other stores:** install Stargate. Program IDs are in `src/00-core.js`
+**For other stores:** install Aethernet. Program IDs are in `src/00-core.js`
 (`CLEANING_PROGRAMS`); they're believed company-wide but have only been
 confirmed at store 914.

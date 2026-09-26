@@ -6,13 +6,13 @@
 
   If the portal renames its hooks, update SEL_MENU_BTN / SEL_PRINT_OPT.
 */
-SG.tool({
+AE.tool({
   id: 'printLabels',
   name: 'Print all labels',
   sites: ['portal.ubreakifix.net'],
   run() {
-    const { h, icon, sleep } = SG;
-    const DELAY_MS = SG.settings.printLabels.delayMs;
+    const { h, icon, sleep } = AE;
+    const DELAY_MS = AE.settings.printLabels.delayMs;
     const SEL_MENU_BTN = 'button[data-aui="action"]';
     const SEL_PRINT_OPT = 'button[data-testid="option-printLabel"]';
     const SERIAL_RE = /^\s*\d{5,}[-–—]\d{5,}\s*$/;
@@ -107,7 +107,7 @@ SG.tool({
       } else ui.panel.actions(close);
     }
 
-    function newUi() { return { panel: SG.progressPanel('Print all labels', { clock: false }), running: false, stop: false }; }
+    function newUi() { return { panel: AE.progressPanel('Print all labels', { clock: false }), running: false, stop: false }; }
 
     async function onClickPrintAll() {
       if (active && active.panel.el.isConnected) { active.panel.flash(); return; }

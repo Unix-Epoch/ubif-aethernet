@@ -1,22 +1,22 @@
 /*
-  Stargate core — shared by every tool in this bundle.
+  Aethernet core — shared by every tool in this bundle.
 
-  - SG.settings: persisted in Tampermonkey storage (GM_*), so the portal and
+  - AE.settings: persisted in Tampermonkey storage (GM_*), so the portal and
     the Sprinklr form (a different site) see the same values.
-  - SG.profile(): the logged-in user + current store, from /api/auth/user.
+  - AE.profile(): the logged-in user + current store, from /api/auth/user.
     Anything personal (name, email, store) comes from here, never hardcoded.
   - Styling uses the portal's own design tokens (--aui-*), which switch with
     its light/dark theme; the fallbacks are the light-theme values, used on
     pages without the tokens (the Sprinklr form).
-  - SG.tool(): each tool registers here and runs in its own try/catch, only
+  - AE.tool(): each tool registers here and runs in its own try/catch, only
     if enabled in settings — one tool breaking can't take down the others.
 */
 
-const SG_NAME = 'Stargate';
-const SG_VERSION = '__VERSION__'; // filled in by build.py
-const SG_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
+const AE_NAME = 'Aethernet';
+const AE_VERSION = '__VERSION__'; // filled in by build.py
+const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 
-const SG = (() => {
+const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
     tools: { cleaningRate: true, autoClose: true, galaxy: true, printLabels: true },
@@ -69,7 +69,7 @@ const SG = (() => {
   // ------------------------------------------------------------ profile
   let profilePromise = null;
   function profile() {
-    if (!SG_ON_PORTAL) return Promise.resolve(null);
+    if (!AE_ON_PORTAL) return Promise.resolve(null);
     if (!profilePromise) {
       profilePromise = api('GET', '/api/auth/user').then((a) => {
         // {isAuthenticated, user: {givenName, familyName, email, …}, currentStore: {storeId, storeName, email, …}}
@@ -154,7 +154,7 @@ const SG = (() => {
     bolt: '<path fill="currentColor" d="M13.5 2 4 13.5h6.5L9.5 22 20 9.5h-6.5z"/>',
     clipboard: '<path fill="currentColor" d="M9 2h6a1 1 0 0 1 1 1v1h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V3a1 1 0 0 1 1-1zm1 2v2h4V4h-4zM8 11v2h8v-2H8zm0 4v2h5v-2H8z"/>',
     printer: '<path fill="currentColor" d="M7 3h10v4H7V3zM5 8h14a2 2 0 0 1 2 2v6h-4v4H7v-4H3v-6a2 2 0 0 1 2-2zm4 7v3h6v-3H9zm8-5a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/>',
-    gate: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="12" cy="12" r="4.5" fill="currentColor" opacity=".35"/><g fill="currentColor"><circle cx="12" cy="3" r="1.4"/><circle cx="20.5" cy="9" r="1.4"/><circle cx="17.3" cy="19.3" r="1.4"/><circle cx="6.7" cy="19.3" r="1.4"/><circle cx="3.5" cy="9" r="1.4"/></g>',
+    aetheryte: '<ellipse cx="12" cy="11" rx="10.5" ry="3.2" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".55"/><path fill="currentColor" d="M12 1.5 6 10l6 12.5L18 10z"/><path fill="#fff" opacity=".4" d="M12 1.5 9.2 10l2.8 12.5z"/><path fill="currentColor" d="M3.5 3.5 2 6l1.5 2.5L5 6zM20.5 15.5 19 18l1.5 2.5L22 18z" opacity=".7"/>',
     grip: '<g fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></g>',
   };
   const icon = (name, size = 16) =>
@@ -209,14 +209,14 @@ const SG = (() => {
     for (const t of tools) {
       if (!settings.tools[t.id]) continue;
       if (t.sites && !t.sites.includes(location.hostname)) continue;
-      try { t.run(); } catch (e) { console.error('[' + SG_NAME + '] ' + t.name + ' failed to start', e); }
+      try { t.run(); } catch (e) { console.error('[' + AE_NAME + '] ' + t.name + ' failed to start', e); }
     }
   }
 
   // Poll a route/DOM check — the portal is a single-page app, so pages
   // change without a load and the portal re-renders often.
   function every(ms, fn) {
-    const safe = () => { try { fn(); } catch (e) { console.error('[' + SG_NAME + ']', e); } };
+    const safe = () => { try { fn(); } catch (e) { console.error('[' + AE_NAME + ']', e); } };
     setInterval(safe, ms);
     safe();
   }

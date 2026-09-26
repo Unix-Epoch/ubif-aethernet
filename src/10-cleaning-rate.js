@@ -9,13 +9,13 @@
   Two read-only list calls per refresh, scoped by the portal to the user's
   current store.
 */
-SG.tool({
+AE.tool({
   id: 'cleaningRate',
   name: 'Live cleaning rate',
   sites: ['portal.ubreakifix.net'],
   run() {
-    const { h, esc } = SG;
-    const TARGET = SG.settings.cleaningRate.target;
+    const { h, esc } = AE;
+    const TARGET = AE.settings.cleaningRate.target;
     const REFRESH_MS = 2 * 60 * 1000;
     const OPEN_STATUS_IDS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 24, 26, 27]; // the portal's own "Active" set
     const PAGE_SIZE = 100, PAGE_CAP = 10;
@@ -45,7 +45,7 @@ SG.tool({
     `));
 
     async function listPage(primaryFilter, page) {
-      const j = await SG.api('POST', '/api/workorders', {
+      const j = await AE.api('POST', '/api/workorders', {
         page, pageSize: PAGE_SIZE, deviceTypeIds: [], serviceOutcome: [], programIds: [], needsAttention: false, tab: 'All', primaryFilter,
         // Closed only returns rows with empty status/program filters.
         workOrderStatusIds: primaryFilter === 'Active' ? OPEN_STATUS_IDS : [],
@@ -76,8 +76,8 @@ SG.tool({
       const startMs = start.getTime(), endMs = startMs + 86400000;
       const all = await fetchToday(startMs);
       const today = (r) => { const t = Date.parse(r.createdAt); return t >= startMs && t < endMs; };
-      const parents = all.filter((r) => r.programId === SG.PARENT_PROGRAM_ID && today(r)).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-      const cleanings = all.filter((r) => SG.CLEANING_PROGRAMS[r.programId] && today(r));
+      const parents = all.filter((r) => r.programId === AE.PARENT_PROGRAM_ID && today(r)).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+      const cleanings = all.filter((r) => AE.CLEANING_PROGRAMS[r.programId] && today(r));
       const used = new Set();
       const rows = parents.map((p) => {
         const pImei = imeiOf(p), pCust = custOf(p);
@@ -143,7 +143,7 @@ SG.tool({
           const dev = (wo.customerDevice && wo.customerDevice.name) || (wo.deviceCatalog && wo.deviceCatalog.name) || '';
           return '<tr><td><a href="/repair/workorder/' + wo.workorderId + '">' + wo.workorderId + '</a>' +
             '<div class="sg-soft">' + fmtTime(new Date(wo.createdAt)) + (dev ? ' · ' + esc(dev) : '') + '</div></td><td style="text-align:right">' +
-            (matched.length ? matched.map((c) => '<span class="chip">' + esc(SG.CLEANING_PROGRAMS[c.programId]) + '</span>').join('') : '<span class="miss">No cleanings</span>') +
+            (matched.length ? matched.map((c) => '<span class="chip">' + esc(AE.CLEANING_PROGRAMS[c.programId]) + '</span>').join('') : '<span class="miss">No cleanings</span>') +
             '</td></tr>';
         }).join('') + '</table>'
         : '<p class="sg-soft">No Asurion Mobility orders created today yet.</p>';
@@ -179,7 +179,7 @@ SG.tool({
     }
 
     const onPortal = () => !/^\/login/.test(location.pathname);
-    SG.every(1500, () => { if (onPortal()) renderBadge(); }); // SPA re-renders can drop the badge
+    AE.every(1500, () => { if (onPortal()) renderBadge(); }); // SPA re-renders can drop the badge
     setInterval(() => { if (onPortal() && !document.hidden) refresh(); }, REFRESH_MS);
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden && onPortal() && (!last || Date.now() - last.at > REFRESH_MS)) refresh();

@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Stargate — add-on tools for NextGen Portal
+// @name         Aethernet — add-on tools for NextGen Portal
 // @namespace    garrett.ubif
 // @version      2.0.0
-// @description  Live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, and print-all-labels for portal.ubreakifix.net. Settings: avatar menu → Stargate settings.
+// @description  Live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, and print-all-labels for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
 // @grant        GM_setValue
@@ -13,29 +13,29 @@
 // ==/UserScript==
 
 /* Built by build.py from src/ — edit those files, not this one. */
-(function stargate() {
+(function aethernet() {
 'use strict';
 
 // ===== 00-core.js =====
 /*
-  Stargate core — shared by every tool in this bundle.
+  Aethernet core — shared by every tool in this bundle.
 
-  - SG.settings: persisted in Tampermonkey storage (GM_*), so the portal and
+  - AE.settings: persisted in Tampermonkey storage (GM_*), so the portal and
     the Sprinklr form (a different site) see the same values.
-  - SG.profile(): the logged-in user + current store, from /api/auth/user.
+  - AE.profile(): the logged-in user + current store, from /api/auth/user.
     Anything personal (name, email, store) comes from here, never hardcoded.
   - Styling uses the portal's own design tokens (--aui-*), which switch with
     its light/dark theme; the fallbacks are the light-theme values, used on
     pages without the tokens (the Sprinklr form).
-  - SG.tool(): each tool registers here and runs in its own try/catch, only
+  - AE.tool(): each tool registers here and runs in its own try/catch, only
     if enabled in settings — one tool breaking can't take down the others.
 */
 
-const SG_NAME = 'Stargate';
-const SG_VERSION = '2.0.0'; // filled in by build.py
-const SG_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
+const AE_NAME = 'Aethernet';
+const AE_VERSION = '2.0.0'; // filled in by build.py
+const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 
-const SG = (() => {
+const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
     tools: { cleaningRate: true, autoClose: true, galaxy: true, printLabels: true },
@@ -88,7 +88,7 @@ const SG = (() => {
   // ------------------------------------------------------------ profile
   let profilePromise = null;
   function profile() {
-    if (!SG_ON_PORTAL) return Promise.resolve(null);
+    if (!AE_ON_PORTAL) return Promise.resolve(null);
     if (!profilePromise) {
       profilePromise = api('GET', '/api/auth/user').then((a) => {
         // {isAuthenticated, user: {givenName, familyName, email, …}, currentStore: {storeId, storeName, email, …}}
@@ -173,7 +173,7 @@ const SG = (() => {
     bolt: '<path fill="currentColor" d="M13.5 2 4 13.5h6.5L9.5 22 20 9.5h-6.5z"/>',
     clipboard: '<path fill="currentColor" d="M9 2h6a1 1 0 0 1 1 1v1h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V3a1 1 0 0 1 1-1zm1 2v2h4V4h-4zM8 11v2h8v-2H8zm0 4v2h5v-2H8z"/>',
     printer: '<path fill="currentColor" d="M7 3h10v4H7V3zM5 8h14a2 2 0 0 1 2 2v6h-4v4H7v-4H3v-6a2 2 0 0 1 2-2zm4 7v3h6v-3H9zm8-5a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/>',
-    gate: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="12" cy="12" r="4.5" fill="currentColor" opacity=".35"/><g fill="currentColor"><circle cx="12" cy="3" r="1.4"/><circle cx="20.5" cy="9" r="1.4"/><circle cx="17.3" cy="19.3" r="1.4"/><circle cx="6.7" cy="19.3" r="1.4"/><circle cx="3.5" cy="9" r="1.4"/></g>',
+    aetheryte: '<ellipse cx="12" cy="11" rx="10.5" ry="3.2" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".55"/><path fill="currentColor" d="M12 1.5 6 10l6 12.5L18 10z"/><path fill="#fff" opacity=".4" d="M12 1.5 9.2 10l2.8 12.5z"/><path fill="currentColor" d="M3.5 3.5 2 6l1.5 2.5L5 6zM20.5 15.5 19 18l1.5 2.5L22 18z" opacity=".7"/>',
     grip: '<g fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></g>',
   };
   const icon = (name, size = 16) =>
@@ -228,14 +228,14 @@ const SG = (() => {
     for (const t of tools) {
       if (!settings.tools[t.id]) continue;
       if (t.sites && !t.sites.includes(location.hostname)) continue;
-      try { t.run(); } catch (e) { console.error('[' + SG_NAME + '] ' + t.name + ' failed to start', e); }
+      try { t.run(); } catch (e) { console.error('[' + AE_NAME + '] ' + t.name + ' failed to start', e); }
     }
   }
 
   // Poll a route/DOM check — the portal is a single-page app, so pages
   // change without a load and the portal re-renders often.
   function every(ms, fn) {
-    const safe = () => { try { fn(); } catch (e) { console.error('[' + SG_NAME + ']', e); } };
+    const safe = () => { try { fn(); } catch (e) { console.error('[' + AE_NAME + ']', e); } };
     setInterval(safe, ms);
     safe();
   }
@@ -249,14 +249,14 @@ const SG = (() => {
 
 // ===== 05-settings.js =====
 /*
-  Settings: a "Stargate settings" item in the portal's avatar menu (cloned
+  Settings: a "Aethernet settings" item in the portal's avatar menu (cloned
   from the portal's own "View my account" item so it matches exactly), which
   opens a pop-out settings card. Also reachable from the Tampermonkey menu.
   Tool on/off changes need a reload, so Save reloads the page.
 */
 (function settingsUi() {
-  if (!SG_ON_PORTAL) return;
-  const { h, esc, icon } = SG;
+  if (!AE_ON_PORTAL) return;
+  const { h, esc, icon } = AE;
 
   const TOOL_INFO = [
     ['cleaningRate', 'Live cleaning rate', "Header badge with today's cleaning percentage."],
@@ -294,10 +294,10 @@ const SG = (() => {
   `;
 
   function open() {
-    SG.ensureCss();
+    AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
     document.getElementById('sg-settings')?.remove();
-    const s = SG.merge(SG.DEFAULTS, SG.settings); // working copy
+    const s = AE.merge(AE.DEFAULTS, AE.settings); // working copy
 
     const input = (label, value, placeholder, onInput, type = 'text') =>
       h('label', { class: 'sg-field' }, h('span', null, label),
@@ -309,10 +309,10 @@ const SG = (() => {
     const galaxyAuto = { technicianName: '', email: '', location: '' };
     const galaxyInputs = {};
 
-    const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': SG_NAME + ' settings' },
+    const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
-        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('gate', 36) }),
-        h('div', { style: 'flex:1' }, h('h2', null, SG_NAME), h('div', { class: 'sg-soft' }, 'Add-on tools for NextGen Portal · v' + SG_VERSION)),
+        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 36) }),
+        h('div', { style: 'flex:1' }, h('h2', null, AE_NAME), h('div', { class: 'sg-soft' }, 'Add-on tools for NextGen Portal · v' + AE_VERSION)),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => scrim.remove() }, '✕')),
 
       h('h3', null, 'Signed in as'), who,
@@ -324,7 +324,7 @@ const SG = (() => {
         toggle(!!s.tools[id], (v) => { s.tools[id] = v; })))),
 
       h('h3', null, 'Live cleaning rate'),
-      input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || SG.DEFAULTS.cleaningRate.target; }, 'number'),
+      input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; }, 'number'),
 
       h('h3', null, 'Galaxy Diagnostics exception'),
       h('div', { class: 'sg-soft' }, 'Leave blank to use your login. Only fill in to override.'),
@@ -341,14 +341,14 @@ const SG = (() => {
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => scrim.remove() }, 'Cancel'),
-        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { SG.saveSettings(s); location.reload(); } }, 'Save & reload')));
+        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); location.reload(); } }, 'Save & reload')));
 
     const scrim = h('div', { class: 'sg sg-scrim', id: 'sg-settings', onclick: (e) => { if (e.target === scrim) scrim.remove(); } }, sheet);
     document.body.appendChild(scrim);
     const onKey = (e) => { if (e.key === 'Escape') { scrim.remove(); document.removeEventListener('keydown', onKey); } };
     document.addEventListener('keydown', onKey);
 
-    SG.profile().then((p) => {
+    AE.profile().then((p) => {
       const loc = p.storeId ? p.storeId + ' ' + p.storeName : '';
       who.replaceChildren(
         h('dt', null, 'Name'), h('dd', null, p.name || '—'),
@@ -360,14 +360,14 @@ const SG = (() => {
   }
 
   // Add our item to the avatar menu whenever the portal renders it.
-  SG.every(400, () => {
+  AE.every(400, () => {
     const logout = document.querySelector('[data-testid="option-logout"]');
     const model = document.querySelector('[data-testid="option-view-account"]');
-    if (!logout || !model || document.querySelector('[data-testid="option-stargate"]')) return;
+    if (!logout || !model || document.querySelector('[data-testid="option-aethernet"]')) return;
     const item = model.cloneNode(true); // same classes → same look, both themes
-    item.setAttribute('data-testid', 'option-stargate');
+    item.setAttribute('data-testid', 'option-aethernet');
     const label = item.querySelector('[data-aui="text"]') || item;
-    label.textContent = SG_NAME + ' settings';
+    label.textContent = AE_NAME + ' settings';
     item.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -379,8 +379,8 @@ const SG = (() => {
     logout.parentElement.insertBefore(item, logout);
   });
 
-  if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(SG_NAME + ' settings', open);
-  SG.openSettings = open;
+  if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(AE_NAME + ' settings', open);
+  AE.openSettings = open;
 })();
 
 // ===== 10-cleaning-rate.js =====
@@ -395,13 +395,13 @@ const SG = (() => {
   Two read-only list calls per refresh, scoped by the portal to the user's
   current store.
 */
-SG.tool({
+AE.tool({
   id: 'cleaningRate',
   name: 'Live cleaning rate',
   sites: ['portal.ubreakifix.net'],
   run() {
-    const { h, esc } = SG;
-    const TARGET = SG.settings.cleaningRate.target;
+    const { h, esc } = AE;
+    const TARGET = AE.settings.cleaningRate.target;
     const REFRESH_MS = 2 * 60 * 1000;
     const OPEN_STATUS_IDS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 24, 26, 27]; // the portal's own "Active" set
     const PAGE_SIZE = 100, PAGE_CAP = 10;
@@ -431,7 +431,7 @@ SG.tool({
     `));
 
     async function listPage(primaryFilter, page) {
-      const j = await SG.api('POST', '/api/workorders', {
+      const j = await AE.api('POST', '/api/workorders', {
         page, pageSize: PAGE_SIZE, deviceTypeIds: [], serviceOutcome: [], programIds: [], needsAttention: false, tab: 'All', primaryFilter,
         // Closed only returns rows with empty status/program filters.
         workOrderStatusIds: primaryFilter === 'Active' ? OPEN_STATUS_IDS : [],
@@ -462,8 +462,8 @@ SG.tool({
       const startMs = start.getTime(), endMs = startMs + 86400000;
       const all = await fetchToday(startMs);
       const today = (r) => { const t = Date.parse(r.createdAt); return t >= startMs && t < endMs; };
-      const parents = all.filter((r) => r.programId === SG.PARENT_PROGRAM_ID && today(r)).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-      const cleanings = all.filter((r) => SG.CLEANING_PROGRAMS[r.programId] && today(r));
+      const parents = all.filter((r) => r.programId === AE.PARENT_PROGRAM_ID && today(r)).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+      const cleanings = all.filter((r) => AE.CLEANING_PROGRAMS[r.programId] && today(r));
       const used = new Set();
       const rows = parents.map((p) => {
         const pImei = imeiOf(p), pCust = custOf(p);
@@ -529,7 +529,7 @@ SG.tool({
           const dev = (wo.customerDevice && wo.customerDevice.name) || (wo.deviceCatalog && wo.deviceCatalog.name) || '';
           return '<tr><td><a href="/repair/workorder/' + wo.workorderId + '">' + wo.workorderId + '</a>' +
             '<div class="sg-soft">' + fmtTime(new Date(wo.createdAt)) + (dev ? ' · ' + esc(dev) : '') + '</div></td><td style="text-align:right">' +
-            (matched.length ? matched.map((c) => '<span class="chip">' + esc(SG.CLEANING_PROGRAMS[c.programId]) + '</span>').join('') : '<span class="miss">No cleanings</span>') +
+            (matched.length ? matched.map((c) => '<span class="chip">' + esc(AE.CLEANING_PROGRAMS[c.programId]) + '</span>').join('') : '<span class="miss">No cleanings</span>') +
             '</td></tr>';
         }).join('') + '</table>'
         : '<p class="sg-soft">No Asurion Mobility orders created today yet.</p>';
@@ -565,7 +565,7 @@ SG.tool({
     }
 
     const onPortal = () => !/^\/login/.test(location.pathname);
-    SG.every(1500, () => { if (onPortal()) renderBadge(); }); // SPA re-renders can drop the badge
+    AE.every(1500, () => { if (onPortal()) renderBadge(); }); // SPA re-renders can drop the badge
     setInterval(() => { if (onPortal() && !document.hidden) refresh(); }, REFRESH_MS);
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden && onPortal() && (!last || Date.now() - last.at > REFRESH_MS)) refresh();
@@ -590,12 +590,12 @@ SG.tool({
   and PUT customer-devices (would blank the shared device's nickname and
   passcode on the parent WO). A Stop button halts before the next call.
 */
-SG.tool({
+AE.tool({
   id: 'autoClose',
   name: 'Cleaning auto-close',
   sites: ['portal.ubreakifix.net'],
   run() {
-    const { h, icon } = SG;
+    const { h, icon } = AE;
     const DEVICE_ISSUES = ['Cleaning'];
     const BIN = ''; // cleanings aren't physical — no bin
     const STEP_DELAY_MS = 400;
@@ -603,23 +603,23 @@ SG.tool({
     let checkedArrivalId = null, isCleaning = false, running = false, stopRequested = false;
 
     async function api(method, path, body) {
-      const r = await SG.api(method, path, body, { shouldStop: () => stopRequested });
-      await SG.sleep(STEP_DELAY_MS);
+      const r = await AE.api(method, path, body, { shouldStop: () => stopRequested });
+      await AE.sleep(STEP_DELAY_MS);
       return r;
     }
-    const unwrap = SG.unwrap;
+    const unwrap = AE.unwrap;
 
     async function run(arrivalId, log) {
       const arrival = unwrap(await api('GET', '/api/arrivals/' + arrivalId));
       const programId = arrival.program && arrival.program.programId;
-      if (!SG.CLEANING_PROGRAMS[programId]) throw new Error('Not a cleaning program (' + programId + ') — refusing.');
+      if (!AE.CLEANING_PROGRAMS[programId]) throw new Error('Not a cleaning program (' + programId + ') — refusing.');
       const dev = arrival.customerDevice || {};
       const customerId = String(arrival.customer.customerId);
       const clientId = arrival.clientId;
       const storeId = arrival.storeId;
       const serviceJobId = arrival.partnerJobDetails && arrival.partnerJobDetails.serviceJobId;
 
-      const tech = (await SG.profile()).name;
+      const tech = (await AE.profile()).name;
       if (!tech) throw new Error("Couldn't read your name from your login — refusing to post nameless notes.");
 
       // 1. IMEI — the arrival carries all 15 digits (the drawer masks the last).
@@ -711,7 +711,7 @@ SG.tool({
     async function onClick(arrivalId) {
       if (running) return;
       running = true; stopRequested = false;
-      const panel = SG.progressPanel('Cleaning auto-close');
+      const panel = AE.progressPanel('Cleaning auto-close');
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       let woId = null;
@@ -723,8 +723,8 @@ SG.tool({
         panel.finish('ok', 'Done — ' + woLink(id) + ' checked in, completed, and sold at $0.');
       } catch (e) {
         const where = woId ? ' ' + woLink(woId) + ' was left at the last step listed above.' : ' No work order was created.';
-        const stopped = e instanceof SG.Stopped;
-        panel.finish(stopped ? 'stop' : 'err', (stopped ? 'Stopped.' : SG.esc(e.message)) + where);
+        const stopped = e instanceof AE.Stopped;
+        panel.finish(stopped ? 'stop' : 'err', (stopped ? 'Stopped.' : AE.esc(e.message)) + where);
       } finally {
         panel.actions();
         running = false;
@@ -742,8 +742,8 @@ SG.tool({
       if (checkedArrivalId !== arrivalId) {
         checkedArrivalId = arrivalId; isCleaning = false; existing?.remove();
         try {
-          const a = unwrap(await SG.api('GET', '/api/arrivals/' + arrivalId));
-          isCleaning = !!SG.CLEANING_PROGRAMS[a && a.program && a.program.programId];
+          const a = unwrap(await AE.api('GET', '/api/arrivals/' + arrivalId));
+          isCleaning = !!AE.CLEANING_PROGRAMS[a && a.program && a.program.programId];
         } catch (_) { checkedArrivalId = null; } // retry next tick
       }
       if (!isCleaning) return;
@@ -765,7 +765,7 @@ SG.tool({
       });
       footer.insertBefore(b, footer.firstChild);
     }
-    SG.every(1000, tick);
+    AE.every(1000, tick);
   },
 });
 
@@ -786,12 +786,12 @@ SG.tool({
   dropdowns, and the native value setter + input event for text fields
   (plain .value = doesn't register with React).
 */
-SG.tool({
+AE.tool({
   id: 'galaxy',
   name: 'Galaxy Diagnostics exception',
   sites: ['portal.ubreakifix.net', 'forms-prod.sprinklr.com'],
   run() {
-    const { h, icon, sleep } = SG;
+    const { h, icon, sleep } = AE;
     // Handoffs are a map keyed by WO id, so two forms opened close together
     // each get their own WO's data. Each form tab takes the oldest one.
     const HANDOFFS_KEY = 'gde_handoffs';
@@ -808,7 +808,7 @@ SG.tool({
 
     // Small status card, top-left (form) or bottom-left (portal).
     function toast(text, kind, where = 'top') {
-      SG.ensureCss();
+      AE.ensureCss();
       let el = document.getElementById('sg-galaxy-toast');
       if (!el) {
         el = h('div', { id: 'sg-galaxy-toast', class: 'sg sg-card', style: 'position:fixed;z-index:2147483647;left:16px;max-width:440px;padding:12px 16px;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4' });
@@ -818,13 +818,13 @@ SG.tool({
       el.style.bottom = where === 'top' ? '' : '16px';
       const mark = kind === 'busy' ? '<span class="sg-spin" style="margin-top:2px"></span>'
         : '<span class="sg-icon-state" style="color:' + (kind === 'ok' ? 'var(--aui-status-success,#136d31)' : 'var(--aui-status-error,#b91a24)') + '">' + (kind === 'ok' ? '✓' : '!') + '</span>';
-      el.innerHTML = mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">Galaxy Diagnostics exception</b>' + SG.esc(text) + '</div>';
+      el.innerHTML = mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">Galaxy Diagnostics exception</b>' + AE.esc(text) + '</div>';
       el.style.borderColor = kind === 'err' ? 'var(--aui-status-error,#b91a24)' : '';
       if (where !== 'top' && kind !== 'busy') setTimeout(() => el.remove(), 8000);
     }
 
     // ------------------------------------------------------------ PART A
-    if (SG_ON_PORTAL) {
+    if (AE_ON_PORTAL) {
       let injectedForWoId = null;
       // Position/collapsed persist across reloads and SPA route changes —
       // tick() rebuilds the button often, so this can't be a local variable.
@@ -861,7 +861,7 @@ SG.tool({
       const gspnTicketOnPage = () => { const m = document.body.innerText.match(/GSPN No\.\s*([0-9]+)/); return m ? m[1] : null; };
 
       async function collectData(woId) {
-        const json = await SG.api('GET', '/api/workorder/' + woId);
+        const json = await AE.api('GET', '/api/workorder/' + woId);
         if (!json || !json.workorder) throw new Error('the portal returned no work order data');
         const wo = json.workorder;
         const device = wo.CustomerDevice || {};
@@ -869,8 +869,8 @@ SG.tool({
         // attribute type 53 = the "GSPN No." ticket (confirmed on two WOs);
         // falls back to the badge text if the API shape changes.
         const gspnAttr = attrs.find((a) => a.partnerJobAttributeTypeId === 53);
-        const p = await SG.profile();
-        const g = SG.settings.galaxy;
+        const p = await AE.profile();
+        const g = AE.settings.galaxy;
         return {
           woId,
           imei: device.imei || '',
@@ -894,7 +894,7 @@ SG.tool({
           'position:fixed;z-index:2147483645;right:' + pos.right + 'px;bottom:' + pos.bottom + 'px;display:flex;align-items:center;height:48px;' +
           'border-radius:10000rem;background:var(--aui-primary,#8223d2);color:var(--aui-on-primary,#fff);box-shadow:0 6px 20px rgba(12,14,17,.25);overflow:hidden' });
         const side = 'display:flex;align-items:center;justify-content:center;width:28px;height:100%;color:rgba(255,255,255,.7);user-select:none;';
-        const grip = h('div', { title: 'Drag to move · double-click to reset', style: side + 'cursor:move;padding-left:6px', html: SG.icon('grip', 14) });
+        const grip = h('div', { title: 'Drag to move · double-click to reset', style: side + 'cursor:move;padding-left:6px', html: AE.icon('grip', 14) });
         grip.addEventListener('dblclick', () => { wrap.style.right = '16px'; wrap.style.bottom = '16px'; savePos({ right: 16, bottom: 16 }); });
         grip.addEventListener('mousedown', (e) => {
           const r = wrap.getBoundingClientRect();
@@ -944,7 +944,7 @@ SG.tool({
         savePos(clampToViewport(wrap));
       }
 
-      SG.every(1000, () => {
+      AE.every(1000, () => {
         const woId = currentWoId();
         const existing = document.getElementById('sg-galaxy-btn');
         if (!woId) { existing?.remove(); injectedForWoId = null; return; }
@@ -1051,13 +1051,13 @@ SG.tool({
 
   If the portal renames its hooks, update SEL_MENU_BTN / SEL_PRINT_OPT.
 */
-SG.tool({
+AE.tool({
   id: 'printLabels',
   name: 'Print all labels',
   sites: ['portal.ubreakifix.net'],
   run() {
-    const { h, icon, sleep } = SG;
-    const DELAY_MS = SG.settings.printLabels.delayMs;
+    const { h, icon, sleep } = AE;
+    const DELAY_MS = AE.settings.printLabels.delayMs;
     const SEL_MENU_BTN = 'button[data-aui="action"]';
     const SEL_PRINT_OPT = 'button[data-testid="option-printLabel"]';
     const SERIAL_RE = /^\s*\d{5,}[-–—]\d{5,}\s*$/;
@@ -1152,7 +1152,7 @@ SG.tool({
       } else ui.panel.actions(close);
     }
 
-    function newUi() { return { panel: SG.progressPanel('Print all labels', { clock: false }), running: false, stop: false }; }
+    function newUi() { return { panel: AE.progressPanel('Print all labels', { clock: false }), running: false, stop: false }; }
 
     async function onClickPrintAll() {
       if (active && active.panel.el.isConnected) { active.panel.flash(); return; }
@@ -1196,5 +1196,5 @@ SG.tool({
   },
 });
 
-SG.start();
+AE.start();
 })();

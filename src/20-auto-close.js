@@ -13,12 +13,12 @@
   and PUT customer-devices (would blank the shared device's nickname and
   passcode on the parent WO). A Stop button halts before the next call.
 */
-SG.tool({
+AE.tool({
   id: 'autoClose',
   name: 'Cleaning auto-close',
   sites: ['portal.ubreakifix.net'],
   run() {
-    const { h, icon } = SG;
+    const { h, icon } = AE;
     const DEVICE_ISSUES = ['Cleaning'];
     const BIN = ''; // cleanings aren't physical — no bin
     const STEP_DELAY_MS = 400;
@@ -26,23 +26,23 @@ SG.tool({
     let checkedArrivalId = null, isCleaning = false, running = false, stopRequested = false;
 
     async function api(method, path, body) {
-      const r = await SG.api(method, path, body, { shouldStop: () => stopRequested });
-      await SG.sleep(STEP_DELAY_MS);
+      const r = await AE.api(method, path, body, { shouldStop: () => stopRequested });
+      await AE.sleep(STEP_DELAY_MS);
       return r;
     }
-    const unwrap = SG.unwrap;
+    const unwrap = AE.unwrap;
 
     async function run(arrivalId, log) {
       const arrival = unwrap(await api('GET', '/api/arrivals/' + arrivalId));
       const programId = arrival.program && arrival.program.programId;
-      if (!SG.CLEANING_PROGRAMS[programId]) throw new Error('Not a cleaning program (' + programId + ') — refusing.');
+      if (!AE.CLEANING_PROGRAMS[programId]) throw new Error('Not a cleaning program (' + programId + ') — refusing.');
       const dev = arrival.customerDevice || {};
       const customerId = String(arrival.customer.customerId);
       const clientId = arrival.clientId;
       const storeId = arrival.storeId;
       const serviceJobId = arrival.partnerJobDetails && arrival.partnerJobDetails.serviceJobId;
 
-      const tech = (await SG.profile()).name;
+      const tech = (await AE.profile()).name;
       if (!tech) throw new Error("Couldn't read your name from your login — refusing to post nameless notes.");
 
       // 1. IMEI — the arrival carries all 15 digits (the drawer masks the last).
@@ -134,7 +134,7 @@ SG.tool({
     async function onClick(arrivalId) {
       if (running) return;
       running = true; stopRequested = false;
-      const panel = SG.progressPanel('Cleaning auto-close');
+      const panel = AE.progressPanel('Cleaning auto-close');
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       let woId = null;
@@ -146,8 +146,8 @@ SG.tool({
         panel.finish('ok', 'Done — ' + woLink(id) + ' checked in, completed, and sold at $0.');
       } catch (e) {
         const where = woId ? ' ' + woLink(woId) + ' was left at the last step listed above.' : ' No work order was created.';
-        const stopped = e instanceof SG.Stopped;
-        panel.finish(stopped ? 'stop' : 'err', (stopped ? 'Stopped.' : SG.esc(e.message)) + where);
+        const stopped = e instanceof AE.Stopped;
+        panel.finish(stopped ? 'stop' : 'err', (stopped ? 'Stopped.' : AE.esc(e.message)) + where);
       } finally {
         panel.actions();
         running = false;
@@ -165,8 +165,8 @@ SG.tool({
       if (checkedArrivalId !== arrivalId) {
         checkedArrivalId = arrivalId; isCleaning = false; existing?.remove();
         try {
-          const a = unwrap(await SG.api('GET', '/api/arrivals/' + arrivalId));
-          isCleaning = !!SG.CLEANING_PROGRAMS[a && a.program && a.program.programId];
+          const a = unwrap(await AE.api('GET', '/api/arrivals/' + arrivalId));
+          isCleaning = !!AE.CLEANING_PROGRAMS[a && a.program && a.program.programId];
         } catch (_) { checkedArrivalId = null; } // retry next tick
       }
       if (!isCleaning) return;
@@ -188,6 +188,6 @@ SG.tool({
       });
       footer.insertBefore(b, footer.firstChild);
     }
-    SG.every(1000, tick);
+    AE.every(1000, tick);
   },
 });

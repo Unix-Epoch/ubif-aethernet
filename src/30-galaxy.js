@@ -14,12 +14,12 @@
   dropdowns, and the native value setter + input event for text fields
   (plain .value = doesn't register with React).
 */
-SG.tool({
+AE.tool({
   id: 'galaxy',
   name: 'Galaxy Diagnostics exception',
   sites: ['portal.ubreakifix.net', 'forms-prod.sprinklr.com'],
   run() {
-    const { h, icon, sleep } = SG;
+    const { h, icon, sleep } = AE;
     // Handoffs are a map keyed by WO id, so two forms opened close together
     // each get their own WO's data. Each form tab takes the oldest one.
     const HANDOFFS_KEY = 'gde_handoffs';
@@ -36,7 +36,7 @@ SG.tool({
 
     // Small status card, top-left (form) or bottom-left (portal).
     function toast(text, kind, where = 'top') {
-      SG.ensureCss();
+      AE.ensureCss();
       let el = document.getElementById('sg-galaxy-toast');
       if (!el) {
         el = h('div', { id: 'sg-galaxy-toast', class: 'sg sg-card', style: 'position:fixed;z-index:2147483647;left:16px;max-width:440px;padding:12px 16px;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4' });
@@ -46,13 +46,13 @@ SG.tool({
       el.style.bottom = where === 'top' ? '' : '16px';
       const mark = kind === 'busy' ? '<span class="sg-spin" style="margin-top:2px"></span>'
         : '<span class="sg-icon-state" style="color:' + (kind === 'ok' ? 'var(--aui-status-success,#136d31)' : 'var(--aui-status-error,#b91a24)') + '">' + (kind === 'ok' ? '✓' : '!') + '</span>';
-      el.innerHTML = mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">Galaxy Diagnostics exception</b>' + SG.esc(text) + '</div>';
+      el.innerHTML = mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">Galaxy Diagnostics exception</b>' + AE.esc(text) + '</div>';
       el.style.borderColor = kind === 'err' ? 'var(--aui-status-error,#b91a24)' : '';
       if (where !== 'top' && kind !== 'busy') setTimeout(() => el.remove(), 8000);
     }
 
     // ------------------------------------------------------------ PART A
-    if (SG_ON_PORTAL) {
+    if (AE_ON_PORTAL) {
       let injectedForWoId = null;
       // Position/collapsed persist across reloads and SPA route changes —
       // tick() rebuilds the button often, so this can't be a local variable.
@@ -89,7 +89,7 @@ SG.tool({
       const gspnTicketOnPage = () => { const m = document.body.innerText.match(/GSPN No\.\s*([0-9]+)/); return m ? m[1] : null; };
 
       async function collectData(woId) {
-        const json = await SG.api('GET', '/api/workorder/' + woId);
+        const json = await AE.api('GET', '/api/workorder/' + woId);
         if (!json || !json.workorder) throw new Error('the portal returned no work order data');
         const wo = json.workorder;
         const device = wo.CustomerDevice || {};
@@ -97,8 +97,8 @@ SG.tool({
         // attribute type 53 = the "GSPN No." ticket (confirmed on two WOs);
         // falls back to the badge text if the API shape changes.
         const gspnAttr = attrs.find((a) => a.partnerJobAttributeTypeId === 53);
-        const p = await SG.profile();
-        const g = SG.settings.galaxy;
+        const p = await AE.profile();
+        const g = AE.settings.galaxy;
         return {
           woId,
           imei: device.imei || '',
@@ -122,7 +122,7 @@ SG.tool({
           'position:fixed;z-index:2147483645;right:' + pos.right + 'px;bottom:' + pos.bottom + 'px;display:flex;align-items:center;height:48px;' +
           'border-radius:10000rem;background:var(--aui-primary,#8223d2);color:var(--aui-on-primary,#fff);box-shadow:0 6px 20px rgba(12,14,17,.25);overflow:hidden' });
         const side = 'display:flex;align-items:center;justify-content:center;width:28px;height:100%;color:rgba(255,255,255,.7);user-select:none;';
-        const grip = h('div', { title: 'Drag to move · double-click to reset', style: side + 'cursor:move;padding-left:6px', html: SG.icon('grip', 14) });
+        const grip = h('div', { title: 'Drag to move · double-click to reset', style: side + 'cursor:move;padding-left:6px', html: AE.icon('grip', 14) });
         grip.addEventListener('dblclick', () => { wrap.style.right = '16px'; wrap.style.bottom = '16px'; savePos({ right: 16, bottom: 16 }); });
         grip.addEventListener('mousedown', (e) => {
           const r = wrap.getBoundingClientRect();
@@ -172,7 +172,7 @@ SG.tool({
         savePos(clampToViewport(wrap));
       }
 
-      SG.every(1000, () => {
+      AE.every(1000, () => {
         const woId = currentWoId();
         const existing = document.getElementById('sg-galaxy-btn');
         if (!woId) { existing?.remove(); injectedForWoId = null; return; }

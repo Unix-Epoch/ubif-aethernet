@@ -1,12 +1,12 @@
 /*
-  Settings: a "Stargate settings" item in the portal's avatar menu (cloned
+  Settings: a "Aethernet settings" item in the portal's avatar menu (cloned
   from the portal's own "View my account" item so it matches exactly), which
   opens a pop-out settings card. Also reachable from the Tampermonkey menu.
   Tool on/off changes need a reload, so Save reloads the page.
 */
 (function settingsUi() {
-  if (!SG_ON_PORTAL) return;
-  const { h, esc, icon } = SG;
+  if (!AE_ON_PORTAL) return;
+  const { h, esc, icon } = AE;
 
   const TOOL_INFO = [
     ['cleaningRate', 'Live cleaning rate', "Header badge with today's cleaning percentage."],
@@ -44,10 +44,10 @@
   `;
 
   function open() {
-    SG.ensureCss();
+    AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
     document.getElementById('sg-settings')?.remove();
-    const s = SG.merge(SG.DEFAULTS, SG.settings); // working copy
+    const s = AE.merge(AE.DEFAULTS, AE.settings); // working copy
 
     const input = (label, value, placeholder, onInput, type = 'text') =>
       h('label', { class: 'sg-field' }, h('span', null, label),
@@ -59,10 +59,10 @@
     const galaxyAuto = { technicianName: '', email: '', location: '' };
     const galaxyInputs = {};
 
-    const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': SG_NAME + ' settings' },
+    const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
-        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('gate', 36) }),
-        h('div', { style: 'flex:1' }, h('h2', null, SG_NAME), h('div', { class: 'sg-soft' }, 'Add-on tools for NextGen Portal · v' + SG_VERSION)),
+        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 36) }),
+        h('div', { style: 'flex:1' }, h('h2', null, AE_NAME), h('div', { class: 'sg-soft' }, 'Add-on tools for NextGen Portal · v' + AE_VERSION)),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => scrim.remove() }, '✕')),
 
       h('h3', null, 'Signed in as'), who,
@@ -74,7 +74,7 @@
         toggle(!!s.tools[id], (v) => { s.tools[id] = v; })))),
 
       h('h3', null, 'Live cleaning rate'),
-      input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || SG.DEFAULTS.cleaningRate.target; }, 'number'),
+      input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; }, 'number'),
 
       h('h3', null, 'Galaxy Diagnostics exception'),
       h('div', { class: 'sg-soft' }, 'Leave blank to use your login. Only fill in to override.'),
@@ -91,14 +91,14 @@
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => scrim.remove() }, 'Cancel'),
-        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { SG.saveSettings(s); location.reload(); } }, 'Save & reload')));
+        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); location.reload(); } }, 'Save & reload')));
 
     const scrim = h('div', { class: 'sg sg-scrim', id: 'sg-settings', onclick: (e) => { if (e.target === scrim) scrim.remove(); } }, sheet);
     document.body.appendChild(scrim);
     const onKey = (e) => { if (e.key === 'Escape') { scrim.remove(); document.removeEventListener('keydown', onKey); } };
     document.addEventListener('keydown', onKey);
 
-    SG.profile().then((p) => {
+    AE.profile().then((p) => {
       const loc = p.storeId ? p.storeId + ' ' + p.storeName : '';
       who.replaceChildren(
         h('dt', null, 'Name'), h('dd', null, p.name || '—'),
@@ -110,14 +110,14 @@
   }
 
   // Add our item to the avatar menu whenever the portal renders it.
-  SG.every(400, () => {
+  AE.every(400, () => {
     const logout = document.querySelector('[data-testid="option-logout"]');
     const model = document.querySelector('[data-testid="option-view-account"]');
-    if (!logout || !model || document.querySelector('[data-testid="option-stargate"]')) return;
+    if (!logout || !model || document.querySelector('[data-testid="option-aethernet"]')) return;
     const item = model.cloneNode(true); // same classes → same look, both themes
-    item.setAttribute('data-testid', 'option-stargate');
+    item.setAttribute('data-testid', 'option-aethernet');
     const label = item.querySelector('[data-aui="text"]') || item;
-    label.textContent = SG_NAME + ' settings';
+    label.textContent = AE_NAME + ' settings';
     item.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -129,6 +129,6 @@
     logout.parentElement.insertBefore(item, logout);
   });
 
-  if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(SG_NAME + ' settings', open);
-  SG.openSettings = open;
+  if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(AE_NAME + ' settings', open);
+  AE.openSettings = open;
 })();
