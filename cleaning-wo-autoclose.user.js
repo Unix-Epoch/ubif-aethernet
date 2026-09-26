@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         UBIF Portal — Cleaning WO one-click close
 // @namespace    garrett.ubif
-// @version      1.1
+// @version      1.2
 // @description  On a cleaning-program arrival, adds a button next to "Check-in" that checks it in, walks the WO to Ready for pickup, and completes the $0 sale — with a Stop button while it runs.
 // @match        https://portal.ubreakifix.net/*
 // @grant        none
@@ -90,8 +90,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const storeId = arrival.storeId;
     const serviceJobId = arrival.partnerJobDetails && arrival.partnerJobDetails.serviceJobId;
 
-    const user = unwrap(await api('GET', '/api/auth/user'));
-    const tech = [user.givenName, user.familyName].filter(Boolean).join(' ');
+    // /api/auth/user nests the profile: {isAuthenticated, user: {givenName, familyName, …}, currentStore, …}
+    const auth = await api('GET', '/api/auth/user');
+    const user = (auth && auth.user) || unwrap(auth) || {};
+    const tech = [user.givenName, user.familyName].filter(Boolean).join(' ').trim();
+    if (!tech) throw new Error("Couldn't read your name from /api/auth/user — refusing to post nameless notes.");
 
     // 1. IMEI — the arrival carries all 15 digits (the drawer masks the last).
     //    Try the known last digit first, then the rest of 0–9.
