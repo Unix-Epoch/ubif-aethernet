@@ -1,7 +1,49 @@
-# UBIF Portal tools
+# Stargate — add-on tools for NextGen Portal
 
-Small browser add-ons for `portal.ubreakifix.net` chores that the portal makes
-tedious.
+One Tampermonkey userscript, **`dist/stargate.user.js`**, that bundles every
+portal tool in this folder:
+
+| Tool | Where it shows up |
+|---|---|
+| Live cleaning rate | Header badge left of "UBIF support" (just the % when the header is tight) |
+| Cleaning auto-close | Round purple ⚡ in a cleaning arrival's "Customer arrival" drawer |
+| Galaxy Diagnostics exception | Draggable purple pill on a Samsung WO once it has a GSPN ticket |
+| Print all labels | Purple button next to "Generate Labels" on a PO Receive page |
+
+**Settings:** avatar menu (top right) → **Stargate settings**, or the
+Tampermonkey menu. Turn tools on/off, set the cleaning target %, override the
+Galaxy form fields, set the label delay. Saving reloads the page.
+
+**Nothing personal is hardcoded.** Name, email and store come from the
+logged-in user (`/api/auth/user`), so the same file works for anyone at any
+store. The Galaxy fields can still be overridden in settings.
+
+**Look:** everything uses the portal's own design tokens (`--aui-*`) and font,
+so it follows the portal's light/dark theme. The settings menu item is a clone
+of the portal's own "View my account" item.
+
+### Install
+
+1. Chrome → install the **Tampermonkey** extension.
+2. **Remove the old single-tool scripts** if you had them (Galaxy, Print all
+   labels, Cleaning auto-close, Cleaning rate). They're in `legacy/` now, and
+   keeping them installed would show every button twice.
+3. Tampermonkey → **Create a new script** → paste `dist/stargate.user.js` →
+   save → reload the portal.
+
+### Editing
+
+Tools live in `src/`, one file each, loaded in filename order:
+`00-core.js` (settings storage, profile, API helper, shared styles and progress
+panel), `05-settings.js`, then the tools. Each tool registers with
+`SG.tool({...})` and runs in its own try/catch, so one breaking can't take the
+others down. After editing, bump `VERSION` in `build.py`, run
+`python3 build.py`, and paste the new `dist/stargate.user.js` over the old one.
+
+The print-labels **bookmarklet** (no Tampermonkey needed) stays separate:
+`print-all-labels.bookmarklet.*`.
+
+_Not affiliated with or supported by Asurion/uBreakiFix._
 
 ## print-all-labels — "Print all labels" for PO receiving
 
@@ -23,12 +65,9 @@ attached LabelWriter. So this only actually prints on a machine where **DYMO
 Connect is installed and running** with a LabelWriter attached — the same
 requirement as clicking the buttons by hand.
 
-### Option A — userscript (adds a real button to the page)
+### Option A — Stargate (adds a real button to the page)
 
-Needs the Tampermonkey (or Violentmonkey) Chrome extension.
-
-1. Tampermonkey → **Create a new script** → paste `print-all-labels.user.js` →
-   save.
+1. Install Stargate (see the top of this file).
 2. Open any PO → Receive page. A purple **"⎙ Print all labels"** button appears
    next to *Generate Labels*.
 3. Click it → panel shows the count → **Print N** → walk away. **Stop** halts it;
@@ -100,8 +139,7 @@ not click Submit** — that's still on you, since it's a real support ticket.
 
 Needs Tampermonkey (this one only comes as a userscript — the two halves live
 on different sites and have to share data through Tampermonkey's storage,
-which a bare bookmarklet can't do). Install: Tampermonkey → **Create a new
-script** → paste `galaxy-diagnostics-exception.user.js` → save.
+which a bare bookmarklet can't do). Part of Stargate.
 
 ### How the two halves talk to each other
 
@@ -117,10 +155,10 @@ to back fills each tab with its own WO.
 
 ### Using the button (v1.2)
 
-- **Drag** it by the `⠿` grip; **double-click the grip** to reset it to the
+- **Drag** it by the dotted grip; **double-click the grip** to reset it to the
   bottom-right corner. Its position is kept on-screen when the window
   shrinks.
-- **Collapse/expand** with `«` / `»`; the state is remembered.
+- **Collapse/expand** with `‹` / `›` (collapsed = just the clipboard icon); the state is remembered.
 - It appears when you navigate into a WO from the list — no refresh needed
   (the script matches the whole portal and checks the path itself).
 - The form tab opens **immediately** on click and is pointed at the form
@@ -132,15 +170,17 @@ to back fills each tab with its own WO.
   dropdown option), the banner turns **red and lists the missing fields**;
   green means every field was filled.
 
-### What's fixed vs. what's pulled from the WO — edit `CONFIG` at the top to change any of the fixed ones
+### Where each field comes from
 
 | Field | Source |
 |---|---|
 | GSPN Ticket Number, IMEI, Portal WO Number | pulled live from `/api/workorder/<id>` |
-| Device Full SKU | the device's human-readable catalog name (e.g. "Samsung Galaxy Fold7 Blue Shadow") — Garrett confirmed that's what actually goes in this field, not a real Samsung SM-xxxx SKU |
-| Your email, Technician Name, Tool Version, UBIF Location, Repair Location Type, Description | fixed constants in `CONFIG` |
-| Store email address | left blank |
-| Issue Type / Exception Type / Exception Reason | always `Exception Request` → `Galaxy Diagnostic Tool` → `Asurion Repair` |
+| Device Full SKU | the device's human-readable catalog name (e.g. "Samsung Galaxy Fold7 Blue Shadow") — Garrett confirmed that's what goes in this field, not a real Samsung SM-xxxx SKU |
+| Your email, Technician Name | the logged-in user (overridable in Stargate settings) |
+| UBIF Location | `{storeId} {storeName}` of the current store, e.g. "914 Newport News" (overridable) |
+| Tool Version, Description | settings (default "Latest", "ER") |
+| Store email address | settings (blank by default) |
+| Repair Location Type / Issue Type / Exception Type / Exception Reason | always `Store`, `Exception Request` → `Galaxy Diagnostic Tool` → `Asurion Repair` |
 
 ### Verified live (2026-09-16)
 
@@ -152,7 +192,7 @@ confirmed by screenshot. Not submitted (by design).
 
 `fieldByLabel()` matches Sprinklr's form fields by their exact `<label>` text,
 and dropdown options by exact rendered text — if Asurion relabels a field or
-changes the option wording, update the matching string in `CONFIG` or the
+changes the option wording, update the matching string in `src/30-galaxy.js` (`FIXED`) or the
 `fillText`/`selectOption` calls in Part B. If the GSPN badge text ever stops
 reading "GSPN No. ######", update the regex in `gspnTicketOnPage()` (Part A).
 
@@ -178,8 +218,7 @@ halts it before the next call; the panel links the WO wherever it stopped.
 - Skips the UI's customer-record and device re-saves (would blank the shared
   device's nickname/passcode on the parent WO).
 
-Install: Tampermonkey → **Create a new script** → paste
-`cleaning-wo-autoclose.user.js` → save.
+Part of Stargate.
 
 **First run:** watch it on one real cleaning arrival. If it fails at check-in,
 the skipped re-saves above are the first suspects.
@@ -199,7 +238,6 @@ and Closed), both scoped by the portal to the logged-in user's current store,
 so it works at any store with no setup. Cleanings link to orders by device
 IMEI, because AT&T cleanings are often under a different customer record.
 
-**For other stores:** install Tampermonkey → **Create a new script** → paste
-`cleaning-rate.user.js` → save → reload the portal. Program IDs are in
-`CONFIG` at the top; they're believed company-wide but have only been
+**For other stores:** install Stargate. Program IDs are in `src/00-core.js`
+(`CLEANING_PROGRAMS`); they're believed company-wide but have only been
 confirmed at store 914.
