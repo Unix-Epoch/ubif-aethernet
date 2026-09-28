@@ -95,19 +95,83 @@ AE.glamour = (() => {
       observer = new MutationObserver(() => {
         const cur = modeOf();
         if (!want || cur === want) return;
-        portalMode = cur; // Portal changed its mode (e.g. its own theme toggle)
+        portalMode = cur; // Portal changed its mode (e.g. its own theme toggle):
+        try { sessionStorage.setItem(SAVED_KEY, sessionStorage.getItem('theme') ?? NONE); } catch (_) {} // restore that one later
         observer.disconnect(); setMode(want); watch();
+        portalTheme(want === 'asurion-dark' ? 'dark' : 'light');
       });
       watch();
     }
+  }
+
+  /*
+    Portal's React theme. Some images are picked in code, not CSS, from
+    Portal's theme state (useIsDarkThemeActive) — the Inventory icons and the
+    Reports banner, for example. That state comes from sessionStorage.theme
+    ('light' | 'dark' | 'system'), read when each part of the app mounts, and
+    changes through the theme provider's setTheme. So Glamour:
+      - sets sessionStorage.theme (anything mounted later picks it up), and
+      - calls setTheme on the providers already on screen, from a small script
+        run in the page (a userscript can't reach React's internals).
+    Your own Portal theme is kept in ae_portal_theme and put back on release.
+  */
+  const SAVED_KEY = 'ae_portal_theme', NONE = '__none__';
+  const PAGE_EVENT = 'aethernet:portal-theme';
+  const pageHook = () => {
+    if (document.getElementById('sg-glamour-hook')) return;
+    const code = '(' + function (evt) {
+      // Every theme provider on screen: walk up React's fiber tree from a node in each app.
+      const providers = () => {
+        const found = new Set();
+        const starts = [...document.querySelectorAll('[id^="single-spa-application"], .components-header, #root, body > div')];
+        for (const box of starts) {
+          const el = [box, ...box.querySelectorAll('*')].slice(0, 80).find((n) => Object.keys(n).some((k) => k.startsWith('__reactFiber$')));
+          if (!el) continue;
+          let f = el[Object.keys(el).find((k) => k.startsWith('__reactFiber$'))];
+          while (f) {
+            const v = f.memoizedProps && f.memoizedProps.value;
+            if (v && typeof v.setTheme === 'function' && 'selected' in v) { found.add(v.setTheme); break; }
+            f = f.return;
+          }
+        }
+        return [...found];
+      };
+      document.addEventListener(evt, (e) => {
+        for (const set of providers()) { try { set(e.detail); } catch (_) {} }
+      });
+    } + ')(' + JSON.stringify(PAGE_EVENT) + ');';
+    const s = document.createElement('script');
+    s.id = 'sg-glamour-hook';
+    s.textContent = code;
+    (document.head || document.documentElement).append(s);
+  };
+  function portalTheme(next) {
+    try {
+      const saved = sessionStorage.getItem(SAVED_KEY);
+      let value;
+      if (next) {
+        if (saved === null) sessionStorage.setItem(SAVED_KEY, sessionStorage.getItem('theme') ?? NONE);
+        value = next;
+      } else {
+        if (saved === null) return; // Glamour never changed it
+        sessionStorage.removeItem(SAVED_KEY);
+        value = saved === NONE ? 'light' : saved; // Portal's default is light
+      }
+      sessionStorage.setItem('theme', value);
+      pageHook();
+      document.dispatchEvent(new CustomEvent(PAGE_EVENT, { detail: value })); // runs setTheme synchronously
+      if (!next && saved === NONE) sessionStorage.removeItem('theme'); // leave Portal as it was found
+    } catch (e) { console.warn('[' + AE_NAME + '] Glamour: could not set Portal theme', e); }
   }
 
   // Apply a Glamour settings object ({ theme, custom }); unknown or 'portal' clears.
   function apply(cfg) {
     const t = cfg && find(cfg, cfg.theme);
     const el = document.getElementById(STYLE_ID);
-    if (!t || !t.bg || ![t.bg, t.fg, t.accent].every(validHex)) { el?.remove(); holdMode(null); return; }
-    holdMode(lum(t.bg) < 0.18 ? 'asurion-dark' : 'asurion-light');
+    if (!t || !t.bg || ![t.bg, t.fg, t.accent].every(validHex)) { el?.remove(); holdMode(null); portalTheme(null); return; }
+    const dark = lum(t.bg) < 0.18;
+    portalTheme(dark ? 'dark' : 'light');
+    holdMode(dark ? 'asurion-dark' : 'asurion-light');
     const vars = Object.entries(tokens(t)).map(([k, v]) => '--aui-' + k + ':' + v + ' !important;').join('');
     // Portal sets its tokens on :root and on .asurion-light/.asurion-dark
     // (the <body> class), so override on all three.
