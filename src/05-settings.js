@@ -1,6 +1,6 @@
 /*
-  Settings: a "Aethernet settings" item in the portal's avatar menu (cloned
-  from the portal's own "View my account" item so it matches exactly), which
+  Settings: a "Aethernet settings" item in Portal's avatar menu (cloned
+  from Portal's own "View my account" item so it matches exactly), which
   opens a pop-out settings card. Also reachable from the Tampermonkey menu.
   Crystal on/off changes need a reload, so Save reloads the page.
 */
@@ -17,7 +17,7 @@
     ['galaxy', 'Macrocosmos', 'Galaxy Diagnostics exception: pre-fills the Sprinklr exception form from a Samsung WO.'],
     ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
     ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
-    ['glamour', 'Glamour', 'Page theming: recolour the portal with a preset theme or one you make.'],
+    ['glamour', 'Glamour', 'Page theming: recolour Portal with a preset theme or one you make.'],
   ];
 
   /*
@@ -319,7 +319,7 @@
     }).catch((e) => { who.replaceChildren(h('dt', null, 'Error'), h('dd', null, esc(e.message))); });
   }
 
-  // Add our item to the avatar menu whenever the portal renders it.
+  // Add our item to the avatar menu whenever Portal renders it.
   AE.every(400, () => {
     const logout = document.querySelector('[data-testid="option-logout"]');
     const model = document.querySelector('[data-testid="option-view-account"]');
@@ -331,7 +331,7 @@
     item.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      // close the portal's menu the way a user would, then open ours
+      // close Portal's menu the way a user would, then open ours
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       open();

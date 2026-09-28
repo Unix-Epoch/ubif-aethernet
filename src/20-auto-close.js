@@ -1,6 +1,6 @@
 /*
   Swiftcast (cleaning auto-close) — round purple ⚡ button in a cleaning arrival's
-  "Customer arrival" drawer. One click replays the portal's own API sequence
+  "Customer arrival" drawer. One click replays Portal's own API sequence
   (see the vault note "Cleaning WO Flow"):
 
     check-in    validate-imei → checkin/workorder → calculate-sla →

@@ -14,7 +14,7 @@
   Crystallized Sep 26 2026 from the standalone "Select All - Buybacks" v1.1.1
   (Tampermonkey on Zen). Its buttons often didn't appear because its @match
   was only /boh/inventory/buyback-order/* — Tampermonkey injects on a real
-  page load and the portal is a single-page app, so arriving from any other
+  page load and Portal is a single-page app, so arriving from any other
   portal page meant the script never ran (removing + re-adding it forced a
   reinject). As a crystal it runs portal-wide and gates on the path itself.
 */

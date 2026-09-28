@@ -4,7 +4,7 @@
   paced (settings → delay) so a DYMO LabelWriter keeps up. Print-only: it
   never receives or changes stock.
 
-  If the portal renames its hooks, update SEL_MENU_BTN / SEL_PRINT_OPT.
+  If Portal renames its hooks, update SEL_MENU_BTN / SEL_PRINT_OPT.
 */
 AE.crystal({
   id: 'printLabels',
@@ -129,7 +129,7 @@ AE.crystal({
         btn('Print ' + rows.length, 'sg-primary', () => runRows(serialRows(), ui)));
     }
 
-    // ---- button next to "Generate Labels", styled like the portal's ----
+    // ---- button next to "Generate Labels", styled like Portal's ----
     function injectButton() {
       const existing = document.getElementById('sg-print-all-btn');
       if (!RECEIVE_PATH_RE.test(location.pathname)) { existing?.remove(); return; }

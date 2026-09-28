@@ -7,26 +7,26 @@
     <the message>
 
   How (v2.3.2): the browser's own network log (PerformanceObserver) reports
-  every request the page makes, however the portal's code issues it. When a
+  every request the page makes, however Portal's code issues it. When a
   POST …/messages/v1/send shows up while a WO page is open, read that WO
   customer's message history (GET /api/messages/v1/customers/{id}, the same
   call the chat panel makes right after sending) and log each of *your*
   outbound messages from the last few minutes that isn't logged yet. Finding
   it in the history also confirms it actually went out. Never sends texts.
 
-  Why not wrap fetch (v2.3.0/2.3.1): the portal's messaging code keeps its
+  Why not wrap fetch (v2.3.0/2.3.1): Portal's messaging code keeps its
   own reference to fetch from load time, before any userscript runs, so a
   wrapper never saw the send (confirmed on Zen with a HAR, Sep 26 2026).
 
   The note is a regular (noteType 2) note tagged with the WO's current
-  status, using the portal's own status → tag map.
+  status, using Portal's own status → tag map.
 */
 AE.crystal({
   id: 'textNotes',
   name: 'Recitation',
   sites: ['portal.ubreakifix.net'],
   run() {
-    // The portal's status id → note tag map (from its ubif-util-store bundle).
+    // Portal's status id → note tag map (from its ubif-util-store bundle).
     const STATUS_TAG = {
       1: 'initial_checkin', 2: 'need_to_order', 3: 'awaiting_item', 4: 'awaiting_device', 5: 'awaiting_diagnostics',
       6: 'awaiting_partner_approval', 7: 'awaiting_callback', 8: 'ready_for_work', 9: 'diagnostics', 10: 'work_in_progress',
@@ -81,7 +81,7 @@ AE.crystal({
       if (!m) return; // texts sent outside a WO aren't logged
       if (busy) return busy; // several sends in a burst → one lookup
       busy = (async () => {
-        await AE.sleep(1200); // let the portal's own write land first
+        await AE.sleep(1200); // let Portal's own write land first
         try {
           let n = await logRecentTexts(m[1]);
           if (!n) { await AE.sleep(2500); n = await logRecentTexts(m[1]); } // history can lag a moment

@@ -1,11 +1,11 @@
 /*
   Aethernet core — shared by every crystal (tool) in this bundle.
 
-  - AE.settings: persisted in Tampermonkey storage (GM_*), so the portal and
+  - AE.settings: persisted in Tampermonkey storage (GM_*), so Portal and
     the Sprinklr form (a different site) see the same values.
   - AE.profile(): the logged-in user + current store, from /api/auth/user.
     Anything personal (name, email, store) comes from here, never hardcoded.
-  - Styling uses the portal's own design tokens (--aui-*), which switch with
+  - Styling uses Portal's own design tokens (--aui-*), which switch with
     its light/dark theme; the fallbacks are the light-theme values, used on
     pages without the tokens (the Sprinklr form).
   - AE.crystal(): each crystal (our name for a tool) registers here and runs
@@ -231,7 +231,7 @@ const AE = (() => {
   }
 
   /*
-    Confirmation dialog in the portal's style (never window.confirm — native
+    Confirmation dialog in Portal's style (never window.confirm — native
     dialogs block the page). Resolves true only on the confirm button.
   */
   const CONFIRM_CSS = `
@@ -283,11 +283,11 @@ const AE = (() => {
   const on = (name, fn) => document.addEventListener('aethernet:' + name, (e) => fn(e.detail));
 
   /*
-    Shared cleaning data. Everything is read-only and scoped by the portal to
+    Shared cleaning data. Everything is read-only and scoped by Portal to
     the logged-in user's current store.
   */
   const data = (() => {
-    const OPEN_STATUS_IDS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 24, 26, 27]; // the portal's own "Active" set
+    const OPEN_STATUS_IDS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 24, 26, 27]; // Portal's own "Active" set
     const PAGE_SIZE = 100, PAGE_CAP = 10;
 
     async function listPage(primaryFilter, page) {
@@ -378,8 +378,8 @@ const AE = (() => {
     }
   }
 
-  // Poll a route/DOM check — the portal is a single-page app, so pages
-  // change without a load and the portal re-renders often.
+  // Poll a route/DOM check — Portal is a single-page app, so pages
+  // change without a load and Portal re-renders often.
   function every(ms, fn) {
     // Promise.resolve so async callbacks' rejections are caught too.
     const safe = () => Promise.resolve().then(fn).catch((e) => console.error('[' + AE_NAME + ']', e));

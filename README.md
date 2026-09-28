@@ -32,9 +32,9 @@ Settings has been closed once.
 logged-in user (`/api/auth/user`), so the same file works for anyone at any
 store. The Galaxy fields can still be overridden in settings.
 
-**Look:** everything uses the portal's own design tokens (`--aui-*`) and font,
-so it follows the portal's light/dark theme. The settings menu item is a clone
-of the portal's own "View my account" item.
+**Look:** everything uses Portal's own design tokens (`--aui-*`) and font,
+so it follows Portal's light/dark theme. The settings menu item is a clone
+of Portal's own "View my account" item.
 
 ### Install (auto-updates)
 
@@ -55,7 +55,7 @@ https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/r
    pasted-in Aethernet).
    Otherwise every button shows twice.
 4. Open the install link above → Tampermonkey's install page opens → **Install**
-   → reload the portal.
+   → reload Portal.
 
 Updates arrive automatically: Tampermonkey checks the link daily, or
 immediately via **Tampermonkey → Utilities → Check for userscript updates**.
@@ -96,7 +96,7 @@ on the page, one after another with a pause between each so a DYMO LabelWriter
 keeps up. It does **not** receive stock or change anything on the server —
 "Print Label" is print-only.
 
-### How the portal prints a label (for reference)
+### How Portal prints a label (for reference)
 
 The page loads DYMO Connect's JS SDK (`dymo-connect-framework.js`). Each
 **Print Label** click hands that serial's label to the local DYMO Connect / DYMO
@@ -140,7 +140,7 @@ run the full batch.
 
 ### If it stops working
 
-The script keys off two attributes in the portal's markup:
+The script keys off two attributes in Portal's markup:
 `button[data-aui="action"]` (the row's `⋮`) and
 `button[data-testid="option-printLabel"]` (the menu item). If a portal update
 renames either, update the selector constants at the top of the file —
@@ -157,7 +157,7 @@ the bookmarklet.
   that row counts as *missed* rather than printing the previous row's label
   a second time.
 - **Appears without a refresh.** The userscript matches the whole portal and
-  shows the button only on `…/purchase-orders/<id>/receive`, since the portal
+  shows the button only on `…/purchase-orders/<id>/receive`, since Portal
   changes pages without a full reload.
 
 ---
@@ -265,7 +265,7 @@ the skipped re-saves above are the first suspects.
 
 ## cleaning-rate — live cleaning percentage badge
 
-**What it shows:** a badge in the portal header, e.g. `Cleanings 8/9 · 89%`
+**What it shows:** a badge in Portal header, e.g. `Cleanings 8/9 · 89%`
 = cleanings linked to today's Asurion Mobility orders ÷ Asurion Mobility
 orders created today (local time). Each cleaning counts on its own, so it can
 go over 100%. Red below 75%, amber 75–99%, green at 100%+. Click it for each
@@ -285,7 +285,7 @@ instead (matched on IMEI + program), never twice. Refreshes every 2 min (paused 
 Raw percentage only: reason notes aren't considered.
 
 **How:** read-only list calls per refresh (`POST /api/workorders` Active and
-Closed, plus `GET /api/arrivals/upcoming-arrivals?pageSize=100`), both scoped by the portal to the logged-in user's current store,
+Closed, plus `GET /api/arrivals/upcoming-arrivals?pageSize=100`), both scoped by Portal to the logged-in user's current store,
 so it works at any store with no setup. Cleanings link to orders by device
 IMEI, because AT&T cleanings are often under a different customer record.
 

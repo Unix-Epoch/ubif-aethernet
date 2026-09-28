@@ -4,7 +4,7 @@
 
   A. Portal WO page: once a "GSPN No. ######" badge exists, shows a
      draggable, collapsible button. Click → gathers IMEI / device name /
-     GSPN ticket / WO number from the portal API, plus the technician,
+     GSPN ticket / WO number from Portal API, plus the technician,
      email and store from the logged-in user (overridable in settings),
      and opens the Sprinklr form in a new tab.
   B. Sprinklr form: picks up that handoff and fills every field, including
@@ -90,7 +90,7 @@ AE.crystal({
 
       async function collectData(woId) {
         const json = await AE.api('GET', '/api/workorder/' + woId);
-        if (!json || !json.workorder) throw new Error('the portal returned no work order data');
+        if (!json || !json.workorder) throw new Error('Portal returned no work order data');
         const wo = json.workorder;
         const device = wo.CustomerDevice || {};
         const attrs = (wo.PartnerJob || {}).PartnerJobAttributes || [];

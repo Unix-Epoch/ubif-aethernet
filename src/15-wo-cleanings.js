@@ -148,7 +148,7 @@ AE.crystal({
       const stale = state && state.status !== 'loading' && Date.now() - state.at > REFRESH_MS && !document.hidden;
       if (!state || state.woId !== woId) { if (loadingFor !== woId) load(woId); }
       else if (stale) { state.at = Date.now(); load(woId, true); }
-      render(); // the portal re-renders the header; put the pill back
+      render(); // Portal re-renders the header; put the pill back
     });
     AE.on('cleaning-changed', () => { const woId = currentWoId(); if (woId) load(woId, true); });
   },

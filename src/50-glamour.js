@@ -17,7 +17,7 @@ AE.glamour = (() => {
   const STYLE_ID = 'sg-glamour';
 
   const PRESETS = [
-    { id: 'portal', name: 'Portal', note: 'The portal as it ships' },
+    { id: 'portal', name: 'Portal', note: 'Portal as it ships' },
     { id: 'limsa', name: 'Limsa Lominsa', bg: '#f2f6fa', fg: '#122232', accent: '#1f6aa8' },
     { id: 'gridania', name: 'Gridania', bg: '#f3f6ef', fg: '#1a2618', accent: '#2f7a3b' },
     { id: 'crystarium', name: 'Crystarium', bg: '#f4f5fb', fg: '#1b1e30', accent: '#5b4fd6' },
@@ -34,7 +34,7 @@ AE.glamour = (() => {
   const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
   const validHex = (v) => /^#[0-9a-f]{6}$/i.test(v || '');
 
-  // Three colours -> the portal's surface/text/primary tokens.
+  // Three colours -> Portal's surface/text/primary tokens.
   function tokens({ bg, fg, accent }) {
     const dark = lum(bg) < 0.18;
     const onAccent = contrast(accent, '#ffffff') >= contrast(accent, '#0c0e11') ? '#ffffff' : '#0c0e11';
@@ -68,19 +68,54 @@ AE.glamour = (() => {
 
   const find = (cfg, id) => PRESETS.find((p) => p.id === id) || (cfg.custom || []).find((c) => c.id === id);
 
+  /*
+    Portal's light/dark mode is a class on <body> (asurion-light/asurion-dark),
+    and some of its styles hang off it rather than the tokens — e.g. the
+    ubreakifix logo is one dark PNG that dark mode turns white with a CSS
+    filter. So a dark theme also puts Portal in dark mode (and a light theme
+    in light mode), held with an observer in case Portal flips it back.
+    Portal's own choice is remembered and restored when Glamour lets go.
+  */
+  const MODES = ['asurion-dark', 'asurion-light'];
+  let observer = null, portalMode = null, want = null;
+  const modeOf = () => MODES.find((m) => document.body.classList.contains(m)) || null;
+  const setMode = (m) => { document.body.classList.remove(...MODES); if (m) document.body.classList.add(m); };
+  const watch = () => observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  function holdMode(next) {
+    if (!document.body) return;
+    if (!next) {
+      observer?.disconnect(); observer = null;
+      if (want) { want = null; setMode(portalMode); }
+      return;
+    }
+    if (!want) portalMode = modeOf();
+    want = next;
+    if (modeOf() !== want) setMode(want);
+    if (!observer) {
+      observer = new MutationObserver(() => {
+        const cur = modeOf();
+        if (!want || cur === want) return;
+        portalMode = cur; // Portal changed its mode (e.g. its own theme toggle)
+        observer.disconnect(); setMode(want); watch();
+      });
+      watch();
+    }
+  }
+
   // Apply a Glamour settings object ({ theme, custom }); unknown or 'portal' clears.
   function apply(cfg) {
     const t = cfg && find(cfg, cfg.theme);
     const el = document.getElementById(STYLE_ID);
-    if (!t || !t.bg || ![t.bg, t.fg, t.accent].every(validHex)) { el?.remove(); return; }
+    if (!t || !t.bg || ![t.bg, t.fg, t.accent].every(validHex)) { el?.remove(); holdMode(null); return; }
+    holdMode(lum(t.bg) < 0.18 ? 'asurion-dark' : 'asurion-light');
     const vars = Object.entries(tokens(t)).map(([k, v]) => '--aui-' + k + ':' + v + ' !important;').join('');
-    // The portal sets its tokens on :root and on .asurion-light/.asurion-dark
+    // Portal sets its tokens on :root and on .asurion-light/.asurion-dark
     // (the <body> class), so override on all three.
     const css = ':root, .asurion-light, .asurion-dark, .partner-light, .partner-dark {' + vars + '}'
       + 'body { background:var(--aui-sub-surface) !important; color-scheme:' + (lum(t.bg) < 0.18 ? 'dark' : 'light') + '; }';
     const style = el || h('style', { id: STYLE_ID });
     style.textContent = css;
-    document.head.append(style); // (re)append so it stays after the portal's own sheets
+    document.head.append(style); // (re)append so it stays after Portal's own sheets
   }
 
   // The Settings editor (nested under the crystal). `s` is Settings' working copy.
