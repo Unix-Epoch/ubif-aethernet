@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.6.0
+// @version      2.7.0
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -35,9 +35,9 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.6.0';            // filled in by build.py
-const AE_BUILD_TIME = '2026-09-26T18:11:28-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = 'fe19b59';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_VERSION = '2.7.0';            // filled in by build.py
+const AE_BUILD_TIME = '2026-09-28T10:41:27-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = '94a3a2b';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';     // where installs update from
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 
@@ -427,15 +427,34 @@ const AE = (() => {
   if (!AE_ON_PORTAL) return;
   const { h, esc, icon } = AE;
 
+  // Crystals are named after FFXIV actions; the description says what each does.
   const CRYSTAL_INFO = [
-    ['cleaningRate', 'Live cleaning rate', "Header badge with today's cleaning percentage."],
-    ['woCleanings', 'WO cleanings pill', 'On a work order: shows whether its device has cleanings, with Create for available ones.'],
-    ['textNotes', 'Text → WO note', 'When you text a customer from a WO, the text is added to the WO notes.'],
-    ['autoClose', 'Cleaning auto-close', 'One-click check-in → complete sale on cleaning arrivals.'],
-    ['galaxy', 'Galaxy Diagnostics exception', 'Pre-fills the Sprinklr exception form from a Samsung WO.'],
-    ['buybacks', 'Buyback add-all', 'Bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
-    ['printLabels', 'Print all labels', 'Prints every serial label on a PO Receive page.'],
+    ['cleaningRate', 'Divination', "Live cleaning rate: header badge with today's cleaning percentage."],
+    ['woCleanings', 'Esuna', 'WO cleanings pill: shows whether a work order\'s device has cleanings, with Create for available ones.'],
+    ['textNotes', 'Recitation', 'Text → WO note: when you text a customer from a WO, the text is added to the WO notes.'],
+    ['autoClose', 'Swiftcast', 'Cleaning auto-close: one-click check-in → complete sale on cleaning arrivals.'],
+    ['galaxy', 'Macrocosmos', 'Galaxy Diagnostics exception: pre-fills the Sprinklr exception form from a Samsung WO.'],
+    ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
+    ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
   ];
+
+  /*
+    What's new. A crystal is "new" until Settings has been opened and closed
+    once with it listed; new ones get a yellow sheen. The first run of a build
+    after an update shows an "Aethernet has updated!" pill (once) that opens
+    Settings. A fresh install sees neither.
+  */
+  const SEEN_KEY = 'ae_seen_crystals', VERSION_KEY = 'ae_last_version';
+  const allIds = () => CRYSTAL_INFO.map(([id]) => id);
+  const existingInstall = () => ['sg_settings', 'ae_settings_sections', 'ae_text_notes_logged', 'gde_btn_pos']
+    .some((k) => GM_getValue(k) !== undefined);
+  const lastVersion = GM_getValue(VERSION_KEY);
+  const updated = lastVersion ? lastVersion !== AE_VERSION : existingInstall();
+  // Before 2.7 nothing was tracked: count every crystal as already seen.
+  if (GM_getValue(SEEN_KEY) === undefined) GM_setValue(SEEN_KEY, allIds());
+  const isNew = (id) => !GM_getValue(SEEN_KEY, []).includes(id);
+  const markAllSeen = () => GM_setValue(SEEN_KEY, [...new Set([...GM_getValue(SEEN_KEY, []), ...allIds()])]);
+  if (lastVersion !== AE_VERSION) GM_setValue(VERSION_KEY, AE_VERSION);
 
   const MODAL_CSS = `
   .sg-scrim { position:fixed; inset:0; z-index:2147483646; background:var(--aui-scrim-overlay, #0c0e1180); display:flex; justify-content:flex-end; }
@@ -501,6 +520,40 @@ const AE = (() => {
   .sg-sheet-foot { position:sticky; bottom:-24px; margin:auto -24px -24px; padding-top:16px; flex:none; padding:16px 24px; display:flex; gap:8px;
     background:var(--aui-surface, #fff); border-top:1px solid var(--aui-outline-soft, #eeedf1); }
   .sg-sheet-foot .sg-btn { flex:1; }
+  /* nested crystal settings */
+  .sg-crystal { border-top:1px solid var(--aui-outline-soft, #eeedf1); }
+  .sg-crystal:first-child { border-top:0; }
+  .sg-crystal > .sg-row { border-top:0; }
+  .sg-opt-toggle { display:inline-flex; align-items:center; gap:4px; margin-top:4px; padding:2px 0; border:0; background:none; cursor:pointer;
+    color:var(--aui-primary, #8223d2); font:400 12px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .sg-opt-toggle .chev { width:14px; height:14px; transition:transform .2s; }
+  .sg-opt-toggle[aria-expanded="false"] .chev { transform:rotate(-90deg); }
+  .sg-opt-toggle .sum { color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-opt-toggle:focus-visible { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; border-radius:4px; }
+  .sg-opts { display:grid; grid-template-rows:1fr; transition:grid-template-rows .2s ease; }
+  .sg-opts.closed { grid-template-rows:0fr; }
+  .sg-opts > div { overflow:hidden; min-height:0; }
+  .sg-opts > div > div { margin:0 0 12px 2px; padding:2px 0 2px 14px; border-left:2px solid var(--aui-primary-soft, #faecff); }
+  /* new crystals: a yellow sheen until Settings is closed once */
+  .sg-crystal.sg-new { position:relative; margin:0 -10px; padding:0 10px; border-radius:10px; border-top-color:transparent;
+    background:linear-gradient(105deg, rgba(255,204,0,.14) 0%, rgba(255,204,0,.14) 38%, rgba(255,236,140,.55) 50%, rgba(255,204,0,.14) 62%, rgba(255,204,0,.14) 100%);
+    background-size:250% 100%; box-shadow:inset 0 0 0 1px rgba(214,160,0,.55); animation:sg-sheen 2.6s ease-in-out infinite; }
+  .sg-crystal.sg-new + .sg-crystal { border-top-color:transparent; }
+  @keyframes sg-sheen { 0% { background-position:100% 0; } 60%,100% { background-position:0% 0; } }
+  .sg-new-tag { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:10000rem; vertical-align:2px;
+    background:#ffcc00; color:#3d2e00; font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
+  /* "Aethernet has updated!" pill */
+  .sg-update-pill { position:fixed; z-index:2147483645; left:50%; bottom:20px; transform:translateX(-50%);
+    display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 14px; border:0; border-radius:10000rem; cursor:pointer;
+    color:var(--aui-on-primary, #fff); font:700 14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; white-space:nowrap;
+    background:linear-gradient(105deg, var(--aui-primary, #8223d2) 0%, var(--aui-primary, #8223d2) 40%, #b36cf0 50%, var(--aui-primary, #8223d2) 60%, var(--aui-primary, #8223d2) 100%);
+    background-size:250% 100%; box-shadow:0 8px 28px rgba(12,14,17,.28); animation:sg-pill-in .3s ease-out, sg-sheen 3s ease-in-out .3s infinite; }
+  .sg-update-pill:hover { filter:brightness(1.08); }
+  .sg-update-pill .ver { font-weight:400; opacity:.8; }
+  .sg-update-pill .x { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:50%; font-weight:400; opacity:.8; }
+  .sg-update-pill .x:hover { opacity:1; background:rgba(255,255,255,.18); }
+  @keyframes sg-pill-in { from { opacity:0; transform:translate(-50%, 10px); } to { opacity:1; transform:translate(-50%, 0); } }
+  @media (prefers-reduced-motion: reduce) { .sg-crystal.sg-new, .sg-update-pill { animation:none; } }
   `;
 
   // About — its own modal, above the settings panel.
@@ -592,11 +645,58 @@ const AE = (() => {
     const galaxyAuto = { technicianName: '', email: '', location: '' };
     const galaxyInputs = {};
 
+    // Each crystal's own settings, shown nested under it.
+    const OPTIONS = {
+      cleaningRate: [() => 'Target ' + s.cleaningRate.target + '%',
+        input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; repaintSums(); }, 'number')],
+      galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
+        h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Leave blank to use your login. Only fill in to override.'),
+        (galaxyInputs.technicianName = input('Technician name', s.galaxy.technicianName, '', (v) => { s.galaxy.technicianName = v.trim(); repaintSums(); })),
+        (galaxyInputs.email = input('Your email', s.galaxy.email, '', (v) => { s.galaxy.email = v.trim(); repaintSums(); })),
+        (galaxyInputs.location = input('UBIF location (as shown in the form)', s.galaxy.location, '', (v) => { s.galaxy.location = v.trim(); repaintSums(); })),
+        input('Store email (optional)', s.galaxy.storeEmail, 'Left blank', (v) => { s.galaxy.storeEmail = v.trim(); }),
+        input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
+        input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
+        h('button', { class: 'sg-btn', style: 'margin:4px 0', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')],
+      printLabels: [() => s.printLabels.delayMs + ' ms between labels',
+        input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
+    };
+    const CHEV = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
+    const crystalRow = (id, name, desc) => {
+      const fresh = isNew(id);
+      let optToggle = null, optBody = null;
+      if (OPTIONS[id]) {
+        const [summary, ...kids] = OPTIONS[id];
+        const key = 'opt_' + id;
+        let isOpen = !!openState[key];
+        const sum = h('span', { class: 'sum' });
+        optToggle = h('button', { type: 'button', class: 'sg-opt-toggle', 'aria-expanded': String(isOpen), html: CHEV }, 'Settings', sum);
+        optBody = h('div', { class: 'sg-opts' + (isOpen ? '' : ' closed') }, h('div', null, h('div', null, ...kids)));
+        const paintSum = () => { sum.textContent = isOpen ? '' : '· ' + summary(); };
+        optToggle.onclick = () => {
+          isOpen = !isOpen;
+          optBody.classList.toggle('closed', !isOpen);
+          optToggle.setAttribute('aria-expanded', String(isOpen));
+          openState[key] = isOpen;
+          GM_setValue(SECTIONS_KEY, openState);
+          paintSum();
+        };
+        sums.push(paintSum);
+        paintSum();
+      }
+      return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : '') },
+        h('div', { class: 'sg-row' },
+          h('div', null, h('b', null, name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : null),
+            h('span', { class: 'sg-soft' }, desc), optToggle ? h('div', null, optToggle) : null),
+          toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); })),
+        optBody);
+    };
+
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
         h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 36) }),
         h('div', { style: 'flex:1' }, h('h2', { class: 'sg-wordmark', html: AE.wordmark(26) }), h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen · v' + AE_VERSION })),
-        h('button', { class: 'sg-x', title: 'Close', onclick: () => scrim.remove() }, '✕')),
+        h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
 
       section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
         who,
@@ -604,37 +704,21 @@ const AE = (() => {
 
       section('crystals', 'Crystals', true,
         () => CRYSTAL_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + CRYSTAL_INFO.length + ' on',
-        h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => h('div', { class: 'sg-row' },
-          h('div', null, h('b', null, name), h('span', { class: 'sg-soft' }, desc)),
-          toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); }))))),
-
-      section('cleaningRate', 'Live cleaning rate', false, () => 'Target ' + s.cleaningRate.target + '%',
-        input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; repaintSums(); }, 'number')),
-
-      section('galaxy', 'Galaxy Diagnostics exception', false,
-        () => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
-        h('div', { class: 'sg-soft' }, 'Leave blank to use your login. Only fill in to override.'),
-        (galaxyInputs.technicianName = input('Technician name', s.galaxy.technicianName, '', (v) => { s.galaxy.technicianName = v.trim(); })),
-        (galaxyInputs.email = input('Your email', s.galaxy.email, '', (v) => { s.galaxy.email = v.trim(); })),
-        (galaxyInputs.location = input('UBIF location (as shown in the form)', s.galaxy.location, '', (v) => { s.galaxy.location = v.trim(); })),
-        input('Store email (optional)', s.galaxy.storeEmail, 'Left blank', (v) => { s.galaxy.storeEmail = v.trim(); }),
-        input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
-        input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
-        h('button', { class: 'sg-btn', style: 'margin-top:4px', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')),
-
-      section('printLabels', 'Print all labels', false, () => s.printLabels.delayMs + ' ms between labels',
-        input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')),
+        h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => crystalRow(id, name, desc)))),
 
       h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…'),
 
       h('div', { class: 'sg-sheet-foot' },
-        h('button', { class: 'sg-btn sg-lg', onclick: () => scrim.remove() }, 'Cancel'),
-        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); location.reload(); } }, 'Save & reload')));
+        h('button', { class: 'sg-btn sg-lg', onclick: () => close() }, 'Cancel'),
+        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(); location.reload(); } }, 'Save & reload')));
 
-    const scrim = h('div', { class: 'sg sg-scrim', id: 'sg-settings', onclick: (e) => { if (e.target === scrim) scrim.remove(); } }, sheet);
+    const scrim = h('div', { class: 'sg sg-scrim', id: 'sg-settings', onclick: (e) => { if (e.target === scrim) close(); } }, sheet);
+    // Every way out ends the "new" sheen: the crystals have now been seen.
+    function close() { scrim.remove(); document.removeEventListener('keydown', onKey); markAllSeen(); }
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
     document.body.appendChild(scrim);
-    const onKey = (e) => { if (e.key === 'Escape') { scrim.remove(); document.removeEventListener('keydown', onKey); } };
     document.addEventListener('keydown', onKey);
+    document.getElementById('sg-update-pill')?.remove();
 
     AE.profile().then((p) => {
       const loc = p.storeId ? p.storeId + ' ' + p.storeName : '';
@@ -668,13 +752,23 @@ const AE = (() => {
     logout.parentElement.insertBefore(item, logout);
   });
 
+  if (updated) {
+    AE.ensureCss();
+    if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
+    const x = h('span', { class: 'x', role: 'button', 'aria-label': 'Dismiss', title: 'Dismiss' }, '✕');
+    const pill = h('button', { type: 'button', class: 'sg sg-update-pill', id: 'sg-update-pill', title: 'Open ' + AE_NAME + ' settings' },
+      h('span', { html: icon('aetheryte', 20) }), AE_NAME + ' has updated!', h('span', { class: 'ver' }, 'v' + AE_VERSION), x);
+    pill.onclick = (e) => { pill.remove(); if (e.target !== x) open(); };
+    document.body.appendChild(pill);
+  }
+
   if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(AE_NAME + ' settings', open);
   AE.openSettings = open;
 })();
 
 // ===== 10-cleaning-rate.js =====
 /*
-  Live cleaning rate — header badge.
+  Divination (live cleaning rate) — header badge.
 
   Rate = cleanings linked to today's Asurion Mobility orders ÷ Asurion
   Mobility orders created today (local time). Each cleaning counts on its
@@ -689,7 +783,7 @@ const AE = (() => {
 */
 AE.crystal({
   id: 'cleaningRate',
-  name: 'Live cleaning rate',
+  name: 'Divination',
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h, esc } = AE;
@@ -863,7 +957,7 @@ AE.crystal({
 
 // ===== 15-wo-cleanings.js =====
 /*
-  WO cleanings pill — on a work order page, a pill right after the
+  Esuna (WO cleanings pill) — on a work order page, a pill right after the
   customer's name saying whether this device has cleanings:
 
     Cleanings available (2)   cleaning arrivals waiting in Arrivals
@@ -879,7 +973,7 @@ AE.crystal({
 */
 AE.crystal({
   id: 'woCleanings',
-  name: 'WO cleanings pill',
+  name: 'Esuna',
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h, esc } = AE;
@@ -1020,7 +1114,7 @@ AE.crystal({
 
 // ===== 17-text-notes.js =====
 /*
-  Text → WO note. When a text is sent to a customer from inside a work
+  Recitation (text → WO note). When a text is sent to a customer from inside a work
   order, post it as a note on that WO:
 
     Garrett Green sent a text message to Tina Liddy.
@@ -1044,7 +1138,7 @@ AE.crystal({
 */
 AE.crystal({
   id: 'textNotes',
-  name: 'Text → WO note',
+  name: 'Recitation',
   sites: ['portal.ubreakifix.net'],
   run() {
     // The portal's status id → note tag map (from its ubif-util-store bundle).
@@ -1124,7 +1218,7 @@ AE.crystal({
 
 // ===== 20-auto-close.js =====
 /*
-  Cleaning auto-close — round purple ⚡ button in a cleaning arrival's
+  Swiftcast (cleaning auto-close) — round purple ⚡ button in a cleaning arrival's
   "Customer arrival" drawer. One click replays the portal's own API sequence
   (see the vault note "Cleaning WO Flow"):
 
@@ -1140,7 +1234,7 @@ AE.crystal({
 */
 AE.crystal({
   id: 'autoClose',
-  name: 'Cleaning auto-close',
+  name: 'Swiftcast',
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h, icon } = AE;
@@ -1259,7 +1353,7 @@ AE.crystal({
     async function onClick(arrivalId) {
       if (running) return;
       running = true; stopRequested = false;
-      const panel = AE.progressPanel('Cleaning auto-close');
+      const panel = AE.progressPanel('Swiftcast · cleaning auto-close');
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       let woId = null;
@@ -1338,7 +1432,7 @@ AE.crystal({
 
 // ===== 30-galaxy.js =====
 /*
-  Galaxy Diagnostics exception — two halves sharing data through
+  Macrocosmos (Galaxy Diagnostics exception) — two halves sharing data through
   Tampermonkey storage (GM_*, scoped per script, not per site):
 
   A. Portal WO page: once a "GSPN No. ######" badge exists, shows a
@@ -1355,7 +1449,7 @@ AE.crystal({
 */
 AE.crystal({
   id: 'galaxy',
-  name: 'Galaxy Diagnostics exception',
+  name: 'Macrocosmos',
   sites: ['portal.ubreakifix.net', 'forms-prod.sprinklr.com'],
   run() {
     const { h, icon, sleep } = AE;
@@ -1611,7 +1705,7 @@ AE.crystal({
 
 // ===== 40-print-labels.js =====
 /*
-  Print all labels — on a PO Receive page, a "Print all labels" button next
+  Quick Synthesis (print all labels) — on a PO Receive page, a "Print all labels" button next
   to "Generate Labels" that opens each serial row's ⋮ → Print Label in turn,
   paced (settings → delay) so a DYMO LabelWriter keeps up. Print-only: it
   never receives or changes stock.
@@ -1620,7 +1714,7 @@ AE.crystal({
 */
 AE.crystal({
   id: 'printLabels',
-  name: 'Print all labels',
+  name: 'Quick Synthesis',
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h, icon, sleep } = AE;
@@ -1719,7 +1813,7 @@ AE.crystal({
       } else ui.panel.actions(close);
     }
 
-    function newUi() { return { panel: AE.progressPanel('Print all labels', { clock: false }), running: false, stop: false }; }
+    function newUi() { return { panel: AE.progressPanel('Quick Synthesis · print all labels', { clock: false }), running: false, stop: false }; }
 
     async function onClickPrintAll() {
       if (active && active.panel.el.isConnected) { active.panel.flash(); return; }
@@ -1765,7 +1859,7 @@ AE.crystal({
 
 // ===== 45-buybacks.js =====
 /*
-  Buyback add-all — on a buyback order's "Add buyback parts" popout
+  Bountiful Yield (buyback add-all) — on a buyback order's "Add buyback parts" popout
   (Buybacks tab), adds bulk-add buttons:
 
     Add all Apple devices (TLC)          destination "Asurion Reverse Logistics"
@@ -1786,7 +1880,7 @@ AE.crystal({
 */
 AE.crystal({
   id: 'buybacks',
-  name: 'Buyback add-all',
+  name: 'Bountiful Yield',
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h } = AE;
