@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.7.0
+// @version      2.8.0
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -35,18 +35,19 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.7.0';            // filled in by build.py
-const AE_BUILD_TIME = '2026-09-28T10:41:27-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = '94a3a2b';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_VERSION = '2.8.0';            // filled in by build.py
+const AE_BUILD_TIME = '2026-09-28T11:27:58-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = '66e17d2';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';     // where installs update from
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
-    crystals: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true },
+    crystals: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true },
     cleaningRate: { target: 75 },
     printLabels: { delayMs: 900 },
+    glamour: { theme: 'portal', custom: [] }, // custom: [{ id, name, bg, fg, accent, custom: true }]
     // Blank = use the logged-in user / current store automatically.
     galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
   };
@@ -436,6 +437,7 @@ const AE = (() => {
     ['galaxy', 'Macrocosmos', 'Galaxy Diagnostics exception: pre-fills the Sprinklr exception form from a Samsung WO.'],
     ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
     ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
+    ['glamour', 'Glamour', 'Page theming: recolour the portal with a preset theme or one you make.'],
   ];
 
   /*
@@ -658,6 +660,7 @@ const AE = (() => {
         input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
         input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
         h('button', { class: 'sg-btn', style: 'margin:4px 0', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')],
+      glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
       printLabels: [() => s.printLabels.delayMs + ' ms between labels',
         input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
     };
@@ -710,11 +713,15 @@ const AE = (() => {
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => close() }, 'Cancel'),
-        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(); location.reload(); } }, 'Save & reload')));
+        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(true); location.reload(); } }, 'Save & reload')));
 
     const scrim = h('div', { class: 'sg sg-scrim', id: 'sg-settings', onclick: (e) => { if (e.target === scrim) close(); } }, sheet);
     // Every way out ends the "new" sheen: the crystals have now been seen.
-    function close() { scrim.remove(); document.removeEventListener('keydown', onKey); markAllSeen(); }
+    function close(saving) {
+      scrim.remove(); document.removeEventListener('keydown', onKey); markAllSeen();
+      // Glamour previews live; closing without saving puts the saved theme back.
+      if (!saving) AE.glamour.apply(AE.settings.crystals.glamour ? AE.settings.glamour : null);
+    }
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     document.body.appendChild(scrim);
     document.addEventListener('keydown', onKey);
@@ -2102,6 +2109,190 @@ AE.crystal({
       tid = setTimeout(() => { tid = null; try { sync(); } catch (_) {} }, 200);
     }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-selected'] });
     sync();
+  },
+});
+
+// ===== 50-glamour.js =====
+/*
+  Glamour (page theming) — recolours the whole portal by overriding its own
+  design tokens (--aui-*), so every portal screen and every crystal follows.
+
+  A theme is just three colours: background, text and accent. The rest of
+  the palette (surfaces, outlines, soft text, the primary's soft/on shades)
+  is derived from those, for light or dark depending on the background.
+  Status colours (success/error/warning) and the brand accents are left
+  alone so their meaning doesn't change.
+
+  Presets are FFXIV-flavoured; users can also make their own. "Portal" means
+  no override at all. The engine is set up at load (not in run()) so the
+  Settings editor can preview live even while the crystal is switched off.
+*/
+AE.glamour = (() => {
+  const { h } = AE;
+  const STYLE_ID = 'sg-glamour';
+
+  const PRESETS = [
+    { id: 'portal', name: 'Portal', note: 'The portal as it ships' },
+    { id: 'limsa', name: 'Limsa Lominsa', bg: '#f2f6fa', fg: '#122232', accent: '#1f6aa8' },
+    { id: 'gridania', name: 'Gridania', bg: '#f3f6ef', fg: '#1a2618', accent: '#2f7a3b' },
+    { id: 'crystarium', name: 'Crystarium', bg: '#f4f5fb', fg: '#1b1e30', accent: '#5b4fd6' },
+    { id: 'uldah', name: "Ul'dah", bg: '#19140d', fg: '#f4ead8', accent: '#e2b04c' },
+    { id: 'ishgard', name: 'Ishgard', bg: '#0f141b', fg: '#e5edf6', accent: '#8cc2ff' },
+    { id: 'void', name: 'The Void', bg: '#0e0a12', fg: '#eee4f2', accent: '#e0567a' },
+  ];
+
+  // --- colour maths (sRGB hex) ---
+  const rgb = (hex) => { const n = parseInt(hex.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+  const hex = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('');
+  const mix = (a, b, t) => { const x = rgb(a), y = rgb(b); return hex(x.map((v, i) => v + (y[i] - v) * t)); };
+  const lum = (c) => { const [r, g, b] = rgb(c).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  const validHex = (v) => /^#[0-9a-f]{6}$/i.test(v || '');
+
+  // Three colours -> the portal's surface/text/primary tokens.
+  function tokens({ bg, fg, accent }) {
+    const dark = lum(bg) < 0.18;
+    const onAccent = contrast(accent, '#ffffff') >= contrast(accent, '#0c0e11') ? '#ffffff' : '#0c0e11';
+    return {
+      'sub-surface': dark ? mix(bg, '#000000', 0.45) : mix(bg, fg, 0.05),
+      'surface': bg,
+      'surface-variant': mix(bg, fg, dark ? 0.05 : 0.025),
+      'on-surface': fg,
+      'on-surface-soft': mix(fg, bg, 0.32),
+      'outline': mix(fg, bg, 0.58),
+      'outline-soft': mix(fg, bg, dark ? 0.78 : 0.88),
+      'elevated-level-01': dark ? mix(bg, fg, 0.06) : bg,
+      'elevated-level-02': dark ? mix(bg, fg, 0.09) : bg,
+      'elevated-level-03': dark ? mix(bg, fg, 0.11) : bg,
+      'elevated-dynamic-card': dark ? mix(bg, fg, 0.04) : bg,
+      'primary': accent,
+      'on-primary': onAccent,
+      'primary-soft': mix(bg, accent, dark ? 0.28 : 0.12),
+      'on-primary-soft': dark ? mix(accent, '#ffffff', 0.35) : mix(accent, '#000000', 0.35),
+      'inverse-primary': mix(accent, dark ? '#000000' : '#ffffff', 0.35),
+      'secondary': mix(bg, accent, dark ? 0.22 : 0.14),
+      'on-secondary': fg,
+      'neutral': fg,
+      'on-neutral': bg,
+      'neutral-soft': mix(bg, fg, dark ? 0.16 : 0.07),
+      'on-neutral-soft': mix(fg, bg, 0.12),
+      'inverse-surface': fg,
+      'inverse-on-surface': bg,
+    };
+  }
+
+  const find = (cfg, id) => PRESETS.find((p) => p.id === id) || (cfg.custom || []).find((c) => c.id === id);
+
+  // Apply a Glamour settings object ({ theme, custom }); unknown or 'portal' clears.
+  function apply(cfg) {
+    const t = cfg && find(cfg, cfg.theme);
+    const el = document.getElementById(STYLE_ID);
+    if (!t || !t.bg || ![t.bg, t.fg, t.accent].every(validHex)) { el?.remove(); return; }
+    const vars = Object.entries(tokens(t)).map(([k, v]) => '--aui-' + k + ':' + v + ' !important;').join('');
+    // The portal sets its tokens on :root and on .asurion-light/.asurion-dark
+    // (the <body> class), so override on all three.
+    const css = ':root, .asurion-light, .asurion-dark, .partner-light, .partner-dark {' + vars + '}'
+      + 'body { background:var(--aui-sub-surface) !important; color-scheme:' + (lum(t.bg) < 0.18 ? 'dark' : 'light') + '; }';
+    const style = el || h('style', { id: STYLE_ID });
+    style.textContent = css;
+    document.head.append(style); // (re)append so it stays after the portal's own sheets
+  }
+
+  // The Settings editor (nested under the crystal). `s` is Settings' working copy.
+  const EDITOR_CSS = `
+  .sg-glam-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); gap:8px; margin:10px 0 6px; }
+  .sg-glam-card { position:relative; display:flex; flex-direction:column; gap:6px; height:66px; padding:8px 9px; border-radius:10px; cursor:pointer; text-align:left;
+    border:1px solid var(--aui-outline, #c6c6ca); font:600 12px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; overflow:hidden; }
+  .sg-glam-card .aa { font-size:18px; font-weight:700; line-height:1; }
+  .sg-glam-card .nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sg-glam-card .dot { position:absolute; right:8px; top:8px; width:12px; height:12px; border-radius:50%; }
+  .sg-glam-card.on { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; }
+  .sg-glam-card.portal { background:linear-gradient(135deg, #ffffff 50%, #130f17 50%); color:#1a1c1e; }
+  .sg-glam-card.portal .nm { color:#1a1c1e; background:#ffffffcc; border-radius:4px; padding:0 3px; align-self:flex-start; }
+  .sg-glam-card.add { align-items:center; justify-content:center; border-style:dashed; background:none; color:var(--aui-primary, #8223d2); }
+  .sg-glam-edit { margin:8px 0 4px; padding:10px 12px; border-radius:10px; background:var(--aui-surface-variant, #faf9fc); border:1px solid var(--aui-outline-soft, #eeedf1); }
+  .sg-glam-colors { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
+  .sg-glam-colors label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-glam-colors input[type=color] { width:100%; height:36px; padding:2px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; background:var(--aui-surface, #fff); cursor:pointer; }
+  .sg-glam-warn { margin-top:6px; font-size:12px; color:var(--aui-status-error, #b91a24); }
+  .sg-glam-edit .sg-actions { margin-top:10px; justify-content:flex-start; }
+  .sg-glam-edit .sg-actions .sg-btn { flex:none; }
+  `;
+
+  function editor(s, repaint) {
+    if (!document.getElementById('sg-glamour-css')) document.head.append(h('style', { id: 'sg-glamour-css' }, EDITOR_CSS));
+    // Own copy: AE.merge shares arrays, and Cancel must leave saved themes untouched.
+    s.glamour.custom = JSON.parse(JSON.stringify(s.glamour.custom || []));
+    const root = h('div');
+    let editing = null; // id of the custom theme open in the editor
+
+    const select = (id) => { s.glamour.theme = id; apply(s.glamour); render(); repaint(); };
+
+    const card = (t) => {
+      const on = s.glamour.theme === t.id;
+      if (t.id === 'portal') {
+        return h('button', { type: 'button', class: 'sg-glam-card portal' + (on ? ' on' : ''), title: t.note, onclick: () => { editing = null; select(t.id); } },
+          h('span', { class: 'aa' }, 'Aa'), h('span', { class: 'nm' }, t.name));
+      }
+      return h('button', { type: 'button', class: 'sg-glam-card' + (on ? ' on' : ''), style: 'background:' + t.bg + ';color:' + t.fg + ';border-color:' + mix(t.fg, t.bg, 0.7),
+        title: t.custom ? 'Your theme — click again to edit' : t.name,
+        onclick: () => { editing = t.custom && on ? t.id : null; select(t.id); } },
+        h('span', { class: 'dot', style: 'background:' + t.accent }),
+        h('span', { class: 'aa' }, 'Aa'), h('span', { class: 'nm' }, t.name));
+    };
+
+    const edit = (t) => {
+      const warn = h('div', { class: 'sg-glam-warn' });
+      const check = () => {
+        const c = contrast(t.bg, t.fg);
+        warn.textContent = c < 4.5 ? 'Text may be hard to read on this background (contrast ' + c.toFixed(1) + ':1, aim for 4.5+).' : '';
+      };
+      const color = (label, key) => h('label', null, label,
+        h('input', { type: 'color', value: t[key], oninput: (e) => { t[key] = e.target.value; apply(s.glamour); check(); root.querySelector('.sg-glam-card.on')?.replaceWith(card(t)); } }));
+      check();
+      return h('div', { class: 'sg-glam-edit' },
+        h('label', { class: 'sg-field', style: 'margin-top:0' }, h('span', null, 'Theme name'),
+          h('input', { type: 'text', value: t.name, maxlength: 24, oninput: (e) => { t.name = e.target.value || 'My theme'; repaint(); } })),
+        h('div', { class: 'sg-glam-colors' }, color('Background', 'bg'), color('Text', 'fg'), color('Accent', 'accent')),
+        warn,
+        h('div', { class: 'sg-actions' },
+          h('button', { type: 'button', class: 'sg-btn', onclick: () => { editing = null; render(); } }, 'Done'),
+          h('button', { type: 'button', class: 'sg-btn', onclick: () => {
+            s.glamour.custom = s.glamour.custom.filter((c) => c.id !== t.id);
+            editing = null; select('portal');
+          } }, 'Delete theme')));
+    };
+
+    function render() {
+      const cur = find(s.glamour, s.glamour.theme);
+      const add = h('button', { type: 'button', class: 'sg-glam-card add', onclick: () => {
+        // Start from whatever is showing now, so tweaking a preset is easy.
+        const base = cur && cur.bg ? cur : { bg: '#ffffff', fg: '#1a1c1e', accent: '#8223d2' };
+        const t = { id: 'custom-' + Date.now().toString(36), name: 'My theme', bg: base.bg, fg: base.fg, accent: base.accent, custom: true };
+        s.glamour.custom.push(t);
+        editing = t.id; select(t.id);
+      } }, '+ New theme');
+      const editingTheme = editing && s.glamour.custom.find((c) => c.id === editing);
+      root.replaceChildren(
+        h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Pick a theme to preview it. Save keeps it; Cancel puts yours back.'),
+        h('div', { class: 'sg-glam-grid' }, PRESETS.map(card), s.glamour.custom.map(card), add),
+        ...(editingTheme ? [edit(editingTheme)] : []));
+    }
+    render();
+    return root;
+  }
+
+  const summary = (cfg) => (find(cfg, cfg.theme) || PRESETS[0]).name;
+
+  return { PRESETS, apply, editor, summary, tokens, contrast };
+})();
+
+AE.crystal({
+  id: 'glamour',
+  name: 'Glamour',
+  sites: ['portal.ubreakifix.net'],
+  run() {
+    AE.glamour.apply(AE.settings.glamour);
   },
 });
 
