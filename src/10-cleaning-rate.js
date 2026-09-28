@@ -1,5 +1,5 @@
 /*
-  Live cleaning rate — header badge.
+  Divination (live cleaning rate) — header badge.
 
   Rate = cleanings linked to today's Asurion Mobility orders ÷ Asurion
   Mobility orders created today (local time). Each cleaning counts on its
@@ -14,7 +14,7 @@
 */
 AE.crystal({
   id: 'cleaningRate',
-  name: 'Live cleaning rate',
+  name: 'Divination',
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h, esc } = AE;

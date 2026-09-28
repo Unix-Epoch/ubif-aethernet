@@ -1,5 +1,5 @@
 /*
-  Cleaning auto-close — round purple ⚡ button in a cleaning arrival's
+  Swiftcast (cleaning auto-close) — round purple ⚡ button in a cleaning arrival's
   "Customer arrival" drawer. One click replays the portal's own API sequence
   (see the vault note "Cleaning WO Flow"):
 
@@ -15,7 +15,7 @@
 */
 AE.crystal({
   id: 'autoClose',
-  name: 'Cleaning auto-close',
+  name: 'Swiftcast',
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h, icon } = AE;
@@ -134,7 +134,7 @@ AE.crystal({
     async function onClick(arrivalId) {
       if (running) return;
       running = true; stopRequested = false;
-      const panel = AE.progressPanel('Cleaning auto-close');
+      const panel = AE.progressPanel('Swiftcast · cleaning auto-close');
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       let woId = null;

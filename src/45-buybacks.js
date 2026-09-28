@@ -1,5 +1,5 @@
 /*
-  Buyback add-all — on a buyback order's "Add buyback parts" popout
+  Bountiful Yield (buyback add-all) — on a buyback order's "Add buyback parts" popout
   (Buybacks tab), adds bulk-add buttons:
 
     Add all Apple devices (TLC)          destination "Asurion Reverse Logistics"
@@ -20,7 +20,7 @@
 */
 AE.crystal({
   id: 'buybacks',
-  name: 'Buyback add-all',
+  name: 'Bountiful Yield',
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h } = AE;

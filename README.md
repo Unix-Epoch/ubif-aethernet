@@ -4,21 +4,28 @@ One Tampermonkey userscript, **`dist/aethernet.user.js`**, that bundles every
 portal crystal in this folder.
 
 **Terminology:** each tool in Aethernet is a **crystal**, and adding a new one
-(or rolling an old standalone script in) is **crystallizing** it.
+(or rolling an old standalone script in) is **crystallizing** it. Crystals are
+named after FFXIV actions, with what they do in brackets.
 
 | Crystal | Where it shows up |
 |---|---|
-| Live cleaning rate | Header badge left of "UBIF support" (just the % when the header is tight) |
-| Cleaning auto-close | Round purple ⚡ in a cleaning arrival's "Customer arrival" drawer |
-| Text → WO note | Automatic: texting a customer from a WO adds a note "<you> sent a text message to <customer>." + the message |
-| WO cleanings pill | After the customer's name on a WO: **Cleanings available (n)** / **Cleanings done (n)** / **No cleanings**; click for the list, with **Create** on available ones |
-| Galaxy Diagnostics exception | Draggable purple pill on a Samsung WO once it has a GSPN ticket |
-| Print all labels | Purple button next to "Generate Labels" on a PO Receive page |
-| Buyback add-all | **Add all Apple devices (TLC)** / **Add all Samsung/Google parts (UROC)** in a buyback order's Add Buyback parts popout (Buybacks tab) |
+| **Divination** (live cleaning rate) | Header badge left of "UBIF support" (just the % when the header is tight) |
+| **Swiftcast** (cleaning auto-close) | Round purple ⚡ in a cleaning arrival's "Customer arrival" drawer |
+| **Recitation** (text → WO note) | Automatic: texting a customer from a WO adds a note "<you> sent a text message to <customer>." + the message |
+| **Esuna** (WO cleanings pill) | After the customer's name on a WO: **Cleanings available (n)** / **Cleanings done (n)** / **No cleanings**; click for the list, with **Create** on available ones |
+| **Macrocosmos** (Galaxy Diagnostics exception) | Draggable purple pill on a Samsung WO once it has a GSPN ticket |
+| **Quick Synthesis** (print all labels) | Purple button next to "Generate Labels" on a PO Receive page |
+| **Bountiful Yield** (buyback add-all) | **Add all Apple devices (TLC)** / **Add all Samsung/Google parts (UROC)** in a buyback order's Add Buyback parts popout (Buybacks tab) |
 
 **Settings:** avatar menu (top right) → **Aethernet settings**, or the
-Tampermonkey menu. Turn crystals on/off, set the cleaning target %, override the
-Galaxy form fields, set the label delay. Saving reloads the page.
+Tampermonkey menu. Turn crystals on/off; a crystal's own settings (cleaning
+target %, Galaxy form overrides, label delay) open from **Settings** under it.
+Saving reloads the page.
+
+**Updates:** the first page load after an update shows an **Aethernet has
+updated!** pill at the bottom of the screen, once; click it to open Settings.
+Crystals added in an update carry a yellow sheen and a **New** tag until
+Settings has been closed once.
 
 **Nothing personal is hardcoded.** Name, email and store come from the
 logged-in user (`/api/auth/user`), so the same file works for anyone at any

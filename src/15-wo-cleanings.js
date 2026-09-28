@@ -1,5 +1,5 @@
 /*
-  WO cleanings pill — on a work order page, a pill right after the
+  Esuna (WO cleanings pill) — on a work order page, a pill right after the
   customer's name saying whether this device has cleanings:
 
     Cleanings available (2)   cleaning arrivals waiting in Arrivals
@@ -15,7 +15,7 @@
 */
 AE.crystal({
   id: 'woCleanings',
-  name: 'WO cleanings pill',
+  name: 'Esuna',
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h, esc } = AE;

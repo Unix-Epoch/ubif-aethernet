@@ -1,5 +1,5 @@
 /*
-  Text → WO note. When a text is sent to a customer from inside a work
+  Recitation (text → WO note). When a text is sent to a customer from inside a work
   order, post it as a note on that WO:
 
     Garrett Green sent a text message to Tina Liddy.
@@ -23,7 +23,7 @@
 */
 AE.crystal({
   id: 'textNotes',
-  name: 'Text → WO note',
+  name: 'Recitation',
   sites: ['portal.ubreakifix.net'],
   run() {
     // The portal's status id → note tag map (from its ubif-util-store bundle).

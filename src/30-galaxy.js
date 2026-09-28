@@ -1,5 +1,5 @@
 /*
-  Galaxy Diagnostics exception — two halves sharing data through
+  Macrocosmos (Galaxy Diagnostics exception) — two halves sharing data through
   Tampermonkey storage (GM_*, scoped per script, not per site):
 
   A. Portal WO page: once a "GSPN No. ######" badge exists, shows a
@@ -16,7 +16,7 @@
 */
 AE.crystal({
   id: 'galaxy',
-  name: 'Galaxy Diagnostics exception',
+  name: 'Macrocosmos',
   sites: ['portal.ubreakifix.net', 'forms-prod.sprinklr.com'],
   run() {
     const { h, icon, sleep } = AE;

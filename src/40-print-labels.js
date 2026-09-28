@@ -1,5 +1,5 @@
 /*
-  Print all labels — on a PO Receive page, a "Print all labels" button next
+  Quick Synthesis (print all labels) — on a PO Receive page, a "Print all labels" button next
   to "Generate Labels" that opens each serial row's ⋮ → Print Label in turn,
   paced (settings → delay) so a DYMO LabelWriter keeps up. Print-only: it
   never receives or changes stock.
@@ -8,7 +8,7 @@
 */
 AE.crystal({
   id: 'printLabels',
-  name: 'Print all labels',
+  name: 'Quick Synthesis',
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h, icon, sleep } = AE;
@@ -107,7 +107,7 @@ AE.crystal({
       } else ui.panel.actions(close);
     }
 
-    function newUi() { return { panel: AE.progressPanel('Print all labels', { clock: false }), running: false, stop: false }; }
+    function newUi() { return { panel: AE.progressPanel('Quick Synthesis · print all labels', { clock: false }), running: false, stop: false }; }
 
     async function onClickPrintAll() {
       if (active && active.panel.el.isConnected) { active.panel.flash(); return; }
