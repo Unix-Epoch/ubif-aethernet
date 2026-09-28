@@ -16,6 +16,7 @@ named after FFXIV actions, with what they do in brackets.
 | **Macrocosmos** (Galaxy Diagnostics exception) | Draggable purple pill on a Samsung WO once it has a GSPN ticket |
 | **Quick Synthesis** (print all labels) | Purple button next to "Generate Labels" on a PO Receive page |
 | **Bountiful Yield** (buyback add-all) | **Add all Apple devices (TLC)** / **Add all Samsung/Google parts (UROC)** in a buyback order's Add Buyback parts popout (Buybacks tab) |
+| **Glamour** (page theming) | Settings → Glamour: preset themes (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or your own from a background, text and accent colour; recolours the whole portal |
 
 **Settings:** avatar menu (top right) → **Aethernet settings**, or the
 Tampermonkey menu. Turn crystals on/off; a crystal's own settings (cleaning

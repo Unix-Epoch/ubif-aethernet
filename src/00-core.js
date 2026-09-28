@@ -23,9 +23,10 @@ const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
-    crystals: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true },
+    crystals: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true },
     cleaningRate: { target: 75 },
     printLabels: { delayMs: 900 },
+    glamour: { theme: 'portal', custom: [] }, // custom: [{ id, name, bg, fg, accent, custom: true }]
     // Blank = use the logged-in user / current store automatically.
     galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
   };

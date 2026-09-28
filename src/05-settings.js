@@ -17,6 +17,7 @@
     ['galaxy', 'Macrocosmos', 'Galaxy Diagnostics exception: pre-fills the Sprinklr exception form from a Samsung WO.'],
     ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
     ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
+    ['glamour', 'Glamour', 'Page theming: recolour the portal with a preset theme or one you make.'],
   ];
 
   /*
@@ -239,6 +240,7 @@
         input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
         input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
         h('button', { class: 'sg-btn', style: 'margin:4px 0', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')],
+      glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
       printLabels: [() => s.printLabels.delayMs + ' ms between labels',
         input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
     };
@@ -291,11 +293,15 @@
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => close() }, 'Cancel'),
-        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(); location.reload(); } }, 'Save & reload')));
+        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(true); location.reload(); } }, 'Save & reload')));
 
     const scrim = h('div', { class: 'sg sg-scrim', id: 'sg-settings', onclick: (e) => { if (e.target === scrim) close(); } }, sheet);
     // Every way out ends the "new" sheen: the crystals have now been seen.
-    function close() { scrim.remove(); document.removeEventListener('keydown', onKey); markAllSeen(); }
+    function close(saving) {
+      scrim.remove(); document.removeEventListener('keydown', onKey); markAllSeen();
+      // Glamour previews live; closing without saving puts the saved theme back.
+      if (!saving) AE.glamour.apply(AE.settings.crystals.glamour ? AE.settings.glamour : null);
+    }
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     document.body.appendChild(scrim);
     document.addEventListener('keydown', onKey);
