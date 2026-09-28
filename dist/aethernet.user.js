@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.8.0
+// @version      2.8.1
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -22,11 +22,11 @@
 /*
   Aethernet core — shared by every crystal (tool) in this bundle.
 
-  - AE.settings: persisted in Tampermonkey storage (GM_*), so the portal and
+  - AE.settings: persisted in Tampermonkey storage (GM_*), so Portal and
     the Sprinklr form (a different site) see the same values.
   - AE.profile(): the logged-in user + current store, from /api/auth/user.
     Anything personal (name, email, store) comes from here, never hardcoded.
-  - Styling uses the portal's own design tokens (--aui-*), which switch with
+  - Styling uses Portal's own design tokens (--aui-*), which switch with
     its light/dark theme; the fallbacks are the light-theme values, used on
     pages without the tokens (the Sprinklr form).
   - AE.crystal(): each crystal (our name for a tool) registers here and runs
@@ -35,9 +35,9 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.8.0';            // filled in by build.py
-const AE_BUILD_TIME = '2026-09-28T11:27:58-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = '66e17d2';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_VERSION = '2.8.1';            // filled in by build.py
+const AE_BUILD_TIME = '2026-09-28T11:35:51-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = '746f9ba';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';     // where installs update from
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 
@@ -252,7 +252,7 @@ const AE = (() => {
   }
 
   /*
-    Confirmation dialog in the portal's style (never window.confirm — native
+    Confirmation dialog in Portal's style (never window.confirm — native
     dialogs block the page). Resolves true only on the confirm button.
   */
   const CONFIRM_CSS = `
@@ -304,11 +304,11 @@ const AE = (() => {
   const on = (name, fn) => document.addEventListener('aethernet:' + name, (e) => fn(e.detail));
 
   /*
-    Shared cleaning data. Everything is read-only and scoped by the portal to
+    Shared cleaning data. Everything is read-only and scoped by Portal to
     the logged-in user's current store.
   */
   const data = (() => {
-    const OPEN_STATUS_IDS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 24, 26, 27]; // the portal's own "Active" set
+    const OPEN_STATUS_IDS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 24, 26, 27]; // Portal's own "Active" set
     const PAGE_SIZE = 100, PAGE_CAP = 10;
 
     async function listPage(primaryFilter, page) {
@@ -399,8 +399,8 @@ const AE = (() => {
     }
   }
 
-  // Poll a route/DOM check — the portal is a single-page app, so pages
-  // change without a load and the portal re-renders often.
+  // Poll a route/DOM check — Portal is a single-page app, so pages
+  // change without a load and Portal re-renders often.
   function every(ms, fn) {
     // Promise.resolve so async callbacks' rejections are caught too.
     const safe = () => Promise.resolve().then(fn).catch((e) => console.error('[' + AE_NAME + ']', e));
@@ -419,8 +419,8 @@ const AE = (() => {
 
 // ===== 05-settings.js =====
 /*
-  Settings: a "Aethernet settings" item in the portal's avatar menu (cloned
-  from the portal's own "View my account" item so it matches exactly), which
+  Settings: a "Aethernet settings" item in Portal's avatar menu (cloned
+  from Portal's own "View my account" item so it matches exactly), which
   opens a pop-out settings card. Also reachable from the Tampermonkey menu.
   Crystal on/off changes need a reload, so Save reloads the page.
 */
@@ -437,7 +437,7 @@ const AE = (() => {
     ['galaxy', 'Macrocosmos', 'Galaxy Diagnostics exception: pre-fills the Sprinklr exception form from a Samsung WO.'],
     ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
     ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
-    ['glamour', 'Glamour', 'Page theming: recolour the portal with a preset theme or one you make.'],
+    ['glamour', 'Glamour', 'Page theming: recolour Portal with a preset theme or one you make.'],
   ];
 
   /*
@@ -739,7 +739,7 @@ const AE = (() => {
     }).catch((e) => { who.replaceChildren(h('dt', null, 'Error'), h('dd', null, esc(e.message))); });
   }
 
-  // Add our item to the avatar menu whenever the portal renders it.
+  // Add our item to the avatar menu whenever Portal renders it.
   AE.every(400, () => {
     const logout = document.querySelector('[data-testid="option-logout"]');
     const model = document.querySelector('[data-testid="option-view-account"]');
@@ -751,7 +751,7 @@ const AE = (() => {
     item.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      // close the portal's menu the way a user would, then open ours
+      // close Portal's menu the way a user would, then open ours
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       open();
@@ -1113,7 +1113,7 @@ AE.crystal({
       const stale = state && state.status !== 'loading' && Date.now() - state.at > REFRESH_MS && !document.hidden;
       if (!state || state.woId !== woId) { if (loadingFor !== woId) load(woId); }
       else if (stale) { state.at = Date.now(); load(woId, true); }
-      render(); // the portal re-renders the header; put the pill back
+      render(); // Portal re-renders the header; put the pill back
     });
     AE.on('cleaning-changed', () => { const woId = currentWoId(); if (woId) load(woId, true); });
   },
@@ -1129,26 +1129,26 @@ AE.crystal({
     <the message>
 
   How (v2.3.2): the browser's own network log (PerformanceObserver) reports
-  every request the page makes, however the portal's code issues it. When a
+  every request the page makes, however Portal's code issues it. When a
   POST …/messages/v1/send shows up while a WO page is open, read that WO
   customer's message history (GET /api/messages/v1/customers/{id}, the same
   call the chat panel makes right after sending) and log each of *your*
   outbound messages from the last few minutes that isn't logged yet. Finding
   it in the history also confirms it actually went out. Never sends texts.
 
-  Why not wrap fetch (v2.3.0/2.3.1): the portal's messaging code keeps its
+  Why not wrap fetch (v2.3.0/2.3.1): Portal's messaging code keeps its
   own reference to fetch from load time, before any userscript runs, so a
   wrapper never saw the send (confirmed on Zen with a HAR, Sep 26 2026).
 
   The note is a regular (noteType 2) note tagged with the WO's current
-  status, using the portal's own status → tag map.
+  status, using Portal's own status → tag map.
 */
 AE.crystal({
   id: 'textNotes',
   name: 'Recitation',
   sites: ['portal.ubreakifix.net'],
   run() {
-    // The portal's status id → note tag map (from its ubif-util-store bundle).
+    // Portal's status id → note tag map (from its ubif-util-store bundle).
     const STATUS_TAG = {
       1: 'initial_checkin', 2: 'need_to_order', 3: 'awaiting_item', 4: 'awaiting_device', 5: 'awaiting_diagnostics',
       6: 'awaiting_partner_approval', 7: 'awaiting_callback', 8: 'ready_for_work', 9: 'diagnostics', 10: 'work_in_progress',
@@ -1203,7 +1203,7 @@ AE.crystal({
       if (!m) return; // texts sent outside a WO aren't logged
       if (busy) return busy; // several sends in a burst → one lookup
       busy = (async () => {
-        await AE.sleep(1200); // let the portal's own write land first
+        await AE.sleep(1200); // let Portal's own write land first
         try {
           let n = await logRecentTexts(m[1]);
           if (!n) { await AE.sleep(2500); n = await logRecentTexts(m[1]); } // history can lag a moment
@@ -1226,7 +1226,7 @@ AE.crystal({
 // ===== 20-auto-close.js =====
 /*
   Swiftcast (cleaning auto-close) — round purple ⚡ button in a cleaning arrival's
-  "Customer arrival" drawer. One click replays the portal's own API sequence
+  "Customer arrival" drawer. One click replays Portal's own API sequence
   (see the vault note "Cleaning WO Flow"):
 
     check-in    validate-imei → checkin/workorder → calculate-sla →
@@ -1444,7 +1444,7 @@ AE.crystal({
 
   A. Portal WO page: once a "GSPN No. ######" badge exists, shows a
      draggable, collapsible button. Click → gathers IMEI / device name /
-     GSPN ticket / WO number from the portal API, plus the technician,
+     GSPN ticket / WO number from Portal API, plus the technician,
      email and store from the logged-in user (overridable in settings),
      and opens the Sprinklr form in a new tab.
   B. Sprinklr form: picks up that handoff and fills every field, including
@@ -1530,7 +1530,7 @@ AE.crystal({
 
       async function collectData(woId) {
         const json = await AE.api('GET', '/api/workorder/' + woId);
-        if (!json || !json.workorder) throw new Error('the portal returned no work order data');
+        if (!json || !json.workorder) throw new Error('Portal returned no work order data');
         const wo = json.workorder;
         const device = wo.CustomerDevice || {};
         const attrs = (wo.PartnerJob || {}).PartnerJobAttributes || [];
@@ -1717,7 +1717,7 @@ AE.crystal({
   paced (settings → delay) so a DYMO LabelWriter keeps up. Print-only: it
   never receives or changes stock.
 
-  If the portal renames its hooks, update SEL_MENU_BTN / SEL_PRINT_OPT.
+  If Portal renames its hooks, update SEL_MENU_BTN / SEL_PRINT_OPT.
 */
 AE.crystal({
   id: 'printLabels',
@@ -1842,7 +1842,7 @@ AE.crystal({
         btn('Print ' + rows.length, 'sg-primary', () => runRows(serialRows(), ui)));
     }
 
-    // ---- button next to "Generate Labels", styled like the portal's ----
+    // ---- button next to "Generate Labels", styled like Portal's ----
     function injectButton() {
       const existing = document.getElementById('sg-print-all-btn');
       if (!RECEIVE_PATH_RE.test(location.pathname)) { existing?.remove(); return; }
@@ -1881,7 +1881,7 @@ AE.crystal({
   Crystallized Sep 26 2026 from the standalone "Select All - Buybacks" v1.1.1
   (Tampermonkey on Zen). Its buttons often didn't appear because its @match
   was only /boh/inventory/buyback-order/* — Tampermonkey injects on a real
-  page load and the portal is a single-page app, so arriving from any other
+  page load and Portal is a single-page app, so arriving from any other
   portal page meant the script never ran (removing + re-adding it forced a
   reinject). As a crystal it runs portal-wide and gates on the path itself.
 */
@@ -2132,7 +2132,7 @@ AE.glamour = (() => {
   const STYLE_ID = 'sg-glamour';
 
   const PRESETS = [
-    { id: 'portal', name: 'Portal', note: 'The portal as it ships' },
+    { id: 'portal', name: 'Portal', note: 'Portal as it ships' },
     { id: 'limsa', name: 'Limsa Lominsa', bg: '#f2f6fa', fg: '#122232', accent: '#1f6aa8' },
     { id: 'gridania', name: 'Gridania', bg: '#f3f6ef', fg: '#1a2618', accent: '#2f7a3b' },
     { id: 'crystarium', name: 'Crystarium', bg: '#f4f5fb', fg: '#1b1e30', accent: '#5b4fd6' },
@@ -2149,7 +2149,7 @@ AE.glamour = (() => {
   const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
   const validHex = (v) => /^#[0-9a-f]{6}$/i.test(v || '');
 
-  // Three colours -> the portal's surface/text/primary tokens.
+  // Three colours -> Portal's surface/text/primary tokens.
   function tokens({ bg, fg, accent }) {
     const dark = lum(bg) < 0.18;
     const onAccent = contrast(accent, '#ffffff') >= contrast(accent, '#0c0e11') ? '#ffffff' : '#0c0e11';
@@ -2183,19 +2183,54 @@ AE.glamour = (() => {
 
   const find = (cfg, id) => PRESETS.find((p) => p.id === id) || (cfg.custom || []).find((c) => c.id === id);
 
+  /*
+    Portal's light/dark mode is a class on <body> (asurion-light/asurion-dark),
+    and some of its styles hang off it rather than the tokens — e.g. the
+    ubreakifix logo is one dark PNG that dark mode turns white with a CSS
+    filter. So a dark theme also puts Portal in dark mode (and a light theme
+    in light mode), held with an observer in case Portal flips it back.
+    Portal's own choice is remembered and restored when Glamour lets go.
+  */
+  const MODES = ['asurion-dark', 'asurion-light'];
+  let observer = null, portalMode = null, want = null;
+  const modeOf = () => MODES.find((m) => document.body.classList.contains(m)) || null;
+  const setMode = (m) => { document.body.classList.remove(...MODES); if (m) document.body.classList.add(m); };
+  const watch = () => observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  function holdMode(next) {
+    if (!document.body) return;
+    if (!next) {
+      observer?.disconnect(); observer = null;
+      if (want) { want = null; setMode(portalMode); }
+      return;
+    }
+    if (!want) portalMode = modeOf();
+    want = next;
+    if (modeOf() !== want) setMode(want);
+    if (!observer) {
+      observer = new MutationObserver(() => {
+        const cur = modeOf();
+        if (!want || cur === want) return;
+        portalMode = cur; // Portal changed its mode (e.g. its own theme toggle)
+        observer.disconnect(); setMode(want); watch();
+      });
+      watch();
+    }
+  }
+
   // Apply a Glamour settings object ({ theme, custom }); unknown or 'portal' clears.
   function apply(cfg) {
     const t = cfg && find(cfg, cfg.theme);
     const el = document.getElementById(STYLE_ID);
-    if (!t || !t.bg || ![t.bg, t.fg, t.accent].every(validHex)) { el?.remove(); return; }
+    if (!t || !t.bg || ![t.bg, t.fg, t.accent].every(validHex)) { el?.remove(); holdMode(null); return; }
+    holdMode(lum(t.bg) < 0.18 ? 'asurion-dark' : 'asurion-light');
     const vars = Object.entries(tokens(t)).map(([k, v]) => '--aui-' + k + ':' + v + ' !important;').join('');
-    // The portal sets its tokens on :root and on .asurion-light/.asurion-dark
+    // Portal sets its tokens on :root and on .asurion-light/.asurion-dark
     // (the <body> class), so override on all three.
     const css = ':root, .asurion-light, .asurion-dark, .partner-light, .partner-dark {' + vars + '}'
       + 'body { background:var(--aui-sub-surface) !important; color-scheme:' + (lum(t.bg) < 0.18 ? 'dark' : 'light') + '; }';
     const style = el || h('style', { id: STYLE_ID });
     style.textContent = css;
-    document.head.append(style); // (re)append so it stays after the portal's own sheets
+    document.head.append(style); // (re)append so it stays after Portal's own sheets
   }
 
   // The Settings editor (nested under the crystal). `s` is Settings' working copy.
