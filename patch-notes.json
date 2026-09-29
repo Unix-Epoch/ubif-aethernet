@@ -5,7 +5,8 @@
       "Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.",
       "The installed file is minified. **About** links to the readable source (the same build, unminified).",
       "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."
-    ]
+    ],
+    "date": "2026-09-29T23:28:58Z"
   },
   {
     "version": "2.11.0",
