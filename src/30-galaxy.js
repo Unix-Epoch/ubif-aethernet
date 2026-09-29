@@ -70,11 +70,14 @@ AE.crystal({
         dragState.wrap.style.right = Math.max(0, dragState.startRight - (e.clientX - dragState.startX)) + 'px';
         dragState.wrap.style.bottom = Math.max(0, dragState.startBottom - (e.clientY - dragState.startY)) + 'px';
         dragState.moved = true;
+        dragState.wrap.classList.add('dragging');
+        placeIntro();
       });
       window.addEventListener('mouseup', () => {
         if (!dragState) return;
         savePos(clampToViewport(dragState.wrap));
         // Only the click belonging to this mouseup is swallowed.
+        dragState.wrap.classList.remove('dragging');
         if (dragState.moved) { suppressNextClick = true; setTimeout(() => { suppressNextClick = false; }, 0); }
         dragState = null;
       });
@@ -130,15 +133,62 @@ AE.crystal({
       #sg-galaxy-btn:disabled img { filter:brightness(.45) saturate(.6); }
       #sg-galaxy-btn .sg-spin { position:absolute; left:50%; top:50%; width:22px; height:22px; margin:-11px 0 0 -11px; border-width:3px; display:none; }
       #sg-galaxy-btn:disabled .sg-spin { display:block; }
+      /* It's a macro, so it wears the hotbar's macro gear and shows its "macro name" on hover. */
+      #sg-galaxy-btn .gear { position:absolute; left:-4px; top:-4px; width:16px; height:16px; pointer-events:none;
+        filter:drop-shadow(0 1px 1px rgba(0,0,0,.8)); }
+      #sg-galaxy-btn .mname { position:absolute; left:50%; bottom:calc(100% + 10px); transform:translate(-50%, 4px); opacity:0; pointer-events:none;
+        padding:5px 10px 4px; border-radius:6px; white-space:nowrap; transition:opacity .12s, transform .12s;
+        background:linear-gradient(#3b3b3b, #1e1e1e); border:1px solid #6b6154; box-shadow:0 0 0 1px #000, 0 4px 12px rgba(0,0,0,.45);
+        color:#f2ecdf; text-shadow:0 1px 1px #000; font:400 15px/1.2 "Myriad Pro", Myriad, "Meiryo UI", Meiryo, "Segoe UI", sans-serif; letter-spacing:.01em; }
+      #sg-galaxy-btn:hover .mname, #sg-galaxy-btn:focus-visible .mname { opacity:1; transform:translate(-50%, 0); }
+      #sg-galaxy-btn.dragging .mname, #sg-galaxy-btn.intro .mname { opacity:0; } /* the explainer sits where the name would */
+      /* First-time explainer, pointing at the button */
+      #sg-galaxy-intro { position:fixed; z-index:2147483646; width:300px; padding:16px 16px 14px; font-size:14px; line-height:1.45; animation:sg-in .2s ease-out; }
+      #sg-galaxy-intro .ae { position:absolute; top:10px; right:10px; color:var(--aui-primary, #8223d2); line-height:0; }
+      #sg-galaxy-intro b { display:block; margin:0 28px 6px 0; font-size:15px; }
+      #sg-galaxy-intro a { color:var(--aui-primary, #8223d2); font-weight:700; cursor:pointer; text-decoration:underline; }
+      #sg-galaxy-intro .sg-actions { margin-top:12px; justify-content:flex-end; }
+      #sg-galaxy-intro .sg-actions .sg-btn { flex:none; }
+      #sg-galaxy-intro .tail { position:absolute; width:14px; height:14px; background:inherit; border:inherit; border-width:0 1px 1px 0; transform:rotate(45deg); }
       `;
+      const INTRO_KEY = 'ae_galaxy_intro_seen';
+      // Place the explainer beside the button (above it if there's room, else below), tail pointing at it.
+      function placeIntro() {
+        const pop = document.getElementById('sg-galaxy-intro'), btn = document.getElementById('sg-galaxy-btn');
+        if (!pop || !btn) return;
+        const b = btn.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight, gap = 14;
+        const above = b.top - ph - gap >= 8;
+        const left = Math.min(Math.max(8, b.left + b.width / 2 - pw + 40), innerWidth - pw - 8);
+        pop.style.left = left + 'px';
+        pop.style.top = (above ? b.top - ph - gap : b.bottom + gap) + 'px';
+        const tail = pop.querySelector('.tail');
+        tail.style.left = Math.min(Math.max(12, b.left + b.width / 2 - left - 7), pw - 26) + 'px';
+        tail.style.top = above ? (ph - 8) + 'px' : '-8px';
+        tail.style.transform = above ? 'rotate(45deg)' : 'rotate(225deg)';
+      }
+      function dismissIntro() { GM_setValue(INTRO_KEY, true); document.getElementById('sg-galaxy-intro')?.remove(); document.getElementById('sg-galaxy-btn')?.classList.remove('intro'); }
+      function showIntro() {
+        if (GM_getValue(INTRO_KEY, false) || document.getElementById('sg-galaxy-intro')) return;
+        const link = h('a', { role: 'button', tabindex: '0', onclick: () => { dismissIntro(); AE.openSettings('galaxy'); } }, 'click here');
+        const pop = h('div', { id: 'sg-galaxy-intro', class: 'sg sg-card', role: 'dialog', 'aria-label': 'About the Macrocosmos button' },
+          h('span', { class: 'ae', title: AE_NAME, html: icon('aetheryte', 22) }),
+          h('b', null, 'Macrocosmos'),
+          h('div', null, 'Click this button to automatically file the Galaxy Diagnostics exception for this device. If you need to change the values used in the form, ', link, ' to change them.'),
+          h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: dismissIntro }, 'Got it')),
+          h('span', { class: 'tail' }));
+        document.body.appendChild(pop);
+        document.getElementById('sg-galaxy-btn')?.classList.add('intro');
+        placeIntro();
+      }
+      window.addEventListener('resize', placeIntro);
       function makeButton() {
         if (!document.getElementById('sg-galaxy-css')) document.head.append(h('style', { id: 'sg-galaxy-css' }, BTN_CSS));
         const pos = loadPos();
         const main = h('button', { type: 'button', id: 'sg-galaxy-btn', class: 'sg',
-          title: 'Macrocosmos: file a Galaxy Diagnostics exception for this WO (drag to move)',
-          'aria-label': 'File Galaxy Diagnostics exception',
+          'aria-label': 'GD Exception: file the Galaxy Diagnostics exception for this WO',
           style: 'right:' + pos.right + 'px;bottom:' + pos.bottom + 'px',
-          html: AE.actionIcon('galaxy', 56) + '<span class="sg-spin"></span>' });
+          html: AE.actionIcon('galaxy', 56) + '<img class="gear" src="' + AE.asset('ui/macro-gear') + '" alt="">'
+            + '<span class="mname">GD Exception</span><span class="sg-spin"></span>' });
         const wrap = main; // drag + clamp act on the button itself
         main.addEventListener('mousedown', (e) => {
           if (e.button !== 0) return;
@@ -148,6 +198,7 @@ AE.crystal({
         });
         main.onclick = async () => {
           if (suppressNextClick) { suppressNextClick = false; return; }
+          dismissIntro(); // using it counts as having read it
           const woId = currentWoId();
           if (!woId) return;
           main.disabled = true;
@@ -172,15 +223,16 @@ AE.crystal({
         };
         document.body.appendChild(wrap);
         savePos(clampToViewport(wrap));
+        showIntro();
       }
 
       AE.every(1000, () => {
         const woId = currentWoId();
         const existing = document.getElementById('sg-galaxy-btn');
-        if (!woId) { existing?.remove(); injectedForWoId = null; return; }
+        if (!woId) { existing?.remove(); document.getElementById('sg-galaxy-intro')?.remove(); injectedForWoId = null; return; }
         const ticket = gspnTicketOnPage();
         if (ticket && (injectedForWoId !== woId || !existing)) { existing?.remove(); makeButton(); injectedForWoId = woId; }
-        else if (!ticket && existing) { existing.remove(); injectedForWoId = null; }
+        else if (!ticket && existing) { existing.remove(); document.getElementById('sg-galaxy-intro')?.remove(); injectedForWoId = null; }
       });
     }
 

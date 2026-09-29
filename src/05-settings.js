@@ -191,7 +191,9 @@
     document.body.appendChild(scrim);
   }
 
-  function open() {
+  // open('galaxy') opens straight to that crystal, with its settings expanded.
+  function open(focus) {
+    if (typeof focus !== 'string') focus = null; // menu commands pass an event
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
     document.getElementById('sg-settings')?.remove();
@@ -207,6 +209,7 @@
     // preference, not a setting — it isn't part of Save).
     const SECTIONS_KEY = 'ae_settings_sections';
     const openState = GM_getValue(SECTIONS_KEY, {});
+    if (focus) { openState.crystals = true; openState['opt_' + focus] = true; }
     const sums = [];
     const section = (id, title, defaultOpen, summary, ...kids) => {
       const isOpen = id in openState ? openState[id] : defaultOpen;
@@ -272,7 +275,7 @@
         sums.push(paintSum);
         paintSum();
       }
-      return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : '') },
+      return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : ''), 'data-crystal': id },
         h('div', { class: 'sg-row' },
           h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : null),
             h('span', { class: 'sg-soft' }, desc), optToggle ? h('div', null, optToggle) : null),
@@ -311,6 +314,7 @@
     document.body.appendChild(scrim);
     document.addEventListener('keydown', onKey);
     document.getElementById('sg-update-pill')?.remove();
+    if (focus) requestAnimationFrame(() => sheet.querySelector('[data-crystal="' + focus + '"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
 
     AE.profile().then((p) => {
       const loc = p.storeId ? p.storeId + ' ' + p.storeName : '';

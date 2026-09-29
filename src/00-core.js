@@ -155,7 +155,8 @@ const AE = (() => {
   }
 
   // Minimal element builder: h('div', {class:'x', onclick}, child, 'text')
-  // Each crystal's FFXIV action icon (embedded by build.py from assets/icons/).
+  // Each crystal's FFXIV action icon, plus a few FFXIV UI pieces under "ui/<name>"
+  // (embedded by build.py from assets/icons/ and assets/ui/).
   const ACTION_ICONS = __ACTION_ICONS__;
   const actionIcon = (id, size = 24, extra = '') => ACTION_ICONS[id]
     ? '<img class="sg-aicon" src="' + ACTION_ICONS[id] + '" width="' + size + '" height="' + size + '" alt="" draggable="false"' + (extra ? ' ' + extra : '') + '>'
@@ -396,7 +397,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
-    api, unwrap, Stopped, profile, sleep, esc, h, icon, actionIcon, wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     confirm: confirmDialog, toast, emit, on, data,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close crystal when it's enabled

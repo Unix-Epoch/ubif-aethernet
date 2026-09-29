@@ -25,7 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "2.9.0"
+VERSION = "2.9.1"
 
 # Secret Gist that hosts the published script (account: Unix-Epoch).
 # The raw URL has no commit hash, so it always serves the latest revision.
@@ -67,6 +67,9 @@ def action_icons(root: Path) -> str:
         f.stem: "data:image/jpeg;base64," + base64.b64encode(f.read_bytes()).decode()
         for f in sorted((root / "assets" / "icons").glob("*.jpg"))
     }
+    # FFXIV UI pieces (e.g. the hotbar macro gear), keyed "ui/<name>"
+    for f in sorted((root / "assets" / "ui").glob("*.png")):
+        icons["ui/" + f.stem] = "data:image/png;base64," + base64.b64encode(f.read_bytes()).decode()
     return json.dumps(icons)
 
 
@@ -76,7 +79,8 @@ def build(root: Path) -> Path:
         "__BUILD_TIME__": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "__BUILD_COMMIT__": git_commit(root),
         "__INSTALL_URL__": RAW_URL,
-        # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), as data URIs
+        # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), plus
+        # UI pieces (assets/ui/*.png), as data URIs
         "__ACTION_ICONS__": action_icons(root),
     }
     parts = [HEADER, "(function aethernet() {\n'use strict';\n"]
