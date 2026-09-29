@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.10.0
+// @version      2.11.0
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -35,9 +35,9 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.10.0';            // filled in by build.py
-const AE_BUILD_TIME = '2026-09-29T12:18:34-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = 'd47fcfa';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_VERSION = '2.11.0';            // filled in by build.py
+const AE_BUILD_TIME = '2026-09-29T15:10:53-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = '13a047a';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';     // where installs update from
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 
@@ -403,6 +403,8 @@ const AE = (() => {
     for (const t of crystals) {
       if (!settings.crystals[t.id]) continue;
       if (t.sites && !t.sites.includes(location.hostname)) continue;
+      // Paused remotely by an Aethernet notice (status.json); last-known copy.
+      if (AE.status && AE.status.paused(t.id)) { console.info('[' + AE_NAME + '] ' + t.name + ' is paused by an Aethernet notice'); continue; }
       try { t.run(); } catch (e) { console.error('[' + AE_NAME + '] ' + t.name + ' failed to start', e); }
     }
   }
@@ -423,6 +425,227 @@ const AE = (() => {
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close crystal when it's enabled
   };
+})();
+
+// ===== 02-status.js =====
+/*
+  Status — live word from the Aethernet team, without waiting for a release.
+
+  Reads status.json from the same Gist as the script (plain fetch: the Gist
+  sends Access-Control-Allow-Origin: *, so no new Tampermonkey permission):
+
+    {
+      "latest":   { "version": "2.11.0", "date": "…" },        // set by build.py --release
+      "incident": {                                          // set by build.py --status …
+        "id", "severity": "info|warning|error", "title", "message",
+        "crystals": ["cleaningRate"],   // which crystals it's about (badges in Settings)
+        "pause": ["autoClose"],         // kill switch: these crystals stop acting
+        "fixedIn": "2.10.1",            // installs at/after this version stop showing it
+        "posted", "updated"
+      }
+    }
+
+  - Checked on load and every 10 minutes; the last good copy is kept, so a
+    GitHub outage never shows anything new (and never an error).
+  - Everything in the file is untrusted data: plain text only (no HTML, no
+    links), length-capped, crystal ids validated. At worst a bad file shows a
+    message or pauses crystals; it can't run anything or turn anything on.
+  - `latest` drives the "update available" pill and Check for updates. An
+    update is one click: the install link opens Tampermonkey's own Update page.
+*/
+AE.status = (() => {
+  const { h, icon } = AE;
+  const STATUS_URL = AE_INSTALL_URL.replace(/[^/]+$/, 'status.json');
+  const CACHE_KEY = 'ae_status', DISMISS_KEY = 'ae_status_dismissed', UPDATE_DISMISS_KEY = 'ae_update_dismissed';
+  const POLL_MS = 10 * 60 * 1000;
+  const SEVERITIES = ['info', 'warning', 'error'];
+  const VER_RE = /^\d+(\.\d+){0,2}$/;
+
+  const verTuple = (v) => String(v || '0').split('.').map(Number);
+  const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+  const text = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+  const ids = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && /^[A-Za-z]{1,30}$/.test(x)).slice(0, 12) : []);
+
+  function clean(raw) {
+    const out = { latest: null, incident: null };
+    if (!raw || typeof raw !== 'object') return out;
+    const l = raw.latest;
+    if (l && VER_RE.test(l.version || '')) out.latest = { version: l.version, date: text(l.date, 40) };
+    const i = raw.incident;
+    if (i && typeof i === 'object' && text(i.title, 140)) {
+      out.incident = {
+        id: text(i.id, 80) || text(i.title, 80),
+        severity: SEVERITIES.includes(i.severity) ? i.severity : 'warning',
+        title: text(i.title, 140),
+        message: text(i.message, 700),
+        crystals: ids(i.crystals),
+        pause: ids(i.pause),
+        fixedIn: VER_RE.test(i.fixedIn || '') ? i.fixedIn : null,
+        updated: text(i.updated || i.posted, 40),
+      };
+    }
+    return out;
+  }
+
+  let state = clean(GM_getValue(CACHE_KEY, null));
+
+  // An incident stops applying to installs at or past its fixedIn version.
+  const incident = () => {
+    const i = state.incident;
+    return i && !(i.fixedIn && !newer(i.fixedIn, AE_VERSION)) ? i : null;
+  };
+  const paused = (id) => !!incident() && incident().pause.includes(id);
+  const crystalName = (id) => (AE.crystals.find((c) => c.id === id) || {}).name || id;
+
+  // For a crystal's action: true (and says why) when it's paused remotely.
+  function blocked(id) {
+    if (!paused(id)) return false;
+    AE.toast(crystalName(id) + ' is paused', incident().title + ' — the Aethernet team has paused it until it\'s fixed.', 'err', 9000);
+    return true;
+  }
+
+  async function refresh(fresh) {
+    // Cache-bust per minute normally, per call when asked (Check for updates).
+    const bust = fresh ? Date.now() : Math.floor(Date.now() / 60000);
+    const res = await fetch(STATUS_URL + '?t=' + bust, { cache: 'no-store', credentials: 'omit' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const next = clean(await res.json());
+    GM_setValue(CACHE_KEY, next);
+    state = next;
+    render();
+    return state;
+  }
+
+  // ------------------------------------------------------------ updates
+  const updateAvailable = () => (state.latest && newer(state.latest.version, AE_VERSION) ? state.latest.version : null);
+
+  function startUpdate(version) {
+    // Tampermonkey (and Violentmonkey) catch a .user.js link and show their own Update page.
+    window.open(AE_INSTALL_URL, '_blank');
+    AE.toast('Updating ' + AE_NAME, 'In the tab that just opened, click Update' + (version ? ' (v' + version + ')' : '') + ', then reload Portal.', 'ok', 20000);
+  }
+
+  // Settings → Check for updates.
+  async function checkNow() {
+    const busy = AE.toast('Checking for updates…', '', 'busy');
+    try { await refresh(true); } catch (e) {
+      busy.remove();
+      AE.toast("Couldn't check for updates", 'GitHub didn\'t answer (' + (e.message || e) + '). Try again in a minute.', 'err');
+      return;
+    }
+    busy.remove();
+    const v = updateAvailable();
+    if (!v) { AE.toast("You're up to date", AE_NAME + ' v' + AE_VERSION + ' is the latest.', 'ok'); return; }
+    const ok = await AE.confirm({
+      title: 'Update available',
+      message: AE_NAME + ' <b>v' + AE.esc(v) + '</b> is out (you have v' + AE.esc(AE_VERSION) + ').'
+        + '<div class="sg-soft" style="margin-top:6px">Tampermonkey opens in a new tab: click <b>Update</b> there, then reload Portal.</div>',
+      confirmLabel: 'Update now',
+      cancelLabel: 'Later',
+    });
+    if (ok) startUpdate(v);
+  }
+
+  // ------------------------------------------------------------ UI
+  const CSS = `
+  #sg-status-banner { position:fixed; z-index:2147483644; left:50%; transform:translateX(-50%); width:min(760px, calc(100vw - 32px));
+    display:flex; gap:12px; align-items:flex-start; padding:12px 12px 12px 14px; border-radius:12px; font-size:14px; line-height:1.45;
+    border:1px solid var(--st-edge); border-left:5px solid var(--st-edge); background:var(--st-bg); color:var(--st-fg);
+    box-shadow:0 8px 28px rgba(12,14,17,.18); animation:sg-in .2s ease-out; }
+  #sg-status-banner.info { --st-bg:var(--aui-primary-soft, #faecff); --st-fg:var(--aui-on-primary-soft, #590099); --st-edge:var(--aui-primary, #8223d2); }
+  #sg-status-banner.warning { --st-bg:var(--aui-status-warning-soft, #fff0c0); --st-fg:var(--aui-status-on-warning-soft, #3a3000); --st-edge:var(--aui-status-warning, #e7c500); }
+  #sg-status-banner.error { --st-bg:var(--aui-status-error-soft, #ffdad7); --st-fg:var(--aui-status-on-error-soft, #410004); --st-edge:var(--aui-status-error, #b91a24); }
+  #sg-status-banner .mark { flex:none; line-height:0; color:var(--st-edge); margin-top:1px; }
+  #sg-status-banner .body { flex:1; min-width:0; }
+  #sg-status-banner .title { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-weight:700; }
+  #sg-status-banner .title .sg-aicon { width:18px; height:18px; }
+  #sg-status-banner .who { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; opacity:.75; }
+  #sg-status-banner .msg { margin-top:2px; overflow-wrap:anywhere; }
+  #sg-status-banner .extra { margin-top:6px; font-size:13px; font-weight:600; }
+  #sg-status-banner .acts { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  #sg-status-banner .acts .sg-btn { height:28px; padding:0 12px; font-size:13px; border-color:currentColor; color:inherit; }
+  #sg-status-banner .sg-x { color:inherit; opacity:.7; }
+  #sg-status-banner .sg-x:hover { opacity:1; }
+  .sg-avail-pill { position:fixed; z-index:2147483645; left:50%; bottom:20px; transform:translateX(-50%); display:inline-flex; align-items:center; gap:10px;
+    height:40px; padding:0 6px 0 14px; border-radius:10000rem; background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e);
+    border:1px solid var(--aui-outline, #c6c6ca); box-shadow:0 8px 28px rgba(12,14,17,.22); font:600 14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    white-space:nowrap; animation:sg-in .25s ease-out; }
+  .sg-avail-pill .mark { line-height:0; color:var(--aui-primary, #8223d2); }
+  .sg-avail-pill .sg-btn { height:28px; padding:0 12px; font-size:13px; }
+  .sg-avail-pill .sg-x { font-size:16px; }
+  `;
+  const ensureCss = () => { AE.ensureCss(); if (!document.getElementById('sg-status-css')) document.head.append(h('style', { id: 'sg-status-css' }, CSS)); };
+
+  // Just under Portal's header, wherever it ends.
+  function placeBanner() {
+    const el = document.getElementById('sg-status-banner');
+    if (!el) return;
+    const header = document.querySelector('.components-header');
+    const top = header ? Math.max(0, header.getBoundingClientRect().bottom) : 0;
+    el.style.top = Math.round(top + 10) + 'px';
+  }
+
+  function renderBanner() {
+    const inc = incident();
+    const key = inc && inc.id + '|' + inc.updated;
+    let el = document.getElementById('sg-status-banner');
+    if (!inc || GM_getValue(DISMISS_KEY, '') === key) { el?.remove(); return; }
+    if (el && el.dataset.key === key) return;
+    el?.remove();
+    ensureCss();
+    const pausedNames = inc.pause.map(crystalName);
+    const upd = updateAvailable();
+    el = h('div', { id: 'sg-status-banner', class: 'sg ' + inc.severity, role: inc.severity === 'error' ? 'alert' : 'status', 'data-key': key },
+      h('span', { class: 'mark', title: AE_NAME, html: icon('aetheryte', 26) }),
+      h('div', { class: 'body' },
+        h('div', { class: 'title' }, h('span', { class: 'who' }, AE_NAME + ' notice'),
+          inc.crystals.map((id) => h('span', { title: crystalName(id), html: AE.actionIcon(id, 18) })), h('span', null, inc.title)),
+        inc.message ? h('div', { class: 'msg' }, inc.message) : null,
+        pausedNames.length ? h('div', { class: 'extra' }, 'Paused until it\'s fixed: ' + pausedNames.join(', ') + '.') : null,
+        inc.fixedIn ? h('div', { class: 'extra' }, 'Fixed in v' + inc.fixedIn + '. You have v' + AE_VERSION + '.') : null,
+        h('div', { class: 'acts' },
+          inc.fixedIn && upd ? h('button', { type: 'button', class: 'sg-btn', onclick: () => startUpdate(upd) }, 'Update now') : null,
+          inc.crystals.length ? h('button', { type: 'button', class: 'sg-btn', onclick: () => AE.openSettings(inc.crystals[0]) }, 'Open in Settings') : null)),
+      h('button', { type: 'button', class: 'sg-x', title: 'Dismiss (it comes back if the notice is updated)', onclick: () => { GM_setValue(DISMISS_KEY, key); el.remove(); } }, '✕'));
+    document.body.appendChild(el);
+    placeBanner();
+  }
+
+  function renderUpdatePill() {
+    const v = updateAvailable();
+    let el = document.getElementById('sg-avail-pill');
+    const hide = !v || GM_getValue(UPDATE_DISMISS_KEY, '') === v || document.getElementById('sg-update-pill');
+    if (hide) { el?.remove(); return; }
+    if (el && el.dataset.v === v) return;
+    el?.remove();
+    ensureCss();
+    el = h('div', { id: 'sg-avail-pill', class: 'sg sg-avail-pill', role: 'status', 'data-v': v },
+      h('span', { class: 'mark', html: icon('aetheryte', 20) }), AE_NAME + ' v' + v + ' is available',
+      h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => { el.remove(); startUpdate(v); } }, 'Update'),
+      h('button', { type: 'button', class: 'sg-x', title: 'Not now', onclick: () => { GM_setValue(UPDATE_DISMISS_KEY, v); el.remove(); } }, '✕'));
+    document.body.appendChild(el);
+  }
+
+  function render() {
+    if (!AE_ON_PORTAL || !document.body) return;
+    renderBanner();
+    renderUpdatePill();
+    AE.emit('status-changed', state);
+  }
+
+  if (AE_ON_PORTAL) {
+    // After every module has loaded (crystal names, Settings), paint the cached
+    // copy right away, then fetch a fresh one and keep polling.
+    setTimeout(() => {
+      render();
+      const poll = () => refresh(false).catch((e) => console.warn('[' + AE_NAME + '] status check failed:', e.message || e));
+      poll();
+      setInterval(poll, POLL_MS);
+      AE.every(1500, placeBanner); // Portal's header can change height
+    }, 0);
+  }
+
+  return { get: () => state, incident, paused, blocked, refresh, checkNow, startUpdate, updateAvailable, newer, url: STATUS_URL };
 })();
 
 // ===== 05-settings.js =====
@@ -574,6 +797,9 @@ const AE = (() => {
     background-size:250% 100%; box-shadow:inset 0 0 0 1px rgba(214,160,0,.55); animation:sg-sheen 2.6s ease-in-out infinite; }
   .sg-crystal.sg-new + .sg-crystal { border-top-color:transparent; }
   @keyframes sg-sheen { 0% { background-position:100% 0; } 60%,100% { background-position:0% 0; } }
+  .sg-issue-tag { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:10000rem; vertical-align:2px; font-size:11px; font-weight:700;
+    letter-spacing:.03em; text-transform:uppercase; background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
+  .sg-issue-tag.paused, .sg-issue-tag.error { background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); }
   .sg-new-tag { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:10000rem; vertical-align:2px;
     background:#ffcc00; color:#3d2e00; font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
   /* "Aethernet has updated!" pill */
@@ -642,7 +868,7 @@ const AE = (() => {
   // Patch notes — its own modal, above Settings. Every release is a panel,
   // newest first. `since` (the version you updated from) expands everything
   // newer than it; otherwise just the latest is open.
-  const PATCH_NOTES = [{"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
+  const PATCH_NOTES = [{"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
   const verTuple = (v) => String(v || '0').split('.').map(Number);
   const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
@@ -738,6 +964,14 @@ const AE = (() => {
       printLabels: [() => s.printLabels.delayMs + ' ms between labels',
         input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
     };
+    // A live Aethernet notice about this crystal (status.json): say so on its row.
+    const issueTag = (id) => {
+      const inc = AE.status.incident();
+      if (!inc) return null;
+      if (inc.pause.includes(id)) return h('span', { class: 'sg-issue-tag paused', title: inc.title }, 'Paused');
+      if (inc.crystals.includes(id)) return h('span', { class: 'sg-issue-tag ' + inc.severity, title: inc.title }, 'Known issue');
+      return null;
+    };
     const CHEV = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
     const crystalRow = (id, name, desc) => {
       const fresh = isNew(id);
@@ -763,7 +997,8 @@ const AE = (() => {
       }
       return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : ''), 'data-crystal': id },
         h('div', { class: 'sg-row' },
-          h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : null),
+          h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : null,
+              issueTag(id)),
             h('span', { class: 'sg-soft' }, desc), optToggle ? h('div', null, optToggle) : null),
           toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); })),
         optBody);
@@ -784,6 +1019,7 @@ const AE = (() => {
         h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => crystalRow(id, name, desc)))),
 
       h('div', { class: 'sg-foot-links' },
+        h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.status.checkNow() }, 'Check for updates'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: () => openPatchNotes() }, 'Patch notes'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…')),
 
@@ -1245,6 +1481,7 @@ AE.crystal({
     let busy = null;
 
     async function logRecentTexts(woId) {
+      if (AE.status.blocked('textNotes')) return; // paused: the text went out, but no note is added
       const [prof, woRes, cust] = await Promise.all([
         AE.profile(),
         AE.api('GET', '/api/workorder/' + woId),
@@ -1437,7 +1674,7 @@ AE.crystal({
     const woLink = (id) => '<a href="/repair/workorder/' + id + '">WO ' + id + '</a>';
 
     async function onClick(arrivalId) {
-      if (running) return;
+      if (running || AE.status.blocked('autoClose')) return;
       running = true; stopRequested = false;
       const panel = AE.progressPanel('Swiftcast · cleaning auto-close');
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
@@ -1467,6 +1704,7 @@ AE.crystal({
     AE.autoClose = {
       isRunning: () => running,
       async confirmAndRun({ arrivalId, programId, customerName }) {
+        if (AE.status.blocked('autoClose')) return;
         if (running) { AE.confirm({ title: 'Already running', message: 'Another cleaning is being closed out — wait for it to finish.', confirmLabel: 'OK' }); return; }
         const ok = await AE.confirm({
           title: 'Create this cleaning?',
@@ -1718,6 +1956,7 @@ AE.crystal({
         main.onclick = async () => {
           if (suppressNextClick) { suppressNextClick = false; return; }
           dismissIntro(); // using it counts as having read it
+          if (AE.status.blocked('galaxy')) return;
           const woId = currentWoId();
           if (!woId) return;
           main.disabled = true;
@@ -1956,6 +2195,7 @@ AE.crystal({
     function newUi() { return { panel: AE.progressPanel('Quick Synthesis · print all labels', { clock: false }), running: false, stop: false }; }
 
     async function onClickPrintAll() {
+      if (AE.status.blocked('printLabels')) return;
       if (active && active.panel.el.isConnected) { active.panel.flash(); return; }
       const ui = active = newUi();
       ui.panel.body.textContent = 'Expanding line items…';
@@ -2179,6 +2419,7 @@ AE.crystal({
 
     // ---------- the run ----------
     async function addAll(key) {
+      if (AE.status.blocked('buybacks')) return;
       if (state.running) return;
       const g = GROUPS[key];
       state.running = true; state.cancel = false;

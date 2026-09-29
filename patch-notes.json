@@ -6,7 +6,8 @@
       "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.",
       "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.",
       "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."
-    ]
+    ],
+    "date": "2026-09-29T19:10:53Z"
   },
   {
     "version": "2.10.0",
