@@ -5,7 +5,8 @@
       "New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.",
       "Each store has its own tag list with colours, set in Settings → Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.",
       "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."
-    ]
+    ],
+    "date": "2026-09-29T23:53:08Z"
   },
   {
     "version": "2.12.0",
