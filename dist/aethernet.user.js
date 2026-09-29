@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.9.1
+// @version      2.10.0
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -35,9 +35,9 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.9.1';            // filled in by build.py
-const AE_BUILD_TIME = '2026-09-29T11:38:01-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = 'a59bb43';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_VERSION = '2.10.0';            // filled in by build.py
+const AE_BUILD_TIME = '2026-09-29T12:18:34-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = 'd47fcfa';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';     // where installs update from
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 
@@ -476,6 +476,26 @@ const AE = (() => {
   .sg-about-link { display:block; margin:20px auto 4px; padding:6px 10px; border:0; background:none; cursor:pointer;
     color:var(--aui-on-surface-soft, #5d5e61); font:400 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-decoration:underline; }
   .sg-about-link:hover { color:var(--aui-primary, #8223d2); }
+  .sg-foot-links { display:flex; justify-content:center; gap:4px; margin:20px auto 4px; }
+  .sg-foot-links .sg-about-link { margin:0; }
+  /* Patch notes */
+  .sg-notes { width:min(520px, 100%); max-height:calc(100vh - 32px); display:flex; flex-direction:column; padding:22px 20px 16px; font-size:14px; line-height:1.45; }
+  .sg-notes .head { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .sg-notes .head h2 { flex:1; margin:0; font-size:20px; font-weight:700; }
+  .sg-notes .list { overflow:auto; margin:0 -4px; padding:0 4px; }
+  .sg-patch { border:1px solid var(--aui-outline-soft, #eeedf1); border-radius:12px; margin-bottom:8px; background:var(--aui-surface, #fff); }
+  .sg-patch > summary { display:flex; align-items:center; gap:10px; padding:10px 12px; cursor:pointer; list-style:none; border-radius:12px; }
+  .sg-patch > summary::-webkit-details-marker { display:none; }
+  .sg-patch > summary:focus-visible { outline:2px solid var(--aui-primary, #8223d2); outline-offset:1px; }
+  .sg-patch > summary .chev { width:16px; height:16px; flex:none; color:var(--aui-on-surface-soft, #5d5e61); transform:rotate(-90deg); transition:transform .2s; }
+  .sg-patch[open] > summary .chev { transform:none; }
+  .sg-patch .ver { font-weight:700; }
+  .sg-patch .when { flex:1; text-align:right; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-patch .tag { padding:1px 7px; border-radius:10000rem; font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase;
+    background:var(--aui-primary-soft, #faecff); color:var(--aui-on-primary-soft, #590099); }
+  .sg-patch .tag.new { background:#ffcc00; color:#3d2e00; }
+  .sg-patch ul { margin:0; padding:0 14px 12px 40px; }
+  .sg-patch li { margin:4px 0; }
   .sg-about-scrim { position:fixed; inset:0; z-index:2147483647; background:var(--aui-scrim-overlay, #0c0e1180);
     display:flex; align-items:center; justify-content:center; padding:16px; animation: sg-in .15s ease-out; }
   .sg-about { width:min(460px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:28px 24px 20px; font-size:14px; line-height:1.45; }
@@ -619,6 +639,44 @@ const AE = (() => {
     document.body.appendChild(scrim);
   }
 
+  // Patch notes — its own modal, above Settings. Every release is a panel,
+  // newest first. `since` (the version you updated from) expands everything
+  // newer than it; otherwise just the latest is open.
+  const PATCH_NOTES = [{"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
+  const verTuple = (v) => String(v || '0').split('.').map(Number);
+  const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+  const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
+  function openPatchNotes(since) {
+    AE.ensureCss();
+    if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
+    document.getElementById('sg-notes')?.remove();
+    const CHEV_SVG = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
+    const panels = PATCH_NOTES.map((n, i) => {
+      const d = n.date ? new Date(n.date) : null;
+      const when = d && !isNaN(d) ? d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Not released yet';
+      const isNew = since && newer(n.version, since);
+      const panel = h('details', { class: 'sg-patch' },
+        h('summary', null, h('span', { html: CHEV_SVG }), h('span', { class: 'ver' }, 'v' + n.version),
+          n.version === AE_VERSION ? h('span', { class: 'tag' }, 'Installed') : null,
+          isNew ? h('span', { class: 'tag new' }, 'New') : null,
+          h('span', { class: 'when' }, when)),
+        h('ul', null, n.notes.map((t) => h('li', { html: noteHtml(t) }))));
+      panel.open = since ? isNew : i === 0;
+      return panel;
+    });
+    const card = h('div', { class: 'sg sg-card sg-notes', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' patch notes' },
+      h('div', { class: 'head' },
+        h('span', { style: 'color:var(--aui-primary,#8223d2);line-height:0', html: icon('aetheryte', 28) }),
+        h('h2', null, 'Patch notes'),
+        h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
+      h('div', { class: 'list' }, panels));
+    const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-notes', onclick: (e) => { if (e.target === scrim) close(); } }, card);
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
+    document.addEventListener('keydown', onKey, true); // capture: Esc closes the notes, not Settings
+    document.body.appendChild(scrim);
+  }
+
   // open('galaxy') opens straight to that crystal, with its settings expanded.
   function open(focus) {
     if (typeof focus !== 'string') focus = null; // menu commands pass an event
@@ -725,7 +783,9 @@ const AE = (() => {
         () => CRYSTAL_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + CRYSTAL_INFO.length + ' on',
         h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => crystalRow(id, name, desc)))),
 
-      h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…'),
+      h('div', { class: 'sg-foot-links' },
+        h('button', { type: 'button', class: 'sg-about-link', onclick: () => openPatchNotes() }, 'Patch notes'),
+        h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…')),
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => close() }, 'Cancel'),
@@ -780,14 +840,16 @@ const AE = (() => {
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
     const x = h('span', { class: 'x', role: 'button', 'aria-label': 'Dismiss', title: 'Dismiss' }, '✕');
-    const pill = h('button', { type: 'button', class: 'sg sg-update-pill', id: 'sg-update-pill', title: 'Open ' + AE_NAME + ' settings' },
+    const pill = h('button', { type: 'button', class: 'sg sg-update-pill', id: 'sg-update-pill', title: "See what's new" },
       h('span', { html: icon('aetheryte', 20) }), AE_NAME + ' has updated!', h('span', { class: 'ver' }, 'v' + AE_VERSION), x);
-    pill.onclick = (e) => { pill.remove(); if (e.target !== x) open(); };
+    // Settings opens underneath (that's where new crystals are marked), with the patch notes on top.
+    pill.onclick = (e) => { pill.remove(); if (e.target !== x) { open(); openPatchNotes(lastVersion || AE_VERSION); } };
     document.body.appendChild(pill);
   }
 
   if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(AE_NAME + ' settings', open);
   AE.openSettings = open;
+  AE.openPatchNotes = openPatchNotes;
 })();
 
 // ===== 10-cleaning-rate.js =====

@@ -4,7 +4,8 @@
     "notes": [
       "New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.",
       "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."
-    ]
+    ],
+    "date": "2026-09-29T16:18:34Z"
   },
   {
     "version": "2.9.1",
