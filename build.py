@@ -35,12 +35,13 @@ updates. Gist raw URLs can be cached for a few minutes after publishing.
 import base64
 import datetime
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "2.12.0"
+VERSION = "2.13.0"
 
 # Secret Gist that hosts the published script (account: Unix-Epoch).
 # The raw URL has no commit hash, so it always serves the latest revision.
@@ -52,6 +53,10 @@ GIST_RAW = f"https://gist.githubusercontent.com/Unix-Epoch/{GIST_ID}/raw"
 RAW_URL = f"{GIST_RAW}/{FILENAME}"
 META_URL = f"{GIST_RAW}/{META_FILENAME}"
 READABLE_URL = f"{GIST_RAW}/{READABLE_FILENAME}"
+# Waymark (work-order tags) API: the Cloudflare Worker in worker/. Empty until
+# deployed; WAYMARK_API in the environment overrides it (e.g. a local
+# `wrangler dev` for testing). The app key is read from worker/wrangler.toml.
+WAYMARK_API = ""
 # Minifier, pinned so builds are repeatable; run through npx (no local node_modules).
 ESBUILD = ["npx", "--yes", "esbuild@0.28.2"]
 
@@ -103,6 +108,11 @@ def stamp_release_date(root: Path) -> None:
         (root / NOTES_FILE).write_text(json.dumps(notes, indent=2, ensure_ascii=False) + "\n")
 
 
+def waymark_key(root: Path) -> str:
+    m = re.search(r'^APP_KEY\s*=\s*"([^"]+)"', (root / "worker" / "wrangler.toml").read_text(), re.M)
+    return m.group(1) if m else ""
+
+
 def action_icons(root: Path) -> str:
     icons = {
         f.stem: "data:image/jpeg;base64," + base64.b64encode(f.read_bytes()).decode()
@@ -121,6 +131,8 @@ def build(root: Path) -> Path:
         "__BUILD_COMMIT__": git_commit(root),
         "__INSTALL_URL__": RAW_URL,
         "__READABLE_URL__": READABLE_URL,
+        "__WAYMARK_API__": os.environ.get("WAYMARK_API", WAYMARK_API),
+        "__WAYMARK_KEY__": waymark_key(root),
         # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), plus
         # UI pieces (assets/ui/*.png), as data URIs
         "__ACTION_ICONS__": action_icons(root),

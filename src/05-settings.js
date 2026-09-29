@@ -18,6 +18,7 @@
     ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
     ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
     ['glamour', 'Glamour', 'Page theming: recolour Portal with a preset theme or one you make.'],
+    ['waymark', 'Waymark', 'Work-order tags: tag WOs for the whole store and see them grouped on a board.'],
   ];
 
   /*
@@ -312,6 +313,7 @@
         input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
         h('button', { class: 'sg-btn', style: 'margin:4px 0', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')],
       glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
+      waymark: [() => AE.waymark.summary(), AE.waymark.editor()],
       printLabels: [() => s.printLabels.delayMs + ' ms between labels',
         input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
     };

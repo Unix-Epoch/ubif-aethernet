@@ -1,0 +1,23 @@
+name = "aethernet-waymark"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "aethernet-waymark"
+database_id = "59394e23-6903-4b1b-bb41-43abf19f3915"
+
+[vars]
+# Not a secret: it ships inside Aethernet (anyone can read it). It only keeps
+# random traffic out; see README "Waymark" for the trust model.
+APP_KEY = "ae_QFa2DKDy0DrlBd_A3bfZL3BtgM51idh6"
+
+# Daily cleanup: tags + history on WOs closed more than 7 days ago.
+[triggers]
+crons = ["0 9 * * *"]
+
+# Per-IP request limit.
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }
