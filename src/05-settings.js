@@ -86,6 +86,10 @@
   .sg-row:first-of-type { border-top:0; }
   .sg-row > div { flex:1; min-width:0; }
   .sg-row b { font-weight:600; font-size:14px; display:block; }
+  .sg-row b.sg-cname { display:flex; align-items:center; gap:8px; margin-bottom:3px; }
+  .sg-cicon { display:inline-flex; line-height:0; }
+  .sg-about .sg-chip { padding-left:3px; }
+  .sg-about .chip-off .sg-aicon { filter:grayscale(1); }
   .sg-field { display:block; margin:10px 0; }
   .sg-field span { display:block; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); margin-bottom:4px; }
   .sg-field input { width:100%; height:40px; padding:0 12px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px;
@@ -171,13 +175,14 @@
       kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914'], ['With', 'Claude (Anthropic)']),
       h('h4', null, 'Crystals'),
       h('div', { class: 'chips' }, CRYSTAL_INFO.map(([id, name]) =>
-        h('span', { class: 'sg-chip' + (on[id] ? '' : ' chip-off'), title: on[id] ? 'On' : 'Off' }, name))),
+        h('span', { class: 'sg-chip' + (on[id] ? '' : ' chip-off'), title: on[id] ? 'On' : 'Off' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 16) }), name))),
       h('h4', null, 'Your setup'),
       kv(['Signed in', whoBox], ['Browser', browser], ['Script manager', manager]),
       h('h4', null, 'Share with another store'),
       h('div', { class: 'link-row' }, linkInput, copyBtn),
       h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Open the link with Tampermonkey installed to add ' + AE_NAME + '. Installs update themselves.'),
       h('div', { class: 'fine' }, 'A personal project. Not affiliated with or supported by Asurion or uBreakiFix.'),
+      h('div', { class: 'fine', style: 'margin-top:4px' }, 'Crystal icons are FINAL FANTASY XIV action icons. © SQUARE ENIX. Not affiliated with Square Enix.'),
       h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-about', onclick: (e) => { if (e.target === scrim) close(); } }, card);
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
@@ -269,7 +274,7 @@
       }
       return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : '') },
         h('div', { class: 'sg-row' },
-          h('div', null, h('b', null, name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : null),
+          h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : null),
             h('span', { class: 'sg-soft' }, desc), optToggle ? h('div', null, optToggle) : null),
           toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); })),
         optBody);

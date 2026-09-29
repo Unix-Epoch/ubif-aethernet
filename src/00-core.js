@@ -141,6 +141,7 @@ const AE = (() => {
   .sg-chip .sg-mk { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border:0; padding:0; border-radius:50%;
     background:var(--aui-primary,#8223d2); color:var(--aui-on-primary,#fff); cursor:pointer; }
   .sg-chip .sg-mk:hover { filter:brightness(.9); }
+  .sg-aicon { display:inline-block; flex:none; border-radius:22%; vertical-align:middle; box-shadow:0 0 0 1px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.25); }
   @keyframes sg-spin { to { transform: rotate(360deg); } }
   @keyframes sg-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
   @keyframes sg-flash { 0%,100% { box-shadow:0 8px 28px rgba(12,14,17,.18); } 50% { box-shadow:0 0 0 3px var(--aui-primary, #8223d2); } }
@@ -154,6 +155,12 @@ const AE = (() => {
   }
 
   // Minimal element builder: h('div', {class:'x', onclick}, child, 'text')
+  // Each crystal's FFXIV action icon (embedded by build.py from assets/icons/).
+  const ACTION_ICONS = __ACTION_ICONS__;
+  const actionIcon = (id, size = 24, extra = '') => ACTION_ICONS[id]
+    ? '<img class="sg-aicon" src="' + ACTION_ICONS[id] + '" width="' + size + '" height="' + size + '" alt="" draggable="false"' + (extra ? ' ' + extra : '') + '>'
+    : '';
+
   function h(tag, attrs, ...kids) {
     const el = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs || {})) {
@@ -389,7 +396,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
-    api, unwrap, Stopped, profile, sleep, esc, h, icon, wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, profile, sleep, esc, h, icon, actionIcon, wordmark, ensureCss, progressPanel,
     confirm: confirmDialog, toast, emit, on, data,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close crystal when it's enabled

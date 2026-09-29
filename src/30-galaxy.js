@@ -54,17 +54,19 @@ AE.crystal({
     // ------------------------------------------------------------ PART A
     if (AE_ON_PORTAL) {
       let injectedForWoId = null;
-      // Position/collapsed persist across reloads and SPA route changes —
-      // tick() rebuilds the button often, so this can't be a local variable.
-      const POS_KEY = 'gde_btn_pos', COLLAPSED_KEY = 'gde_btn_collapsed';
+      // Position persists across reloads and SPA route changes — tick()
+      // rebuilds the button often, so this can't be a local variable.
+      const POS_KEY = 'gde_btn_pos';
       const loadPos = () => GM_getValue(POS_KEY, { right: 16, bottom: 16 });
       const savePos = (pos) => GM_setValue(POS_KEY, pos);
 
-      // Window listeners added once; the grip's mousedown points dragState
+      // Window listeners added once; the button's mousedown points dragState
       // at whichever button currently exists.
       let dragState = null, suppressNextClick = false;
       window.addEventListener('mousemove', (e) => {
         if (!dragState) return;
+        // A few pixels of wobble is still a click, not a drag.
+        if (!dragState.moved && Math.hypot(e.clientX - dragState.startX, e.clientY - dragState.startY) < 4) return;
         dragState.wrap.style.right = Math.max(0, dragState.startRight - (e.clientX - dragState.startX)) + 'px';
         dragState.wrap.style.bottom = Math.max(0, dragState.startBottom - (e.clientY - dragState.startY)) + 'px';
         dragState.moved = true;
@@ -115,34 +117,35 @@ AE.crystal({
         };
       }
 
+      // The button is the Macrocosmos action icon, like a hotbar slot: click
+      // to file, drag it to move (Settings → Macrocosmos resets the spot).
+      const BTN_CSS = `
+      #sg-galaxy-btn { position:fixed; z-index:2147483645; width:56px; height:56px; padding:0; border:0; border-radius:14px; cursor:pointer;
+        background:#000; box-shadow:0 6px 20px rgba(12,14,17,.35), 0 0 0 2px rgba(255,255,255,.9), 0 0 0 3px rgba(0,0,0,.35); transition:transform .12s, box-shadow .12s; }
+      #sg-galaxy-btn img { display:block; width:56px; height:56px; border-radius:14px; box-shadow:none; pointer-events:none; }
+      #sg-galaxy-btn:hover { transform:translateY(-1px); box-shadow:0 8px 24px rgba(12,14,17,.4), 0 0 0 2px #ffd97a, 0 0 14px 3px rgba(255,217,122,.55); }
+      #sg-galaxy-btn:active { transform:scale(.96); }
+      #sg-galaxy-btn:focus-visible { outline:3px solid var(--aui-primary, #8223d2); outline-offset:3px; }
+      #sg-galaxy-btn:disabled { cursor:progress; }
+      #sg-galaxy-btn:disabled img { filter:brightness(.45) saturate(.6); }
+      #sg-galaxy-btn .sg-spin { position:absolute; left:50%; top:50%; width:22px; height:22px; margin:-11px 0 0 -11px; border-width:3px; display:none; }
+      #sg-galaxy-btn:disabled .sg-spin { display:block; }
+      `;
       function makeButton() {
+        if (!document.getElementById('sg-galaxy-css')) document.head.append(h('style', { id: 'sg-galaxy-css' }, BTN_CSS));
         const pos = loadPos();
-        const collapsed = GM_getValue(COLLAPSED_KEY, false);
-        const wrap = h('div', { id: 'sg-galaxy-btn', class: 'sg', style:
-          'position:fixed;z-index:2147483645;right:' + pos.right + 'px;bottom:' + pos.bottom + 'px;display:flex;align-items:center;height:48px;' +
-          'border-radius:10000rem;background:var(--aui-primary,#8223d2);color:var(--aui-on-primary,#fff);box-shadow:0 6px 20px rgba(12,14,17,.25);overflow:hidden' });
-        const side = 'display:flex;align-items:center;justify-content:center;width:28px;height:100%;color:rgba(255,255,255,.7);user-select:none;';
-        const grip = h('div', { title: 'Drag to move · double-click to reset', style: side + 'cursor:move;padding-left:6px', html: AE.icon('grip', 14) });
-        grip.addEventListener('dblclick', () => { wrap.style.right = '16px'; wrap.style.bottom = '16px'; savePos({ right: 16, bottom: 16 }); });
-        grip.addEventListener('mousedown', (e) => {
+        const main = h('button', { type: 'button', id: 'sg-galaxy-btn', class: 'sg',
+          title: 'Macrocosmos: file a Galaxy Diagnostics exception for this WO (drag to move)',
+          'aria-label': 'File Galaxy Diagnostics exception',
+          style: 'right:' + pos.right + 'px;bottom:' + pos.bottom + 'px',
+          html: AE.actionIcon('galaxy', 56) + '<span class="sg-spin"></span>' });
+        const wrap = main; // drag + clamp act on the button itself
+        main.addEventListener('mousedown', (e) => {
+          if (e.button !== 0) return;
           const r = wrap.getBoundingClientRect();
           dragState = { wrap, startX: e.clientX, startY: e.clientY, startRight: innerWidth - r.right, startBottom: innerHeight - r.bottom, moved: false };
-          e.preventDefault();
+          e.preventDefault(); // no text selection / image drag while moving
         });
-        const main = h('button', { type: 'button', style:
-          'display:flex;align-items:center;gap:8px;height:100%;padding:0 ' + (collapsed ? '6px' : '8px') + ';border:0;background:none;color:inherit;cursor:pointer;' +
-          'font:600 14px Apercu,"Helvetica Neue",Helvetica,Arial,sans-serif;white-space:nowrap' });
-        const label = h('span', null, 'File Galaxy exception');
-        const setLabel = (c) => { main.innerHTML = icon('clipboard', 18); if (!c) main.append(label); main.title = c ? 'File Galaxy Diagnostics exception' : ''; };
-        setLabel(collapsed);
-        const toggle = h('div', { style: side + 'cursor:pointer;padding-right:6px;font-size:16px', title: collapsed ? 'Expand' : 'Collapse' }, collapsed ? '›' : '‹');
-        toggle.onclick = (e) => {
-          e.stopPropagation();
-          const c = !GM_getValue(COLLAPSED_KEY, false);
-          GM_setValue(COLLAPSED_KEY, c);
-          setLabel(c); toggle.textContent = c ? '›' : '‹'; toggle.title = c ? 'Expand' : 'Collapse';
-          savePos(clampToViewport(wrap));
-        };
         main.onclick = async () => {
           if (suppressNextClick) { suppressNextClick = false; return; }
           const woId = currentWoId();
@@ -167,7 +170,6 @@ AE.crystal({
             main.disabled = false;
           }
         };
-        wrap.append(grip, main, toggle);
         document.body.appendChild(wrap);
         savePos(clampToViewport(wrap));
       }

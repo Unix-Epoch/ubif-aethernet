@@ -17,13 +17,15 @@ default), or immediately via Tampermonkey → Utilities → Check for userscript
 updates. Gist raw URLs can be cached for a few minutes after publishing.
 """
 
+import base64
 import datetime
+import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "2.8.2"
+VERSION = "2.9.0"
 
 # Secret Gist that hosts the published script (account: Unix-Epoch).
 # The raw URL has no commit hash, so it always serves the latest revision.
@@ -60,12 +62,22 @@ def git_commit(root: Path) -> str:
         return "unknown"
 
 
+def action_icons(root: Path) -> str:
+    icons = {
+        f.stem: "data:image/jpeg;base64," + base64.b64encode(f.read_bytes()).decode()
+        for f in sorted((root / "assets" / "icons").glob("*.jpg"))
+    }
+    return json.dumps(icons)
+
+
 def build(root: Path) -> Path:
     stamps = {
         "__VERSION__": VERSION,
         "__BUILD_TIME__": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "__BUILD_COMMIT__": git_commit(root),
         "__INSTALL_URL__": RAW_URL,
+        # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), as data URIs
+        "__ACTION_ICONS__": action_icons(root),
     }
     parts = [HEADER, "(function aethernet() {\n'use strict';\n"]
     for f in sorted((root / "src").glob("*.js")):

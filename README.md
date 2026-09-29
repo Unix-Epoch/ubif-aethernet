@@ -5,7 +5,10 @@ portal crystal in this folder.
 
 **Terminology:** each tool in Aethernet is a **crystal**, and adding a new one
 (or rolling an old standalone script in) is **crystallizing** it. Crystals are
-named after FFXIV actions, with what they do in brackets.
+named after FFXIV actions, with what they do in brackets, and show that
+action's icon (`assets/icons/<crystalId>.jpg`, embedded by `build.py`; icons
+© SQUARE ENIX, from XIVAPI). Quick Synthesis has no in-game icon, so it uses
+Rapid Synthesis's.
 
 | Crystal | Where it shows up |
 |---|---|
@@ -13,7 +16,7 @@ named after FFXIV actions, with what they do in brackets.
 | **Swiftcast** (cleaning auto-close) | Round purple ⚡ in a cleaning arrival's "Customer arrival" drawer |
 | **Recitation** (text → WO note) | Automatic: texting a customer from a WO adds a note "<you> sent a text message to <customer>." + the message |
 | **Esuna** (WO cleanings pill) | After the customer's name on a WO: **Cleanings available (n)** / **Cleanings done (n)** / **No cleanings**; click for the list, with **Create** on available ones |
-| **Macrocosmos** (Galaxy Diagnostics exception) | Draggable purple pill on a Samsung WO once it has a GSPN ticket |
+| **Macrocosmos** (Galaxy Diagnostics exception) | The Macrocosmos icon, bottom-right on a Samsung WO once it has a GSPN ticket; click to file, drag to move |
 | **Quick Synthesis** (print all labels) | Purple button next to "Generate Labels" on a PO Receive page |
 | **Bountiful Yield** (buyback add-all) | **Add all Apple devices (TLC)** / **Add all Samsung/Google parts (UROC)** in a buyback order's Add Buyback parts popout (Buybacks tab) |
 | **Glamour** (page theming) | Settings → Glamour: preset themes (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or your own from a background, text and accent colour; recolours the whole portal |
