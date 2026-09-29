@@ -3,17 +3,5 @@
     "version": "2.11.0",
     "date": "2026-09-29T19:10:53Z"
   },
-  "incident": {
-    "id": "2026-09-29-do-not-rfp-or-sale-complete-wos-until-fu",
-    "severity": "error",
-    "title": "DO NOT RFP OR SALE COMPLETE WOs UNTIL FURTHER NOTICE.",
-    "message": "All WOs will remove parts and get stuck in limbo if you attempt to Sale Complete. Run required QC and complete all required steps, then return the device to the customer as necessary.",
-    "crystals": [],
-    "pause": [
-      "autoClose"
-    ],
-    "fixedIn": null,
-    "posted": "2026-09-29T19:17:18Z",
-    "updated": "2026-09-29T19:17:18Z"
-  }
+  "incident": null
 }
