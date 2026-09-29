@@ -1,0 +1,134 @@
+[
+  {
+    "version": "2.10.0",
+    "notes": [
+      "New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.",
+      "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."
+    ]
+  },
+  {
+    "version": "2.9.1",
+    "date": "2026-09-29T15:38:03Z",
+    "notes": [
+      "**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.",
+      "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.",
+      "Settings can now open straight to one crystal with its settings expanded."
+    ]
+  },
+  {
+    "version": "2.9.0",
+    "date": "2026-09-29T15:26:27Z",
+    "notes": [
+      "Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.",
+      "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."
+    ]
+  },
+  {
+    "version": "2.8.2",
+    "date": "2026-09-28T15:42:48Z",
+    "notes": [
+      "**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."
+    ]
+  },
+  {
+    "version": "2.8.1",
+    "date": "2026-09-28T15:35:53Z",
+    "notes": [
+      "**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.",
+      "Portal is now written as a proper noun everywhere."
+    ]
+  },
+  {
+    "version": "2.8.0",
+    "date": "2026-09-28T15:28:00Z",
+    "notes": [
+      "New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."
+    ]
+  },
+  {
+    "version": "2.7.0",
+    "date": "2026-09-28T14:41:31Z",
+    "notes": [
+      "Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.",
+      "An **Aethernet has updated!** pill appears once after each update.",
+      "New crystals get a yellow sheen in Settings until you've seen them.",
+      "Each crystal's settings now sit under it in the Crystals list."
+    ]
+  },
+  {
+    "version": "2.6.0",
+    "date": "2026-09-26T22:11:30Z",
+    "notes": [
+      "Settings sections collapse, and remember which ones you left open.",
+      "New subtitle: Restoring the *flow* of NextGen.",
+      "New **About** window: version, build time, author, your setup, and the install link to share with another store.",
+      "The Aethernet name in titles uses its own wordmark."
+    ]
+  },
+  {
+    "version": "2.5.0",
+    "date": "2026-09-26T21:35:43Z",
+    "notes": [
+      "New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.",
+      "Fixed: its buttons no longer need the script removed and re-added before each buyback."
+    ]
+  },
+  {
+    "version": "2.4.0",
+    "date": "2026-09-26T21:30:09Z",
+    "notes": [
+      "Aethernet's tools are now called **crystals**. Your on/off switches carry over."
+    ]
+  },
+  {
+    "version": "2.3.2",
+    "date": "2026-09-26T21:07:05Z",
+    "notes": [
+      "**Text → WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."
+    ]
+  },
+  {
+    "version": "2.3.1",
+    "date": "2026-09-26T20:56:36Z",
+    "notes": [
+      "Attempted fix for **Text → WO note** on Firefox and Zen (finished in 2.3.2)."
+    ]
+  },
+  {
+    "version": "2.3.0",
+    "date": "2026-09-26T20:52:51Z",
+    "notes": [
+      "New crystal: **Text → WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."
+    ]
+  },
+  {
+    "version": "2.2.0",
+    "date": "2026-09-26T20:42:10Z",
+    "notes": [
+      "New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.",
+      "Pending cleanings in the cleaning-rate list get a ⚡ to create them, behind a confirmation."
+    ]
+  },
+  {
+    "version": "2.1.1",
+    "date": "2026-09-26T20:30:12Z",
+    "notes": [
+      "Aethernet now installs from a link and updates itself."
+    ]
+  },
+  {
+    "version": "2.1.0",
+    "date": "2026-09-26T20:29:50Z",
+    "notes": [
+      "The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.",
+      "The cleaning list shows each customer's name instead of the device nickname."
+    ]
+  },
+  {
+    "version": "2.0.0",
+    "date": "2026-09-26T19:37:00Z",
+    "notes": [
+      "First Aethernet release: one install bundling the cleaning auto-close ⚡, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."
+    ]
+  }
+]

@@ -25,7 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "2.9.1"
+VERSION = "2.10.0"
 
 # Secret Gist that hosts the published script (account: Unix-Epoch).
 # The raw URL has no commit hash, so it always serves the latest revision.
@@ -62,6 +62,25 @@ def git_commit(root: Path) -> str:
         return "unknown"
 
 
+NOTES_FILE = "patch-notes.json"
+
+
+def load_notes(root: Path) -> list:
+    # Newest first: [{version, date (UTC ISO, stamped at release), notes: [...]}]
+    return json.loads((root / NOTES_FILE).read_text())
+
+
+def stamp_release_date(root: Path) -> None:
+    # Patch notes carry the moment each version went out; --release fills it in.
+    notes = load_notes(root)
+    entry = next((n for n in notes if n["version"] == VERSION), None)
+    if not entry:
+        sys.exit(f"Refusing to publish: {NOTES_FILE} has no entry for {VERSION}. Write the patch notes first.")
+    if not entry.get("date"):
+        entry["date"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        (root / NOTES_FILE).write_text(json.dumps(notes, indent=2, ensure_ascii=False) + "\n")
+
+
 def action_icons(root: Path) -> str:
     icons = {
         f.stem: "data:image/jpeg;base64," + base64.b64encode(f.read_bytes()).decode()
@@ -82,6 +101,7 @@ def build(root: Path) -> Path:
         # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), plus
         # UI pieces (assets/ui/*.png), as data URIs
         "__ACTION_ICONS__": action_icons(root),
+        "__PATCH_NOTES__": json.dumps(load_notes(root)),
     }
     parts = [HEADER, "(function aethernet() {\n'use strict';\n"]
     for f in sorted((root / "src").glob("*.js")):
@@ -114,16 +134,25 @@ def published_version() -> str | None:
     return m.group(1) if m else None
 
 
-def release(out: Path) -> None:
+def check_releasable() -> str | None:
     live = published_version()
     if live and as_tuple(VERSION) <= as_tuple(live):
         sys.exit(f"Refusing to publish: VERSION {VERSION} isn't higher than the published {live}. "
                  "Bump VERSION in build.py (installs ignore same-or-lower versions).")
+    return live
+
+
+def release(out: Path, live: str | None) -> None:
     subprocess.run(["gh", "gist", "edit", GIST_ID, "--filename", FILENAME, str(out)], check=True)
     print(f"Published v{VERSION} (was {live or 'nothing'}). Install/update URL:\n  {RAW_URL}")
 
 
 if __name__ == "__main__":
-    out = build(Path(__file__).resolve().parent)
-    if "--release" in sys.argv[1:]:
-        release(out)
+    root = Path(__file__).resolve().parent
+    releasing = "--release" in sys.argv[1:]
+    if releasing:
+        live = check_releasable()
+        stamp_release_date(root)  # before building, so the published file carries it
+    out = build(root)
+    if releasing:
+        release(out, live)

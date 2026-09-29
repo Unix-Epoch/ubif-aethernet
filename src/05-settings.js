@@ -48,6 +48,26 @@
   .sg-about-link { display:block; margin:20px auto 4px; padding:6px 10px; border:0; background:none; cursor:pointer;
     color:var(--aui-on-surface-soft, #5d5e61); font:400 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-decoration:underline; }
   .sg-about-link:hover { color:var(--aui-primary, #8223d2); }
+  .sg-foot-links { display:flex; justify-content:center; gap:4px; margin:20px auto 4px; }
+  .sg-foot-links .sg-about-link { margin:0; }
+  /* Patch notes */
+  .sg-notes { width:min(520px, 100%); max-height:calc(100vh - 32px); display:flex; flex-direction:column; padding:22px 20px 16px; font-size:14px; line-height:1.45; }
+  .sg-notes .head { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .sg-notes .head h2 { flex:1; margin:0; font-size:20px; font-weight:700; }
+  .sg-notes .list { overflow:auto; margin:0 -4px; padding:0 4px; }
+  .sg-patch { border:1px solid var(--aui-outline-soft, #eeedf1); border-radius:12px; margin-bottom:8px; background:var(--aui-surface, #fff); }
+  .sg-patch > summary { display:flex; align-items:center; gap:10px; padding:10px 12px; cursor:pointer; list-style:none; border-radius:12px; }
+  .sg-patch > summary::-webkit-details-marker { display:none; }
+  .sg-patch > summary:focus-visible { outline:2px solid var(--aui-primary, #8223d2); outline-offset:1px; }
+  .sg-patch > summary .chev { width:16px; height:16px; flex:none; color:var(--aui-on-surface-soft, #5d5e61); transform:rotate(-90deg); transition:transform .2s; }
+  .sg-patch[open] > summary .chev { transform:none; }
+  .sg-patch .ver { font-weight:700; }
+  .sg-patch .when { flex:1; text-align:right; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-patch .tag { padding:1px 7px; border-radius:10000rem; font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase;
+    background:var(--aui-primary-soft, #faecff); color:var(--aui-on-primary-soft, #590099); }
+  .sg-patch .tag.new { background:#ffcc00; color:#3d2e00; }
+  .sg-patch ul { margin:0; padding:0 14px 12px 40px; }
+  .sg-patch li { margin:4px 0; }
   .sg-about-scrim { position:fixed; inset:0; z-index:2147483647; background:var(--aui-scrim-overlay, #0c0e1180);
     display:flex; align-items:center; justify-content:center; padding:16px; animation: sg-in .15s ease-out; }
   .sg-about { width:min(460px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:28px 24px 20px; font-size:14px; line-height:1.45; }
@@ -191,6 +211,44 @@
     document.body.appendChild(scrim);
   }
 
+  // Patch notes — its own modal, above Settings. Every release is a panel,
+  // newest first. `since` (the version you updated from) expands everything
+  // newer than it; otherwise just the latest is open.
+  const PATCH_NOTES = __PATCH_NOTES__;
+  const verTuple = (v) => String(v || '0').split('.').map(Number);
+  const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+  const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
+  function openPatchNotes(since) {
+    AE.ensureCss();
+    if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
+    document.getElementById('sg-notes')?.remove();
+    const CHEV_SVG = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
+    const panels = PATCH_NOTES.map((n, i) => {
+      const d = n.date ? new Date(n.date) : null;
+      const when = d && !isNaN(d) ? d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Not released yet';
+      const isNew = since && newer(n.version, since);
+      const panel = h('details', { class: 'sg-patch' },
+        h('summary', null, h('span', { html: CHEV_SVG }), h('span', { class: 'ver' }, 'v' + n.version),
+          n.version === AE_VERSION ? h('span', { class: 'tag' }, 'Installed') : null,
+          isNew ? h('span', { class: 'tag new' }, 'New') : null,
+          h('span', { class: 'when' }, when)),
+        h('ul', null, n.notes.map((t) => h('li', { html: noteHtml(t) }))));
+      panel.open = since ? isNew : i === 0;
+      return panel;
+    });
+    const card = h('div', { class: 'sg sg-card sg-notes', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' patch notes' },
+      h('div', { class: 'head' },
+        h('span', { style: 'color:var(--aui-primary,#8223d2);line-height:0', html: icon('aetheryte', 28) }),
+        h('h2', null, 'Patch notes'),
+        h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
+      h('div', { class: 'list' }, panels));
+    const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-notes', onclick: (e) => { if (e.target === scrim) close(); } }, card);
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
+    document.addEventListener('keydown', onKey, true); // capture: Esc closes the notes, not Settings
+    document.body.appendChild(scrim);
+  }
+
   // open('galaxy') opens straight to that crystal, with its settings expanded.
   function open(focus) {
     if (typeof focus !== 'string') focus = null; // menu commands pass an event
@@ -297,7 +355,9 @@
         () => CRYSTAL_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + CRYSTAL_INFO.length + ' on',
         h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => crystalRow(id, name, desc)))),
 
-      h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…'),
+      h('div', { class: 'sg-foot-links' },
+        h('button', { type: 'button', class: 'sg-about-link', onclick: () => openPatchNotes() }, 'Patch notes'),
+        h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…')),
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => close() }, 'Cancel'),
@@ -352,12 +412,14 @@
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
     const x = h('span', { class: 'x', role: 'button', 'aria-label': 'Dismiss', title: 'Dismiss' }, '✕');
-    const pill = h('button', { type: 'button', class: 'sg sg-update-pill', id: 'sg-update-pill', title: 'Open ' + AE_NAME + ' settings' },
+    const pill = h('button', { type: 'button', class: 'sg sg-update-pill', id: 'sg-update-pill', title: "See what's new" },
       h('span', { html: icon('aetheryte', 20) }), AE_NAME + ' has updated!', h('span', { class: 'ver' }, 'v' + AE_VERSION), x);
-    pill.onclick = (e) => { pill.remove(); if (e.target !== x) open(); };
+    // Settings opens underneath (that's where new crystals are marked), with the patch notes on top.
+    pill.onclick = (e) => { pill.remove(); if (e.target !== x) { open(); openPatchNotes(lastVersion || AE_VERSION); } };
     document.body.appendChild(pill);
   }
 
   if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(AE_NAME + ' settings', open);
   AE.openSettings = open;
+  AE.openPatchNotes = openPatchNotes;
 })();

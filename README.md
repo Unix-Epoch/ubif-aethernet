@@ -27,9 +27,14 @@ target %, Galaxy form overrides, label delay) open from **Settings** under it.
 Saving reloads the page.
 
 **Updates:** the first page load after an update shows an **Aethernet has
-updated!** pill at the bottom of the screen, once; click it to open Settings.
+updated!** pill at the bottom of the screen, once; click it for the patch notes.
 Crystals added in an update carry a yellow sheen and a **New** tag until
 Settings has been closed once.
+
+**Patch notes:** Settings → **Patch notes** (bottom), or click the update pill.
+They live in `patch-notes.json` (newest first). Every release needs an entry
+there first: `build.py --release` refuses without one, and stamps the entry
+with the publish time.
 
 **Nothing personal is hardcoded.** Name, email and store come from the
 logged-in user (`/api/auth/user`), so the same file works for anyone at any
