@@ -4,7 +4,9 @@
 Edit the crystals in src/ (one file each, loaded in filename order: core,
 settings, then crystals), then:
 
-  python3 build.py            build dist/aethernet.user.js only (for testing)
+  python3 build.py            build dist/ only (for testing): aethernet.user.js
+                              (minified), aethernet.meta.js (header only, for
+                              update checks), aethernet.readable.js (unminified)
   python3 build.py --release  build, then publish to the Gist so every
                               install auto-updates (also updates status.json's
                               "latest", which drives the in-Portal update pill)
@@ -38,13 +40,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "2.11.0"
+VERSION = "2.12.0"
 
 # Secret Gist that hosts the published script (account: Unix-Epoch).
 # The raw URL has no commit hash, so it always serves the latest revision.
 GIST_ID = "0cf4560c4f26d8ff9091a10068fd3464"
-FILENAME = "aethernet.user.js"
-RAW_URL = f"https://gist.githubusercontent.com/Unix-Epoch/{GIST_ID}/raw/{FILENAME}"
+FILENAME = "aethernet.user.js"          # minified; what installs run
+META_FILENAME = "aethernet.meta.js"     # header only; what update checks download (~1 KB)
+READABLE_FILENAME = "aethernet.readable.js"  # the same build, unminified, for reading/auditing
+GIST_RAW = f"https://gist.githubusercontent.com/Unix-Epoch/{GIST_ID}/raw"
+RAW_URL = f"{GIST_RAW}/{FILENAME}"
+META_URL = f"{GIST_RAW}/{META_FILENAME}"
+READABLE_URL = f"{GIST_RAW}/{READABLE_FILENAME}"
+# Minifier, pinned so builds are repeatable; run through npx (no local node_modules).
+ESBUILD = ["npx", "--yes", "esbuild@0.28.2"]
 
 HEADER = f"""// ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
@@ -58,7 +67,7 @@ HEADER = f"""// ==UserScript==
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @run-at       document-idle
-// @updateURL    {RAW_URL}
+// @updateURL    {META_URL}
 // @downloadURL  {RAW_URL}
 // ==/UserScript==
 
@@ -111,6 +120,7 @@ def build(root: Path) -> Path:
         "__BUILD_TIME__": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "__BUILD_COMMIT__": git_commit(root),
         "__INSTALL_URL__": RAW_URL,
+        "__READABLE_URL__": READABLE_URL,
         # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), plus
         # UI pieces (assets/ui/*.png), as data URIs
         "__ACTION_ICONS__": action_icons(root),
@@ -124,11 +134,44 @@ def build(root: Path) -> Path:
             text = text.replace(k, v)
         parts.append(text)
     parts.append("\nAE.start();\n})();\n")
-    out = root / "dist" / FILENAME
-    out.parent.mkdir(exist_ok=True)
-    out.write_text("".join(parts))
-    print(f"Built {out.relative_to(root)} v{VERSION} ({out.stat().st_size:,} bytes)")
+    dist = root / "dist"
+    dist.mkdir(exist_ok=True)
+    readable = "".join(parts)
+    body = readable[len(HEADER):]
+    (dist / READABLE_FILENAME).write_text(readable)
+    (dist / META_FILENAME).write_text(HEADER.split("// ==/UserScript==")[0] + "// ==/UserScript==\n")
+    out = dist / FILENAME
+    out.write_text(HEADER + minify(body))
+    print(f"Built {out.relative_to(root)} v{VERSION}: {out.stat().st_size:,} bytes "
+          f"(readable {len(readable.encode()):,}, meta {(dist / META_FILENAME).stat().st_size:,})")
     return out
+
+
+def minify(js: str) -> str:
+    # --keep-names: function names survive, so errors from stores still say where.
+    res = subprocess.run(ESBUILD + ["--minify", "--keep-names", "--format=iife", "--target=es2020", "--loader=js", "--log-level=warning"],
+                         input=js, capture_output=True, text=True)
+    if res.returncode:
+        sys.exit("esbuild failed:\n" + res.stderr)
+    return squash_css(res.stdout)
+
+
+def squash_css(js: str) -> str:
+    # esbuild leaves template literals alone, and nearly every one in src/ is a CSS
+    # block, sometimes with ${id} placeholders. Collapse the whitespace in the
+    # literal text between placeholders; text templates (no "{" outside
+    # placeholders, e.g. the Recitation note) are left untouched.
+    placeholder = re.compile(r"(\$\{[^{}`]*\})")
+    def squash(m):
+        chunks = placeholder.split(m.group(0))
+        if not any("{" in c for c in chunks[::2]):
+            return m.group(0)
+        def tidy(c):
+            c = re.sub(r"/\*.*?\*/", "", c, flags=re.S)
+            c = re.sub(r"\s+", " ", c)
+            return re.sub(r"\s*([{};>])\s*", r"\1", c)
+        return "".join(tidy(c) if i % 2 == 0 else c for i, c in enumerate(chunks))
+    return re.sub(r"`[^`]*`", squash, js)
 
 
 def as_tuple(v: str) -> tuple:
@@ -169,8 +212,7 @@ def publish_status(root: Path, status: dict) -> None:
     f.write_text(json.dumps(status, indent=2, ensure_ascii=False) + "\n")
     files = subprocess.run(["gh", "api", f"gists/{GIST_ID}", "--jq", ".files | keys[]"],
                            check=True, capture_output=True, text=True).stdout.split()
-    cmd = ["gh", "gist", "edit", GIST_ID] + (["--filename", STATUS_FILE] if STATUS_FILE in files else ["--add"]) + [str(f)]
-    subprocess.run(cmd, check=True)
+    gist_put(f, files)
     print(f"Published {STATUS_FILE}: " + json.dumps(status, ensure_ascii=False))
 
 
@@ -218,8 +260,19 @@ def check_releasable() -> str | None:
     return live
 
 
+def gist_put(path: Path, files: list) -> None:
+    name = path.name
+    cmd = ["gh", "gist", "edit", GIST_ID] + (["--filename", name] if name in files else ["--add"]) + [str(path)]
+    subprocess.run(cmd, check=True)
+
+
 def release(root: Path, out: Path, live: str | None) -> None:
-    subprocess.run(["gh", "gist", "edit", GIST_ID, "--filename", FILENAME, str(out)], check=True)
+    files = subprocess.run(["gh", "api", f"gists/{GIST_ID}", "--jq", ".files | keys[]"],
+                           check=True, capture_output=True, text=True).stdout.split()
+    # Script first, then the meta file (so an update check never sees a
+    # version whose script isn't up yet), then the readable copy.
+    for name in (FILENAME, META_FILENAME, READABLE_FILENAME):
+        gist_put(out.parent / name, files)
     print(f"Published v{VERSION} (was {live or 'nothing'}). Install/update URL:\n  {RAW_URL}")
     # Tell running installs there's an update (they check status.json every 10 minutes).
     entry = next(n for n in load_notes(root) if n["version"] == VERSION)

@@ -87,7 +87,13 @@ AE.status = (() => {
   }
 
   // ------------------------------------------------------------ updates
-  const updateAvailable = () => (state.latest && newer(state.latest.version, AE_VERSION) ? state.latest.version : null);
+  // GitHub caches the script for 5 minutes, so a brand-new release isn't
+  // offered until it's been out for 6 — otherwise Update could fetch the old copy.
+  const ROLLOUT_MS = 6 * 60 * 1000;
+  const released = () => { const t = Date.parse(state.latest && state.latest.date); return isNaN(t) ? 0 : t; };
+  const newerExists = () => !!state.latest && newer(state.latest.version, AE_VERSION);
+  const rollingOut = () => newerExists() && Date.now() - released() < ROLLOUT_MS;
+  const updateAvailable = () => (newerExists() && !rollingOut() ? state.latest.version : null);
 
   function startUpdate(version) {
     // Tampermonkey (and Violentmonkey) catch a .user.js link and show their own Update page.
@@ -104,6 +110,11 @@ AE.status = (() => {
       return;
     }
     busy.remove();
+    if (rollingOut()) {
+      const mins = Math.max(1, Math.ceil((ROLLOUT_MS - (Date.now() - released())) / 60000));
+      AE.toast('v' + state.latest.version + ' is rolling out', 'It was just released. Check again in about ' + mins + ' minute' + (mins === 1 ? '' : 's') + '.', 'ok', 9000);
+      return;
+    }
     const v = updateAvailable();
     if (!v) { AE.toast("You're up to date", AE_NAME + ' v' + AE_VERSION + ' is the latest.', 'ok'); return; }
     const ok = await AE.confirm({
@@ -211,6 +222,7 @@ AE.status = (() => {
       const poll = () => refresh(false).catch((e) => console.warn('[' + AE_NAME + '] status check failed:', e.message || e));
       poll();
       setInterval(poll, POLL_MS);
+      setInterval(render, 60 * 1000); // lets a rolling-out release appear once it's ready
       AE.every(1500, placeBanner); // Portal's header can change height
     }, 0);
   }

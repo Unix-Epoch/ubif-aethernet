@@ -119,27 +119,31 @@ AE.glamour = (() => {
   const PAGE_EVENT = 'aethernet:portal-theme';
   const pageHook = () => {
     if (document.getElementById('sg-glamour-hook')) return;
-    const code = '(' + function (evt) {
-      // Every theme provider on screen: walk up React's fiber tree from a node in each app.
-      const providers = () => {
-        const found = new Set();
-        const starts = [...document.querySelectorAll('[id^="single-spa-application"], .components-header, #root, body > div')];
-        for (const box of starts) {
-          const el = [box, ...box.querySelectorAll('*')].slice(0, 80).find((n) => Object.keys(n).some((k) => k.startsWith('__reactFiber$')));
-          if (!el) continue;
-          let f = el[Object.keys(el).find((k) => k.startsWith('__reactFiber$'))];
-          while (f) {
-            const v = f.memoizedProps && f.memoizedProps.value;
-            if (v && typeof v.setTheme === 'function' && 'selected' in v) { found.add(v.setTheme); break; }
-            f = f.return;
-          }
-        }
-        return [...found];
-      };
-      document.addEventListener(evt, (e) => {
-        for (const set of providers()) { try { set(e.detail); } catch (_) {} }
-      });
-    } + ')(' + JSON.stringify(PAGE_EVENT) + ');';
+    // Runs in the page, so it's kept as a plain string: the minifier would
+    // otherwise rewrite a function's source to lean on helpers that only
+    // exist inside Aethernet. Finds every theme provider on screen by walking
+    // up React's fiber tree from a node in each app, and calls its setTheme.
+    const code = [
+      '(function (evt) {',
+      '  var fiberKey = function (n) { return Object.keys(n).find(function (k) { return k.indexOf("__reactFiber$") === 0; }); };',
+      '  var providers = function () {',
+      '    var found = [];',
+      '    document.querySelectorAll("[id^=\\"single-spa-application\\"], .components-header, #root, body > div").forEach(function (box) {',
+      '      var nodes = [box].concat(Array.prototype.slice.call(box.querySelectorAll("*"), 0, 80));',
+      '      var el = nodes.find(function (n) { return fiberKey(n); });',
+      '      if (!el) return;',
+      '      for (var f = el[fiberKey(el)]; f; f = f.return) {',
+      '        var v = f.memoizedProps && f.memoizedProps.value;',
+      '        if (v && typeof v.setTheme === "function" && "selected" in v) { if (found.indexOf(v.setTheme) < 0) found.push(v.setTheme); break; }',
+      '      }',
+      '    });',
+      '    return found;',
+      '  };',
+      '  document.addEventListener(evt, function (e) {',
+      '    providers().forEach(function (set) { try { set(e.detail); } catch (_) {} });',
+      '  });',
+      '})(' + JSON.stringify(PAGE_EVENT) + ');',
+    ].join('\n');
     const s = document.createElement('script');
     s.id = 'sg-glamour-hook';
     s.textContent = code;

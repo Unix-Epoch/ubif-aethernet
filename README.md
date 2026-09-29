@@ -36,6 +36,20 @@ They live in `patch-notes.json` (newest first). Every release needs an entry
 there first: `build.py --release` refuses without one, and stamps the entry
 with the publish time.
 
+**Build output:** `build.py` writes three files to `dist/` and `--release`
+publishes all three to the Gist:
+- `aethernet.user.js`: what installs run, minified with esbuild (pinned,
+  via `npx`; `--keep-names` so errors still name the function) with CSS
+  squashed. About 143 KB, down from 218 KB.
+- `aethernet.meta.js`: just the header (~1 KB). `@updateURL` points here,
+  so Tampermonkey's update checks don't download the whole script.
+- `aethernet.readable.js`: the same build, unminified, linked from About
+  for anyone who wants to read what it does.
+
+Anything injected into the page as a script must be a plain string, not a
+function's `.toString()`: minified functions lean on esbuild helpers that
+only exist inside the bundle.
+
 **Check for updates:** Settings → **Check for updates** (bottom). Every release
 also updates `status.json` on the Gist; running installs see an **update
 available** pill within ~15 minutes. Updating is one click: it opens the
