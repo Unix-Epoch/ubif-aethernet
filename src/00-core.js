@@ -382,6 +382,8 @@ const AE = (() => {
     for (const t of crystals) {
       if (!settings.crystals[t.id]) continue;
       if (t.sites && !t.sites.includes(location.hostname)) continue;
+      // Paused remotely by an Aethernet notice (status.json); last-known copy.
+      if (AE.status && AE.status.paused(t.id)) { console.info('[' + AE_NAME + '] ' + t.name + ' is paused by an Aethernet notice'); continue; }
       try { t.run(); } catch (e) { console.error('[' + AE_NAME + '] ' + t.name + ' failed to start', e); }
     }
   }

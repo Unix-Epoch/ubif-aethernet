@@ -36,6 +36,25 @@ They live in `patch-notes.json` (newest first). Every release needs an entry
 there first: `build.py --release` refuses without one, and stamps the entry
 with the publish time.
 
+**Check for updates:** Settings → **Check for updates** (bottom). Every release
+also updates `status.json` on the Gist; running installs see an **update
+available** pill within ~15 minutes. Updating is one click: it opens the
+install link, and Tampermonkey shows its own Update page. (Aethernet never
+downloads and runs code itself; updates always go through Tampermonkey.)
+
+**Notices:** a banner under Portal's header for a known issue, read live from
+`status.json` (no release needed; everyone sees it within ~15 minutes):
+
+    python3 build.py --status warning "Title" "Message" --crystal cleaningRate [--pause autoClose]
+    python3 build.py --status-update "New message"
+    python3 build.py --status-fixed 2.11.1      # hidden for installs at/after 2.11.1
+    python3 build.py --status-clear
+
+`--pause` is a kill switch: those crystals stop acting everywhere until the
+notice is cleared (or the install reaches `fixedIn`). The file is treated as
+untrusted data: plain text only, capped, ids checked; it can show a message
+or pause crystals, never run code or turn anything on.
+
 **Nothing personal is hardcoded.** Name, email and store come from the
 logged-in user (`/api/auth/user`), so the same file works for anyone at any
 store. The Galaxy fields can still be overridden in settings.

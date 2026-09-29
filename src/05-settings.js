@@ -146,6 +146,9 @@
     background-size:250% 100%; box-shadow:inset 0 0 0 1px rgba(214,160,0,.55); animation:sg-sheen 2.6s ease-in-out infinite; }
   .sg-crystal.sg-new + .sg-crystal { border-top-color:transparent; }
   @keyframes sg-sheen { 0% { background-position:100% 0; } 60%,100% { background-position:0% 0; } }
+  .sg-issue-tag { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:10000rem; vertical-align:2px; font-size:11px; font-weight:700;
+    letter-spacing:.03em; text-transform:uppercase; background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
+  .sg-issue-tag.paused, .sg-issue-tag.error { background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); }
   .sg-new-tag { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:10000rem; vertical-align:2px;
     background:#ffcc00; color:#3d2e00; font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
   /* "Aethernet has updated!" pill */
@@ -310,6 +313,14 @@
       printLabels: [() => s.printLabels.delayMs + ' ms between labels',
         input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
     };
+    // A live Aethernet notice about this crystal (status.json): say so on its row.
+    const issueTag = (id) => {
+      const inc = AE.status.incident();
+      if (!inc) return null;
+      if (inc.pause.includes(id)) return h('span', { class: 'sg-issue-tag paused', title: inc.title }, 'Paused');
+      if (inc.crystals.includes(id)) return h('span', { class: 'sg-issue-tag ' + inc.severity, title: inc.title }, 'Known issue');
+      return null;
+    };
     const CHEV = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
     const crystalRow = (id, name, desc) => {
       const fresh = isNew(id);
@@ -335,7 +346,8 @@
       }
       return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : ''), 'data-crystal': id },
         h('div', { class: 'sg-row' },
-          h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : null),
+          h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : null,
+              issueTag(id)),
             h('span', { class: 'sg-soft' }, desc), optToggle ? h('div', null, optToggle) : null),
           toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); })),
         optBody);
@@ -356,6 +368,7 @@
         h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => crystalRow(id, name, desc)))),
 
       h('div', { class: 'sg-foot-links' },
+        h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.status.checkNow() }, 'Check for updates'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: () => openPatchNotes() }, 'Patch notes'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…')),
 

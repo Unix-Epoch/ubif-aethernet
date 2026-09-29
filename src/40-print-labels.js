@@ -110,6 +110,7 @@ AE.crystal({
     function newUi() { return { panel: AE.progressPanel('Quick Synthesis · print all labels', { clock: false }), running: false, stop: false }; }
 
     async function onClickPrintAll() {
+      if (AE.status.blocked('printLabels')) return;
       if (active && active.panel.el.isConnected) { active.panel.flash(); return; }
       const ui = active = newUi();
       ui.panel.body.textContent = 'Expanding line items…';

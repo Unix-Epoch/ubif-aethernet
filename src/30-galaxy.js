@@ -199,6 +199,7 @@ AE.crystal({
         main.onclick = async () => {
           if (suppressNextClick) { suppressNextClick = false; return; }
           dismissIntro(); // using it counts as having read it
+          if (AE.status.blocked('galaxy')) return;
           const woId = currentWoId();
           if (!woId) return;
           main.disabled = true;

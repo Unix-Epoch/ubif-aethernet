@@ -44,6 +44,7 @@ AE.crystal({
     let busy = null;
 
     async function logRecentTexts(woId) {
+      if (AE.status.blocked('textNotes')) return; // paused: the text went out, but no note is added
       const [prof, woRes, cust] = await Promise.all([
         AE.profile(),
         AE.api('GET', '/api/workorder/' + woId),

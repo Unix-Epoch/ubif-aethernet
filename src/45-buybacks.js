@@ -179,6 +179,7 @@ AE.crystal({
 
     // ---------- the run ----------
     async function addAll(key) {
+      if (AE.status.blocked('buybacks')) return;
       if (state.running) return;
       const g = GROUPS[key];
       state.running = true; state.cancel = false;

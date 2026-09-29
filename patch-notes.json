@@ -1,5 +1,14 @@
 [
   {
+    "version": "2.11.0",
+    "notes": [
+      "New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.",
+      "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.",
+      "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.",
+      "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."
+    ]
+  },
+  {
     "version": "2.10.0",
     "notes": [
       "New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.",

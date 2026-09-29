@@ -132,7 +132,7 @@ AE.crystal({
     const woLink = (id) => '<a href="/repair/workorder/' + id + '">WO ' + id + '</a>';
 
     async function onClick(arrivalId) {
-      if (running) return;
+      if (running || AE.status.blocked('autoClose')) return;
       running = true; stopRequested = false;
       const panel = AE.progressPanel('Swiftcast · cleaning auto-close');
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
@@ -162,6 +162,7 @@ AE.crystal({
     AE.autoClose = {
       isRunning: () => running,
       async confirmAndRun({ arrivalId, programId, customerName }) {
+        if (AE.status.blocked('autoClose')) return;
         if (running) { AE.confirm({ title: 'Already running', message: 'Another cleaning is being closed out — wait for it to finish.', confirmLabel: 'OK' }); return; }
         const ok = await AE.confirm({
           title: 'Create this cleaning?',
