@@ -56,7 +56,7 @@ READABLE_URL = f"{GIST_RAW}/{READABLE_FILENAME}"
 # Waymark (work-order tags) API: the Cloudflare Worker in worker/. Empty until
 # deployed; WAYMARK_API in the environment overrides it (e.g. a local
 # `wrangler dev` for testing). The app key is read from worker/wrangler.toml.
-WAYMARK_API = ""
+WAYMARK_API = "https://aethernet-waymark.ubifaethernet.workers.dev"
 # Minifier, pinned so builds are repeatable; run through npx (no local node_modules).
 ESBUILD = ["npx", "--yes", "esbuild@0.28.2"]
 

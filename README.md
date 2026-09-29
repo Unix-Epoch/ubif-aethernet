@@ -20,6 +20,7 @@ Rapid Synthesis's.
 | **Quick Synthesis** (print all labels) | Purple button next to "Generate Labels" on a PO Receive page |
 | **Bountiful Yield** (buyback add-all) | **Add all Apple devices (TLC)** / **Add all Samsung/Google parts (UROC)** in a buyback order's Add Buyback parts popout (Buybacks tab) |
 | **Glamour** (page theming) | Settings → Glamour: preset themes (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or your own from a background, text and accent colour; recolours the whole portal |
+| **Waymark** (work-order tags) | **+ Tag** after the customer's name on a WO; the Waymarks button in the header opens a board of open WOs grouped by tag; Settings → Waymark holds the store's tag list |
 
 **Settings:** avatar menu (top right) → **Aethernet settings**, or the
 Tampermonkey menu. Turn crystals on/off; a crystal's own settings (cleaning
@@ -369,3 +370,31 @@ only on a real page load. Arriving from any other portal page meant it never
 ran, which is why removing and re-adding it "fixed" it. The crystal runs
 portal-wide and checks the path itself. Verified live: the toolbar appeared on
 two buyback orders in a row, reached by in-portal navigation.
+
+## Waymark — shared work-order tags
+
+Tags are shared by everyone at a store and live outside Portal (no Portal
+notes), in a Cloudflare Worker + D1 database: `worker/` in this repo,
+deployed at https://aethernet-waymark.ubifaethernet.workers.dev (account:
+the Cloudflare login used with `npx wrangler login`).
+
+- Data per Portal store ID: the managed tag list (name, colour, order), tags
+  on WOs (managed or one-off), and our own history log (who added/removed
+  what, when; list edits too).
+- Aethernet reports tagged WOs that have left Portal's Active list; a daily
+  cron (09:00 UTC) deletes their tags and history 7 days later. List-edit
+  history is kept 90 days.
+- Editing the list is limited to Portal's Store Manager (Corp/Franchisee),
+  District Manager (and - Franchisee) and Store Owner - Franchisee roles for
+  the signed-in store (`GET /api/auth/user/stores`). Everyone can tag and add
+  one-offs.
+- **Trust model:** the Worker can't see Portal logins, so the role check and
+  "who did it" are asserted by Aethernet, not verified. The app key in
+  `worker/wrangler.toml` ships inside Aethernet; it only keeps random
+  traffic out (plus a 120 requests/minute per-IP limit). Fine for tags; don't
+  store anything sensitive this way. Tag text is plain text everywhere.
+- Deploy changes: `cd worker && npx wrangler deploy`. Schema: `schema.sql`
+  (`npx wrangler d1 execute aethernet-waymark --remote --file=schema.sql`).
+- Test a build against a local Worker: `npx wrangler dev --local` in
+  `worker/`, then `WAYMARK_API=http://localhost:8787 python3 build.py`.
+
