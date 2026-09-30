@@ -158,6 +158,9 @@
         btn('Reload as a store without access', () => AE.hooks.previewLockedOut(), { title: 'Everything stays off, as for a store not on the list. The notice has an End preview button.' })),
       note('The full preview only changes this browser; "End preview" on the notice switches back.'));
 
+    const rows = section('Rainbow Drip',
+      row(btn('"Another script is also coloring" notice', () => { if (!AE.hooks.rowColorsNotice) throw new Error('Turn Rainbow Drip on first.'); AE.hooks.rowColorsNotice(); }, { close: true })));
+
     // Swiftcast + general
     const general = section('Panels, toasts, dialogs',
       row(btn('Swiftcast progress panel (fake)', demoProgress, { close: true }),
@@ -171,7 +174,7 @@
     const card = h('div', { class: 'sg sg-card sg-dev', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' dev tools' },
       h('div', { class: 'head' }, h('span', { style: 'color:#e0761a;line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Dev tools'), h('span', { class: 'tag' }, 'DEV v' + AE_VERSION),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
-      h('div', { class: 'scroll' }, updates, notices, access, settings, macro, waymark, general));
+      h('div', { class: 'scroll' }, updates, notices, access, settings, macro, waymark, rows, general));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-dev', onclick: (e) => { if (e.target === scrim) close(); } }, card);
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
