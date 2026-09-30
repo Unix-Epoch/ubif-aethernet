@@ -1,5 +1,7 @@
 /*
   Bountiful Yield (buyback add-all) — on a buyback order's "Add buyback parts" popout
+  (and, since 2.16, an RMA order's "Add RMA parts" popout: one "Add all RMA
+  parts" button; the serial is read from under the part name)
   (Buybacks tab), adds bulk-add buttons:
 
     Add all Apple devices (TLC)          destination "Asurion Reverse Logistics"
@@ -24,7 +26,19 @@ AE.crystal({
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h } = AE;
-    const PATH_RE = /^\/boh\/inventory\/buyback-order\//;
+    // Two pages, same idea: a buyback order's "Add buyback parts" popout and an
+    // RMA order's "Add RMA parts" popout. The mode comes from the page.
+    const MODES = {
+      buyback: {
+        path: /^\/boh\/inventory\/buyback-order\//, heading: /^\s*add\s+buyback\s+parts\s*$/i,
+        headers: (hs) => hs.includes('serial number') && hs.includes('destination'), anchor: /^salvages\s*\(\d+\)/i,
+      },
+      rma: {
+        path: /^\/boh\/inventory\/rma-order\//, heading: /^\s*add\s+rma\s+parts\s*$/i,
+        headers: (hs) => hs.includes('part') && hs.includes('return value'), anchor: /^rmas\s*\(\d+\)/i,
+      },
+    };
+    const mode = () => Object.keys(MODES).find((k) => MODES[k].path.test(location.pathname)) || null;
     const TOOLBAR_ID = 'sg-buyback-toolbar';
 
     // Safety limits — these are what stop a run from ever spinning forever.
@@ -40,7 +54,9 @@ AE.crystal({
     const GROUPS = {
       apple: { label: 'Apple devices', hint: 'TLC', variant: 'sg-primary', test: (d) => /asurion\s+reverse\s+logistics/i.test(d) },
       samsungGoogle: { label: 'Samsung/Google parts', hint: 'UROC', variant: 'sg-outline', test: (d) => /\buroc\b/i.test(d) },
+      rma: { label: 'RMA parts', hint: '', variant: 'sg-primary', test: () => true },
     };
+    const groupsFor = (m) => (m === 'rma' ? ['rma'] : ['apple', 'samsungGoogle']);
 
     document.head.append(h('style', null, `
       #${TOOLBAR_ID} { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:8px 0 12px; }
@@ -78,8 +94,10 @@ AE.crystal({
       return true;
     }
     function getModal() {
+      const m = mode();
+      if (!m) return null;
       const heads = [...document.querySelectorAll('h1,h2,h3')]
-        .filter((e) => /^\s*add\s+buyback\s+parts\s*$/i.test(e.textContent || ''))
+        .filter((e) => MODES[m].heading.test(e.textContent || ''))
         .filter(isVisible);
       const hd = heads[heads.length - 1];
       let n = hd;
@@ -89,25 +107,38 @@ AE.crystal({
     const tabButtons = (modal, re) => [...modal.querySelectorAll('button,[role="tab"]')].filter((b) => re.test((b.innerText || '').trim()));
     // The Damaged tab has identical columns; the active tab is the only reliable tell.
     function buybacksTabActive(modal) {
+      if (mode() === 'rma') return true; // the RMA popout has no tabs
       const tabs = tabButtons(modal, /^buybacks\s*\(\d+\)$/i);
       return tabs.length > 0 && tabs.some((b) => b.getAttribute('aria-selected') === 'true');
     }
     function getTable(modal) {
       if (!modal) return null;
+      const m = mode();
       return [...modal.querySelectorAll('table')].find((t) => {
         const hs = [...t.querySelectorAll('thead th')].map((x) => (x.innerText || '').trim().toLowerCase());
-        return hs.includes('serial number') && hs.includes('destination');
+        return m && MODES[m].headers(hs);
       }) || null;
     }
     const colIdx = (table, re) => [...table.querySelectorAll('thead th')].findIndex((th) => re.test((th.innerText || '').trim()));
+    const btnEnabled = (b) => b && !b.disabled && b.getAttribute('aria-disabled') !== 'true';
     function getRows(table) {
       if (!table) return [];
+      if (mode() === 'rma') {
+        // Part cell = name with the serial underneath; the last cell holds "+".
+        const pi = colIdx(table, /^part$/i), mi = colIdx(table, /manufacturer/i);
+        if (pi < 0) return [];
+        return [...table.querySelectorAll('tbody tr')].map((tr) => {
+          const c = tr.children, text = c[pi] ? (c[pi].innerText || '').trim() : '';
+          const serial = (text.match(/\b\d+-\d{6,}\b/) || [text.split('\n').pop().trim()])[0];
+          return { tr, serial, dest: mi >= 0 && c[mi] ? (c[mi].innerText || '').trim() : '', btn: tr.querySelector('td:last-child button') };
+        }).filter((r) => r.serial && btnEnabled(r.btn));
+      }
       const si = colIdx(table, /serial\s*number/i), di = colIdx(table, /destination/i);
       if (si < 0 || di < 0) return [];
       return [...table.querySelectorAll('tbody tr')].map((tr) => {
         const c = tr.children;
         return { tr, serial: c[si] ? (c[si].innerText || '').trim() : '', dest: c[di] ? (c[di].innerText || '').trim() : '', btn: tr.querySelector('td:last-child button') };
-      }).filter((r) => r.serial && r.btn && !r.btn.disabled);
+      }).filter((r) => r.serial && btnEnabled(r.btn));
     }
     const groupRows = (table, key) => getRows(table).filter((r) => GROUPS[key].test(r.dest));
     // The list empties for a moment while it refetches after every add —
@@ -116,7 +147,7 @@ AE.crystal({
     // If clicks stop registering, bouncing tabs re-renders the rows with fresh handlers. Read-only, bounded.
     async function recover(key) {
       const modal = getModal();
-      if (!modal) return false;
+      if (!modal || mode() === 'rma') return false; // no tabs to bounce on the RMA popout
       const bb = tabButtons(modal, /^buybacks\s*\(\d+\)$/i)[0];
       const dmg = tabButtons(modal, /^damaged\s*\(\d+\)$/i)[0];
       if (!bb) return false;
@@ -128,27 +159,25 @@ AE.crystal({
 
     // ---------- UI ----------
     function buildToolbar() {
-      const mk = (key) => h('button', { type: 'button', class: 'sg sg-btn ' + GROUPS[key].variant, onclick: () => addAll(key) });
-      const bar = h('div', { id: TOOLBAR_ID, class: 'sg' });
-      bar._apple = mk('apple');
-      bar._sg = mk('samsungGoogle');
+      const mk = (key) => h('button', { type: 'button', class: 'sg sg-btn ' + GROUPS[key].variant, 'data-group': key, onclick: () => addAll(key) });
+      const bar = h('div', { id: TOOLBAR_ID, class: 'sg', 'data-mode': mode() });
+      bar._groups = groupsFor(mode()).map(mk);
       bar._stop = h('button', { type: 'button', class: 'sg sg-btn sg-danger', onclick: () => { state.cancel = true; setStatus('Stopping…'); } }, '■ Stop');
       bar._status = h('span', { class: 'status' });
-      bar.append(bar._apple, bar._sg, bar._stop, bar._status);
+      bar.append(...bar._groups, bar._stop, bar._status);
       return bar;
     }
     function refreshToolbar() {
       const bar = document.getElementById(TOOLBAR_ID);
       if (!bar) return;
       const table = getTable(getModal());
-      const a = table ? groupRows(table, 'apple').length : 0;
-      const s = table ? groupRows(table, 'samsungGoogle').length : 0;
-      const label = (key, n) => 'Add all ' + GROUPS[key].label + ' (' + GROUPS[key].hint + ') · <span class="count">' + n + '</span>';
+      const label = (key, n) => 'Add all ' + GROUPS[key].label + (GROUPS[key].hint ? ' (' + GROUPS[key].hint + ')' : '') + ' · <span class="count">' + n + '</span>';
       const setHtml = (el, html) => { if (el.innerHTML !== html) el.innerHTML = html; };
-      setHtml(bar._apple, label('apple', a));
-      setHtml(bar._sg, label('samsungGoogle', s));
-      bar._apple.disabled = state.running || a === 0;
-      bar._sg.disabled = state.running || s === 0;
+      for (const btn of bar._groups) {
+        const n = table ? groupRows(table, btn.dataset.group).length : 0;
+        setHtml(btn, label(btn.dataset.group, n));
+        btn.disabled = state.running || n === 0;
+      }
       bar._stop.style.display = state.running ? '' : 'none';
       setHtml(bar._status, (state.running ? '<span class="sg-spin"></span>' : '') + AE.esc(state.status || ''));
     }
@@ -156,7 +185,7 @@ AE.crystal({
 
     function anchorFor(modal, table) {
       const p = [...modal.querySelectorAll('p,div,span,h4')]
-        .find((e) => e.children.length <= 2 && /^salvages\s*\(\d+\)/i.test((e.innerText || '').trim()));
+        .find((e) => e.children.length <= 2 && MODES[mode()].anchor.test((e.innerText || '').trim()));
       if (p && p.parentElement) return { parent: p.parentElement, next: p.nextSibling };
       let n = table;
       while (n.parentElement && n.parentElement !== modal) n = n.parentElement;
@@ -165,7 +194,8 @@ AE.crystal({
 
     function sync() {
       const existing = document.getElementById(TOOLBAR_ID);
-      if (!PATH_RE.test(location.pathname)) { if (existing && !state.running) existing.remove(); return; }
+      if (!mode()) { if (existing && !state.running) existing.remove(); return; }
+      if (existing && existing.dataset.mode !== mode() && !state.running) existing.remove();
       const modal = getModal();
       const table = modal ? getTable(modal) : null;
       if (!modal || !table || !buybacksTabActive(modal)) { if (existing && !state.running) existing.remove(); return; }
@@ -180,7 +210,7 @@ AE.crystal({
     // ---------- the run ----------
     async function addAll(key) {
       if (AE.status.blocked('buybacks')) return;
-      AE.track('buybacks:addAll');
+      AE.track(mode() === 'rma' ? 'buybacks:addAllRma' : 'buybacks:addAll');
       if (state.running) return;
       const g = GROUPS[key];
       state.running = true; state.cancel = false;
@@ -202,7 +232,12 @@ AE.crystal({
           if (!rows.length) {
             // Could be the post-add refresh rather than a finished list.
             setStatus('Waiting for the list to refresh… (' + added + ' added)');
-            if (!(await listRepopulated(key))) { setStatus('Done — added ' + added + ' ' + g.label + '.'); break; }
+            if (!(await listRepopulated(key))) {
+              // RMAs have a line limit; Portal disables "+" once it's reached.
+              const limited = mode() === 'rma' && /line limit for an rma/i.test((getModal() || {}).innerText || '');
+              setStatus(limited ? 'RMA line limit reached — added ' + added + '.' : 'Done — added ' + added + ' ' + g.label + '.');
+              break;
+            }
             continue;
           }
           // Keyed by serial, never index; a per-serial attempt cap makes retry loops impossible.
