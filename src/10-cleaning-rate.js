@@ -52,16 +52,9 @@ AE.crystal({
       const startMs = start.getTime(), endMs = startMs + 86400000;
       const [wos, arrs] = await Promise.all([AE.data.workorders(startMs), AE.data.arrivals()]);
       const today = (r) => { const t = Date.parse(r.createdAt); return t >= startMs && t < endMs; };
-      // Orders closed as incomplete (list rows' serviceOutcome, from the WO's
-      // "service_outcome" attribute) don't count: out of the list and the rate.
-      const incomplete = (r) => String(r.serviceOutcome || '').toLowerCase() === 'incomplete';
-      const todays = wos.filter((r) => r.programId === AE.PARENT_PROGRAM_ID && today(r)).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-      const parents = todays.filter((r) => !incomplete(r));
-      const dropped = todays.filter(incomplete);
+      const parents = wos.filter((r) => r.programId === AE.PARENT_PROGRAM_ID && today(r)).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
       const cleanings = AE.data.cleanings(wos, arrs, today);
       const used = new Set();
-      // Their cleanings are set aside too, rather than listed as "not linked".
-      dropped.forEach((p) => cleanings.filter((c) => !used.has(c.key) && AE.data.belongs(c, p)).forEach((c) => used.add(c.key)));
       const rows = parents.map((p) => {
         const matched = cleanings.filter((c) => !used.has(c.key) && AE.data.belongs(c, p));
         matched.forEach((c) => used.add(c.key));
@@ -70,7 +63,7 @@ AE.crystal({
       const linked = rows.reduce((n, r) => n + r.matched.length, 0);
       const pending = rows.reduce((n, r) => n + r.matched.filter((c) => c.pending).length, 0);
       return {
-        parents: parents.length, linked, pending, rows, dropped, at: new Date(),
+        parents: parents.length, linked, pending, rows, at: new Date(),
         unlinked: cleanings.filter((c) => !used.has(c.key)),
         pct: parents.length ? Math.round((linked / parents.length) * 100) : null,
       };
@@ -142,10 +135,6 @@ AE.crystal({
         ? '<p class="sg-soft" style="margin:10px 0 0">' + last.unlinked.length + " cleaning(s) today not linked to any of today's orders (not counted): " +
           last.unlinked.map(linkTo).join(', ') + '</p>'
         : '';
-      const notCounted = last.dropped && last.dropped.length
-        ? '<p class="sg-soft" style="margin:10px 0 0">Not counted: ' + last.dropped.length + ' order' + (last.dropped.length === 1 ? '' : 's') +
-          ' closed as incomplete (' + last.dropped.map((wo) => '<a href="/repair/workorder/' + wo.workorderId + '">' + wo.workorderId + '</a>').join(', ') + ').</p>'
-        : '';
       const scroll = p.scrollTop;
       p.innerHTML =
         '<div style="display:flex;align-items:center;gap:8px">' + AE.actionIcon('cleaningRate', 26) + '<b style="flex:1;font-size:16px">Today\'s cleaning rate: <span style="color:' + levelColor(last.pct) + '">' +
@@ -153,7 +142,7 @@ AE.crystal({
         '<div class="sg-soft" style="margin-top:4px">' + last.linked + ' cleanings' + (last.pending ? ' (' + last.pending + ' pending in Arrivals)' : '') +
         ' ÷ ' + last.parents + ' Asurion Mobility orders created today · target ' + TARGET +
         '%, ideally 100% · updated ' + fmtTime(last.at) + (lastError ? '<br><span class="miss">Last refresh failed: ' + esc(lastError) + '</span>' : '') + '</div>' +
-        table + extra + notCounted;
+        table + extra;
       p.scrollTop = scroll;
       p.querySelector('[data-refresh]').onclick = (e) => { e.stopPropagation(); refresh(); };
       p.querySelectorAll('.sg-mk').forEach((btn) => {
