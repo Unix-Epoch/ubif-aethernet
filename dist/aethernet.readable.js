@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.14.1
+// @version      2.15.0
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -35,9 +35,9 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.14.1';            // filled in by build.py
-const AE_BUILD_TIME = '2026-09-29T20:47:16-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = '724e70d';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_VERSION = '2.15.0';            // filled in by build.py
+const AE_BUILD_TIME = '2026-09-30T01:45:13-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = '040d91c';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';
 const AE_READABLE_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.readable.js'; // same build, unminified     // where installs update from
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
@@ -396,6 +396,38 @@ const AE = (() => {
     return { workorders, arrivals, cleanings, belongs, imeiOf, custOf, nameOf };
   })();
 
+  // --------------------------------------------------- errors + usage
+  // The last few Aethernet errors, attached to bug reports ("Send feedback").
+  const recentErrors = [];
+  function noteError(where, e) {
+    recentErrors.push({ at: new Date().toISOString(), where, message: String((e && e.message) || e).slice(0, 300) });
+    if (recentErrors.length > 10) recentErrors.shift();
+  }
+
+  /*
+    Usage counts ("who uses what"): AE.track('autoClose:run') adds 1 to today's
+    count for this person. Counts are batched in Tampermonkey storage and sent
+    by the feedback module (06-feedback.js) every few minutes. Only feature
+    names and counts — never page contents or customer details.
+  */
+  const USAGE_KEY = 'ae_usage_pending';
+  const localDay = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  function track(feature) {
+    try {
+      const pend = GM_getValue(USAGE_KEY, {});
+      const day = (pend[localDay()] = pend[localDay()] || {});
+      day[feature] = (day[feature] || 0) + 1;
+      GM_setValue(USAGE_KEY, pend);
+    } catch (_) { /* never let tracking break a crystal */ }
+  }
+  // Once a day per person (e.g. "used Aethernet today", "has a Glamour theme on").
+  function trackDaily(feature) {
+    const k = 'ae_usage_daily', seen = GM_getValue(k, {});
+    if (seen[feature] === localDay()) return;
+    seen[feature] = localDay(); GM_setValue(k, seen);
+    track(feature);
+  }
+
   // --------------------------------------------------- crystal registry
   const crystals = [];
   function crystal(def) { crystals.push(def); }
@@ -406,7 +438,7 @@ const AE = (() => {
       if (t.sites && !t.sites.includes(location.hostname)) continue;
       // Paused remotely by an Aethernet notice (status.json); last-known copy.
       if (AE.status && AE.status.paused(t.id)) { console.info('[' + AE_NAME + '] ' + t.name + ' is paused by an Aethernet notice'); continue; }
-      try { t.run(); } catch (e) { console.error('[' + AE_NAME + '] ' + t.name + ' failed to start', e); }
+      try { t.run(); } catch (e) { noteError(t.name + ' start', e); console.error('[' + AE_NAME + '] ' + t.name + ' failed to start', e); }
     }
   }
 
@@ -414,7 +446,7 @@ const AE = (() => {
   // change without a load and Portal re-renders often.
   function every(ms, fn) {
     // Promise.resolve so async callbacks' rejections are caught too.
-    const safe = () => Promise.resolve().then(fn).catch((e) => console.error('[' + AE_NAME + ']', e));
+    const safe = () => Promise.resolve().then(fn).catch((e) => { noteError('timer', e); console.error('[' + AE_NAME + ']', e); });
     setInterval(safe, ms);
     safe();
   }
@@ -422,7 +454,7 @@ const AE = (() => {
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
     api, unwrap, Stopped, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
-    confirm: confirmDialog, toast, emit, on, data,
+    confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close crystal when it's enabled
   };
@@ -733,6 +765,7 @@ AE.status = (() => {
   .sg-patch .tag.new { background:#ffcc00; color:#3d2e00; }
   .sg-patch ul { margin:0; padding:0 14px 12px 40px; }
   .sg-patch li { margin:4px 0; }
+  .sg-patch .credits { margin:-4px 14px 12px 40px; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); font-style:italic; }
   .sg-about-scrim { position:fixed; inset:0; z-index:2147483647; background:var(--aui-scrim-overlay, #0c0e1180);
     display:flex; align-items:center; justify-content:center; padding:16px; animation: sg-in .15s ease-out; }
   .sg-about { width:min(460px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:28px 24px 20px; font-size:14px; line-height:1.45; }
@@ -866,6 +899,8 @@ AE.status = (() => {
         h('span', { class: 'sg-chip' + (on[id] ? '' : ' chip-off'), title: on[id] ? 'On' : 'Off' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 16) }), name))),
       h('h4', null, 'Your setup'),
       kv(['Signed in', whoBox], ['Browser', browser], ['Script manager', manager]),
+      h('h4', null, 'Usage data'),
+      h('div', { class: 'sg-soft' }, AE_NAME + ' records which features each person uses (a count per feature per day, with name and store) to decide what to improve. It never records customer details or page contents. Bug reports and suggestions sent from Send feedback include your name and store.'),
       h('h4', null, 'Share with another store'),
       h('div', { class: 'link-row' }, linkInput, copyBtn),
       h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Open the link with Tampermonkey installed to add ' + AE_NAME + '. Installs update themselves.'),
@@ -884,7 +919,7 @@ AE.status = (() => {
   // Patch notes — its own modal, above Settings. Every release is a panel,
   // newest first. `since` (the version you updated from) expands everything
   // newer than it; otherwise just the latest is open.
-  const PATCH_NOTES = [{"version": "2.14.1", "notes": ["Auto-Waymark: if a work order's nickname already has a date in it (like \"PS5 SLIM (10/01)\"), that date becomes its Auto-Waymark date. Otherwise it's 3 days after it reached Ready for pickup, as before.", "Fixed: work orders already at Ready for pickup when 2.14.0 arrived were dated from their last update instead of the date in their nickname. Their Auto-Waymarks have been corrected."], "date": "2026-09-30T00:47:16Z"}, {"version": "2.14.0", "notes": ["New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.", "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.", "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **\u00d7** removes it for good.", "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.", "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."], "date": "2026-09-30T00:37:49Z"}, {"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
+  const PATCH_NOTES = [{"version": "2.15.0", "notes": ["New: **Send feedback**. Report a bug or suggest something straight from Portal: avatar menu \u2192 **Send Aethernet feedback**, or the link at the bottom of Settings. Bug reports can include technical details to help track the problem down (never customer details).", "Suggestions that get built are credited here in the patch notes."], "date": "2026-09-30T05:45:13Z"}, {"version": "2.14.1", "notes": ["Auto-Waymark: if a work order's nickname already has a date in it (like \"PS5 SLIM (10/01)\"), that date becomes its Auto-Waymark date. Otherwise it's 3 days after it reached Ready for pickup, as before.", "Fixed: work orders already at Ready for pickup when 2.14.0 arrived were dated from their last update instead of the date in their nickname. Their Auto-Waymarks have been corrected."], "date": "2026-09-30T00:47:16Z"}, {"version": "2.14.0", "notes": ["New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.", "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.", "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **\u00d7** removes it for good.", "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.", "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."], "date": "2026-09-30T00:37:49Z"}, {"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
   const verTuple = (v) => String(v || '0').split('.').map(Number);
   const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
@@ -902,7 +937,8 @@ AE.status = (() => {
           n.version === AE_VERSION ? h('span', { class: 'tag' }, 'Installed') : null,
           isNew ? h('span', { class: 'tag new' }, 'New') : null,
           h('span', { class: 'when' }, when)),
-        h('ul', null, n.notes.map((t) => h('li', { html: noteHtml(t) }))));
+        h('ul', null, n.notes.map((t) => h('li', { html: noteHtml(t) }))),
+        n.credits && n.credits.length ? h('div', { class: 'credits' }, 'Suggested by ' + n.credits.join(', ') + '. Thank you!') : null);
       panel.open = since ? isNew : i === 0;
       return panel;
     });
@@ -925,6 +961,7 @@ AE.status = (() => {
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
     document.getElementById('sg-settings')?.remove();
+    AE.track('settings:open');
     const s = AE.merge(AE.DEFAULTS, AE.settings); // working copy
 
     const input = (label, value, placeholder, onInput, type = 'text') =>
@@ -1023,19 +1060,25 @@ AE.status = (() => {
 
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
-        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 36) }),
+        // Hidden way in: ten quick clicks on the crystal open the admin panel (key entry first time).
+        h('span', { style: 'color:var(--aui-primary,#8223d2);cursor:default;user-select:none', html: icon('aetheryte', 36), onclick: (() => {
+          let n = 0, last = 0;
+          return () => { const t = Date.now(); n = t - last < 1500 ? n + 1 : 1; last = t; if (n >= 10) { n = 0; AE.feedback && AE.feedback.openAdmin(); } };
+        })() }),
         h('div', { style: 'flex:1' }, h('h2', { class: 'sg-wordmark', html: AE.wordmark(26) }), h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen · v' + AE_VERSION })),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
 
       section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
         who,
-        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.')),
+        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.'),
+        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, AE_NAME + ' records which features you use (a count per feature per day, with your name and store) to decide what to improve. It never records customer details or what\'s on the page.')),
 
       section('crystals', 'Crystals', true,
         () => CRYSTAL_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + CRYSTAL_INFO.length + ' on',
         h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => crystalRow(id, name, desc)))),
 
       h('div', { class: 'sg-foot-links' },
+        h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.feedback.openFeedback() }, 'Send feedback'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.status.checkNow() }, 'Check for updates'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: () => openPatchNotes() }, 'Patch notes'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…')),
@@ -1103,6 +1146,317 @@ AE.status = (() => {
   if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(AE_NAME + ' settings', open);
   AE.openSettings = open;
   AE.openPatchNotes = openPatchNotes;
+})();
+
+// ===== 06-feedback.js =====
+/*
+  Feedback + usage + admin.
+
+  - "Send feedback" (avatar menu, Settings, Tampermonkey menu): a bug report
+    or a suggestion, sent to the Aethernet API (same Worker as Waymark). Bug
+    reports can include technical details: version, browser, the page's path,
+    which crystals are on, and the last few Aethernet errors. Never customer
+    details. Submit-and-done; suggestions that get built are credited in the
+    patch notes.
+  - Usage: AE.track() counts (core) are sent here every 5 minutes, named per
+    person, per store, per feature, per day. Disclosed in Settings and About.
+  - Admin (Garrett): an inbox of reports with his own status/notes, and
+    usage by feature, person and store. No visible way in: ten quick clicks
+    on the crystal in the Settings header open it (asking for the key the
+    first time). Reading needs the ADMIN_KEY secret, kept in this browser
+    only; it never ships in the script, so other users can't read any of it
+    even with the public app key.
+  - Patch notes mention the feedback button and credits, never the admin
+    panel or usage analytics (Garrett's call).
+*/
+AE.feedback = (() => {
+  if (!AE_ON_PORTAL) return null;
+  const { h, icon } = AE;
+  const API = 'https://aethernet-waymark.ubifaethernet.workers.dev';
+  const KEY = 'ae_QFa2DKDy0DrlBd_A3bfZL3BtgM51idh6';
+  const ADMIN_KEY_GM = 'ae_admin_key';
+  const configured = () => /^(https:\/\/|http:\/\/localhost[:/])/.test(API);
+
+  async function call(method, path, body, adminKey) {
+    if (!configured()) throw new Error('The Aethernet service isn\'t set up');
+    const headers = { 'content-type': 'application/json', 'x-aethernet-key': KEY };
+    if (adminKey) headers['x-aethernet-admin'] = adminKey;
+    const res = await fetch(API + path, { method, headers, credentials: 'omit', keepalive: !!body && JSON.stringify(body).length < 60000, body: body ? JSON.stringify(body) : undefined });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
+    return j;
+  }
+  const me = async () => { const p = await AE.profile(); if (!p.storeId) throw new Error('No current store'); return p; };
+  const browserName = () => { const ua = navigator.userAgent; return /Zen\//.test(ua) ? 'Zen' : /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : 'Other'; };
+
+  // ------------------------------------------------------------ usage upload
+  async function flushUsage() {
+    const pend = GM_getValue(AE.USAGE_KEY, {});
+    const days = Object.keys(pend);
+    if (!days.length || !configured()) return;
+    const p = await me();
+    for (const day of days) {
+      await call('POST', '/v1/' + p.storeId + '/usage', { day, counts: pend[day], by: p.name, byId: p.userId, storeName: p.storeName });
+      // Re-read before deleting: counts added while sending stay for next time.
+      const now = GM_getValue(AE.USAGE_KEY, {});
+      for (const [f, n] of Object.entries(pend[day])) { if (now[day]) { now[day][f] -= n; if (now[day][f] <= 0) delete now[day][f]; } }
+      if (now[day] && !Object.keys(now[day]).length) delete now[day];
+      GM_setValue(AE.USAGE_KEY, now);
+    }
+  }
+  setTimeout(() => {
+    const go = () => flushUsage().catch((e) => console.warn('[' + AE_NAME + '] usage upload:', e.message || e));
+    go();
+    setInterval(go, 5 * 60 * 1000);
+  }, 30000);
+
+  // ------------------------------------------------------------ CSS
+  const CSS = `
+  .sg-fb { width:min(520px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:22px 20px 16px; font-size:14px; line-height:1.45; }
+  .sg-fb .head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .sg-fb .head h2 { flex:1; margin:0; font-size:20px; font-weight:700; }
+  .sg-fb .kinds { display:flex; gap:8px; margin-bottom:12px; }
+  .sg-fb .kinds button { flex:1; height:40px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:10px; background:none; cursor:pointer;
+    color:var(--aui-on-surface, #1a1c1e); font:600 14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .sg-fb .kinds button.on { border:2px solid var(--aui-primary, #8223d2); background:var(--aui-primary-soft, #faecff); color:var(--aui-on-primary-soft, #590099); }
+  .sg-fb textarea { width:100%; min-height:130px; padding:10px 12px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:10px; resize:vertical; box-sizing:border-box;
+    background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font:14px/1.45 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .sg-fb textarea:focus { outline:2px solid var(--aui-primary, #8223d2); outline-offset:-1px; border-color:transparent; }
+  .sg-fb label.chk { display:flex; gap:8px; align-items:flex-start; margin:10px 0 4px; font-size:13px; cursor:pointer; }
+  .sg-fb details { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-fb pre { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--aui-surface-variant, #faf9fc); border:1px solid var(--aui-outline-soft, #eeedf1); border-radius:8px; padding:8px; font:11px ui-monospace, Menlo, monospace; }
+  .sg-fb .sg-actions { margin-top:14px; }
+  .sg-adm { width:min(980px, 100%); height:min(760px, calc(100vh - 32px)); display:flex; flex-direction:column; padding:18px 20px 14px; font-size:14px; line-height:1.4; }
+  .sg-adm .head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .sg-adm .head h2 { flex:1; margin:0; font-size:20px; font-weight:700; }
+  .sg-adm .tabs { display:flex; gap:2px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); margin-bottom:10px; }
+  .sg-adm .tab { padding:7px 12px 8px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px; background:none; cursor:pointer; color:var(--aui-on-surface-soft, #5d5e61); font:600 14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .sg-adm .tab.on { color:var(--aui-primary, #8223d2); border-bottom-color:var(--aui-primary, #8223d2); }
+  .sg-adm .body { flex:1; overflow:auto; }
+  .sg-adm .bar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+  .sg-adm .bar select { height:32px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); }
+  .sg-adm .rep { border:1px solid var(--aui-outline-soft, #eeedf1); border-radius:12px; padding:10px 12px; margin-bottom:8px; }
+  .sg-adm .rep .top { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .sg-adm .rep .who { font-weight:600; }
+  .sg-adm .rep .meta { flex:1; text-align:right; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-adm .rep .txt { margin:6px 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .sg-adm .rep .ctl { display:flex; gap:6px; align-items:center; }
+  .sg-adm .rep .ctl input { flex:1; min-width:0; height:30px; padding:0 8px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); }
+  .sg-adm .kind { padding:1px 8px; border-radius:10000rem; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; }
+  .sg-adm .kind.bug { background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); }
+  .sg-adm .kind.idea { background:var(--aui-primary-soft, #faecff); color:var(--aui-on-primary-soft, #590099); }
+  .sg-adm .st { font-size:11px; font-weight:700; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-adm .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(290px, 1fr)); gap:14px; }
+  .sg-adm .card { border:1px solid var(--aui-outline-soft, #eeedf1); border-radius:12px; padding:10px 12px; }
+  .sg-adm .card h3 { margin:0 0 8px; font-size:13px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-adm .row { display:grid; grid-template-columns:minmax(0, 1.3fr) minmax(0, 1fr) auto; gap:8px; align-items:center; padding:3px 0; font-size:13px; }
+  .sg-adm .row .name { display:flex; gap:6px; align-items:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sg-adm .row .track { height:8px; border-radius:4px; background:var(--aui-neutral-soft, #f1f0f4); overflow:hidden; }
+  .sg-adm .row .track i { display:block; height:100%; background:var(--aui-primary, #8223d2); border-radius:4px; }
+  .sg-adm .row .n { font-variant-numeric:tabular-nums; color:var(--aui-on-surface-soft, #5d5e61); min-width:36px; text-align:right; }
+  .sg-adm .sub { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-adm .unlock { max-width:420px; margin:30px auto; }
+  .sg-adm .unlock input { width:100%; height:38px; padding:0 10px; margin:8px 0; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; box-sizing:border-box;
+    background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font:13px ui-monospace, Menlo, monospace; }
+  `;
+  const ensureCss = () => { AE.ensureCss(); if (!document.getElementById('sg-fb-css')) document.head.append(h('style', { id: 'sg-fb-css' }, CSS)); };
+
+  function modal(id, card, onClose) {
+    document.getElementById(id)?.remove();
+    const scrim = h('div', { class: 'sg sg-about-scrim', id, onclick: (e) => { if (e.target === scrim) close(); } }, card);
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); onClose && onClose(); }
+    document.addEventListener('keydown', onKey, true);
+    document.body.appendChild(scrim);
+    return close;
+  }
+
+  // ------------------------------------------------------------ Send feedback
+  function diagnostics() {
+    return {
+      crystals: Object.entries(AE.settings.crystals).filter(([, on]) => on).map(([id]) => id),
+      errors: AE.recentErrors.slice(-5),
+      screen: innerWidth + 'x' + innerHeight,
+      theme: document.body.classList.contains('asurion-dark') ? 'dark' : 'light',
+    };
+  }
+  function openFeedback() {
+    ensureCss();
+    let kind = 'bug';
+    const text = h('textarea', { maxlength: 4000, placeholder: 'What happened, and what did you expect? (Which work order or page, if it matters.)' });
+    const include = h('input', { type: 'checkbox', checked: true });
+    const setKind = (k) => {
+      kind = k;
+      card.querySelectorAll('.kinds button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+      text.placeholder = k === 'bug' ? 'What happened, and what did you expect? (Which work order or page, if it matters.)' : 'What would make Portal or Aethernet better for you?';
+      detailsRow.style.display = k === 'bug' ? '' : 'none';
+    };
+    const preview = () => JSON.stringify({ version: AE_VERSION, browser: browserName(), page: location.pathname, ...diagnostics() }, null, 1);
+    const pre = h('pre', null, preview());
+    const detailsRow = h('div', null,
+      h('label', { class: 'chk' }, include, h('span', null, 'Include technical details (version, browser, this page\'s address, which crystals are on, recent Aethernet errors). No customer details.')),
+      h('details', null, h('summary', null, 'What gets sent'), pre));
+    const send = h('button', { type: 'button', class: 'sg-btn sg-lg sg-primary', onclick: async () => {
+      const t = text.value.trim();
+      if (t.length < 3) { text.focus(); return; }
+      send.disabled = true; send.textContent = 'Sending…';
+      try {
+        const p = await me();
+        await call('POST', '/v1/' + p.storeId + '/feedback', {
+          kind, text: t, version: AE_VERSION, browser: browserName(), page: location.pathname,
+          diag: kind === 'bug' && include.checked ? diagnostics() : null, by: p.name, byId: p.userId, storeName: p.storeName,
+        });
+        AE.track('feedback:' + kind);
+        close();
+        AE.toast('Thanks!', kind === 'bug' ? 'Your bug report went to the Aethernet team.' : 'Your suggestion went to the Aethernet team. If it gets built, you\'ll be credited in the patch notes.', 'ok', 8000);
+      } catch (e) {
+        send.disabled = false; send.textContent = 'Send';
+        AE.toast("Couldn't send", (e.message || e) + ' — try again in a minute.', 'err');
+      }
+    } }, 'Send');
+    const card = h('div', { class: 'sg sg-card sg-fb', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Send feedback' },
+      h('div', { class: 'head' }, h('span', { style: 'color:var(--aui-primary,#8223d2);line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Send feedback'),
+        h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
+      h('div', { class: 'kinds' },
+        h('button', { type: 'button', 'data-k': 'bug', class: 'on', onclick: () => setKind('bug') }, '🐞 Report a bug'),
+        h('button', { type: 'button', 'data-k': 'idea', onclick: () => setKind('idea') }, '💡 Suggest something')),
+      text, detailsRow,
+      h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Sent with your name and store so the team can follow up in person.'),
+      h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Cancel'), send));
+    const close = modal('sg-feedback', card);
+    text.focus();
+  }
+
+  // ------------------------------------------------------------ Admin
+  const FEATURE_NAMES = () => Object.fromEntries(AE.crystals.map((c) => [c.id, c.name]));
+  const featureLabel = (f) => {
+    const [id, act] = f.split(':');
+    const base = { active: 'Used Aethernet', feedback: 'Feedback', settings: 'Settings' }[id] || FEATURE_NAMES()[id] || id;
+    return act ? base + ' · ' + act : base;
+  };
+
+  async function openAdmin() {
+    ensureCss();
+    let tab = 'reports', statusFilter = 'new', days = 30;
+    const body = h('div', { class: 'body' });
+    const tabs = h('div', { class: 'tabs', role: 'tablist' });
+    const card = h('div', { class: 'sg sg-card sg-adm', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' admin' },
+      h('div', { class: 'head' }, h('span', { style: 'color:var(--aui-primary,#8223d2);line-height:0', html: icon('aetheryte', 28) }), h('h2', null, AE_NAME + ' admin'),
+        h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
+      tabs, body);
+    const close = modal('sg-admin', card);
+
+    const key = () => GM_getValue(ADMIN_KEY_GM, '');
+    function unlock(msg) {
+      tabs.replaceChildren();
+      const input = h('input', { type: 'password', placeholder: 'Admin key', autocomplete: 'off' });
+      const go = h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: async () => {
+        go.disabled = true;
+        try { await call('GET', '/v1/admin/ping', null, input.value.trim()); GM_setValue(ADMIN_KEY_GM, input.value.trim()); draw(); }
+        catch (e) { go.disabled = false; unlock('That key didn\'t work (' + (e.message || e) + ').'); }
+      } }, 'Unlock');
+      body.replaceChildren(h('div', { class: 'unlock' },
+        h('b', null, 'Admin key'),
+        h('div', { class: 'sg-soft' }, 'Kept in this browser only. It is not part of the script, so nobody else can read reports or usage.'),
+        input, go, msg ? h('div', { style: 'color:var(--aui-status-error,#b91a24);margin-top:8px' }, msg) : null));
+      input.focus();
+    }
+
+    async function draw() {
+      if (!key()) return unlock();
+      tabs.replaceChildren(
+        h('button', { type: 'button', class: 'tab' + (tab === 'reports' ? ' on' : ''), onclick: () => { tab = 'reports'; draw(); } }, 'Reports'),
+        h('button', { type: 'button', class: 'tab' + (tab === 'usage' ? ' on' : ''), onclick: () => { tab = 'usage'; draw(); } }, 'Usage'));
+      body.replaceChildren(h('div', { class: 'sg-soft' }, 'Loading…'));
+      try { tab === 'reports' ? await drawReports() : await drawUsage(); }
+      catch (e) { if (/admin key/.test(e.message)) { GM_deleteValue(ADMIN_KEY_GM); unlock('The saved key was refused.'); } else body.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load: " + (e.message || e))); }
+    }
+
+    async function drawReports() {
+      const j = await call('GET', '/v1/admin/feedback?status=' + statusFilter, null, key());
+      const c = j.counts || {};
+      const sel = h('select', { onchange: (e) => { statusFilter = e.target.value; draw(); } },
+        [['new', 'New'], ['planned', 'Planned'], ['fixed', 'Fixed'], ['wontfix', "Won't fix"], ['all', 'All']].map(([v, l]) => {
+          const o = h('option', { value: v }, l + (v !== 'all' ? ' (' + (c[v] || 0) + ')' : '')); o.selected = v === statusFilter; return o;
+        }));
+      const when = (iso) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      const rep = (r) => {
+        const st = h('select', null, STATUS_OPTS.map(([v, l]) => { const o = h('option', { value: v }, l); o.selected = v === r.status; return o; }));
+        const note = h('input', { type: 'text', value: r.note || '', placeholder: 'Your note (only you see this)' });
+        const save = h('button', { type: 'button', class: 'sg-btn', onclick: async () => {
+          save.disabled = true;
+          try { await call('POST', '/v1/admin/feedback/' + r.id, { status: st.value, note: note.value }, key()); save.textContent = 'Saved'; setTimeout(() => { save.textContent = 'Save'; save.disabled = false; }, 1200); }
+          catch (e) { save.disabled = false; AE.toast("Couldn't save", e.message || String(e), 'err'); }
+        } }, 'Save');
+        let diag = null;
+        try { diag = r.diag ? JSON.parse(r.diag) : null; } catch (_) {}
+        return h('div', { class: 'rep' },
+          h('div', { class: 'top' }, h('span', { class: 'kind ' + r.kind }, r.kind === 'bug' ? 'Bug' : 'Idea'),
+            h('span', { class: 'who' }, r.user_name || 'Someone'), h('span', { class: 'sub' }, (r.store_name || 'Store') + ' #' + r.store),
+            h('span', { class: 'meta' }, when(r.created_at) + ' · v' + (r.version || '?') + ' · ' + (r.browser || '') + (r.page ? ' · ' + r.page : ''))),
+          h('div', { class: 'txt' }, r.text),
+          diag ? h('details', { class: 'sub' }, h('summary', null, 'Technical details' + (diag.errors && diag.errors.length ? ' · ' + diag.errors.length + ' recent error' + (diag.errors.length === 1 ? '' : 's') : '')),
+            h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(diag, null, 1))) : null,
+          h('div', { class: 'ctl' }, st, note, save));
+      };
+      body.replaceChildren(h('div', { class: 'bar' }, sel, h('span', { class: 'sub' }, 'Reporters don\'t see statuses or notes. Credit suggestions that ship in the patch notes.')),
+        ...(j.feedback.length ? j.feedback.map(rep) : [h('div', { class: 'sub', style: 'padding:12px 0' }, 'Nothing here.')]));
+    }
+    const STATUS_OPTS = [['new', 'New'], ['planned', 'Planned'], ['fixed', 'Fixed'], ['wontfix', "Won't fix"]];
+
+    async function drawUsage() {
+      const j = await call('GET', '/v1/admin/usage?days=' + days, null, key());
+      const rows = j.rows.filter((r) => !r.feature.startsWith('active')); // "active" is its own card
+      const sum = (arr, keyFn) => { const m = new Map(); for (const r of arr) { const k = keyFn(r); m.set(k, (m.get(k) || 0) + r.count); } return [...m.entries()].sort((a, b) => b[1] - a[1]); };
+      const people = new Map(j.rows.map((r) => [r.user_id, r.user_name + ' · ' + (r.store_name || r.store)]));
+      const bars = (entries, label, limit = 12) => {
+        const max = Math.max(1, ...entries.map((e) => e[1]));
+        return entries.slice(0, limit).map(([k, n]) => h('div', { class: 'row' },
+          h('div', { class: 'name', title: label(k) }, label(k)), h('div', { class: 'track' }, h('i', { style: 'width:' + Math.round((n / max) * 100) + '%' })), h('div', { class: 'n' }, n)));
+      };
+      const byCrystal = sum(rows, (r) => r.feature.split(':')[0]);
+      const users = (f) => new Set(rows.filter((r) => r.feature.split(':')[0] === f).map((r) => r.user_id)).size;
+      const activeDays = sum(j.rows.filter((r) => r.feature === 'active'), (r) => r.user_id);
+      const stores = sum(rows, (r) => (r.store_name || '') + ' #' + r.store);
+      const sel = h('select', { onchange: (e) => { days = Number(e.target.value); draw(); } }, [7, 30, 90, 180].map((d) => { const o = h('option', { value: d }, 'Last ' + d + ' days'); o.selected = d === days; return o; }));
+      const cardEl = (title, ...kids) => h('div', { class: 'card' }, h('h3', null, title), ...kids);
+      const empty = (x) => (x.length ? x : [h('div', { class: 'sub' }, 'No data yet.')]);
+      body.replaceChildren(
+        h('div', { class: 'bar' }, sel, h('span', { class: 'sub' }, activeDays.length + (activeDays.length === 1 ? ' person' : ' people') + ' used ' + AE_NAME + ' since ' + j.since + '. Counts are uses of each feature.')),
+        h('div', { class: 'grid' },
+          cardEl('By crystal', ...empty(byCrystal.map(([f, n]) => h('div', { class: 'row' },
+            h('div', { class: 'name' }, h('span', { html: AE.actionIcon(f, 18) }), featureLabel(f)),
+            h('div', { class: 'track' }, h('i', { style: 'width:' + Math.round((n / Math.max(1, byCrystal[0][1])) * 100) + '%' })),
+            h('div', { class: 'n', title: users(f) + ' people' }, n))))),
+          cardEl('By action', ...empty(bars(sum(rows, (r) => r.feature), featureLabel, 20))),
+          cardEl('By person', ...empty(bars(sum(rows, (r) => r.user_id), (k) => people.get(k) || String(k))), h('div', { class: 'sub', style: 'margin-top:6px' }, 'All feature uses, per person.')),
+          cardEl('Days active', ...empty(bars(activeDays, (k) => people.get(k) || String(k))), h('div', { class: 'sub', style: 'margin-top:6px' }, 'Days each person had Portal open with ' + AE_NAME + '.')),
+          cardEl('By store', ...empty(bars(stores, (k) => k)))));
+    }
+    draw();
+  }
+
+  // ------------------------------------------------------------ entry points
+  // Avatar menu: "Send Aethernet feedback", cloned like the Settings item.
+  AE.every(400, () => {
+    const settingsItem = document.querySelector('[data-testid="option-aethernet"]');
+    if (!settingsItem || document.querySelector('[data-testid="option-aethernet-feedback"]')) return;
+    const item = settingsItem.cloneNode(true);
+    item.setAttribute('data-testid', 'option-aethernet-feedback');
+    const label = item.querySelector('[data-aui="text"]') || item;
+    label.textContent = 'Send ' + AE_NAME + ' feedback';
+    item.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      openFeedback();
+    });
+    settingsItem.after(item);
+  });
+  if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Send ' + AE_NAME + ' feedback', openFeedback);
+  AE.trackDaily('active');
+
+  return { openFeedback, openAdmin, flushUsage };
 })();
 
 // ===== 10-cleaning-rate.js =====
@@ -1265,7 +1619,7 @@ AE.crystal({
     function togglePanel(e) {
       e.stopPropagation();
       const p = document.getElementById(PANEL_ID);
-      if (p) p.remove(); else renderPanel();
+      if (p) p.remove(); else { renderPanel(); AE.track('cleaningRate:open'); }
     }
     document.addEventListener('click', (e) => {
       const p = document.getElementById(PANEL_ID), b = document.getElementById(BADGE_ID);
@@ -1432,7 +1786,7 @@ AE.crystal({
     function togglePop(e) {
       e.stopPropagation();
       const pop = document.getElementById(POP_ID);
-      if (pop) pop.remove(); else renderPop();
+      if (pop) pop.remove(); else { renderPop(); AE.track('woCleanings:open'); }
     }
     document.addEventListener('click', (e) => {
       const pop = document.getElementById(POP_ID), pill = document.getElementById(PILL_ID);
@@ -1527,6 +1881,7 @@ AE.crystal({
         });
         logged[m.messageId] = Date.now();
         GM_setValue(LOGGED_KEY, logged);
+        AE.track('textNotes:note');
       }
       return fresh.length;
     }
@@ -1692,6 +2047,7 @@ AE.crystal({
 
     async function onClick(arrivalId) {
       if (running || AE.status.blocked('autoClose')) return;
+      AE.track('autoClose:run');
       running = true; stopRequested = false;
       const panel = AE.progressPanel('Swiftcast · cleaning auto-close');
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
@@ -1974,6 +2330,7 @@ AE.crystal({
           if (suppressNextClick) { suppressNextClick = false; return; }
           dismissIntro(); // using it counts as having read it
           if (AE.status.blocked('galaxy')) return;
+          AE.track('galaxy:file');
           const woId = currentWoId();
           if (!woId) return;
           main.disabled = true;
@@ -2213,6 +2570,7 @@ AE.crystal({
 
     async function onClickPrintAll() {
       if (AE.status.blocked('printLabels')) return;
+      AE.track('printLabels:run');
       if (active && active.panel.el.isConnected) { active.panel.flash(); return; }
       const ui = active = newUi();
       ui.panel.body.textContent = 'Expanding line items…';
@@ -2437,6 +2795,7 @@ AE.crystal({
     // ---------- the run ----------
     async function addAll(key) {
       if (AE.status.blocked('buybacks')) return;
+      AE.track('buybacks:addAll');
       if (state.running) return;
       const g = GROUPS[key];
       state.running = true; state.cancel = false;
@@ -2787,6 +3146,7 @@ AE.crystal({
   sites: ['portal.ubreakifix.net'],
   run() {
     AE.glamour.apply(AE.settings.glamour);
+    if (AE.settings.glamour && AE.settings.glamour.theme && AE.settings.glamour.theme !== 'portal') AE.trackDaily('glamour:themed');
   },
 });
 
@@ -2870,6 +3230,7 @@ AE.waymark = (() => {
 
   async function setTag(woId, tag, on) {
     if (AE.status.blocked('waymark')) return null;
+    AE.track(on ? 'waymark:tag' : 'waymark:untag');
     const j = await call('POST', '/wo/' + woId + (on ? '/tag' : '/untag'), { tag });
     if (cache) { if (j.tags.length) cache.tags[woId] = j.tags; else delete cache.tags[woId]; }
     AE.emit('waymark-changed', cache);
@@ -2949,6 +3310,7 @@ AE.waymark = (() => {
   async function pushMark(woId, due) {
     if (AE.status.blocked('waymark')) return;
     const j = await call('POST', '/wo/' + woId + '/push', { due });
+    AE.track('waymark:push');
     if (cache) cache.auto[woId] = Object.assign({}, cache.auto[woId], { due: j.auto.due });
     AE.emit('waymark-changed', cache);
     try { if (await syncNickname(woId, j.auto.due)) AE.toast('Auto-Waymark', 'Moved to ' + fmtDate(j.auto.due) + '; nickname is now ' + nickDate(j.auto.due) + '.', 'ok'); }
@@ -2974,6 +3336,7 @@ AE.waymark = (() => {
   async function unmark(woId) {
     if (AE.status.blocked('waymark')) return;
     await call('POST', '/wo/' + woId + '/unmark', {});
+    AE.track('waymark:unmark');
     if (cache) delete cache.auto[woId];
     AE.emit('waymark-changed', cache);
   }
@@ -3383,6 +3746,7 @@ AE.crystal({
           h('button', { type: 'button', class: 'sg-x', title: 'Close', onclick: () => board.remove() }, '✕')),
         h('div', { class: 'list' }, h('div', { class: 'sg-soft' }, h('span', { class: 'sg-spin', style: 'display:inline-block;vertical-align:-3px;margin-right:6px' }), 'Loading open work orders…')));
       document.body.appendChild(board);
+      AE.track('waymark:board');
       try {
         const [c, wos] = await Promise.all([W.load(true), AE.data.workorders(Date.now(), 0)]);
         drawBoard(board, c, wos);
