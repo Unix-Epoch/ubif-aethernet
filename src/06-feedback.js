@@ -215,9 +215,10 @@ AE.feedback = (() => {
       if (!key()) return unlock();
       tabs.replaceChildren(
         h('button', { type: 'button', class: 'tab' + (tab === 'reports' ? ' on' : ''), onclick: () => { tab = 'reports'; draw(); } }, 'Reports'),
-        h('button', { type: 'button', class: 'tab' + (tab === 'usage' ? ' on' : ''), onclick: () => { tab = 'usage'; draw(); } }, 'Usage'));
+        h('button', { type: 'button', class: 'tab' + (tab === 'usage' ? ' on' : ''), onclick: () => { tab = 'usage'; draw(); } }, 'Usage'),
+        h('button', { type: 'button', class: 'tab' + (tab === 'stores' ? ' on' : ''), onclick: () => { tab = 'stores'; draw(); } }, 'Stores'));
       body.replaceChildren(h('div', { class: 'sg-soft' }, 'Loading…'));
-      try { tab === 'reports' ? await drawReports() : await drawUsage(); }
+      try { tab === 'reports' ? await drawReports() : tab === 'usage' ? await drawUsage() : await drawStores(); }
       catch (e) { if (/admin key/.test(e.message)) { GM_deleteValue(ADMIN_KEY_GM); unlock('The saved key was refused.'); } else body.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load: " + (e.message || e))); }
     }
 
@@ -252,6 +253,73 @@ AE.feedback = (() => {
         ...(j.feedback.length ? j.feedback.map(rep) : [h('div', { class: 'sub', style: 'padding:12px 0' }, 'Nothing here.')]));
     }
     const STATUS_OPTS = [['new', 'New'], ['planned', 'Planned'], ['fixed', 'Fixed'], ['wontfix', "Won't fix"]];
+
+    /*
+      Stores: which stores may use Aethernet. Add by number (looked up in
+      Portal to confirm the name) or by name (matched against stores that
+      have opened Portal with Aethernet: the Waiting list). Removing a store
+      stops Aethernet there on its next page load; the Worker refuses its
+      services to it within a minute.
+    */
+    async function drawStores() {
+      const j = await call('GET', '/v1/admin/stores', null, key());
+      const me = await AE.profile().catch(() => ({}));
+      const when = (iso) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—');
+      const out = h('div', { class: 'sub', style: 'margin:6px 0 0' });
+      const grant = async (store, name) => {
+        await call('POST', '/v1/admin/stores', { store: Number(store), name, by: me.name }, key());
+        AE.toast('Store added', (name || 'Store') + ' (#' + store + ') can use ' + AE_NAME + ' from its next page load.', 'ok');
+        draw();
+      };
+      const input = h('input', { type: 'text', placeholder: 'Store number or name', style: 'flex:1;min-width:0;height:32px;padding:0 10px;border:1px solid var(--aui-outline,#c6c6ca);border-radius:8px;background:var(--aui-surface,#fff);color:var(--aui-on-surface,#1a1c1e)' });
+      async function add() {
+        const v = input.value.trim();
+        if (!v) return;
+        out.textContent = 'Looking up…';
+        try {
+          if (/^\d{1,6}$/.test(v)) {
+            // A number: confirm the store's name with Portal first.
+            let st = null;
+            try { st = await AE.api('GET', '/api/stores/' + v); } catch (_) { st = null; }
+            if (!st || !st.storeId) { out.textContent = 'Portal has no store #' + v + '.'; return; }
+            const label = st.storeName + ' (#' + st.storeId + (st.city ? ', ' + st.city + (st.state ? ', ' + st.state : '') : '') + ')';
+            const ok = await AE.confirm({ title: 'Give this store access?', message: '<b>' + AE.esc(label) + '</b> will be able to use ' + AE.esc(AE_NAME) + '.', confirmLabel: 'Give access' });
+            out.textContent = '';
+            if (ok) await grant(st.storeId, st.storeName);
+            return;
+          }
+          // A name: stores that have opened Portal with Aethernet, and ones already on the list.
+          const q = v.toLowerCase();
+          const matches = [...j.waiting, ...j.allowed.map((a) => Object.assign({ onList: true }, a))].filter((x) => (x.name || '').toLowerCase().includes(q));
+          if (!matches.length) { out.textContent = 'No store named "' + v + '" has opened Portal with ' + AE_NAME + ' yet. Enter its store number instead, or wait for it to show under Waiting for access.'; return; }
+          out.replaceChildren(...matches.map((x) => h('div', { style: 'display:flex;gap:8px;align-items:center;margin:4px 0' },
+            h('span', { style: 'flex:1' }, (x.name || 'Store') + ' (#' + x.store + ')'),
+            x.onList ? h('span', null, 'already has access') : h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => grant(x.store, x.name) }, 'Give access'))));
+        } catch (e) { out.textContent = "Couldn't add: " + (e.message || e); }
+      }
+      input.onkeydown = (e) => { if (e.key === 'Enter') add(); };
+      const row = (cells, actions) => h('div', { class: 'rep', style: 'display:flex;gap:10px;align-items:center;padding:8px 12px' }, h('div', { style: 'flex:1;min-width:0' }, ...cells), actions);
+      const allowed = j.allowed.map((a) => row([
+        h('div', null, h('b', null, (a.name || 'Store') + ' (#' + a.store + ')'), a.store === me.storeId ? h('span', { class: 'sub' }, ' · this store') : null),
+        h('div', { class: 'sub' }, 'Added ' + when(a.added_at) + (a.added_by ? ' by ' + a.added_by : '') + ' · last opened ' + when(a.last_at) + (a.loads ? ' · ' + a.loads + ' page load' + (a.loads === 1 ? '' : 's') : ''))],
+        h('button', { type: 'button', class: 'sg-btn', onclick: async () => {
+          const ok = await AE.confirm({ title: 'Remove access?', message: '<b>' + AE.esc((a.name || 'Store') + ' (#' + a.store + ')') + '</b> will lose ' + AE.esc(AE_NAME) + ' on its next page load.',
+            warning: a.store === me.storeId ? 'This is the store you\'re signed into: ' + AE_NAME + ' (and this admin panel) will stop here too.' : null, confirmLabel: 'Remove' });
+          if (!ok) return;
+          await call('POST', '/v1/admin/stores/' + a.store + '/remove', {}, key());
+          draw();
+        } }, 'Remove')));
+      const waiting = j.waiting.map((w) => row([
+        h('div', null, h('b', null, (w.name || 'Store') + ' (#' + w.store + ')')),
+        h('div', { class: 'sub' }, 'Tried ' + when(w.last_at) + (w.last_user ? ' (' + w.last_user + ')' : '') + ' · ' + w.loads + ' page load' + (w.loads === 1 ? '' : 's') + ' since ' + when(w.first_at))],
+        h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => grant(w.store, w.name) }, 'Give access')));
+      body.replaceChildren(
+        h('div', { class: 'bar' }, input, h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: add }, 'Add store')), out,
+        h('h3', { style: 'margin:14px 0 6px;font-size:13px;letter-spacing:.03em;text-transform:uppercase;color:var(--aui-on-surface-soft,#5d5e61)' }, 'Have access (' + j.allowed.length + ')'),
+        ...(allowed.length ? allowed : [h('div', { class: 'sub' }, 'No stores yet.')]),
+        h('h3', { style: 'margin:14px 0 6px;font-size:13px;letter-spacing:.03em;text-transform:uppercase;color:var(--aui-on-surface-soft,#5d5e61)' }, 'Waiting for access (' + j.waiting.length + ')'),
+        ...(waiting.length ? waiting : [h('div', { class: 'sub' }, 'No other stores have opened Portal with ' + AE_NAME + '.')]));
+    }
 
     async function drawUsage() {
       const j = await call('GET', '/v1/admin/usage?days=' + days, null, key());

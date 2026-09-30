@@ -42,3 +42,10 @@ CREATE TABLE IF NOT EXISTS usage (       -- feature use: one counter per day, st
   feature TEXT NOT NULL, count INTEGER NOT NULL,
   PRIMARY KEY (day, store, user_id, feature)
 );
+CREATE TABLE IF NOT EXISTS store_access (  -- stores allowed to use Aethernet (admin panel → Stores)
+  store INTEGER PRIMARY KEY, name TEXT, added_by TEXT, added_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS store_seen (    -- every store that has tried to load Aethernet
+  store INTEGER PRIMARY KEY, name TEXT, first_at TEXT NOT NULL, last_at TEXT NOT NULL,
+  loads INTEGER NOT NULL DEFAULT 0, last_user TEXT
+);

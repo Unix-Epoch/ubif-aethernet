@@ -127,6 +127,9 @@ def git_commit(root: Path) -> str:
         return "unknown"
 
 
+# Files that run before the store-access check (the rest wait for it).
+PREBOOT = ("00-core.js", "01-access.js")
+
 NOTES_FILE = "patch-notes.json"
 
 
@@ -183,13 +186,19 @@ def build(root: Path, version: str = VERSION) -> Path:
     parts = [head, "(function aethernet() {\n'use strict';\n"]
     # src/dev/*.js (dev tools) only go into dev builds; everything sorts by file name.
     files = list((root / "src").glob("*.js")) + (list((root / "src" / "dev").glob("*.js")) if dev else [])
+    # Core + the store-access gate load first; everything else sits in AE.boot,
+    # which the gate calls only once the store is allowed (01-access.js).
+    booting = False
     for f in sorted(files, key=lambda f: f.name):
+        if f.name not in PREBOOT and not booting:
+            parts.append("\nAE.boot = function aethernetBoot() {\n")
+            booting = True
         parts.append(f"\n// ===== {f.name} =====\n")
         text = f.read_text()
         for k, v in stamps.items():
             text = text.replace(k, v)
         parts.append(text)
-    parts.append("\nAE.start();\n})();\n")
+    parts.append("\nAE.start();\n};\nAE.gate();\n})();\n")
     dist = root / (DEV["dist"] if dev else "dist")
     dist.mkdir(exist_ok=True)
     readable = "".join(parts)
