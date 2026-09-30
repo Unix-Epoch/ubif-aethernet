@@ -7,7 +7,8 @@
       "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **×** removes it for good.",
       "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.",
       "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."
-    ]
+    ],
+    "date": "2026-09-30T00:37:49Z"
   },
   {
     "version": "2.13.0",

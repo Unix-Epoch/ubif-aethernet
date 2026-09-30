@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.13.0
+// @version      2.14.0
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -35,9 +35,9 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.13.0';            // filled in by build.py
-const AE_BUILD_TIME = '2026-09-29T19:53:08-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = '290de91';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_VERSION = '2.14.0';            // filled in by build.py
+const AE_BUILD_TIME = '2026-09-29T20:37:49-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = 'c0d6731';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';
 const AE_READABLE_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.readable.js'; // same build, unminified     // where installs update from
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
@@ -884,7 +884,7 @@ AE.status = (() => {
   // Patch notes — its own modal, above Settings. Every release is a panel,
   // newest first. `since` (the version you updated from) expands everything
   // newer than it; otherwise just the latest is open.
-  const PATCH_NOTES = [{"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
+  const PATCH_NOTES = [{"version": "2.14.0", "notes": ["New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.", "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.", "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **\u00d7** removes it for good.", "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.", "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."], "date": "2026-09-30T00:37:49Z"}, {"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
   const verTuple = (v) => String(v || '0').split('.').map(Number);
   const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
@@ -2802,6 +2802,21 @@ AE.crystal({
   - On a WO page: tag chips next to the customer name, and "+ Tag" (managed
     tags as toggles, a box for one-off tags, and the WO's tag history).
   - Header button: the board — open WOs grouped by tag, filterable.
+  - Auto-Waymark: a WO that reaches Ready for pickup gets a follow-up date
+    3 days after that day (its own kind of mark, not a tag), added after end
+    of day (7 PM local) — or on the first Portal load after that if nobody
+    had Portal open then. Right-click pushes it
+    later (never earlier); × removes it for good. The board's second tab
+    lists them by due date. Found by a scan of Portal's active list every 10
+    minutes (one tab per browser does it; the server ignores repeats), and
+    when a tech sets the WO they're on to Ready for pickup after 7 PM.
+  - The header icon shows how many open Auto-Waymarks are due (today or
+    overdue). On their first Portal load of the day, managers get a speech
+    bubble from the icon if any were left open past their due day.
+  - While a WO is at Ready for pickup, its device nickname is just the
+    Auto-Waymark date ("10/02", the store's usual M/DD) and is kept that way:
+    pushes rewrite it, and the scan puts it back if it drifts. A later date
+    typed into the nickname by hand moves the mark to match instead.
   - Settings → Waymark: the store's managed tag list. Only Portal's
     Store Manager / District Manager / Store Owner roles (for the current
     store) can edit it; everyone can tag and add one-offs.
@@ -2845,7 +2860,7 @@ AE.waymark = (() => {
   function load(force) {
     if (!force && cache && Date.now() - cacheAt < TTL) return Promise.resolve(cache);
     if (inflight) return inflight;
-    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {} }; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
+    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {}, auto: j.auto || {} }; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
       .finally(() => { inflight = null; });
     return inflight;
   }
@@ -2882,16 +2897,134 @@ AE.waymark = (() => {
     return roleInfo;
   }
 
-  // Report tagged WOs that are no longer open, so the Worker can clear them 7 days on.
-  let lastClosedCheck = 0;
-  async function reportClosed() {
-    if (Date.now() - lastClosedCheck < 30 * 60 * 1000) return;
-    lastClosedCheck = Date.now();
-    const c = await load();
-    const tagged = Object.keys(c.tags).map(Number);
-    if (!tagged.length) return;
-    const open = new Set((await AE.data.workorders(Date.now(), 0)).map((r) => Number(r.workorderId)));
-    const closed = tagged.filter((id) => !open.has(id));
+  // ------------------------------------------------------------ Auto-Waymark
+  const AUTO_DAYS = 3, RFP_STATUS = 13; // 13 = Ready for pickup
+  const EOD_HOUR = 19;                    // marks go on after end of day, 7 PM local
+  const afterEod = () => new Date().getHours() >= EOD_HOUR;
+  const pad = (n) => String(n).padStart(2, '0');
+  const isoDate = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); // store-local date
+  const parseDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+  const addDays = (iso, n) => { const d = parseDate(iso); d.setDate(d.getDate() + n); return isoDate(d); };
+  const today = () => isoDate(new Date());
+  const fmtDate = (iso) => parseDate(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const dueState = (iso) => (iso < today() ? 'overdue' : iso === today() ? 'today' : 'upcoming');
+  const autoOf = (woId) => (cache && cache.auto && cache.auto[woId]) || null;
+  // When did it reach Ready for pickup? The list row's updatedAt is the best
+  // hint (a WO sitting at RFP rarely changes); never later than now.
+  const rfpSince = (r) => { const t = Date.parse(r.updatedAt); return isoDate(new Date(isNaN(t) ? Date.now() : Math.min(t, Date.now()))); };
+
+  // ---- the WO's device nickname mirrors its Auto-Waymark (M/DD, as the store writes it)
+  const nickDate = (iso) => { const d = parseDate(iso); return (d.getMonth() + 1) + '/' + pad(d.getDate()); };
+  // A nickname that is just a date ("10/2", "10/02") → YYYY-MM-DD (nearest year), else null.
+  function parseNick(name) {
+    const m = String(name || '').trim().match(/^(\d{1,2})\/(\d{1,2})$/);
+    if (!m) return null;
+    const now = new Date();
+    const d = new Date(now.getFullYear(), m[1] - 1, m[2]);
+    if (d.getMonth() !== m[1] - 1) return null;
+    if (now - d > 183 * 86400000) d.setFullYear(d.getFullYear() + 1);
+    return isoDate(d);
+  }
+  const woDetail = async (woId) => { const j = await AE.api('GET', '/api/workorder/' + woId); return (j && j.workorder) || AE.unwrap(j); };
+  // Set the nickname to the mark's date, only while the WO is at Ready for pickup.
+  // Sends the device record back unchanged apart from `name`, as Portal's own edit does.
+  async function syncNickname(woId, due, wo) {
+    wo = wo || await woDetail(woId);
+    const dev = wo && wo.CustomerDevice;
+    if (!dev || !dev.customerDeviceId || Number(wo.workorderStatusId) !== RFP_STATUS) return false;
+    const name = nickDate(due);
+    if ((dev.name || '').trim() === name) return false;
+    await AE.api('PUT', '/api/customer-devices/' + dev.customerDeviceId, {
+      customerDeviceId: dev.customerDeviceId, customerId: dev.customerId, passcode: dev.passcode, serial: dev.serial,
+      imei: dev.imei, deviceCatalogId: dev.deviceCatalogId, name,
+    });
+    return true;
+  }
+
+  async function pushMark(woId, due) {
+    if (AE.status.blocked('waymark')) return;
+    const j = await call('POST', '/wo/' + woId + '/push', { due });
+    if (cache) cache.auto[woId] = Object.assign({}, cache.auto[woId], { due: j.auto.due });
+    AE.emit('waymark-changed', cache);
+    try { if (await syncNickname(woId, j.auto.due)) AE.toast('Auto-Waymark', 'Moved to ' + fmtDate(j.auto.due) + '; nickname is now ' + nickDate(j.auto.due) + '.', 'ok'); }
+    catch (e) { fail('mark moved, but the nickname couldn\'t be updated', e); }
+  }
+
+  // Right after a tech sets this WO to Ready for pickup (seen from the WO page).
+  async function checkWo(woId) {
+    if (!configured() || AE.status.paused('waymark')) return;
+    const [c, wo] = await Promise.all([load(), woDetail(woId)]);
+    if (!wo || Number(wo.workorderStatusId) !== RFP_STATUS) return;
+    let m = c.auto[woId];
+    if (!m) {
+      if (!afterEod()) return; // the evening scan (or tomorrow's first load) marks it
+      const r = await call('POST', '/auto', { marks: [{ wo: Number(woId), due: addDays(today(), AUTO_DAYS) }] });
+      if (!(r.created && r.created.length)) return; // removed earlier with ×: stays removed
+      await load(true);
+      m = autoOf(woId);
+    }
+    if (m && await syncNickname(woId, m.due, wo)) AE.toast('Auto-Waymark', 'Follow up by ' + fmtDate(m.due) + '; nickname set to ' + nickDate(m.due) + '.', 'ok');
+  }
+  async function unmark(woId) {
+    if (AE.status.blocked('waymark')) return;
+    await call('POST', '/wo/' + woId + '/unmark', {});
+    if (cache) delete cache.auto[woId];
+    AE.emit('waymark-changed', cache);
+  }
+
+  /*
+    One pass over Portal's active list: Auto-Waymark WOs at Ready for pickup,
+    and report tagged/marked WOs that have closed (cleared 7 days later).
+    Every 10 minutes; tabs share a timestamp so only one does it. The board
+    passes the list it just loaded.
+  */
+  const SCAN_KEY = 'ae_wm_scan_at', SCAN_MS = 10 * 60 * 1000;
+  const OPEN_KEY = 'ae_wm_open'; // last active-list WO ids (shared across tabs), so counts skip closed WOs
+
+  // Open Auto-Waymarks due today or earlier (for the header badge).
+  function dueMarks() {
+    if (!cache) return [];
+    const o = GM_getValue(OPEN_KEY, null);
+    const open = o && Date.now() - o.at < 30 * 60 * 1000 ? new Set(o.ids) : null;
+    return Object.entries(cache.auto).filter(([id, m]) => m.due <= today() && (!open || open.has(Number(id))));
+  }
+  async function scan(rows) {
+    if (!rows) {
+      if (Date.now() - GM_getValue(SCAN_KEY, 0) < SCAN_MS - 30000) return;
+      GM_setValue(SCAN_KEY, Date.now());
+      rows = await AE.data.workorders(Date.now(), 0);
+    }
+    GM_setValue(OPEN_KEY, { at: Date.now(), ids: rows.map((r) => Number(r.workorderId)) });
+    let c = await load(true);
+    if (!AE.status.paused('waymark')) {
+      // Today's RFPs wait for end of day; earlier days' are overdue for marking now.
+      const marks = rows.filter((r) => Number(r.workorderStatusId) === RFP_STATUS && !c.auto[r.workorderId] && (afterEod() || rfpSince(r) < today()))
+        .map((r) => ({ wo: Number(r.workorderId), due: addDays(rfpSince(r), AUTO_DAYS) }));
+      if (marks.length) {
+        const j = await call('POST', '/auto', { marks }); // already-marked or removed ones are ignored
+        if (j.created && j.created.length) c = await load(true);
+      }
+    }
+    // Keep nicknames and marks the same on every WO at Ready for pickup.
+    if (!AE.status.paused('waymark')) {
+      for (const r of rows) {
+        const m = c.auto[r.workorderId];
+        if (!m || Number(r.workorderStatusId) !== RFP_STATUS) continue;
+        const nick = ((r.customerDevice && r.customerDevice.name) || '').trim();
+        if (nick === nickDate(m.due)) continue;
+        try {
+          const typed = parseNick(nick);
+          if (typed && typed > m.due) { // someone moved the date later in the nickname: the mark follows
+            await call('POST', '/wo/' + r.workorderId + '/push', { due: typed, by: 'Nickname edit' });
+            m.due = typed;
+          }
+          await syncNickname(r.workorderId, m.due); // also tidies "10/5" → "10/05"
+        } catch (e) { console.warn('[' + AE_NAME + '] Waymark nickname sync, WO ' + r.workorderId + ':', e.message || e); }
+      }
+    }
+    const open = new Set(rows.map((r) => Number(r.workorderId)));
+    const known = [...new Set([...Object.keys(c.tags), ...Object.keys(c.auto)].map(Number))];
+    const closed = known.filter((id) => !open.has(id));
     if (closed.length) await call('POST', '/closed', { wos: closed });
   }
 
@@ -2922,6 +3055,16 @@ AE.waymark = (() => {
     background:none; cursor:pointer; flex:none; }
   #sg-wm-btn:hover { background:var(--aui-neutral-soft, #f1f0f4); }
   #sg-wm-btn .sg-aicon { width:26px; height:26px; }
+  #sg-wm-btn { position:relative; }
+  #sg-wm-btn .badge { position:absolute; top:-3px; right:-4px; min-width:18px; height:18px; padding:0 5px; border-radius:10000rem; box-sizing:border-box;
+    background:#d1344b; color:#fff; border:2px solid var(--aui-elevated-level-01, #fff); font:700 11px/14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; }
+  #sg-wm-bubble { position:fixed; z-index:2147483646; width:300px; padding:14px 14px 12px; font-size:14px; line-height:1.45; animation:sg-in .25s ease-out;
+    border-color:#d1344b; box-shadow:0 10px 30px rgba(12,14,17,.25); }
+  #sg-wm-bubble .top { display:flex; gap:10px; align-items:flex-start; }
+  #sg-wm-bubble .top .n { flex:none; min-width:26px; height:26px; padding:0 7px; border-radius:10000rem; background:#d1344b; color:#fff; font:700 14px/26px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; box-sizing:border-box; }
+  #sg-wm-bubble .sg-actions { margin-top:10px; justify-content:flex-end; }
+  #sg-wm-bubble .sg-actions .sg-btn { flex:none; }
+  #sg-wm-bubble .tail { position:absolute; top:-8px; width:14px; height:14px; background:inherit; border:1px solid #d1344b; border-width:1px 0 0 1px; transform:rotate(45deg); }
   #sg-wm-board { position:fixed; z-index:2147483646; right:16px; width:min(560px, calc(100vw - 32px)); max-height:calc(100vh - 100px); display:flex; flex-direction:column;
     padding:16px 16px 10px; font-size:14px; line-height:1.4; }
   #sg-wm-board .head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
@@ -2936,6 +3079,31 @@ AE.waymark = (() => {
   #sg-wm-board .wo a:hover { text-decoration:underline; }
   #sg-wm-board .wo .meta { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #sg-wm-board .wo .chips { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; max-width:45%; }
+  .sg-auto { display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 3px 0 6px; border-radius:6px; flex:none; cursor:context-menu;
+    font:700 12px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; white-space:nowrap;
+    color:color-mix(in srgb, var(--c) 80%, var(--aui-on-surface, #1a1c1e)); background:color-mix(in srgb, var(--c) 14%, var(--aui-surface, #fff));
+    border:1px solid color-mix(in srgb, var(--c) 55%, transparent); }
+  .sg-auto svg { width:13px; height:13px; flex:none; }
+  .sg-auto.upcoming { --c:#4a68f9; }
+  .sg-auto.today { --c:#b38f00; background:color-mix(in srgb, var(--c) 28%, var(--aui-surface, #fff)); }
+  .sg-auto.overdue { --c:#d1344b; background:#d1344b; color:#fff; border-color:#d1344b; }
+  .sg-auto button { border:0; background:none; padding:0 2px; margin:0; color:inherit; cursor:pointer; font-size:13px; line-height:1; opacity:.75; }
+  .sg-auto button:hover { opacity:1; }
+  #sg-wm-push { position:fixed; z-index:2147483647; width:230px; padding:8px; font-size:13px; }
+  #sg-wm-push .ttl { padding:4px 8px 6px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+  #sg-wm-push .opt { display:flex; justify-content:space-between; width:100%; padding:7px 8px; border:0; border-radius:6px; background:none; cursor:pointer;
+    color:var(--aui-on-surface, #1a1c1e); font:400 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:left; }
+  #sg-wm-push .opt:hover, #sg-wm-push .opt:focus-visible { background:var(--aui-neutral-soft, #f1f0f4); outline:0; }
+  #sg-wm-push .pick { display:flex; gap:6px; padding:6px 8px 2px; border-top:1px solid var(--aui-outline-soft, #eeedf1); margin-top:4px; }
+  #sg-wm-push .pick input { flex:1; min-width:0; height:30px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:6px; background:var(--aui-surface, #fff);
+    color:var(--aui-on-surface, #1a1c1e); font:13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; color-scheme:light dark; }
+  #sg-wm-push .pick .sg-btn { height:30px; padding:0 10px; font-size:13px; }
+  #sg-wm-board .tabs { display:flex; gap:2px; margin:0 0 10px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
+  #sg-wm-board .tab { padding:6px 10px 7px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px; background:none; cursor:pointer;
+    color:var(--aui-on-surface-soft, #5d5e61); font:600 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  #sg-wm-board .tab.on { color:var(--aui-primary, #8223d2); border-bottom-color:var(--aui-primary, #8223d2); }
+  #sg-wm-board .tab .n { margin-left:4px; font-weight:400; }
+  #sg-wm-board .tab .late { margin-left:4px; padding:0 5px; border-radius:10000rem; background:#d1344b; color:#fff; font-size:11px; }
   .sg-wm-edit .row { display:flex; align-items:center; gap:6px; margin:6px 0; }
   .sg-wm-edit .row input[type=text] { flex:1; min-width:0; height:32px; padding:0 8px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px;
     background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font:14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
@@ -2956,6 +3124,63 @@ AE.waymark = (() => {
   }
   const when = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
   const fail = (what, e) => AE.toast('Waymark: ' + what, (e && e.message) || String(e), 'err');
+
+  const CAL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 2h2v2h6V2h2v2h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V2zM5 9v10h14V9H5z"/></svg>';
+
+  // The Auto-Waymark chip: blue ahead of time, amber on the day, red once overdue.
+  function autoChip(woId, mark, onChange) {
+    const st = dueState(mark.due);
+    const label = (st === 'today' ? 'Today · ' : st === 'overdue' ? 'Overdue · ' : '') + fmtDate(mark.due);
+    const el = h('span', { class: 'sg-auto ' + st, role: 'note',
+      title: 'Auto-Waymark: follow up by ' + fmtDate(mark.due) + ' (set when it reached Ready for pickup). Right-click to push it later; × removes it.' },
+      h('span', { html: CAL_SVG, style: 'line-height:0' }), label,
+      h('button', { type: 'button', title: 'Remove this Auto-Waymark', 'aria-label': 'Remove Auto-Waymark', onclick: async (e) => {
+        e.stopPropagation();
+        try { await unmark(woId); } catch (err) { fail("couldn't remove the Auto-Waymark", err); }
+        onChange && onChange();
+      } }, '×'));
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); pushMenu(e.clientX, e.clientY, woId, mark.due, onChange); });
+    return el;
+  }
+
+  // Right-click menu: only ever later.
+  function pushMenu(x, y, woId, due, onChange) {
+    document.getElementById('sg-wm-push')?.remove();
+    ensureCss();
+    const go = async (next) => {
+      menu.remove();
+      try { await pushMark(woId, next); } catch (e) { fail("couldn't move the Auto-Waymark", e); }
+      onChange && onChange();
+    };
+    const opt = (label, days) => { const d = addDays(due, days); return h('button', { type: 'button', class: 'opt', role: 'menuitem', onclick: () => go(d) }, label, h('span', { class: 'sg-soft' }, fmtDate(d))); };
+    const pick = h('input', { type: 'date', min: addDays(due, 1), value: addDays(due, 1), 'aria-label': 'Pick a later date' });
+    const menu = h('div', { id: 'sg-wm-push', class: 'sg sg-card', role: 'menu', 'aria-label': 'Push Auto-Waymark later' },
+      h('div', { class: 'ttl' }, 'Push later · now ' + fmtDate(due)),
+      opt('+1 day', 1), opt('+3 days', 3), opt('+1 week', 7),
+      h('div', { class: 'pick' }, pick, h('button', { type: 'button', class: 'sg-btn', onclick: () => { if (pick.value && pick.value > due) go(pick.value); } }, 'Set')));
+    document.body.appendChild(menu);
+    menu.style.left = Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8)) + 'px';
+    menu.querySelector('.opt').focus();
+    const close = (e) => {
+      if (e.type === 'keydown' ? e.key !== 'Escape' : e.composedPath().includes(menu)) return;
+      menu.remove(); document.removeEventListener('mousedown', close, true); document.removeEventListener('keydown', close, true);
+    };
+    setTimeout(() => { document.addEventListener('mousedown', close, true); document.addEventListener('keydown', close, true); }, 0);
+  }
+
+  // History line for any Waymark event.
+  function historyLine(x) {
+    const who = x.by || 'Someone';
+    const dates = (d) => String(d || '').split(' → ').map((v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? fmtDate(v) : v)).join(' → ');
+    const parts = {
+      add: [who + ' added ', x.tag], remove: [who + ' removed ', x.tag],
+      auto: ['Auto-Waymark set for ', dates(x.detail)],
+      push: [who + ' pushed the Auto-Waymark ', dates(x.detail)],
+      unmark: [who + ' removed the Auto-Waymark ', dates(x.detail)],
+    }[x.action] || [who + ' ' + x.action + ' ', x.tag || x.detail || ''];
+    return h('li', null, parts[0], h('b', null, parts[1]), ' ', h('span', { class: 'when' }, '· ' + when(x.at)));
+  }
 
   // ------------------------------------------------------------ Settings → Waymark (managed list)
   function editor() {
@@ -2996,7 +3221,7 @@ AE.waymark = (() => {
   const listSig = () => JSON.stringify(cache && cache.list);
   const summary = () => (cache ? cache.list.length + ' tag' + (cache.list.length === 1 ? '' : 's') : 'Store tags');
 
-  return { API, configured, load, tagsOf, listSig, setTag, history, saveList, canEdit, reportClosed, chip, when, fail, ensureCss, editor, summary, COLORS };
+  return { API, configured, load, tagsOf, autoOf, checkWo, dueMarks, today, OPEN_KEY, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
 })();
 
 AE.crystal({
@@ -3021,10 +3246,11 @@ AE.crystal({
       const anchor = woId && nameRow(woId);
       let row = document.getElementById(ROW_ID);
       if (!anchor) { row?.remove(); return; }
-      const key = woId + '|' + JSON.stringify(W.tagsOf(woId)) + '|' + W.listSig(); // redraw when tags or colours change
+      const key = woId + '|' + JSON.stringify(W.tagsOf(woId)) + '|' + JSON.stringify(W.autoOf(woId)) + '|' + W.listSig(); // redraw on any change
       if (row && row.dataset.key === key && row.parentElement === anchor) return;
       row?.remove();
       row = h('span', { id: ROW_ID, 'data-key': key },
+        W.autoOf(woId) ? W.autoChip(woId, W.autoOf(woId), renderRow) : null,
         W.tagsOf(woId).map((t) => W.chip(t.tag, { title: t.tag + ' · added by ' + (t.by || 'someone') + ', ' + W.when(t.at), onRemove: () => toggle(woId, t.tag, false) })),
         h('button', { type: 'button', class: 'sg-btn add', onclick: (e) => { e.stopPropagation(); togglePop(woId); } }, '+ Tag'));
       anchor.appendChild(row);
@@ -3070,7 +3296,7 @@ AE.crystal({
         const r = btn && btn.getBoundingClientRect();
         if (r) { pop.style.top = Math.min(r.bottom + 8, innerHeight - pop.offsetHeight - 8) + 'px'; pop.style.left = Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8)) + 'px'; }
         W.history(woId).then((items) => {
-          hist.replaceChildren(...(items.length ? items.map((x) => h('li', null, (x.by || 'Someone') + (x.action === 'add' ? ' added ' : ' removed '), h('b', null, x.tag), ' ', h('span', { class: 'when' }, '· ' + W.when(x.at))))
+          hist.replaceChildren(...(items.length ? items.map(W.historyLine)
             : [h('li', { class: 'sg-soft' }, 'No tag changes yet.')]));
         }).catch(() => hist.replaceChildren(h('li', { class: 'sg-soft' }, "Couldn't load history.")));
       }).catch((e) => { pop.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load tags: " + (e.message || e))); });
@@ -3078,7 +3304,7 @@ AE.crystal({
     document.addEventListener('click', (e) => {
       // composedPath: the clicked chip may already be redrawn (detached) by now.
       const pop = document.getElementById(POP_ID), path = e.composedPath();
-      if (pop && !path.includes(pop) && !path.includes(document.getElementById(ROW_ID))) pop.remove();
+      if (pop && !path.includes(pop) && !path.includes(document.getElementById(ROW_ID)) && !path.some((n) => n.id === 'sg-wm-push')) pop.remove();
     });
 
     // ---------------------------------------------------- header button + board
@@ -3088,9 +3314,59 @@ AE.crystal({
       if (!anchor) { b?.remove(); return; }
       if (!b) b = h('button', { type: 'button', id: BTN_ID, class: 'sg', title: 'Waymark: work orders by tag', 'aria-label': 'Waymark board', html: AE.actionIcon('waymark', 26), onclick: (e) => { e.stopPropagation(); toggleBoard(); } });
       if (b.parentElement !== anchor.parentElement || b.nextSibling !== anchor) anchor.parentElement.insertBefore(b, anchor);
+      // Badge: open Auto-Waymarks due today (or overdue).
+      const n = W.dueMarks().length;
+      let badge = b.querySelector('.badge');
+      if (!n) { badge?.remove(); b.title = 'Waymark: work orders by tag'; }
+      else {
+        if (!badge) { badge = h('span', { class: 'badge' }); b.append(badge); }
+        if (badge.textContent !== String(n)) badge.textContent = n > 99 ? '99+' : String(n);
+        b.title = 'Waymark: ' + n + ' Auto-Waymark' + (n === 1 ? '' : 's') + ' due';
+      }
+      placeBubble();
+    }
+
+    // ---------------------------------------------------- morning notice (managers)
+    // First Portal load of the day: if any Auto-Waymarks were left open past
+    // their due day (so open past 9 PM that night), a speech bubble from the icon.
+    const MORNING_KEY = 'ae_wm_morning_shown';
+    function placeBubble() {
+      const bub = document.getElementById('sg-wm-bubble'), b = document.getElementById(BTN_ID);
+      if (!bub || !b) return;
+      const r = b.getBoundingClientRect();
+      const left = Math.max(8, Math.min(r.left + r.width / 2 - bub.offsetWidth + 40, innerWidth - bub.offsetWidth - 8));
+      bub.style.left = left + 'px'; bub.style.top = (r.bottom + 12) + 'px';
+      bub.querySelector('.tail').style.left = (r.left + r.width / 2 - left - 7) + 'px';
+    }
+    async function morningNotice() {
+      if (GM_getValue(MORNING_KEY, '') === W.today()) return;
+      const role = await W.canEdit();
+      if (!role.ok) return;
+      const rows = await AE.data.workorders(Date.now(), 0);
+      GM_setValue(W.OPEN_KEY, { at: Date.now(), ids: rows.map((r) => Number(r.workorderId)) });
+      const c = await W.load(true);
+      const open = new Set(rows.map((r) => String(r.workorderId)));
+      const late = Object.entries(c.auto).filter(([id, m]) => open.has(String(id)) && m.due < W.today()).length;
+      GM_setValue(MORNING_KEY, W.today()); // once a day, whether or not there's anything to say
+      if (!late || document.getElementById('sg-wm-bubble')) return;
+      const bub = h('div', { id: 'sg-wm-bubble', class: 'sg sg-card', role: 'alert' },
+        h('span', { class: 'tail' }),
+        h('div', { class: 'top' }, h('span', { class: 'n' }, String(late)),
+          h('div', null, late === 1 ? 'There is 1 Auto-Waymark sitting open. Please take a look at it ASAP.'
+            : 'There are ' + late + ' Auto-Waymarks sitting open. Please take a look at these ASAP.')),
+        h('div', { class: 'sg-actions' },
+          h('button', { type: 'button', class: 'sg-btn', onclick: () => bub.remove() }, 'Later'),
+          h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => {
+            bub.remove(); boardTab = 'auto';
+            // After this click finishes, or the board's click-outside handler would close it at once.
+            setTimeout(() => { if (!document.getElementById(BOARD_ID)) toggleBoard(); }, 0);
+          } }, 'Show them')));
+      document.body.appendChild(bub);
+      placeBubble();
     }
 
     let boardFilter = null; // tag name, or null = all
+    let boardTab = 'tags';  // 'tags' | 'auto'
     async function toggleBoard() {
       if (document.getElementById(BOARD_ID)) { document.getElementById(BOARD_ID).remove(); return; }
       const header = document.querySelector('.components-header');
@@ -3103,13 +3379,41 @@ AE.crystal({
       try {
         const [c, wos] = await Promise.all([W.load(true), AE.data.workorders(Date.now(), 0)]);
         drawBoard(board, c, wos);
-        W.reportClosed().catch(() => {});
+        W.scan(wos).then(() => W.load()).then((c2) => { if (board.isConnected) drawBoard(board, c2, wos); }).catch(() => {});
       } catch (e) {
         board.querySelector('.list').replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load: " + (e.message || e)));
       }
     }
     function drawBoard(board, c, wos) {
       const byId = new Map(wos.map((r) => [String(r.workorderId), r]));
+      const marked = Object.entries(c.auto || {}).filter(([id]) => byId.has(String(id)));
+      const late = marked.filter(([, m]) => W.dueState(m.due) === 'overdue').length;
+      const tabBtn = (id, label, n, extra) => h('button', { type: 'button', class: 'tab' + (boardTab === id ? ' on' : ''), role: 'tab', 'aria-selected': String(boardTab === id),
+        onclick: () => { boardTab = id; drawBoard(board, c, wos); } }, label, h('span', { class: 'n' }, n), extra);
+      board.querySelector('.tabs')?.remove();
+      board.querySelector('.head').after(h('div', { class: 'tabs', role: 'tablist' },
+        tabBtn('tags', 'Tags', Object.keys(c.tags).filter((id) => byId.has(String(id))).length),
+        tabBtn('auto', 'Auto-Waymark', marked.length, late ? h('span', { class: 'late', title: late + ' overdue' }, late) : null)));
+      const woLine = (id) => {
+        const r = byId.get(String(id));
+        const dev = (r.customerDevice && r.customerDevice.name) || (r.deviceCatalog && r.deviceCatalog.name) || '';
+        return h('div', null,
+          h('a', { href: '/repair/workorder/' + id }, 'WO ' + id), ' · ', AE.data.nameOf(r) || 'Customer',
+          h('div', { class: 'meta' }, [r.workorderStatusName, dev].filter(Boolean).join(' · ')));
+      };
+      if (boardTab === 'auto') {
+        board.querySelector('.filters')?.remove();
+        const redraw = () => W.load().then((c2) => drawBoard(board, c2, wos)).catch(() => {});
+        const sections = [['overdue', 'Overdue'], ['today', 'Due today'], ['upcoming', 'Upcoming']];
+        const sorted = marked.sort(([, a], [, b]) => a.due.localeCompare(b.due));
+        board.querySelector('.list').replaceChildren(...(sorted.length ? sections.map(([st, title]) => {
+          const rows = sorted.filter(([, m]) => W.dueState(m.due) === st);
+          return rows.length ? h('div', { class: 'group' }, h('div', { class: 'gh' }, title + ' · ' + rows.length),
+            rows.map(([id, m]) => h('div', { class: 'wo' }, woLine(id), h('div', { class: 'chips' }, W.autoChip(id, m, redraw))))) : null;
+        }).filter(Boolean) : [h('div', { class: 'sg-soft', style: 'padding:8px 0' }, 'No Auto-Waymarks. A work order gets one, 3 days out, when it reaches Ready for pickup.')]),
+          h('div', { class: 'sg-soft', style: 'padding:6px 0 2px' }, 'Right-click a date to push it later; × removes it.'));
+        return;
+      }
       const tagged = Object.entries(c.tags).filter(([id]) => byId.has(String(id)));
       // Groups: managed list order, then one-offs A–Z.
       const names = [...c.list.map((l) => l.name)];
@@ -3134,7 +3438,7 @@ AE.crystal({
       };
       board.querySelector('.filters')?.remove();
       const filters = h('div', { class: 'filters' }, names.filter((n) => counts[n]).map(filterChip));
-      board.querySelector('.head').after(filters);
+      board.querySelector('.tabs').after(filters);
       board.querySelector('.list').replaceChildren(...(shown.length ? shown.map((n) => {
         const rows = tagged.filter(([, ts]) => ts.some((t) => t.tag === n))
           .sort(([a], [b]) => Date.parse(byId.get(String(a)).createdAt) - Date.parse(byId.get(String(b)).createdAt));
@@ -3144,8 +3448,23 @@ AE.crystal({
     }
     document.addEventListener('click', (e) => {
       const b = document.getElementById(BOARD_ID), path = e.composedPath();
-      if (b && !path.includes(b) && !path.includes(document.getElementById(BTN_ID))) b.remove();
+      if (b && !path.includes(b) && !path.includes(document.getElementById(BTN_ID)) && !path.some((n) => n.id === 'sg-wm-push')) b.remove();
     });
+
+    // A tech setting this WO to Ready for pickup saves it with PUT /api/workorder/{id}
+    // (or its /status). The page keeps its own fetch, so watch the network log,
+    // then re-read the WO. Our own re-read lands inside the 5 s window and is ignored.
+    let lastCheck = 0;
+    try {
+      new PerformanceObserver((list) => {
+        const woId = currentWoId();
+        if (!woId || Date.now() - lastCheck < 5000) return;
+        const re = new RegExp('/api/workorder/' + woId + '(/status)?(?:[?#]|$)');
+        if (!list.getEntries().some((e) => re.test(e.name))) return;
+        lastCheck = Date.now();
+        setTimeout(() => W.checkWo(woId).catch((e) => console.warn('[' + AE_NAME + '] Auto-Waymark check:', e.message || e)), 1500);
+      }).observe({ type: 'resource', buffered: false });
+    } catch (_) { /* no PerformanceObserver: the 10-minute scan still covers it */ }
 
     AE.on('waymark-changed', () => { renderRow(); });
     W.load().catch(() => {});
@@ -3154,9 +3473,13 @@ AE.crystal({
       if (currentWoId()) { W.load().then(renderRow).catch(() => {}); renderRow(); }
       else { document.getElementById(ROW_ID)?.remove(); document.getElementById(POP_ID)?.remove(); }
     });
-    // Clears tags 7 days after close: tell the Worker which tagged WOs have closed.
-    setTimeout(() => W.reportClosed().catch(() => {}), 20000);
-    setInterval(() => W.reportClosed().catch(() => {}), 30 * 60 * 1000);
+    // Every 10 minutes (shared across tabs): Auto-Waymark new Ready for pickup
+    // WOs, and report closed ones so their tags/marks clear 7 days later.
+    const tick = () => W.scan().catch((e) => console.warn('[' + AE_NAME + '] Waymark scan:', e.message || e));
+    setTimeout(tick, 15000);
+    // Managers' morning notice, once the header is up.
+    setTimeout(() => morningNotice().catch((e) => console.warn('[' + AE_NAME + '] Waymark morning notice:', e.message || e)), 4000);
+    setInterval(tick, 60 * 1000); // scan() itself waits out the 10 minutes
   },
 });
 
