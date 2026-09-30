@@ -416,3 +416,36 @@ the Cloudflare login used with `npx wrangler login`).
   `worker/.admin-key` (git-ignored) and entered once per browser; it never
   ships in the script. Set/rotate: `cat worker/.admin-key | npx wrangler secret put ADMIN_KEY`.
 - **Patch notes never mention the admin panel or usage analytics.**
+
+## Dev channel
+
+Two channels, two installs:
+
+| | Public | Dev |
+|---|---|---|
+| Git branch | `main` | `dev` |
+| Tampermonkey script | Aethernet — crystals for NextGen Portal (`garrett.ubif`) | Aethernet (dev) (`garrett.ubif.dev`), own storage |
+| Gist | `0cf4560c…` | `9ac1e1db…` (secret) |
+| Worker | aethernet-waymark | aethernet-waymark-dev (`wrangler deploy --env dev`), same D1 database, no cron |
+| Version | `VERSION` (2.15.0) | `DEV_BASE.N` (2.16.0.1, 2.16.0.2 …; `dev-build.txt`) |
+| Build | `build.py` / `--release` | `build.py --dev-build` / `--dev` (publish) |
+
+**Workflow (Garrett, Sep 30, 2026):** every feature is committed to `dev` and
+published with `build.py --dev` straight away. When Garrett asks to bundle the
+session: merge `dev` into `main`, set `VERSION = DEV_BASE` (and bump
+`DEV_BASE`), write one combined patch-notes entry, `build.py --release`.
+
+**Dev install:** https://gist.githubusercontent.com/Unix-Epoch/9ac1e1dbc80caa3dff04afb5b89e90c3/raw/aethernet.user.js
+Turn the public Aethernet off in Tampermonkey while the dev one is on (the dev
+build warns if both run). The dev build is fully working: it acts on real
+Portal data like the public one.
+
+**Dev tools** (`src/dev/`, dev builds only; the orange DEV tab on the left, or
+the Tampermonkey menu): every popup and automatic feature on demand —
+update pills and Check for updates states, notices (info/warning/error, paused,
+fixed-in), the New sheen, the Macrocosmos button + explainer on any WO,
+Waymark's due badge and manager bubble, the real morning check, an
+Auto-Waymark **dry run** (what the scan would mark/rename, nothing written),
+a shifted clock for the 7 PM and morning rules, the scan for real (asks
+first), the Swiftcast progress panel (fake), toasts, the confirm dialog and
+recent errors. Modules expose what the dev tools need through `AE.hooks`.

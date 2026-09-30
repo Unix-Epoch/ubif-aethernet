@@ -10,6 +10,15 @@ settings, then crystals), then:
   python3 build.py --release  build, then publish to the Gist so every
                               install auto-updates (also updates status.json's
                               "latest", which drives the in-Portal update pill)
+  python3 build.py --dev      build the DEV channel (dist-dev/) and publish it to
+                              the dev Gist: "Aethernet (dev)", its own install,
+                              storage and Worker, plus the dev tools in src/dev/.
+                              Every dev publish gets a new build number:
+                              DEV_BASE.N (e.g. 2.16.0.3).
+
+Workflow (Garrett, Sep 30, 2026): new work goes to the `dev` git branch and
+`--dev` straight away; a session is later bundled into one public release
+(merge into main, one patch-notes entry, `--release`).
 
 Notices (status.json on the same Gist, read live by every install within
 ~15 minutes; no release needed):
@@ -41,7 +50,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "2.15.0"
+VERSION = "2.15.0"   # the public version (bump when bundling a public release)
+DEV_BASE = "2.16.0"  # the next public version, being built on dev
 
 # Secret Gist that hosts the published script (account: Unix-Epoch).
 # The raw URL has no commit hash, so it always serves the latest revision.
@@ -57,13 +67,28 @@ READABLE_URL = f"{GIST_RAW}/{READABLE_FILENAME}"
 # deployed; WAYMARK_API in the environment overrides it (e.g. a local
 # `wrangler dev` for testing). The app key is read from worker/wrangler.toml.
 WAYMARK_API = "https://aethernet-waymark.ubifaethernet.workers.dev"
+
+# The dev channel: everything that differs from the public build.
+DEV = {
+    "gist_id": "9ac1e1dbc80caa3dff04afb5b89e90c3",  # secret Gist, account Unix-Epoch
+    "name": "Aethernet (dev)",
+    "namespace": "garrett.ubif.dev",   # a separate script to Tampermonkey: own install + storage
+    "waymark_api": "https://aethernet-waymark-dev.ubifaethernet.workers.dev",
+    "dist": "dist-dev",
+    "status_file": "status-dev.json",
+    "counter": "dev-build.txt",       # last dev build number
+}
+CHANNEL = "public"  # set to "dev" by --dev before building
 # Minifier, pinned so builds are repeatable; run through npx (no local node_modules).
 ESBUILD = ["npx", "--yes", "esbuild@0.28.2"]
 
-HEADER = f"""// ==UserScript==
-// @name         Aethernet — crystals for NextGen Portal
-// @namespace    garrett.ubif
-// @version      {VERSION}
+def header(version: str) -> str:
+    dev = CHANNEL == "dev"
+    raw = gist_raw(DEV["gist_id"]) if dev else GIST_RAW
+    return f"""// ==UserScript==
+// @name         {DEV["name"] if dev else "Aethernet — crystals for NextGen Portal"}
+// @namespace    {DEV["namespace"] if dev else "garrett.ubif"}
+// @version      {version}
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -72,12 +97,25 @@ HEADER = f"""// ==UserScript==
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @run-at       document-idle
-// @updateURL    {META_URL}
-// @downloadURL  {RAW_URL}
+// @updateURL    {raw}/{META_FILENAME}
+// @downloadURL  {raw}/{FILENAME}
 // ==/UserScript==
 
 /* Built by build.py from src/ — edit those files, not this one. */
 """
+
+
+def gist_raw(gist_id: str) -> str:
+    return f"https://gist.githubusercontent.com/Unix-Epoch/{gist_id}/raw"
+
+
+def dev_version(root: Path, bump: bool) -> str:
+    f = root / DEV["counter"]
+    n = int(f.read_text().strip()) if f.exists() else 0
+    if bump:
+        n += 1
+        f.write_text(f"{n}\n")
+    return f"{DEV_BASE}.{max(n, 1)}"
 
 
 def git_commit(root: Path) -> str:
@@ -88,6 +126,9 @@ def git_commit(root: Path) -> str:
     except Exception:
         return "unknown"
 
+
+# Files that run before the store-access check (the rest wait for it).
+PREBOOT = ("00-core.js", "01-access.js")
 
 NOTES_FILE = "patch-notes.json"
 
@@ -124,37 +165,49 @@ def action_icons(root: Path) -> str:
     return json.dumps(icons)
 
 
-def build(root: Path) -> Path:
+def build(root: Path, version: str = VERSION) -> Path:
+    dev = CHANNEL == "dev"
+    raw = gist_raw(DEV["gist_id"]) if dev else GIST_RAW
     stamps = {
-        "__VERSION__": VERSION,
+        "__VERSION__": version,
+        "__DEV__": "true" if dev else "false",
         "__BUILD_TIME__": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "__BUILD_COMMIT__": git_commit(root),
-        "__INSTALL_URL__": RAW_URL,
-        "__READABLE_URL__": READABLE_URL,
-        "__WAYMARK_API__": os.environ.get("WAYMARK_API", WAYMARK_API),
+        "__INSTALL_URL__": f"{raw}/{FILENAME}",
+        "__READABLE_URL__": f"{raw}/{READABLE_FILENAME}",
+        "__WAYMARK_API__": os.environ.get("WAYMARK_API", DEV["waymark_api"] if dev else WAYMARK_API),
         "__WAYMARK_KEY__": waymark_key(root),
         # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), plus
         # UI pieces (assets/ui/*.png), as data URIs
         "__ACTION_ICONS__": action_icons(root),
         "__PATCH_NOTES__": json.dumps(load_notes(root)),
     }
-    parts = [HEADER, "(function aethernet() {\n'use strict';\n"]
-    for f in sorted((root / "src").glob("*.js")):
+    head = header(version)
+    parts = [head, "(function aethernet() {\n'use strict';\n"]
+    # src/dev/*.js (dev tools) only go into dev builds; everything sorts by file name.
+    files = list((root / "src").glob("*.js")) + (list((root / "src" / "dev").glob("*.js")) if dev else [])
+    # Core + the store-access gate load first; everything else sits in AE.boot,
+    # which the gate calls only once the store is allowed (01-access.js).
+    booting = False
+    for f in sorted(files, key=lambda f: f.name):
+        if f.name not in PREBOOT and not booting:
+            parts.append("\nAE.boot = function aethernetBoot() {\n")
+            booting = True
         parts.append(f"\n// ===== {f.name} =====\n")
         text = f.read_text()
         for k, v in stamps.items():
             text = text.replace(k, v)
         parts.append(text)
-    parts.append("\nAE.start();\n})();\n")
-    dist = root / "dist"
+    parts.append("\nAE.start();\n};\nAE.gate();\n})();\n")
+    dist = root / (DEV["dist"] if dev else "dist")
     dist.mkdir(exist_ok=True)
     readable = "".join(parts)
-    body = readable[len(HEADER):]
+    body = readable[len(head):]
     (dist / READABLE_FILENAME).write_text(readable)
-    (dist / META_FILENAME).write_text(HEADER.split("// ==/UserScript==")[0] + "// ==/UserScript==\n")
+    (dist / META_FILENAME).write_text(head.split("// ==/UserScript==")[0] + "// ==/UserScript==\n")
     out = dist / FILENAME
-    out.write_text(HEADER + minify(body))
-    print(f"Built {out.relative_to(root)} v{VERSION}: {out.stat().st_size:,} bytes "
+    out.write_text(head + minify(body))
+    print(f"Built {out.relative_to(root)} v{version}{' (dev)' if dev else ''}: {out.stat().st_size:,} bytes "
           f"(readable {len(readable.encode()):,}, meta {(dist / META_FILENAME).stat().st_size:,})")
     return out
 
@@ -186,7 +239,7 @@ def squash_css(js: str) -> str:
     return re.sub(r"`[^`]*`", squash, js)
 
 
-def as_tuple(v: str) -> tuple:
+def as_tuple(v: str) -> tuple:  # "2.16.0.3" works too
     return tuple(int(x) for x in v.split("."))
 
 
@@ -222,10 +275,25 @@ def load_status(root: Path) -> dict:
 def publish_status(root: Path, status: dict) -> None:
     f = root / STATUS_FILE
     f.write_text(json.dumps(status, indent=2, ensure_ascii=False) + "\n")
-    files = subprocess.run(["gh", "api", f"gists/{GIST_ID}", "--jq", ".files | keys[]"],
-                           check=True, capture_output=True, text=True).stdout.split()
-    gist_put(f, files)
+    gist_put(f, gist_files(GIST_ID))
     print(f"Published {STATUS_FILE}: " + json.dumps(status, ensure_ascii=False))
+    # Dev installs read the dev Gist's status.json: same notice, their own "latest".
+    if DEV["gist_id"]:
+        dev = load_dev_status(root)
+        dev["incident"] = status.get("incident")
+        publish_dev_status(root, dev)
+
+
+def load_dev_status(root: Path) -> dict:
+    f = root / DEV["status_file"]
+    return json.loads(f.read_text()) if f.exists() else {"latest": None, "incident": None}
+
+
+def publish_dev_status(root: Path, status: dict) -> None:
+    f = root / DEV["status_file"]
+    f.write_text(json.dumps(status, indent=2, ensure_ascii=False) + "\n")
+    gist_put(f, gist_files(DEV["gist_id"]), DEV["gist_id"], as_name=STATUS_FILE)
+    print("Published dev status.json: " + json.dumps(status, ensure_ascii=False))
 
 
 def status_command(root: Path, args) -> None:
@@ -272,15 +340,24 @@ def check_releasable() -> str | None:
     return live
 
 
-def gist_put(path: Path, files: list) -> None:
-    name = path.name
-    cmd = ["gh", "gist", "edit", GIST_ID] + (["--filename", name] if name in files else ["--add"]) + [str(path)]
-    subprocess.run(cmd, check=True)
+def gist_files(gist_id: str) -> list:
+    return subprocess.run(["gh", "api", f"gists/{gist_id}", "--jq", ".files | keys[]"],
+                          check=True, capture_output=True, text=True).stdout.split()
+
+
+def gist_put(path: Path, files: list, gist_id: str = GIST_ID, as_name: str | None = None) -> None:
+    """Upload `path` to the Gist as `as_name` (default: its own name), adding it if new."""
+    import tempfile
+    name = as_name or path.name
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / name          # `gh gist edit --add` names the file after the path
+        src.write_bytes(path.read_bytes())
+        opts = ["--filename", name] if name in files else ["--add"]
+        subprocess.run(["gh", "gist", "edit", gist_id, *opts, str(src)], check=True)
 
 
 def release(root: Path, out: Path, live: str | None) -> None:
-    files = subprocess.run(["gh", "api", f"gists/{GIST_ID}", "--jq", ".files | keys[]"],
-                           check=True, capture_output=True, text=True).stdout.split()
+    files = gist_files(GIST_ID)
     # Script first, then the meta file (so an update check never sees a
     # version whose script isn't up yet), then the readable copy.
     for name in (FILENAME, META_FILENAME, READABLE_FILENAME):
@@ -293,10 +370,29 @@ def release(root: Path, out: Path, live: str | None) -> None:
     publish_status(root, status)
 
 
+def dev_release(root: Path) -> None:
+    global CHANNEL
+    if not DEV["gist_id"]:
+        sys.exit("No dev Gist yet: set DEV['gist_id'] in build.py.")
+    CHANNEL = "dev"
+    version = dev_version(root, bump=True)
+    out = build(root, version)
+    files = gist_files(DEV["gist_id"])
+    for name in (FILENAME, META_FILENAME, READABLE_FILENAME):
+        gist_put(out.parent / name, files, DEV["gist_id"])
+    print(f"Published dev v{version}. Dev install link:\n  {gist_raw(DEV['gist_id'])}/{FILENAME}")
+    status = load_dev_status(root)
+    status["latest"] = {"version": version, "date": now_utc()}
+    status["incident"] = load_status(root).get("incident")  # same notice as the public channel
+    publish_dev_status(root, status)
+
+
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="Build / release Aethernet, or post a live notice.")
     ap.add_argument("--release", action="store_true")
+    ap.add_argument("--dev", action="store_true", help="build + publish the dev channel")
+    ap.add_argument("--dev-build", action="store_true", help="build the dev channel only (no publish)")
     ap.add_argument("--status", nargs="+", metavar=("SEVERITY", "TITLE"), help="post a notice: SEVERITY TITLE [MESSAGE…]")
     ap.add_argument("--status-update", metavar="MESSAGE")
     ap.add_argument("--status-fixed", metavar="VERSION")
@@ -310,6 +406,13 @@ if __name__ == "__main__":
         if args.status and len(args.status) < 2:
             ap.error("--status needs at least SEVERITY and TITLE")
         status_command(root, args)
+        sys.exit(0)
+    if args.dev:
+        dev_release(root)
+        sys.exit(0)
+    if args.dev_build:
+        CHANNEL = "dev"
+        build(root, dev_version(root, bump=False))
         sys.exit(0)
     if args.release:
         live = check_releasable()

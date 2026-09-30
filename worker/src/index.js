@@ -23,6 +23,12 @@
     GET  /v1/admin/feedback?status=new|planned|fixed|wontfix|all
     POST /v1/admin/feedback/:id         { status?, note? }
     GET  /v1/admin/usage?days=30
+    GET  /v1/admin/stores                                        allowed stores + stores waiting
+    POST /v1/admin/stores               { store, name, by }      grant access
+    POST /v1/admin/stores/:store/remove                          revoke access
+  Store access: GET /v1/:store/access?name=&user= answers { allowed } (and
+  records the store as seen). Every other /v1/:store/… call is refused (403)
+  for stores without access.
   Daily cron: drop tags + history for WOs closed more than 7 days ago; usage older than 180 days.
 */
 const COLORS = ['purple', 'blue', 'teal', 'green', 'lime', 'yellow', 'orange', 'red', 'grey'];
@@ -79,6 +85,28 @@ async function admin(req, env, url) {
     await env.DB.prepare('UPDATE feedback SET status = ?, note = ?, updated_at = ? WHERE id = ?').bind(status, note, now(), Number(fm[1])).run();
     return json({ ok: true, status, note });
   }
+  if (req.method === 'GET' && path === '/stores') {
+    const [allowed, seen] = await env.DB.batch([
+      env.DB.prepare('SELECT a.store, COALESCE(a.name, s.name) AS name, a.added_by, a.added_at, s.last_at, s.loads FROM store_access a LEFT JOIN store_seen s ON s.store = a.store ORDER BY a.store'),
+      env.DB.prepare('SELECT s.* FROM store_seen s WHERE s.store NOT IN (SELECT store FROM store_access) ORDER BY s.last_at DESC LIMIT 200'),
+    ]);
+    return json({ allowed: allowed.results, waiting: seen.results });
+  }
+  if (req.method === 'POST' && path === '/stores') {
+    const b = await body(req);
+    const store = Number(b.store);
+    if (!Number.isInteger(store) || store <= 0 || store > 999999) return fail(400, 'store number required');
+    await env.DB.prepare('INSERT INTO store_access (store, name, added_by, added_at) VALUES (?, ?, ?, ?) ON CONFLICT (store) DO UPDATE SET name = COALESCE(excluded.name, name)')
+      .bind(store, clean(b.name, 80) || null, clean(b.by, 60) || null, now()).run();
+    accessCache.delete(store);
+    return json({ ok: true });
+  }
+  const rm = path.match(/^\/stores\/(\d{1,6})\/remove$/);
+  if (req.method === 'POST' && rm) {
+    await env.DB.prepare('DELETE FROM store_access WHERE store = ?').bind(Number(rm[1])).run();
+    accessCache.delete(Number(rm[1]));
+    return json({ ok: true });
+  }
   if (req.method === 'GET' && path === '/usage') {
     const days = Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30));
     const since = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
@@ -88,14 +116,33 @@ async function admin(req, env, url) {
   return fail(404, 'not found');
 }
 
+// Store access, cached briefly per Worker instance (changes apply within a minute).
+const accessCache = new Map();
+async function allowed(env, store) {
+  const c = accessCache.get(store);
+  if (c && Date.now() - c.at < 60000) return c.ok;
+  const ok = !!(await env.DB.prepare('SELECT 1 FROM store_access WHERE store = ?').bind(store).first());
+  accessCache.set(store, { ok, at: Date.now() });
+  return ok;
+}
+
 async function route(req, env) {
   const url = new URL(req.url);
   if (url.pathname.startsWith('/v1/admin/')) return admin(req, env, url);
-  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|auto|feedback|usage)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark))?$/);
+  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|auto|feedback|usage|access)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark))?$/);
   if (!m) return fail(404, 'not found');
   const store = Number(m[1]);
   const wo = m[3] ? Number(m[3]) : null;
   const what = m[2] || m[4] || 'all';
+
+  if (req.method === 'GET' && what === 'access') {
+    const name = clean(url.searchParams.get('name'), 80) || null, user = clean(url.searchParams.get('user'), 60) || null, t = now();
+    await env.DB.prepare('INSERT INTO store_seen (store, name, first_at, last_at, loads, last_user) VALUES (?, ?, ?, ?, 1, ?) ' +
+      'ON CONFLICT (store) DO UPDATE SET name = COALESCE(excluded.name, name), last_at = excluded.last_at, loads = loads + 1, last_user = COALESCE(excluded.last_user, last_user)')
+      .bind(store, name, t, t, user).run();
+    return json({ allowed: await allowed(env, store) });
+  }
+  if (!(await allowed(env, store))) return fail(403, 'this store does not have access to Aethernet');
 
   if (req.method === 'GET' && what === 'all') {
     const [list, tags, marks] = await env.DB.batch([

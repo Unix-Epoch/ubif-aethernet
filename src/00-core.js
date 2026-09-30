@@ -15,6 +15,7 @@
 
 const AE_NAME = 'Aethernet';
 const AE_VERSION = '__VERSION__';            // filled in by build.py
+const AE_DEV = __DEV__;                      // true only in the dev channel ("Aethernet (dev)")
 const AE_BUILD_TIME = '__BUILD_TIME__';       // ISO time of the build
 const AE_BUILD_COMMIT = '__BUILD_COMMIT__';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = '__INSTALL_URL__';
@@ -24,7 +25,7 @@ const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
-    crystals: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true },
+    crystals: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true },
     cleaningRate: { target: 75 },
     printLabels: { delayMs: 900 },
     glamour: { theme: 'portal', custom: [] }, // custom: [{ id, name, bg, fg, accent, custom: true }]
@@ -375,6 +376,15 @@ const AE = (() => {
     return { workorders, arrivals, cleanings, belongs, imeiOf, custOf, nameOf };
   })();
 
+  // --------------------------------------------------- dev hooks + clock
+  // Modules register things the dev tools (src/dev/, dev builds only) can
+  // trigger on demand: popups, notices, dry runs. Harmless in public builds.
+  const hooks = {};
+  // "Now", which the dev tools can shift to test time-based rules (Waymark's
+  // 7 PM and morning rules). Always the real time in public builds.
+  const now = () => Date.now() + (AE_DEV ? Number(GM_getValue('ae_dev_clock_offset', 0)) || 0 : 0);
+  const nowDate = () => new Date(now());
+
   // --------------------------------------------------- errors + usage
   // The last few Aethernet errors, attached to bug reports ("Send feedback").
   const recentErrors = [];
@@ -412,6 +422,9 @@ const AE = (() => {
   function crystal(def) { crystals.push(def); }
   function start() {
     ensureCss();
+    // Which Aethernet builds are running on this page (the dev build warns if both are).
+    const root = document.documentElement;
+    root.dataset.aethernet = ((root.dataset.aethernet || '') + ' ' + (AE_DEV ? 'dev' : 'public')).trim();
     for (const t of crystals) {
       if (!settings.crystals[t.id]) continue;
       if (t.sites && !t.sites.includes(location.hostname)) continue;
@@ -433,6 +446,7 @@ const AE = (() => {
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
     api, unwrap, Stopped, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close crystal when it's enabled

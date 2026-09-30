@@ -131,8 +131,27 @@ AE.crystal({
 
     const woLink = (id) => '<a href="/repair/workorder/' + id + '">WO ' + id + '</a>';
 
-    async function onClick(arrivalId) {
+    /*
+      Never act while the store is closed (Portal's Close store button). Asked
+      fresh each time (/api/auth/user → isStoreOpen, the flag behind Portal's
+      own Open/Close store button); if Portal can't be asked, don't act either.
+    */
+    async function storeClosed() {
+      let open;
+      try { open = (await AE.api('GET', '/api/auth/user')).isStoreOpen; } catch (e) {
+        AE.toast('Swiftcast', "Couldn't check whether the store is open (" + (e.message || e) + '). Nothing was created.', 'err', 9000);
+        return true;
+      }
+      if (open === false) {
+        AE.toast('Swiftcast is off while the store is closed', 'Open the store in Portal, then try again. Nothing was created.', 'err', 9000);
+        return true;
+      }
+      return false;
+    }
+
+    async function onClick(arrivalId, checked) {
       if (running || AE.status.blocked('autoClose')) return;
+      if (!checked && await storeClosed()) return;
       AE.track('autoClose:run');
       running = true; stopRequested = false;
       const panel = AE.progressPanel('Swiftcast · cleaning auto-close');
@@ -164,6 +183,7 @@ AE.crystal({
       isRunning: () => running,
       async confirmAndRun({ arrivalId, programId, customerName }) {
         if (AE.status.blocked('autoClose')) return;
+        if (await storeClosed()) return; // before asking, so nobody confirms for nothing
         if (running) { AE.confirm({ title: 'Already running', message: 'Another cleaning is being closed out — wait for it to finish.', confirmLabel: 'OK' }); return; }
         const ok = await AE.confirm({
           title: 'Create this cleaning?',
@@ -172,7 +192,7 @@ AE.crystal({
           warning: "Are you sure you'd like to create this cleaning? Only use this if you are the one who repaired this device!",
           confirmLabel: 'Yes, create cleaning',
         });
-        if (ok) await onClick(arrivalId);
+        if (ok) await onClick(arrivalId, true);
       },
     };
 

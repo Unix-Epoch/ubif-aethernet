@@ -137,7 +137,7 @@ AE.crystal({
         : '';
       const scroll = p.scrollTop;
       p.innerHTML =
-        '<div style="display:flex;align-items:baseline;gap:8px"><b style="flex:1;font-size:16px">Today\'s cleaning rate: <span style="color:' + levelColor(last.pct) + '">' +
+        '<div style="display:flex;align-items:center;gap:8px">' + AE.actionIcon('cleaningRate', 26) + '<b style="flex:1;font-size:16px">Today\'s cleaning rate: <span style="color:' + levelColor(last.pct) + '">' +
         (last.pct == null ? '—' : last.pct + '%') + '</span></b><button type="button" class="sg-btn" data-refresh>Refresh</button></div>' +
         '<div class="sg-soft" style="margin-top:4px">' + last.linked + ' cleanings' + (last.pending ? ' (' + last.pending + ' pending in Arrivals)' : '') +
         ' ÷ ' + last.parents + ' Asurion Mobility orders created today · target ' + TARGET +

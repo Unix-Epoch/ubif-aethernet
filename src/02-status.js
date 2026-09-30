@@ -29,10 +29,10 @@ AE.status = (() => {
   const CACHE_KEY = 'ae_status', DISMISS_KEY = 'ae_status_dismissed', UPDATE_DISMISS_KEY = 'ae_update_dismissed';
   const POLL_MS = 10 * 60 * 1000;
   const SEVERITIES = ['info', 'warning', 'error'];
-  const VER_RE = /^\d+(\.\d+){0,2}$/;
+  const VER_RE = /^\d+(\.\d+){0,3}$/; // dev builds have a 4th part (2.16.0.3)
 
   const verTuple = (v) => String(v || '0').split('.').map(Number);
-  const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+  const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   const text = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
   const ids = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && /^[A-Za-z]{1,30}$/.test(x)).slice(0, 12) : []);
 
@@ -102,9 +102,9 @@ AE.status = (() => {
   }
 
   // Settings → Check for updates.
-  async function checkNow() {
+  async function checkNow(opts = {}) {
     const busy = AE.toast('Checking for updates…', '', 'busy');
-    try { await refresh(true); } catch (e) {
+    try { if (!opts.noFetch) await refresh(true); } catch (e) { // noFetch: dev tools, against simulated data
       busy.remove();
       AE.toast("Couldn't check for updates", 'GitHub didn\'t answer (' + (e.message || e) + '). Try again in a minute.', 'err');
       return;
@@ -227,5 +227,8 @@ AE.status = (() => {
     }, 0);
   }
 
-  return { get: () => state, incident, paused, blocked, refresh, checkNow, startUpdate, updateAvailable, newer, url: STATUS_URL };
+  // Dev tools: show a pretend status.json (not saved; the next real check replaces it).
+  function simulate(raw) { state = clean(raw); GM_deleteValue(DISMISS_KEY); GM_deleteValue(UPDATE_DISMISS_KEY); render(); }
+
+  return { get: () => state, incident, paused, blocked, refresh, checkNow, startUpdate, updateAvailable, newer, simulate, url: STATUS_URL };
 })();

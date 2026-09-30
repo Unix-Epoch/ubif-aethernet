@@ -1,5 +1,15 @@
 [
   {
+    "version": "2.16.0",
+    "notes": [
+      "New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates as each item is scanned, without losing your place in the list.",
+      "**Divination**: its icon now shows in its panel.",
+      "Aethernet is now available store by store. If your store doesn't have access yet, you'll see a notice instead, and nothing else loads until it's added.",
+      "**Swiftcast** won't create cleanings while the store is closed (after **Close store** in Portal). Open the store first.",
+      "**Bountiful Yield** now works on RMA orders too: **Add all RMA parts** in the Add RMA parts popout. It stops if the RMA's line limit is reached."
+    ]
+  },
+  {
     "version": "2.15.0",
     "notes": [
       "New: **Send feedback**. Report a bug or suggest something straight from Portal: avatar menu → **Send Aethernet feedback**, or the link at the bottom of Settings. Bug reports can include technical details to help track the problem down (never customer details).",
