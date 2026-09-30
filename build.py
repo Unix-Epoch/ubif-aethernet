@@ -15,6 +15,12 @@ settings, then crystals), then:
                               storage and Worker, plus the dev tools in src/dev/.
                               Every dev publish gets a new build number:
                               DEV_BASE.N (e.g. 2.16.0.3).
+  python3 build.py --demo     build the DEMO channel (dist-demo/) and publish it
+                              to the demo Gist: a cut-down "Aethernet" with only
+                              the crystals in DEMO["crystals"], no patch notes,
+                              a minimal About, and no Worker traffic (no store
+                              check, feedback, usage or Waymark). Built from the
+                              `demo` git branch; bump DEMO["version"] first.
 
 Workflow (Garrett, Sep 30, 2026): new work goes to the `dev` git branch and
 `--dev` straight away; a session is later bundled into one public release
@@ -78,13 +84,47 @@ DEV = {
     "status_file": "status-dev.json",
     "counter": "dev-build.txt",       # last dev build number
 }
-CHANNEL = "public"  # set to "dev" by --dev before building
+# The demo channel: a cut-down build that must read as the real thing (no
+# "demo" anywhere a user can see: name, namespace, Gist, About).
+DEMO = {
+    "gist_id": "",                     # secret Gist, account Unix-Epoch
+    "version": "2.16.0",               # bump for each --demo publish
+    "name": "Aethernet",
+    "namespace": "garrett.aethernet",  # its own install + storage (can sit beside the public one)
+    "dist": "dist-demo",
+    "status_file": "status-demo.json",
+    # Only these crystals (and the files that hold them) go in.
+    "crystals": ("cleaningRate", "autoClose", "glamour"),
+    "files": ("00-core.js", "02-status.js", "05-settings.js", "10-cleaning-rate.js", "20-auto-close.js", "50-glamour.js"),
+    "description": "Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out and page theming for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.",
+}
+CHANNEL = "public"  # set to "dev" / "demo" by --dev / --demo before building
 # Minifier, pinned so builds are repeatable; run through npx (no local node_modules).
 ESBUILD = ["npx", "--yes", "esbuild@0.28.2"]
 
+def channel_raw() -> str:
+    return gist_raw(DEV["gist_id"]) if CHANNEL == "dev" else gist_raw(DEMO["gist_id"]) if CHANNEL == "demo" else GIST_RAW
+
+
 def header(version: str) -> str:
     dev = CHANNEL == "dev"
-    raw = gist_raw(DEV["gist_id"]) if dev else GIST_RAW
+    raw = channel_raw()
+    if CHANNEL == "demo":
+        return f"""// ==UserScript==
+// @name         {DEMO["name"]}
+// @namespace    {DEMO["namespace"]}
+// @version      {version}
+// @description  {DEMO["description"]}
+// @match        https://portal.ubreakifix.net/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_deleteValue
+// @grant        GM_registerMenuCommand
+// @run-at       document-idle
+// @updateURL    {raw}/{META_FILENAME}
+// @downloadURL  {raw}/{FILENAME}
+// ==/UserScript==
+"""
     return f"""// ==UserScript==
 // @name         {DEV["name"] if dev else "Aethernet — crystals for NextGen Portal"}
 // @namespace    {DEV["namespace"] if dev else "garrett.ubif"}
@@ -155,22 +195,27 @@ def waymark_key(root: Path) -> str:
 
 
 def action_icons(root: Path) -> str:
+    demo = CHANNEL == "demo"
     icons = {
         f.stem: "data:image/jpeg;base64," + base64.b64encode(f.read_bytes()).decode()
         for f in sorted((root / "assets" / "icons").glob("*.jpg"))
+        if not demo or f.stem in DEMO["crystals"]
     }
     # FFXIV UI pieces (e.g. the hotbar macro gear), keyed "ui/<name>"
-    for f in sorted((root / "assets" / "ui").glob("*.png")):
+    for f in ([] if demo else sorted((root / "assets" / "ui").glob("*.png"))):
         icons["ui/" + f.stem] = "data:image/png;base64," + base64.b64encode(f.read_bytes()).decode()
     return json.dumps(icons)
 
 
 def build(root: Path, version: str = VERSION) -> Path:
-    dev = CHANNEL == "dev"
-    raw = gist_raw(DEV["gist_id"]) if dev else GIST_RAW
+    dev, demo = CHANNEL == "dev", CHANNEL == "demo"
+    raw = channel_raw()
     stamps = {
         "__VERSION__": version,
         "__DEV__": "true" if dev else "false",
+        # AE_DEMO is written bare in src/ and swapped for a literal here, so the
+        # minifier drops the other channel's branches (and their text) entirely.
+        "AE_DEMO": "true" if demo else "false",
         "__BUILD_TIME__": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "__BUILD_COMMIT__": git_commit(root),
         "__INSTALL_URL__": f"{raw}/{FILENAME}",
@@ -180,12 +225,14 @@ def build(root: Path, version: str = VERSION) -> Path:
         # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), plus
         # UI pieces (assets/ui/*.png), as data URIs
         "__ACTION_ICONS__": action_icons(root),
-        "__PATCH_NOTES__": json.dumps(load_notes(root)),
+        "__PATCH_NOTES__": "[]" if demo else json.dumps(load_notes(root)),
     }
     head = header(version)
     parts = [head, "(function aethernet() {\n'use strict';\n"]
     # src/dev/*.js (dev tools) only go into dev builds; everything sorts by file name.
     files = list((root / "src").glob("*.js")) + (list((root / "src" / "dev").glob("*.js")) if dev else [])
+    if demo:  # only its crystals; no store check (01-access.js), so it boots straight away
+        files = [f for f in files if f.name in DEMO["files"]]
     # Core + the store-access gate load first; everything else sits in AE.boot,
     # which the gate calls only once the store is allowed (01-access.js).
     booting = False
@@ -198,8 +245,8 @@ def build(root: Path, version: str = VERSION) -> Path:
         for k, v in stamps.items():
             text = text.replace(k, v)
         parts.append(text)
-    parts.append("\nAE.start();\n};\nAE.gate();\n})();\n")
-    dist = root / (DEV["dist"] if dev else "dist")
+    parts.append("\nAE.start();\n};\n" + ("AE.boot();" if demo else "AE.gate();") + "\n})();\n")
+    dist = root / (DEV["dist"] if dev else DEMO["dist"] if demo else "dist")
     dist.mkdir(exist_ok=True)
     readable = "".join(parts)
     body = readable[len(head):]
@@ -207,7 +254,7 @@ def build(root: Path, version: str = VERSION) -> Path:
     (dist / META_FILENAME).write_text(head.split("// ==/UserScript==")[0] + "// ==/UserScript==\n")
     out = dist / FILENAME
     out.write_text(head + minify(body))
-    print(f"Built {out.relative_to(root)} v{version}{' (dev)' if dev else ''}: {out.stat().st_size:,} bytes "
+    print(f"Built {out.relative_to(root)} v{version}{' (dev)' if dev else ' (demo)' if demo else ''}: {out.stat().st_size:,} bytes "
           f"(readable {len(readable.encode()):,}, meta {(dist / META_FILENAME).stat().st_size:,})")
     return out
 
@@ -282,6 +329,36 @@ def publish_status(root: Path, status: dict) -> None:
         dev = load_dev_status(root)
         dev["incident"] = status.get("incident")
         publish_dev_status(root, dev)
+    # Demo installs only hear about notices that concern their own crystals.
+    if DEMO["gist_id"]:
+        demo = load_channel_status(root, DEMO["status_file"])
+        inc = demo_incident(status.get("incident"))
+        if demo.get("incident") != inc:
+            demo["incident"] = inc
+            publish_channel_status(root, DEMO["status_file"], DEMO["gist_id"], demo)
+
+
+def demo_incident(inc):
+    if not inc:
+        return None
+    ours = set(DEMO["crystals"])
+    touched = set(inc.get("crystals") or []) | set(inc.get("pause") or [])
+    if not touched & ours:
+        return None
+    return {**inc, "crystals": [c for c in inc.get("crystals") or [] if c in ours],
+            "pause": [c for c in inc.get("pause") or [] if c in ours]}
+
+
+def load_channel_status(root: Path, name: str) -> dict:
+    f = root / name
+    return json.loads(f.read_text()) if f.exists() else {"latest": None, "incident": None}
+
+
+def publish_channel_status(root: Path, name: str, gist_id: str, status: dict) -> None:
+    f = root / name
+    f.write_text(json.dumps(status, indent=2, ensure_ascii=False) + "\n")
+    gist_put(f, gist_files(gist_id), gist_id, as_name=STATUS_FILE)
+    print(f"Published {name} → status.json: " + json.dumps(status, ensure_ascii=False))
 
 
 def load_dev_status(root: Path) -> dict:
@@ -387,12 +464,40 @@ def dev_release(root: Path) -> None:
     publish_dev_status(root, status)
 
 
+def demo_release(root: Path) -> None:
+    global CHANNEL
+    if not DEMO["gist_id"]:
+        sys.exit("No demo Gist yet: set DEMO['gist_id'] in build.py.")
+    content = subprocess.run(["gh", "api", f"gists/{DEMO['gist_id']}", "--jq", f'.files["{FILENAME}"].content // ""'],
+                             check=True, capture_output=True, text=True).stdout
+    m = re.search(r"^// @version\s+(\S+)", content, re.M)
+    if m and as_tuple(DEMO["version"]) <= as_tuple(m.group(1)):
+        sys.exit(f"Refusing to publish: DEMO version {DEMO['version']} isn't higher than the published {m.group(1)}.")
+    CHANNEL = "demo"
+    out = build(root, DEMO["version"])
+    # Nothing that gives it away: the word "demo", or any left-out crystal / feature.
+    leaks = sorted(set(re.findall(r"(?i)\bdemo\b|patch notes|waymark|macrocosmos|esuna|recitation|bountiful|quick synthesis|lay of the land|"
+                                  r"send feedback|workers\.dev|ae_usage", out.read_text())))
+    if leaks:
+        sys.exit(f"Refusing to publish: the demo build contains {leaks}.")
+    files = gist_files(DEMO["gist_id"])
+    for name in (FILENAME, META_FILENAME):  # no readable copy: About doesn't link one
+        gist_put(out.parent / name, files, DEMO["gist_id"])
+    print(f"Published demo v{DEMO['version']}. Install link:\n  {gist_raw(DEMO['gist_id'])}/{FILENAME}")
+    status = load_channel_status(root, DEMO["status_file"])
+    status["latest"] = {"version": DEMO["version"], "date": now_utc()}
+    status["incident"] = demo_incident(load_status(root).get("incident"))
+    publish_channel_status(root, DEMO["status_file"], DEMO["gist_id"], status)
+
+
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="Build / release Aethernet, or post a live notice.")
     ap.add_argument("--release", action="store_true")
     ap.add_argument("--dev", action="store_true", help="build + publish the dev channel")
     ap.add_argument("--dev-build", action="store_true", help="build the dev channel only (no publish)")
+    ap.add_argument("--demo", action="store_true", help="build + publish the demo channel")
+    ap.add_argument("--demo-build", action="store_true", help="build the demo channel only (no publish)")
     ap.add_argument("--status", nargs="+", metavar=("SEVERITY", "TITLE"), help="post a notice: SEVERITY TITLE [MESSAGE…]")
     ap.add_argument("--status-update", metavar="MESSAGE")
     ap.add_argument("--status-fixed", metavar="VERSION")
@@ -413,6 +518,13 @@ if __name__ == "__main__":
     if args.dev_build:
         CHANNEL = "dev"
         build(root, dev_version(root, bump=False))
+        sys.exit(0)
+    if args.demo:
+        demo_release(root)
+        sys.exit(0)
+    if args.demo_build:
+        CHANNEL = "demo"
+        build(root, DEMO["version"])
         sys.exit(0)
     if args.release:
         live = check_releasable()

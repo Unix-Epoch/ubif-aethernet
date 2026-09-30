@@ -16,6 +16,9 @@
 const AE_NAME = 'Aethernet';
 const AE_VERSION = '__VERSION__';            // filled in by build.py
 const AE_DEV = __DEV__;                      // true only in the dev channel ("Aethernet (dev)")
+// AE_DEMO (used bare, never declared): build.py swaps it for true in the demo
+// channel's build (build.py --demo: only a few crystals, nothing else) and
+// false everywhere else, so the other side's code is dropped by the minifier.
 const AE_BUILD_TIME = '__BUILD_TIME__';       // ISO time of the build
 const AE_BUILD_COMMIT = '__BUILD_COMMIT__';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = '__INSTALL_URL__';
@@ -25,12 +28,15 @@ const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
-    crystals: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true },
+    crystals: AE_DEMO ? { cleaningRate: true, autoClose: true, glamour: true }
+      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true },
     cleaningRate: { target: 75 },
-    printLabels: { delayMs: 900 },
     glamour: { theme: 'portal', custom: [] }, // custom: [{ id, name, bg, fg, accent, custom: true }]
-    // Blank = use the logged-in user / current store automatically.
-    galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
+    ...(AE_DEMO ? {} : {
+      printLabels: { delayMs: 900 },
+      // Blank = use the logged-in user / current store automatically.
+      galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
+    }),
   };
 
   // Cleaning programs, from the ubif-workorders audit rules. Shared by the
@@ -402,6 +408,7 @@ const AE = (() => {
   const USAGE_KEY = 'ae_usage_pending';
   const localDay = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
   function track(feature) {
+    if (AE_DEMO) return; // the demo build sends nothing anywhere
     try {
       const pend = GM_getValue(USAGE_KEY, {});
       const day = (pend[localDay()] = pend[localDay()] || {});
@@ -411,6 +418,7 @@ const AE = (() => {
   }
   // Once a day per person (e.g. "used Aethernet today", "has a Glamour theme on").
   function trackDaily(feature) {
+    if (AE_DEMO) return;
     const k = 'ae_usage_daily', seen = GM_getValue(k, {});
     if (seen[feature] === localDay()) return;
     seen[feature] = localDay(); GM_setValue(k, seen);
