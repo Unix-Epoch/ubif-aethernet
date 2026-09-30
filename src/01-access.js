@@ -48,8 +48,8 @@ AE.gate = (() => {
       h('div', { style: 'flex:1' },
         h('b', { style: 'display:block;margin-bottom:2px' }, kind === 'denied' ? AE_NAME + " isn't available for " + store + ' yet' : AE_NAME + " couldn't check this store's access"),
         h('span', { class: 'sg-soft', style: 'font-size:13px' }, kind === 'denied'
-          ? 'Access is given store by store. Ask the ' + AE_NAME + ' team to add ' + (p.storeName || 'your store') + '. Until then, ' + AE_NAME + ' stays switched off here.'
-          : 'It will try again in a minute. Nothing from ' + AE_NAME + ' runs until it can.')),
+          ? AE_NAME + ' access is enabled on a store-by-store basis. Reach out to your manager or higher up and ask them to inquire.'
+          : AE_NAME + " will continue checking. If this is a backend issue - we're on it.")),
       h('button', { type: 'button', class: 'sg-x', title: 'Dismiss', onclick: () => { try { if (!opts.force) sessionStorage.setItem(dismissKey, '1'); } catch (_) {} card.remove(); } }, '✕'));
     if (opts.preview) { // dev: the way back out of a locked-out preview
       card.lastChild.before(h('button', { type: 'button', class: 'sg-btn', style: 'flex:none;align-self:center;height:28px;font-size:12px;border-color:#e0761a;color:#e0761a',
