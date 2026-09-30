@@ -17,6 +17,7 @@ AE.gate = (() => {
   const API = '__WAYMARK_API__';
   const KEY = '__WAYMARK_KEY__';
   const CACHE_KEY = 'ae_access';
+  const PREVIEW_KEY = 'ae_dev_preview_locked'; // dev tools: load as a store without access
   let booted = false;
 
   function boot() {
@@ -34,10 +35,10 @@ AE.gate = (() => {
   }
 
   // The one thing a store without access sees (dismissable for this tab).
-  function notice(p, kind) {
+  function notice(p, kind, opts = {}) {
     const id = 'sg-access-notice', dismissKey = 'ae_access_dismissed_' + p.storeId + '_' + kind;
     document.getElementById(id)?.remove();
-    try { if (sessionStorage.getItem(dismissKey)) return; } catch (_) {}
+    try { if (!opts.force && sessionStorage.getItem(dismissKey)) return; } catch (_) {}
     AE.ensureCss();
     const { h, icon } = AE;
     const store = (p.storeName || 'This store') + (p.storeId ? ' (#' + p.storeId + ')' : '');
@@ -49,15 +50,24 @@ AE.gate = (() => {
         h('span', { class: 'sg-soft', style: 'font-size:13px' }, kind === 'denied'
           ? 'Access is given store by store. Ask the ' + AE_NAME + ' team to add ' + (p.storeName || 'your store') + '. Until then, ' + AE_NAME + ' stays switched off here.'
           : 'It will try again in a minute. Nothing from ' + AE_NAME + ' runs until it can.')),
-      h('button', { type: 'button', class: 'sg-x', title: 'Dismiss', onclick: () => { try { sessionStorage.setItem(dismissKey, '1'); } catch (_) {} card.remove(); } }, '✕'));
+      h('button', { type: 'button', class: 'sg-x', title: 'Dismiss', onclick: () => { try { if (!opts.force) sessionStorage.setItem(dismissKey, '1'); } catch (_) {} card.remove(); } }, '✕'));
+    if (opts.preview) { // dev: the way back out of a locked-out preview
+      card.lastChild.before(h('button', { type: 'button', class: 'sg-btn', style: 'flex:none;align-self:center;height:28px;font-size:12px;border-color:#e0761a;color:#e0761a',
+        onclick: () => { GM_deleteValue(PREVIEW_KEY); location.reload(); } }, 'End preview'));
+    }
     (document.body || document.documentElement).appendChild(card);
   }
+
+  // Dev tools: show a notice on demand, or reload as a store without access.
+  AE.hooks.accessNotice = async (kind) => notice(await AE.profile(), kind, { force: true });
+  AE.hooks.previewLockedOut = () => { GM_setValue(PREVIEW_KEY, true); location.reload(); };
 
   return async function gate() {
     if (!AE_ON_PORTAL) return boot();
     let p;
     try { p = await AE.profile(); } catch (_) { p = null; }
     if (!p || !p.storeId) { setTimeout(gate, 30000); return; } // signed out (login page): check again later
+    if (AE_DEV && GM_getValue(PREVIEW_KEY, false)) { notice(p, 'denied', { force: true, preview: true }); return; } // dev preview: act locked out
     const cached = GM_getValue(CACHE_KEY, null);
     const known = cached && cached.store === p.storeId ? cached : null;
     if (known && known.allowed) boot(); // fast start; confirmed just below
