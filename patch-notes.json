@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.14.0",
+    "notes": [
+      "New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, next to the customer's name.",
+      "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **×** removes it for good.",
+      "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."
+    ]
+  },
+  {
     "version": "2.13.0",
     "notes": [
       "New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.",

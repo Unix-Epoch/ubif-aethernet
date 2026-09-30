@@ -19,3 +19,10 @@ CREATE TABLE IF NOT EXISTS history (     -- our own log (not Portal notes)
   by_name TEXT, by_id INTEGER, at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS history_by_wo ON history (store, wo, id);
+CREATE TABLE IF NOT EXISTS auto_marks (  -- Auto-Waymark: follow-up date set when a WO reaches Ready for pickup
+  store INTEGER NOT NULL, wo INTEGER NOT NULL,
+  due TEXT NOT NULL,                     -- YYYY-MM-DD, store-local
+  created_at TEXT NOT NULL,
+  removed_at TEXT,                       -- × removes; the row stays so it isn't re-created
+  PRIMARY KEY (store, wo)
+);

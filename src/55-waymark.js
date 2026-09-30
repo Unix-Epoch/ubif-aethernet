@@ -9,6 +9,11 @@
   - On a WO page: tag chips next to the customer name, and "+ Tag" (managed
     tags as toggles, a box for one-off tags, and the WO's tag history).
   - Header button: the board — open WOs grouped by tag, filterable.
+  - Auto-Waymark: when a WO reaches Ready for pickup it gets a follow-up
+    date 3 days out (its own kind of mark, not a tag). Right-click pushes it
+    later (never earlier); × removes it for good. The board's second tab
+    lists them by due date. Found by a scan of Portal's active list every 10
+    minutes (one tab per browser does it; the server ignores repeats).
   - Settings → Waymark: the store's managed tag list. Only Portal's
     Store Manager / District Manager / Store Owner roles (for the current
     store) can edit it; everyone can tag and add one-offs.
@@ -52,7 +57,7 @@ AE.waymark = (() => {
   function load(force) {
     if (!force && cache && Date.now() - cacheAt < TTL) return Promise.resolve(cache);
     if (inflight) return inflight;
-    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {} }; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
+    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {}, auto: j.auto || {} }; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
       .finally(() => { inflight = null; });
     return inflight;
   }
@@ -89,16 +94,58 @@ AE.waymark = (() => {
     return roleInfo;
   }
 
-  // Report tagged WOs that are no longer open, so the Worker can clear them 7 days on.
-  let lastClosedCheck = 0;
-  async function reportClosed() {
-    if (Date.now() - lastClosedCheck < 30 * 60 * 1000) return;
-    lastClosedCheck = Date.now();
-    const c = await load();
-    const tagged = Object.keys(c.tags).map(Number);
-    if (!tagged.length) return;
-    const open = new Set((await AE.data.workorders(Date.now(), 0)).map((r) => Number(r.workorderId)));
-    const closed = tagged.filter((id) => !open.has(id));
+  // ------------------------------------------------------------ Auto-Waymark
+  const AUTO_DAYS = 3, RFP_STATUS = 13; // 13 = Ready for pickup
+  const pad = (n) => String(n).padStart(2, '0');
+  const isoDate = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); // store-local date
+  const parseDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+  const addDays = (iso, n) => { const d = parseDate(iso); d.setDate(d.getDate() + n); return isoDate(d); };
+  const today = () => isoDate(new Date());
+  const fmtDate = (iso) => parseDate(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const dueState = (iso) => (iso < today() ? 'overdue' : iso === today() ? 'today' : 'upcoming');
+  const autoOf = (woId) => (cache && cache.auto && cache.auto[woId]) || null;
+  // When did it reach Ready for pickup? The list row's updatedAt is the best
+  // hint (a WO sitting at RFP rarely changes); never later than now.
+  const rfpSince = (r) => { const t = Date.parse(r.updatedAt); return isoDate(new Date(isNaN(t) ? Date.now() : Math.min(t, Date.now()))); };
+
+  async function pushMark(woId, due) {
+    if (AE.status.blocked('waymark')) return;
+    const j = await call('POST', '/wo/' + woId + '/push', { due });
+    if (cache) cache.auto[woId] = Object.assign({}, cache.auto[woId], { due: j.auto.due });
+    AE.emit('waymark-changed', cache);
+  }
+  async function unmark(woId) {
+    if (AE.status.blocked('waymark')) return;
+    await call('POST', '/wo/' + woId + '/unmark', {});
+    if (cache) delete cache.auto[woId];
+    AE.emit('waymark-changed', cache);
+  }
+
+  /*
+    One pass over Portal's active list: Auto-Waymark WOs at Ready for pickup,
+    and report tagged/marked WOs that have closed (cleared 7 days later).
+    Every 10 minutes; tabs share a timestamp so only one does it. The board
+    passes the list it just loaded.
+  */
+  const SCAN_KEY = 'ae_wm_scan_at', SCAN_MS = 10 * 60 * 1000;
+  async function scan(rows) {
+    if (!rows) {
+      if (Date.now() - GM_getValue(SCAN_KEY, 0) < SCAN_MS - 30000) return;
+      GM_setValue(SCAN_KEY, Date.now());
+      rows = await AE.data.workorders(Date.now(), 0);
+    }
+    let c = await load(true);
+    if (!AE.status.paused('waymark')) {
+      const marks = rows.filter((r) => Number(r.workorderStatusId) === RFP_STATUS && !c.auto[r.workorderId])
+        .map((r) => ({ wo: Number(r.workorderId), due: addDays(rfpSince(r), AUTO_DAYS) }));
+      if (marks.length) {
+        const j = await call('POST', '/auto', { marks }); // already-marked or removed ones are ignored
+        if (j.created && j.created.length) c = await load(true);
+      }
+    }
+    const open = new Set(rows.map((r) => Number(r.workorderId)));
+    const known = [...new Set([...Object.keys(c.tags), ...Object.keys(c.auto)].map(Number))];
+    const closed = known.filter((id) => !open.has(id));
     if (closed.length) await call('POST', '/closed', { wos: closed });
   }
 
@@ -143,6 +190,31 @@ AE.waymark = (() => {
   #sg-wm-board .wo a:hover { text-decoration:underline; }
   #sg-wm-board .wo .meta { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #sg-wm-board .wo .chips { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; max-width:45%; }
+  .sg-auto { display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 3px 0 6px; border-radius:6px; flex:none; cursor:context-menu;
+    font:700 12px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; white-space:nowrap;
+    color:color-mix(in srgb, var(--c) 80%, var(--aui-on-surface, #1a1c1e)); background:color-mix(in srgb, var(--c) 14%, var(--aui-surface, #fff));
+    border:1px solid color-mix(in srgb, var(--c) 55%, transparent); }
+  .sg-auto svg { width:13px; height:13px; flex:none; }
+  .sg-auto.upcoming { --c:#4a68f9; }
+  .sg-auto.today { --c:#b38f00; background:color-mix(in srgb, var(--c) 28%, var(--aui-surface, #fff)); }
+  .sg-auto.overdue { --c:#d1344b; background:#d1344b; color:#fff; border-color:#d1344b; }
+  .sg-auto button { border:0; background:none; padding:0 2px; margin:0; color:inherit; cursor:pointer; font-size:13px; line-height:1; opacity:.75; }
+  .sg-auto button:hover { opacity:1; }
+  #sg-wm-push { position:fixed; z-index:2147483647; width:230px; padding:8px; font-size:13px; }
+  #sg-wm-push .ttl { padding:4px 8px 6px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+  #sg-wm-push .opt { display:flex; justify-content:space-between; width:100%; padding:7px 8px; border:0; border-radius:6px; background:none; cursor:pointer;
+    color:var(--aui-on-surface, #1a1c1e); font:400 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:left; }
+  #sg-wm-push .opt:hover, #sg-wm-push .opt:focus-visible { background:var(--aui-neutral-soft, #f1f0f4); outline:0; }
+  #sg-wm-push .pick { display:flex; gap:6px; padding:6px 8px 2px; border-top:1px solid var(--aui-outline-soft, #eeedf1); margin-top:4px; }
+  #sg-wm-push .pick input { flex:1; min-width:0; height:30px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:6px; background:var(--aui-surface, #fff);
+    color:var(--aui-on-surface, #1a1c1e); font:13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; color-scheme:light dark; }
+  #sg-wm-push .pick .sg-btn { height:30px; padding:0 10px; font-size:13px; }
+  #sg-wm-board .tabs { display:flex; gap:2px; margin:0 0 10px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
+  #sg-wm-board .tab { padding:6px 10px 7px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px; background:none; cursor:pointer;
+    color:var(--aui-on-surface-soft, #5d5e61); font:600 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  #sg-wm-board .tab.on { color:var(--aui-primary, #8223d2); border-bottom-color:var(--aui-primary, #8223d2); }
+  #sg-wm-board .tab .n { margin-left:4px; font-weight:400; }
+  #sg-wm-board .tab .late { margin-left:4px; padding:0 5px; border-radius:10000rem; background:#d1344b; color:#fff; font-size:11px; }
   .sg-wm-edit .row { display:flex; align-items:center; gap:6px; margin:6px 0; }
   .sg-wm-edit .row input[type=text] { flex:1; min-width:0; height:32px; padding:0 8px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px;
     background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font:14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
@@ -163,6 +235,63 @@ AE.waymark = (() => {
   }
   const when = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
   const fail = (what, e) => AE.toast('Waymark: ' + what, (e && e.message) || String(e), 'err');
+
+  const CAL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 2h2v2h6V2h2v2h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V2zM5 9v10h14V9H5z"/></svg>';
+
+  // The Auto-Waymark chip: blue ahead of time, amber on the day, red once overdue.
+  function autoChip(woId, mark, onChange) {
+    const st = dueState(mark.due);
+    const label = (st === 'today' ? 'Today · ' : st === 'overdue' ? 'Overdue · ' : '') + fmtDate(mark.due);
+    const el = h('span', { class: 'sg-auto ' + st, role: 'note',
+      title: 'Auto-Waymark: follow up by ' + fmtDate(mark.due) + ' (set when it reached Ready for pickup). Right-click to push it later; × removes it.' },
+      h('span', { html: CAL_SVG, style: 'line-height:0' }), label,
+      h('button', { type: 'button', title: 'Remove this Auto-Waymark', 'aria-label': 'Remove Auto-Waymark', onclick: async (e) => {
+        e.stopPropagation();
+        try { await unmark(woId); } catch (err) { fail("couldn't remove the Auto-Waymark", err); }
+        onChange && onChange();
+      } }, '×'));
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); pushMenu(e.clientX, e.clientY, woId, mark.due, onChange); });
+    return el;
+  }
+
+  // Right-click menu: only ever later.
+  function pushMenu(x, y, woId, due, onChange) {
+    document.getElementById('sg-wm-push')?.remove();
+    ensureCss();
+    const go = async (next) => {
+      menu.remove();
+      try { await pushMark(woId, next); } catch (e) { fail("couldn't move the Auto-Waymark", e); }
+      onChange && onChange();
+    };
+    const opt = (label, days) => { const d = addDays(due, days); return h('button', { type: 'button', class: 'opt', role: 'menuitem', onclick: () => go(d) }, label, h('span', { class: 'sg-soft' }, fmtDate(d))); };
+    const pick = h('input', { type: 'date', min: addDays(due, 1), value: addDays(due, 1), 'aria-label': 'Pick a later date' });
+    const menu = h('div', { id: 'sg-wm-push', class: 'sg sg-card', role: 'menu', 'aria-label': 'Push Auto-Waymark later' },
+      h('div', { class: 'ttl' }, 'Push later · now ' + fmtDate(due)),
+      opt('+1 day', 1), opt('+3 days', 3), opt('+1 week', 7),
+      h('div', { class: 'pick' }, pick, h('button', { type: 'button', class: 'sg-btn', onclick: () => { if (pick.value && pick.value > due) go(pick.value); } }, 'Set')));
+    document.body.appendChild(menu);
+    menu.style.left = Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8)) + 'px';
+    menu.querySelector('.opt').focus();
+    const close = (e) => {
+      if (e.type === 'keydown' ? e.key !== 'Escape' : e.composedPath().includes(menu)) return;
+      menu.remove(); document.removeEventListener('mousedown', close, true); document.removeEventListener('keydown', close, true);
+    };
+    setTimeout(() => { document.addEventListener('mousedown', close, true); document.addEventListener('keydown', close, true); }, 0);
+  }
+
+  // History line for any Waymark event.
+  function historyLine(x) {
+    const who = x.by || 'Someone';
+    const dates = (d) => String(d || '').split(' → ').map((v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? fmtDate(v) : v)).join(' → ');
+    const parts = {
+      add: [who + ' added ', x.tag], remove: [who + ' removed ', x.tag],
+      auto: ['Auto-Waymark set for ', dates(x.detail)],
+      push: [who + ' pushed the Auto-Waymark ', dates(x.detail)],
+      unmark: [who + ' removed the Auto-Waymark ', dates(x.detail)],
+    }[x.action] || [who + ' ' + x.action + ' ', x.tag || x.detail || ''];
+    return h('li', null, parts[0], h('b', null, parts[1]), ' ', h('span', { class: 'when' }, '· ' + when(x.at)));
+  }
 
   // ------------------------------------------------------------ Settings → Waymark (managed list)
   function editor() {
@@ -203,7 +332,7 @@ AE.waymark = (() => {
   const listSig = () => JSON.stringify(cache && cache.list);
   const summary = () => (cache ? cache.list.length + ' tag' + (cache.list.length === 1 ? '' : 's') : 'Store tags');
 
-  return { API, configured, load, tagsOf, listSig, setTag, history, saveList, canEdit, reportClosed, chip, when, fail, ensureCss, editor, summary, COLORS };
+  return { API, configured, load, tagsOf, autoOf, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
 })();
 
 AE.crystal({
@@ -228,10 +357,11 @@ AE.crystal({
       const anchor = woId && nameRow(woId);
       let row = document.getElementById(ROW_ID);
       if (!anchor) { row?.remove(); return; }
-      const key = woId + '|' + JSON.stringify(W.tagsOf(woId)) + '|' + W.listSig(); // redraw when tags or colours change
+      const key = woId + '|' + JSON.stringify(W.tagsOf(woId)) + '|' + JSON.stringify(W.autoOf(woId)) + '|' + W.listSig(); // redraw on any change
       if (row && row.dataset.key === key && row.parentElement === anchor) return;
       row?.remove();
       row = h('span', { id: ROW_ID, 'data-key': key },
+        W.autoOf(woId) ? W.autoChip(woId, W.autoOf(woId), renderRow) : null,
         W.tagsOf(woId).map((t) => W.chip(t.tag, { title: t.tag + ' · added by ' + (t.by || 'someone') + ', ' + W.when(t.at), onRemove: () => toggle(woId, t.tag, false) })),
         h('button', { type: 'button', class: 'sg-btn add', onclick: (e) => { e.stopPropagation(); togglePop(woId); } }, '+ Tag'));
       anchor.appendChild(row);
@@ -277,7 +407,7 @@ AE.crystal({
         const r = btn && btn.getBoundingClientRect();
         if (r) { pop.style.top = Math.min(r.bottom + 8, innerHeight - pop.offsetHeight - 8) + 'px'; pop.style.left = Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8)) + 'px'; }
         W.history(woId).then((items) => {
-          hist.replaceChildren(...(items.length ? items.map((x) => h('li', null, (x.by || 'Someone') + (x.action === 'add' ? ' added ' : ' removed '), h('b', null, x.tag), ' ', h('span', { class: 'when' }, '· ' + W.when(x.at))))
+          hist.replaceChildren(...(items.length ? items.map(W.historyLine)
             : [h('li', { class: 'sg-soft' }, 'No tag changes yet.')]));
         }).catch(() => hist.replaceChildren(h('li', { class: 'sg-soft' }, "Couldn't load history.")));
       }).catch((e) => { pop.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load tags: " + (e.message || e))); });
@@ -285,7 +415,7 @@ AE.crystal({
     document.addEventListener('click', (e) => {
       // composedPath: the clicked chip may already be redrawn (detached) by now.
       const pop = document.getElementById(POP_ID), path = e.composedPath();
-      if (pop && !path.includes(pop) && !path.includes(document.getElementById(ROW_ID))) pop.remove();
+      if (pop && !path.includes(pop) && !path.includes(document.getElementById(ROW_ID)) && !path.some((n) => n.id === 'sg-wm-push')) pop.remove();
     });
 
     // ---------------------------------------------------- header button + board
@@ -298,6 +428,7 @@ AE.crystal({
     }
 
     let boardFilter = null; // tag name, or null = all
+    let boardTab = 'tags';  // 'tags' | 'auto'
     async function toggleBoard() {
       if (document.getElementById(BOARD_ID)) { document.getElementById(BOARD_ID).remove(); return; }
       const header = document.querySelector('.components-header');
@@ -310,13 +441,41 @@ AE.crystal({
       try {
         const [c, wos] = await Promise.all([W.load(true), AE.data.workorders(Date.now(), 0)]);
         drawBoard(board, c, wos);
-        W.reportClosed().catch(() => {});
+        W.scan(wos).then(() => W.load()).then((c2) => { if (board.isConnected) drawBoard(board, c2, wos); }).catch(() => {});
       } catch (e) {
         board.querySelector('.list').replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load: " + (e.message || e)));
       }
     }
     function drawBoard(board, c, wos) {
       const byId = new Map(wos.map((r) => [String(r.workorderId), r]));
+      const marked = Object.entries(c.auto || {}).filter(([id]) => byId.has(String(id)));
+      const late = marked.filter(([, m]) => W.dueState(m.due) === 'overdue').length;
+      const tabBtn = (id, label, n, extra) => h('button', { type: 'button', class: 'tab' + (boardTab === id ? ' on' : ''), role: 'tab', 'aria-selected': String(boardTab === id),
+        onclick: () => { boardTab = id; drawBoard(board, c, wos); } }, label, h('span', { class: 'n' }, n), extra);
+      board.querySelector('.tabs')?.remove();
+      board.querySelector('.head').after(h('div', { class: 'tabs', role: 'tablist' },
+        tabBtn('tags', 'Tags', Object.keys(c.tags).filter((id) => byId.has(String(id))).length),
+        tabBtn('auto', 'Auto-Waymark', marked.length, late ? h('span', { class: 'late', title: late + ' overdue' }, late) : null)));
+      const woLine = (id) => {
+        const r = byId.get(String(id));
+        const dev = (r.customerDevice && r.customerDevice.name) || (r.deviceCatalog && r.deviceCatalog.name) || '';
+        return h('div', null,
+          h('a', { href: '/repair/workorder/' + id }, 'WO ' + id), ' · ', AE.data.nameOf(r) || 'Customer',
+          h('div', { class: 'meta' }, [r.workorderStatusName, dev].filter(Boolean).join(' · ')));
+      };
+      if (boardTab === 'auto') {
+        board.querySelector('.filters')?.remove();
+        const redraw = () => W.load().then((c2) => drawBoard(board, c2, wos)).catch(() => {});
+        const sections = [['overdue', 'Overdue'], ['today', 'Due today'], ['upcoming', 'Upcoming']];
+        const sorted = marked.sort(([, a], [, b]) => a.due.localeCompare(b.due));
+        board.querySelector('.list').replaceChildren(...(sorted.length ? sections.map(([st, title]) => {
+          const rows = sorted.filter(([, m]) => W.dueState(m.due) === st);
+          return rows.length ? h('div', { class: 'group' }, h('div', { class: 'gh' }, title + ' · ' + rows.length),
+            rows.map(([id, m]) => h('div', { class: 'wo' }, woLine(id), h('div', { class: 'chips' }, W.autoChip(id, m, redraw))))) : null;
+        }).filter(Boolean) : [h('div', { class: 'sg-soft', style: 'padding:8px 0' }, 'No Auto-Waymarks. A work order gets one, 3 days out, when it reaches Ready for pickup.')]),
+          h('div', { class: 'sg-soft', style: 'padding:6px 0 2px' }, 'Right-click a date to push it later; × removes it.'));
+        return;
+      }
       const tagged = Object.entries(c.tags).filter(([id]) => byId.has(String(id)));
       // Groups: managed list order, then one-offs A–Z.
       const names = [...c.list.map((l) => l.name)];
@@ -341,7 +500,7 @@ AE.crystal({
       };
       board.querySelector('.filters')?.remove();
       const filters = h('div', { class: 'filters' }, names.filter((n) => counts[n]).map(filterChip));
-      board.querySelector('.head').after(filters);
+      board.querySelector('.tabs').after(filters);
       board.querySelector('.list').replaceChildren(...(shown.length ? shown.map((n) => {
         const rows = tagged.filter(([, ts]) => ts.some((t) => t.tag === n))
           .sort(([a], [b]) => Date.parse(byId.get(String(a)).createdAt) - Date.parse(byId.get(String(b)).createdAt));
@@ -351,7 +510,7 @@ AE.crystal({
     }
     document.addEventListener('click', (e) => {
       const b = document.getElementById(BOARD_ID), path = e.composedPath();
-      if (b && !path.includes(b) && !path.includes(document.getElementById(BTN_ID))) b.remove();
+      if (b && !path.includes(b) && !path.includes(document.getElementById(BTN_ID)) && !path.some((n) => n.id === 'sg-wm-push')) b.remove();
     });
 
     AE.on('waymark-changed', () => { renderRow(); });
@@ -361,8 +520,10 @@ AE.crystal({
       if (currentWoId()) { W.load().then(renderRow).catch(() => {}); renderRow(); }
       else { document.getElementById(ROW_ID)?.remove(); document.getElementById(POP_ID)?.remove(); }
     });
-    // Clears tags 7 days after close: tell the Worker which tagged WOs have closed.
-    setTimeout(() => W.reportClosed().catch(() => {}), 20000);
-    setInterval(() => W.reportClosed().catch(() => {}), 30 * 60 * 1000);
+    // Every 10 minutes (shared across tabs): Auto-Waymark new Ready for pickup
+    // WOs, and report closed ones so their tags/marks clear 7 days later.
+    const tick = () => W.scan().catch((e) => console.warn('[' + AE_NAME + '] Waymark scan:', e.message || e));
+    setTimeout(tick, 15000);
+    setInterval(tick, 60 * 1000); // scan() itself waits out the 10 minutes
   },
 });

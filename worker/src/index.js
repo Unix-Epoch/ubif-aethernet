@@ -13,10 +13,14 @@
     POST /v1/:store/wo/:wo/untag        { tag, by, byId }        remove
     PUT  /v1/:store/list                { list: [{name,color}], by, byId }
     POST /v1/:store/closed              { wos: [id…] }           seen closed
+    POST /v1/:store/auto                { marks: [{wo, due}] }   Auto-Waymark new RFP WOs (existing/removed ignored)
+    POST /v1/:store/wo/:wo/push         { due, by, byId }        move a mark later (never earlier)
+    POST /v1/:store/wo/:wo/unmark       { by, byId }             remove a mark (stays removed)
   Daily cron: drop tags + history for WOs closed more than 7 days ago.
 */
 const COLORS = ['purple', 'blue', 'teal', 'green', 'lime', 'yellow', 'orange', 'red', 'grey'];
 const MAX_TAGS_PER_WO = 12, MAX_LIST = 40, KEEP_DAYS = 7;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -46,20 +50,22 @@ async function logHistory(env, store, wo, action, tag, detail, by) {
 
 async function route(req, env) {
   const url = new URL(req.url);
-  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed)|\/wo\/(\d{5,12})\/(history|tag|untag))?$/);
+  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|auto)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark))?$/);
   if (!m) return fail(404, 'not found');
   const store = Number(m[1]);
   const wo = m[3] ? Number(m[3]) : null;
   const what = m[2] || m[4] || 'all';
 
   if (req.method === 'GET' && what === 'all') {
-    const [list, tags] = await env.DB.batch([
+    const [list, tags, marks] = await env.DB.batch([
       env.DB.prepare('SELECT name, color FROM list WHERE store = ? ORDER BY pos').bind(store),
       env.DB.prepare('SELECT wo, tag, by_name AS by, at FROM wo_tags WHERE store = ? ORDER BY at').bind(store),
+      env.DB.prepare('SELECT wo, due, created_at AS at FROM auto_marks WHERE store = ? AND removed_at IS NULL').bind(store),
     ]);
-    const byWo = {};
+    const byWo = {}, auto = {};
     for (const r of tags.results) (byWo[r.wo] = byWo[r.wo] || []).push({ tag: r.tag, by: r.by, at: r.at });
-    return json({ list: list.results, tags: byWo });
+    for (const r of marks.results) auto[r.wo] = { due: r.due, at: r.at };
+    return json({ list: list.results, tags: byWo, auto });
   }
 
   if (req.method === 'GET' && what === 'history') {
@@ -88,6 +94,33 @@ async function route(req, env) {
     return json({ tags: tags.results });
   }
 
+  if (req.method === 'POST' && what === 'auto') {
+    const b = await body(req);
+    const marks = (Array.isArray(b.marks) ? b.marks : []).filter((x) => x && Number.isInteger(x.wo) && x.wo > 0 && DATE_RE.test(x.due)).slice(0, 500);
+    const created = [];
+    for (const x of marks) {
+      const r = await env.DB.prepare('INSERT OR IGNORE INTO auto_marks (store, wo, due, created_at) VALUES (?, ?, ?, ?)').bind(store, x.wo, x.due, now()).run();
+      if (r.meta.changes) { created.push(x.wo); await logHistory(env, store, x.wo, 'auto', null, x.due, { name: 'Auto-Waymark', id: null }); }
+    }
+    return json({ created });
+  }
+
+  if (req.method === 'POST' && (what === 'push' || what === 'unmark')) {
+    const b = await body(req);
+    const by = who(b);
+    const cur = await env.DB.prepare('SELECT due FROM auto_marks WHERE store = ? AND wo = ? AND removed_at IS NULL').bind(store, wo).first();
+    if (!cur) return fail(404, 'no Auto-Waymark on this work order');
+    if (what === 'push') {
+      if (!DATE_RE.test(b.due || '') || b.due <= cur.due) return fail(400, 'Auto-Waymarks can only move later');
+      await env.DB.prepare('UPDATE auto_marks SET due = ? WHERE store = ? AND wo = ?').bind(b.due, store, wo).run();
+      await logHistory(env, store, wo, 'push', null, cur.due + ' → ' + b.due, by);
+      return json({ auto: { due: b.due } });
+    }
+    await env.DB.prepare('UPDATE auto_marks SET removed_at = ? WHERE store = ? AND wo = ?').bind(now(), store, wo).run();
+    await logHistory(env, store, wo, 'unmark', null, cur.due, by);
+    return json({ auto: null });
+  }
+
   if (req.method === 'PUT' && what === 'list') {
     const b = await body(req);
     const by = who(b);
@@ -112,8 +145,8 @@ async function route(req, env) {
     const wos = (Array.isArray(b.wos) ? b.wos : []).filter((w) => Number.isInteger(w) && w > 0).slice(0, 500);
     if (wos.length) {
       await env.DB.batch(wos.map((w) => env.DB.prepare(
-        'INSERT OR IGNORE INTO wo_closed (store, wo, closed_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM wo_tags WHERE store = ? AND wo = ?)')
-        .bind(store, w, now(), store, w)));
+        'INSERT OR IGNORE INTO wo_closed (store, wo, closed_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM wo_tags WHERE store = ? AND wo = ?) OR EXISTS (SELECT 1 FROM auto_marks WHERE store = ? AND wo = ?)')
+        .bind(store, w, now(), store, w, store, w)));
     }
     return json({ ok: true });
   }
@@ -127,6 +160,7 @@ async function cleanup(env) {
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM wo_tags WHERE (store, wo) IN (${expired})`).bind(cutoff),
     env.DB.prepare(`DELETE FROM history WHERE wo IS NOT NULL AND (store, wo) IN (${expired})`).bind(cutoff),
+    env.DB.prepare(`DELETE FROM auto_marks WHERE (store, wo) IN (${expired})`).bind(cutoff),
     env.DB.prepare('DELETE FROM wo_closed WHERE closed_at < ?').bind(cutoff),
     // List-change history: keep 90 days.
     env.DB.prepare('DELETE FROM history WHERE wo IS NULL AND at < ?').bind(new Date(Date.now() - 90 * 86400000).toISOString()),
