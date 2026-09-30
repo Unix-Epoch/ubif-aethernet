@@ -13,7 +13,12 @@
     date 3 days out (its own kind of mark, not a tag). Right-click pushes it
     later (never earlier); × removes it for good. The board's second tab
     lists them by due date. Found by a scan of Portal's active list every 10
-    minutes (one tab per browser does it; the server ignores repeats).
+    minutes (one tab per browser does it; the server ignores repeats), and
+    straight away when a tech sets the WO they're on to Ready for pickup.
+  - While a WO is at Ready for pickup, its device nickname is just the
+    Auto-Waymark date ("10/02", the store's usual M/DD) and is kept that way:
+    pushes rewrite it, and the scan puts it back if it drifts. A later date
+    typed into the nickname by hand moves the mark to match instead.
   - Settings → Waymark: the store's managed tag list. Only Portal's
     Store Manager / District Manager / Store Owner roles (for the current
     store) can edit it; everyone can tag and add one-offs.
@@ -108,11 +113,56 @@ AE.waymark = (() => {
   // hint (a WO sitting at RFP rarely changes); never later than now.
   const rfpSince = (r) => { const t = Date.parse(r.updatedAt); return isoDate(new Date(isNaN(t) ? Date.now() : Math.min(t, Date.now()))); };
 
+  // ---- the WO's device nickname mirrors its Auto-Waymark (M/DD, as the store writes it)
+  const nickDate = (iso) => { const d = parseDate(iso); return (d.getMonth() + 1) + '/' + pad(d.getDate()); };
+  // A nickname that is just a date ("10/2", "10/02") → YYYY-MM-DD (nearest year), else null.
+  function parseNick(name) {
+    const m = String(name || '').trim().match(/^(\d{1,2})\/(\d{1,2})$/);
+    if (!m) return null;
+    const now = new Date();
+    const d = new Date(now.getFullYear(), m[1] - 1, m[2]);
+    if (d.getMonth() !== m[1] - 1) return null;
+    if (now - d > 183 * 86400000) d.setFullYear(d.getFullYear() + 1);
+    return isoDate(d);
+  }
+  const woDetail = async (woId) => { const j = await AE.api('GET', '/api/workorder/' + woId); return (j && j.workorder) || AE.unwrap(j); };
+  // Set the nickname to the mark's date, only while the WO is at Ready for pickup.
+  // Sends the device record back unchanged apart from `name`, as Portal's own edit does.
+  async function syncNickname(woId, due, wo) {
+    wo = wo || await woDetail(woId);
+    const dev = wo && wo.CustomerDevice;
+    if (!dev || !dev.customerDeviceId || Number(wo.workorderStatusId) !== RFP_STATUS) return false;
+    const name = nickDate(due);
+    if ((dev.name || '').trim() === name) return false;
+    await AE.api('PUT', '/api/customer-devices/' + dev.customerDeviceId, {
+      customerDeviceId: dev.customerDeviceId, customerId: dev.customerId, passcode: dev.passcode, serial: dev.serial,
+      imei: dev.imei, deviceCatalogId: dev.deviceCatalogId, name,
+    });
+    return true;
+  }
+
   async function pushMark(woId, due) {
     if (AE.status.blocked('waymark')) return;
     const j = await call('POST', '/wo/' + woId + '/push', { due });
     if (cache) cache.auto[woId] = Object.assign({}, cache.auto[woId], { due: j.auto.due });
     AE.emit('waymark-changed', cache);
+    try { if (await syncNickname(woId, j.auto.due)) AE.toast('Auto-Waymark', 'Moved to ' + fmtDate(j.auto.due) + '; nickname is now ' + nickDate(j.auto.due) + '.', 'ok'); }
+    catch (e) { fail('mark moved, but the nickname couldn\'t be updated', e); }
+  }
+
+  // Right after a tech sets this WO to Ready for pickup (seen from the WO page).
+  async function checkWo(woId) {
+    if (!configured() || AE.status.paused('waymark')) return;
+    const [c, wo] = await Promise.all([load(), woDetail(woId)]);
+    if (!wo || Number(wo.workorderStatusId) !== RFP_STATUS) return;
+    let m = c.auto[woId];
+    if (!m) {
+      const r = await call('POST', '/auto', { marks: [{ wo: Number(woId), due: addDays(today(), AUTO_DAYS) }] });
+      if (!(r.created && r.created.length)) return; // removed earlier with ×: stays removed
+      await load(true);
+      m = autoOf(woId);
+    }
+    if (m && await syncNickname(woId, m.due, wo)) AE.toast('Auto-Waymark', 'Follow up by ' + fmtDate(m.due) + '; nickname set to ' + nickDate(m.due) + '.', 'ok');
   }
   async function unmark(woId) {
     if (AE.status.blocked('waymark')) return;
@@ -141,6 +191,23 @@ AE.waymark = (() => {
       if (marks.length) {
         const j = await call('POST', '/auto', { marks }); // already-marked or removed ones are ignored
         if (j.created && j.created.length) c = await load(true);
+      }
+    }
+    // Keep nicknames and marks the same on every WO at Ready for pickup.
+    if (!AE.status.paused('waymark')) {
+      for (const r of rows) {
+        const m = c.auto[r.workorderId];
+        if (!m || Number(r.workorderStatusId) !== RFP_STATUS) continue;
+        const nick = ((r.customerDevice && r.customerDevice.name) || '').trim();
+        if (nick === nickDate(m.due)) continue;
+        try {
+          const typed = parseNick(nick);
+          if (typed && typed > m.due) { // someone moved the date later in the nickname: the mark follows
+            await call('POST', '/wo/' + r.workorderId + '/push', { due: typed, by: 'Nickname edit' });
+            m.due = typed;
+          }
+          await syncNickname(r.workorderId, m.due); // also tidies "10/5" → "10/05"
+        } catch (e) { console.warn('[' + AE_NAME + '] Waymark nickname sync, WO ' + r.workorderId + ':', e.message || e); }
       }
     }
     const open = new Set(rows.map((r) => Number(r.workorderId)));
@@ -332,7 +399,7 @@ AE.waymark = (() => {
   const listSig = () => JSON.stringify(cache && cache.list);
   const summary = () => (cache ? cache.list.length + ' tag' + (cache.list.length === 1 ? '' : 's') : 'Store tags');
 
-  return { API, configured, load, tagsOf, autoOf, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
+  return { API, configured, load, tagsOf, autoOf, checkWo, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
 })();
 
 AE.crystal({
@@ -512,6 +579,21 @@ AE.crystal({
       const b = document.getElementById(BOARD_ID), path = e.composedPath();
       if (b && !path.includes(b) && !path.includes(document.getElementById(BTN_ID)) && !path.some((n) => n.id === 'sg-wm-push')) b.remove();
     });
+
+    // A tech setting this WO to Ready for pickup saves it with PUT /api/workorder/{id}
+    // (or its /status). The page keeps its own fetch, so watch the network log,
+    // then re-read the WO. Our own re-read lands inside the 5 s window and is ignored.
+    let lastCheck = 0;
+    try {
+      new PerformanceObserver((list) => {
+        const woId = currentWoId();
+        if (!woId || Date.now() - lastCheck < 5000) return;
+        const re = new RegExp('/api/workorder/' + woId + '(/status)?(?:[?#]|$)');
+        if (!list.getEntries().some((e) => re.test(e.name))) return;
+        lastCheck = Date.now();
+        setTimeout(() => W.checkWo(woId).catch((e) => console.warn('[' + AE_NAME + '] Auto-Waymark check:', e.message || e)), 1500);
+      }).observe({ type: 'resource', buffered: false });
+    } catch (_) { /* no PerformanceObserver: the 10-minute scan still covers it */ }
 
     AE.on('waymark-changed', () => { renderRow(); });
     W.load().catch(() => {});
