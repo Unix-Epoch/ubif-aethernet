@@ -9,12 +9,17 @@
   - On a WO page: tag chips next to the customer name, and "+ Tag" (managed
     tags as toggles, a box for one-off tags, and the WO's tag history).
   - Header button: the board — open WOs grouped by tag, filterable.
-  - Auto-Waymark: when a WO reaches Ready for pickup it gets a follow-up
-    date 3 days out (its own kind of mark, not a tag). Right-click pushes it
+  - Auto-Waymark: a WO that reaches Ready for pickup gets a follow-up date
+    3 days after that day (its own kind of mark, not a tag), added after end
+    of day (7 PM local) — or on the first Portal load after that if nobody
+    had Portal open then. Right-click pushes it
     later (never earlier); × removes it for good. The board's second tab
     lists them by due date. Found by a scan of Portal's active list every 10
     minutes (one tab per browser does it; the server ignores repeats), and
-    straight away when a tech sets the WO they're on to Ready for pickup.
+    when a tech sets the WO they're on to Ready for pickup after 7 PM.
+  - The header icon shows how many open Auto-Waymarks are due (today or
+    overdue). On their first Portal load of the day, managers get a speech
+    bubble from the icon if any were left open past their due day.
   - While a WO is at Ready for pickup, its device nickname is just the
     Auto-Waymark date ("10/02", the store's usual M/DD) and is kept that way:
     pushes rewrite it, and the scan puts it back if it drifts. A later date
@@ -101,6 +106,8 @@ AE.waymark = (() => {
 
   // ------------------------------------------------------------ Auto-Waymark
   const AUTO_DAYS = 3, RFP_STATUS = 13; // 13 = Ready for pickup
+  const EOD_HOUR = 19;                    // marks go on after end of day, 7 PM local
+  const afterEod = () => new Date().getHours() >= EOD_HOUR;
   const pad = (n) => String(n).padStart(2, '0');
   const isoDate = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); // store-local date
   const parseDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
@@ -157,6 +164,7 @@ AE.waymark = (() => {
     if (!wo || Number(wo.workorderStatusId) !== RFP_STATUS) return;
     let m = c.auto[woId];
     if (!m) {
+      if (!afterEod()) return; // the evening scan (or tomorrow's first load) marks it
       const r = await call('POST', '/auto', { marks: [{ wo: Number(woId), due: addDays(today(), AUTO_DAYS) }] });
       if (!(r.created && r.created.length)) return; // removed earlier with ×: stays removed
       await load(true);
@@ -178,15 +186,26 @@ AE.waymark = (() => {
     passes the list it just loaded.
   */
   const SCAN_KEY = 'ae_wm_scan_at', SCAN_MS = 10 * 60 * 1000;
+  const OPEN_KEY = 'ae_wm_open'; // last active-list WO ids (shared across tabs), so counts skip closed WOs
+
+  // Open Auto-Waymarks due today or earlier (for the header badge).
+  function dueMarks() {
+    if (!cache) return [];
+    const o = GM_getValue(OPEN_KEY, null);
+    const open = o && Date.now() - o.at < 30 * 60 * 1000 ? new Set(o.ids) : null;
+    return Object.entries(cache.auto).filter(([id, m]) => m.due <= today() && (!open || open.has(Number(id))));
+  }
   async function scan(rows) {
     if (!rows) {
       if (Date.now() - GM_getValue(SCAN_KEY, 0) < SCAN_MS - 30000) return;
       GM_setValue(SCAN_KEY, Date.now());
       rows = await AE.data.workorders(Date.now(), 0);
     }
+    GM_setValue(OPEN_KEY, { at: Date.now(), ids: rows.map((r) => Number(r.workorderId)) });
     let c = await load(true);
     if (!AE.status.paused('waymark')) {
-      const marks = rows.filter((r) => Number(r.workorderStatusId) === RFP_STATUS && !c.auto[r.workorderId])
+      // Today's RFPs wait for end of day; earlier days' are overdue for marking now.
+      const marks = rows.filter((r) => Number(r.workorderStatusId) === RFP_STATUS && !c.auto[r.workorderId] && (afterEod() || rfpSince(r) < today()))
         .map((r) => ({ wo: Number(r.workorderId), due: addDays(rfpSince(r), AUTO_DAYS) }));
       if (marks.length) {
         const j = await call('POST', '/auto', { marks }); // already-marked or removed ones are ignored
@@ -243,6 +262,16 @@ AE.waymark = (() => {
     background:none; cursor:pointer; flex:none; }
   #sg-wm-btn:hover { background:var(--aui-neutral-soft, #f1f0f4); }
   #sg-wm-btn .sg-aicon { width:26px; height:26px; }
+  #sg-wm-btn { position:relative; }
+  #sg-wm-btn .badge { position:absolute; top:-3px; right:-4px; min-width:18px; height:18px; padding:0 5px; border-radius:10000rem; box-sizing:border-box;
+    background:#d1344b; color:#fff; border:2px solid var(--aui-elevated-level-01, #fff); font:700 11px/14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; }
+  #sg-wm-bubble { position:fixed; z-index:2147483646; width:300px; padding:14px 14px 12px; font-size:14px; line-height:1.45; animation:sg-in .25s ease-out;
+    border-color:#d1344b; box-shadow:0 10px 30px rgba(12,14,17,.25); }
+  #sg-wm-bubble .top { display:flex; gap:10px; align-items:flex-start; }
+  #sg-wm-bubble .top .n { flex:none; min-width:26px; height:26px; padding:0 7px; border-radius:10000rem; background:#d1344b; color:#fff; font:700 14px/26px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; box-sizing:border-box; }
+  #sg-wm-bubble .sg-actions { margin-top:10px; justify-content:flex-end; }
+  #sg-wm-bubble .sg-actions .sg-btn { flex:none; }
+  #sg-wm-bubble .tail { position:absolute; top:-8px; width:14px; height:14px; background:inherit; border:1px solid #d1344b; border-width:1px 0 0 1px; transform:rotate(45deg); }
   #sg-wm-board { position:fixed; z-index:2147483646; right:16px; width:min(560px, calc(100vw - 32px)); max-height:calc(100vh - 100px); display:flex; flex-direction:column;
     padding:16px 16px 10px; font-size:14px; line-height:1.4; }
   #sg-wm-board .head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
@@ -399,7 +428,7 @@ AE.waymark = (() => {
   const listSig = () => JSON.stringify(cache && cache.list);
   const summary = () => (cache ? cache.list.length + ' tag' + (cache.list.length === 1 ? '' : 's') : 'Store tags');
 
-  return { API, configured, load, tagsOf, autoOf, checkWo, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
+  return { API, configured, load, tagsOf, autoOf, checkWo, dueMarks, today, OPEN_KEY, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
 })();
 
 AE.crystal({
@@ -492,6 +521,55 @@ AE.crystal({
       if (!anchor) { b?.remove(); return; }
       if (!b) b = h('button', { type: 'button', id: BTN_ID, class: 'sg', title: 'Waymark: work orders by tag', 'aria-label': 'Waymark board', html: AE.actionIcon('waymark', 26), onclick: (e) => { e.stopPropagation(); toggleBoard(); } });
       if (b.parentElement !== anchor.parentElement || b.nextSibling !== anchor) anchor.parentElement.insertBefore(b, anchor);
+      // Badge: open Auto-Waymarks due today (or overdue).
+      const n = W.dueMarks().length;
+      let badge = b.querySelector('.badge');
+      if (!n) { badge?.remove(); b.title = 'Waymark: work orders by tag'; }
+      else {
+        if (!badge) { badge = h('span', { class: 'badge' }); b.append(badge); }
+        if (badge.textContent !== String(n)) badge.textContent = n > 99 ? '99+' : String(n);
+        b.title = 'Waymark: ' + n + ' Auto-Waymark' + (n === 1 ? '' : 's') + ' due';
+      }
+      placeBubble();
+    }
+
+    // ---------------------------------------------------- morning notice (managers)
+    // First Portal load of the day: if any Auto-Waymarks were left open past
+    // their due day (so open past 9 PM that night), a speech bubble from the icon.
+    const MORNING_KEY = 'ae_wm_morning_shown';
+    function placeBubble() {
+      const bub = document.getElementById('sg-wm-bubble'), b = document.getElementById(BTN_ID);
+      if (!bub || !b) return;
+      const r = b.getBoundingClientRect();
+      const left = Math.max(8, Math.min(r.left + r.width / 2 - bub.offsetWidth + 40, innerWidth - bub.offsetWidth - 8));
+      bub.style.left = left + 'px'; bub.style.top = (r.bottom + 12) + 'px';
+      bub.querySelector('.tail').style.left = (r.left + r.width / 2 - left - 7) + 'px';
+    }
+    async function morningNotice() {
+      if (GM_getValue(MORNING_KEY, '') === W.today()) return;
+      const role = await W.canEdit();
+      if (!role.ok) return;
+      const rows = await AE.data.workorders(Date.now(), 0);
+      GM_setValue(W.OPEN_KEY, { at: Date.now(), ids: rows.map((r) => Number(r.workorderId)) });
+      const c = await W.load(true);
+      const open = new Set(rows.map((r) => String(r.workorderId)));
+      const late = Object.entries(c.auto).filter(([id, m]) => open.has(String(id)) && m.due < W.today()).length;
+      GM_setValue(MORNING_KEY, W.today()); // once a day, whether or not there's anything to say
+      if (!late || document.getElementById('sg-wm-bubble')) return;
+      const bub = h('div', { id: 'sg-wm-bubble', class: 'sg sg-card', role: 'alert' },
+        h('span', { class: 'tail' }),
+        h('div', { class: 'top' }, h('span', { class: 'n' }, String(late)),
+          h('div', null, late === 1 ? 'There is 1 Auto-Waymark sitting open. Please take a look at it ASAP.'
+            : 'There are ' + late + ' Auto-Waymarks sitting open. Please take a look at these ASAP.')),
+        h('div', { class: 'sg-actions' },
+          h('button', { type: 'button', class: 'sg-btn', onclick: () => bub.remove() }, 'Later'),
+          h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => {
+            bub.remove(); boardTab = 'auto';
+            // After this click finishes, or the board's click-outside handler would close it at once.
+            setTimeout(() => { if (!document.getElementById(BOARD_ID)) toggleBoard(); }, 0);
+          } }, 'Show them')));
+      document.body.appendChild(bub);
+      placeBubble();
     }
 
     let boardFilter = null; // tag name, or null = all
@@ -606,6 +684,8 @@ AE.crystal({
     // WOs, and report closed ones so their tags/marks clear 7 days later.
     const tick = () => W.scan().catch((e) => console.warn('[' + AE_NAME + '] Waymark scan:', e.message || e));
     setTimeout(tick, 15000);
+    // Managers' morning notice, once the header is up.
+    setTimeout(() => morningNotice().catch((e) => console.warn('[' + AE_NAME + '] Waymark morning notice:', e.message || e)), 4000);
     setInterval(tick, 60 * 1000); // scan() itself waits out the 10 minutes
   },
 });

@@ -2,9 +2,10 @@
   {
     "version": "2.14.0",
     "notes": [
-      "New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, next to the customer's name.",
+      "New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.",
       "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.",
       "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **×** removes it for good.",
+      "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.",
       "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."
     ]
   },
