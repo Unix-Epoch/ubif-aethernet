@@ -198,12 +198,14 @@
     const whoBox = h('span', null, '…');
     AE.profile().then((p) => { whoBox.textContent = (p.name || '—') + (p.storeId ? ' · ' + p.storeId + ' ' + p.storeName : ''); }).catch(() => { whoBox.textContent = '—'; });
 
-    // The demo build's About is the bare minimum: name, version, icon credit.
+    // The demo build's About is the bare minimum: name, version, author, icon credit.
     const card = AE_DEMO ? h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
       h('div', { class: 'hero' },
         h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
         h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
         h('div', { class: 'sg-soft' }, 'v' + AE_VERSION)),
+      h('h4', null, 'Authored by'),
+      kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914'], ['With', 'Claude (Anthropic)']),
       h('div', { class: 'fine' }, 'Crystal icons are FINAL FANTASY XIV action icons. © SQUARE ENIX.'),
       h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')))
     : h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
@@ -403,7 +405,7 @@
 
       h('div', { class: 'sg-foot-links' },
         AE_DEMO ? null : h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.feedback.openFeedback() }, 'Send feedback'),
-        h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.status.checkNow() }, 'Check for updates'),
+        AE_DEMO ? null : h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.status.checkNow() }, 'Check for updates'),
         AE_DEMO ? null : h('button', { type: 'button', class: 'sg-about-link', onclick: () => openPatchNotes() }, 'Patch notes'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…')),
 
