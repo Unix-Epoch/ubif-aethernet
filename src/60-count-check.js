@@ -23,7 +23,7 @@ AE.crystal({
     const { h } = AE;
     const PATH_RE = /^\/boh\/inventory\/counts\/([^/]+)\/(edit|review)\b/;
     const PILL_ID = 'sg-lol-pill', PANEL_ID = 'sg-lol';
-    const REFRESH_MS = 2 * 60 * 1000;
+    const FULL_MS = 10 * 60 * 1000;   // full re-read (expected list + every serial list); scans update in between
     const BUCKETS = {
       unknownitem: 'Not in stock for this store',
       invalidformat: 'Not a serial (barcode, item number, date…)',
@@ -73,6 +73,8 @@ AE.crystal({
       #${PANEL_ID} .item .t .chev { width:14px; height:14px; flex:none; align-self:center; color:var(--aui-on-surface-soft, #5d5e61); transition:transform .15s; transform:rotate(-90deg); }
       #${PANEL_ID} .item.open .t .chev { transform:none; }
       #${PANEL_ID} .item:not(.open) .serials { display:none; }
+      #${PANEL_ID} .item.flash { animation:sg-lol-flash 1.6s ease-out; }
+      @keyframes sg-lol-flash { 0%, 30% { background:color-mix(in srgb, #ffcc00 35%, transparent); } 100% { background:transparent; } }
       #${PANEL_ID} .item { padding:8px 2px; border-top:1px solid var(--aui-outline-soft, #eeedf1); }
       #${PANEL_ID} .item .t { display:flex; gap:8px; align-items:baseline; }
       #${PANEL_ID} .item .t b { flex:1; font-weight:600; }
@@ -96,52 +98,90 @@ AE.crystal({
       return out;
     }
 
-    async function compute(id) {
+    /*
+      cache (per count): the expected list and each fetched serial list with
+      the scanned quantity it was fetched at. An update after a scan re-reads
+      only the scanned quantities, then refetches serial lists whose quantity
+      changed — about 2 requests per scan. full = start over.
+    */
+    let cache = null;
+    async function compute(id, full) {
+      if (full || !cache || cache.id !== id) cache = { id, exp: null, serials: new Map(), fullAt: Date.now() };
       const [exp, it] = await Promise.all([
-        AE.api('GET', '/api/boh/counts/expectedSerials?journalId=' + encodeURIComponent(id)),
+        cache.exp ? cache.exp : AE.api('GET', '/api/boh/counts/expectedSerials?journalId=' + encodeURIComponent(id)),
         AE.api('GET', base(id) + '/item'),
       ]);
+      cache.exp = exp;
       const lines = (exp && exp.Lines) || [];
       const rows = (it && it.ScannedItemInformation) || [];
       const qty = new Map(rows.map((r) => [String(r.ItemId), Number(r.ScannedQuantity) || 0]));
       const partial = lines.filter((l) => { const n = qty.get(String(l.ItemId)) || 0; return n > 0 && n < l.SerialNumbers.length; });
       const buckets = rows.filter((r) => BUCKETS[r.ItemId] && r.ScannedQuantity > 0);
+      const need = [...partial.map((l) => String(l.ItemId)), ...buckets.map((r) => r.ItemId)];
+      const stale = need.filter((itemId) => { const c = cache.serials.get(itemId); return !c || c.qty !== qty.get(itemId); });
       const serialsOf = async (itemId) => { const j = await AE.api('GET', base(id) + '/' + encodeURIComponent(itemId) + '/serial'); return (j && j.ScannedSerialNumbers) || []; };
-      const fetched = new Map(await pool([...partial.map((l) => String(l.ItemId)), ...buckets.map((r) => r.ItemId)], 4, async (itemId) => [itemId, await serialsOf(itemId)]));
+      await pool(stale, 4, async (itemId) => { cache.serials.set(itemId, { qty: qty.get(itemId), list: await serialsOf(itemId) }); });
+      const listOf = (itemId) => (cache.serials.get(itemId) || { list: [] }).list;
       const missing = [];
       for (const l of lines) {
         const n = qty.get(String(l.ItemId)) || 0;
         let miss;
         if (n === 0) miss = l.SerialNumbers.slice();
         else if (n >= l.SerialNumbers.length) miss = [];
-        else { const got = new Set(fetched.get(String(l.ItemId)).map((s) => s.SerialNumber)); miss = l.SerialNumbers.filter((s) => !got.has(s)); }
+        else { const got = new Set(listOf(String(l.ItemId)).map((x) => x.SerialNumber)); miss = l.SerialNumbers.filter((x) => !got.has(x)); }
         if (miss.length) missing.push({ itemId: String(l.ItemId), name: l.ItemName, group: l.ItemGroup, expected: l.SerialNumbers.length, missing: miss.sort() });
       }
       missing.sort((a, b) => b.missing.length - a.missing.length || a.name.localeCompare(b.name));
       const unexpected = [];
-      for (const r of buckets) for (const s of fetched.get(r.ItemId) || []) unexpected.push({ serial: s.SerialNumber, bucket: r.ItemId, by: s.ScannedBy, at: s.ScannedDateTime });
+      for (const r of buckets) for (const x of listOf(r.ItemId)) unexpected.push({ serial: x.SerialNumber, bucket: r.ItemId, by: x.ScannedBy, at: x.ScannedDateTime });
       unexpected.sort((a, b) => a.bucket.localeCompare(b.bucket) || a.serial.localeCompare(b.serial));
       return {
         expected: Number(exp && exp.TotalExpected) || lines.reduce((n, l) => n + l.SerialNumbers.length, 0),
         scanned: rows.reduce((n, r) => n + (Number(r.ScannedQuantity) || 0), 0),
         missingCount: missing.reduce((n, m) => n + m.missing.length, 0),
-        missing, unexpected,
+        missing, unexpected, requests: 1 + (cache.exp === exp && !full ? 0 : 1) + stale.length,
       };
     }
 
-    async function load(id, quiet) {
+    // quiet: keep showing the current numbers while updating; full: re-read everything.
+    let running = null, again = false;
+    async function load(id, quiet, full) {
+      if (running) { again = true; return running; } // a scan burst: one update now, one after
       loadingFor = id;
       if (!quiet || !state || state.id !== id) { state = { id, status: 'loading' }; render(); }
-      try {
-        const data = await compute(id);
-        if (loadingFor !== id) return;
-        state = { id, status: 'ready', data, at: Date.now() };
-      } catch (e) {
-        if (loadingFor !== id) return;
-        state = { id, status: 'error', error: e.message || String(e), at: Date.now() };
-      }
-      render();
+      running = (async () => {
+        const before = state && state.data;
+        try {
+          const data = await compute(id, full || !quiet);
+          if (loadingFor !== id) return;
+          // Which items just changed (to flash them in the list).
+          const was = new Map((before ? before.missing : []).map((m) => [m.itemId, m.missing.length]));
+          data.changed = before ? new Set(data.missing.filter((m) => was.get(m.itemId) !== m.missing.length).map((m) => m.itemId).concat([...was.keys()].filter((k) => !data.missing.some((m) => m.itemId === k)))) : new Set();
+          state = { id, status: 'ready', data, at: Date.now(), fullAt: cache.fullAt };
+        } catch (e) {
+          if (loadingFor !== id) return;
+          if (!quiet) state = { id, status: 'error', error: e.message || String(e), at: Date.now() };
+        }
+        render();
+      })();
+      try { await running; } finally { running = null; }
+      if (again) { again = false; return load(id, true); }
     }
+
+    // Every scan saves through POST boh/counts/<id>/itemSerial. Portal keeps its
+    // own fetch, so watch the browser's network log, and update shortly after
+    // (scans come in bursts).
+    let scanTimer = null;
+    try {
+      new PerformanceObserver((list) => {
+        const id = countId();
+        if (!id || !state || state.status === 'loading') return;
+        const re = new RegExp('/api/boh/counts/' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/itemSerial(?:[?#]|$)');
+        if (!list.getEntries().some((e) => re.test(e.name))) return;
+        clearTimeout(scanTimer);
+        scanTimer = setTimeout(() => load(id, true), 700);
+      }).observe({ type: 'resource', buffered: false });
+    } catch (_) { /* no PerformanceObserver: the 2-minute refresh still runs */ }
 
     function render() {
       const id = countId();
@@ -186,8 +226,9 @@ AE.crystal({
 
     const CHEV = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
     // A collapsible entry: click the header to show/hide its serials (toggled in place, no redraw).
+    let flash = new Set(); // entries changed by the last scan
     function entry(key, title, meta, serials) {
-      const el = h('div', { class: 'item' + (open.has(key) ? ' open' : '') },
+      const el = h('div', { class: 'item' + (open.has(key) ? ' open' : '') + (flash.has(key) ? ' flash' : ''), 'data-key': key },
         h('div', { class: 't', role: 'button', tabindex: '0', 'aria-expanded': String(open.has(key)) }, h('span', { html: CHEV, style: 'line-height:0' }), ...title, meta),
         h('div', { class: 'serials' }, serials));
       const head = el.firstChild;
@@ -203,17 +244,27 @@ AE.crystal({
       if (!p) { p = h('div', { id: PANEL_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': 'Missing serials' }); document.body.appendChild(p); }
       const s = state;
       p.dataset.dataKey = s.status + '|' + (s.at || '');
-      const scroll = p.querySelector('.list') ? p.querySelector('.list').scrollTop : 0; // keep your place across redraws
+      // Keep your place: remember the entry at the top of the view (and the ones after it,
+      // in case it just finished and drops out), then scroll back to it after redrawing.
+      const oldList = p.querySelector('.list');
+      let anchor = null;
+      if (oldList) {
+        const top = oldList.getBoundingClientRect().top;
+        const entries = [...oldList.querySelectorAll('[data-key]')];
+        const k = entries.findIndex((el) => el.getBoundingClientRect().bottom > top + 1);
+        if (k >= 0) anchor = { keys: entries.slice(k).map((el) => el.dataset.key), offset: entries[k].getBoundingClientRect().top - top, scroll: oldList.scrollTop };
+      }
       const focused = document.activeElement && p.contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
       const head = h('div', { class: 'head' }, h('span', { html: AE.actionIcon('countCheck', 26) }),
         h('b', null, 'Lay of the Land ', h('span', { class: 'sub' }, id + (s.at ? ' · updated ' + new Date(s.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''))),
-        h('button', { type: 'button', class: 'sg-btn', style: 'height:30px;font-size:13px', onclick: () => load(id) }, 'Refresh'),
+        h('button', { type: 'button', class: 'sg-btn', style: 'height:30px;font-size:13px', onclick: () => load(id, false, true) }, 'Refresh'),
         h('button', { type: 'button', class: 'sg-x', title: 'Close', onclick: () => p.remove() }, '✕'));
       if (s.status !== 'ready') {
         p.replaceChildren(head, h('div', { class: 'sg-soft', style: 'padding:10px 0' }, s.status === 'loading' ? 'Comparing expected and scanned serials…' : "Couldn't load this count: " + s.error));
         return;
       }
       const d = s.data;
+      flash = new Set([...(d.changed || [])].map((k) => 'item:' + k)); d.changed = new Set(); // flash once
       const stat = (k, v, bad) => h('div', { class: 'stat' + (bad ? ' bad' : '') }, h('div', { class: 'v' }, v.toLocaleString()), h('div', { class: 'k' }, k));
       const q = query.trim().toLowerCase();
       const hit = (...xs) => !q || xs.some((x) => String(x || '').toLowerCase().includes(q));
@@ -274,8 +325,11 @@ AE.crystal({
           h('button', { type: 'button', class: 'sg-btn', onclick: () => copy(shownMissing.join('\n'), shownMissing.length + ' missing serials, one per line' + (cat !== 'all' || q ? ' (the ones shown)' : '')) }, 'Copy missing'),
           h('button', { type: 'button', class: 'sg-btn', onclick: () => download(d, id) }, 'Download CSV')),
         controls, listEl,
-        h('div', { class: 'foot' }, 'Updates every 2 minutes while this page is open. Click an item to show its serials; click a serial to copy it.'));
-      listEl.scrollTop = scroll;
+        h('div', { class: 'foot' }, 'Updates as items are scanned. Click an item to show its serials; click a serial to copy it.'));
+      if (anchor) {
+        const el = anchor.keys.map((k) => listEl.querySelector('[data-key="' + CSS.escape(k) + '"]')).find(Boolean);
+        listEl.scrollTop = el ? el.getBoundingClientRect().top - listEl.getBoundingClientRect().top - anchor.offset : anchor.scroll;
+      }
       if (focused) { const inp = p.querySelector('.tools input'); inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
     }
     document.addEventListener('click', (e) => {
@@ -287,7 +341,7 @@ AE.crystal({
       const id = countId();
       if (!id) { if (state) { state = null; loadingFor = null; render(); } return; }
       if (!state || state.id !== id) { if (loadingFor !== id) load(id); }
-      else if (state.status !== 'loading' && Date.now() - state.at > REFRESH_MS && !document.hidden) { state.at = Date.now(); load(id, true); }
+      else if (state.status === 'ready' && Date.now() - (state.fullAt || state.at) > FULL_MS && !document.hidden) { state.fullAt = Date.now(); load(id, true, true); }
       render();
     });
   },
