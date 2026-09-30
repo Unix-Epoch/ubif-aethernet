@@ -1,5 +1,12 @@
 [
   {
+    "version": "2.14.1",
+    "notes": [
+      "Auto-Waymark: if a work order's nickname already has a date in it (like \"PS5 SLIM (10/01)\"), that date becomes its Auto-Waymark date. Otherwise it's 3 days after it reached Ready for pickup, as before.",
+      "Fixed: work orders already at Ready for pickup when 2.14.0 arrived were dated from their last update instead of the date in their nickname. Their Auto-Waymarks have been corrected."
+    ]
+  },
+  {
     "version": "2.14.0",
     "notes": [
       "New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.",

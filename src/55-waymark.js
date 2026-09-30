@@ -20,6 +20,8 @@
   - The header icon shows how many open Auto-Waymarks are due (today or
     overdue). On their first Portal load of the day, managers get a speech
     bubble from the icon if any were left open past their due day.
+  - If the nickname already has a date in it when the mark is made
+    ("PS5 SLIM (10/01)"), that date is the mark's date instead.
   - While a WO is at Ready for pickup, its device nickname is just the
     Auto-Waymark date ("10/02", the store's usual M/DD) and is kept that way:
     pushes rewrite it, and the scan puts it back if it drifts. A later date
@@ -122,15 +124,18 @@ AE.waymark = (() => {
 
   // ---- the WO's device nickname mirrors its Auto-Waymark (M/DD, as the store writes it)
   const nickDate = (iso) => { const d = parseDate(iso); return (d.getMonth() + 1) + '/' + pad(d.getDate()); };
-  // A nickname that is just a date ("10/2", "10/02") → YYYY-MM-DD (nearest year), else null.
+  // The date written in a nickname, anywhere in it ("10/02", "PS5 SLIM (10/01)",
+  // "HDMI REPLACEMENT 9/29"; the last one wins) → YYYY-MM-DD in the nearest year, else null.
   function parseNick(name) {
-    const m = String(name || '').trim().match(/^(\d{1,2})\/(\d{1,2})$/);
-    if (!m) return null;
-    const now = new Date();
-    const d = new Date(now.getFullYear(), m[1] - 1, m[2]);
-    if (d.getMonth() !== m[1] - 1) return null;
-    if (now - d > 183 * 86400000) d.setFullYear(d.getFullYear() + 1);
-    return isoDate(d);
+    const found = [...String(name || '').matchAll(/(?:^|[^\d/])(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?![\d/])/g)];
+    for (const m of found.reverse()) {
+      const mo = Number(m[1]) - 1, day = Number(m[2]), now = new Date();
+      const best = [-1, 0, 1].map((dy) => new Date(now.getFullYear() + dy, mo, day))
+        .filter((d) => d.getMonth() === mo && d.getDate() === day)
+        .sort((a, b) => Math.abs(a - now) - Math.abs(b - now))[0];
+      if (best) return isoDate(best);
+    }
+    return null;
   }
   const woDetail = async (woId) => { const j = await AE.api('GET', '/api/workorder/' + woId); return (j && j.workorder) || AE.unwrap(j); };
   // Set the nickname to the mark's date, only while the WO is at Ready for pickup.
@@ -165,7 +170,8 @@ AE.waymark = (() => {
     let m = c.auto[woId];
     if (!m) {
       if (!afterEod()) return; // the evening scan (or tomorrow's first load) marks it
-      const r = await call('POST', '/auto', { marks: [{ wo: Number(woId), due: addDays(today(), AUTO_DAYS) }] });
+      const due = parseNick(wo.CustomerDevice && wo.CustomerDevice.name) || addDays(today(), AUTO_DAYS);
+      const r = await call('POST', '/auto', { marks: [{ wo: Number(woId), due }] });
       if (!(r.created && r.created.length)) return; // removed earlier with ×: stays removed
       await load(true);
       m = autoOf(woId);
@@ -206,7 +212,8 @@ AE.waymark = (() => {
     if (!AE.status.paused('waymark')) {
       // Today's RFPs wait for end of day; earlier days' are overdue for marking now.
       const marks = rows.filter((r) => Number(r.workorderStatusId) === RFP_STATUS && !c.auto[r.workorderId] && (afterEod() || rfpSince(r) < today()))
-        .map((r) => ({ wo: Number(r.workorderId), due: addDays(rfpSince(r), AUTO_DAYS) }));
+        // The date already in the nickname wins; otherwise 3 days after the RFP day.
+        .map((r) => ({ wo: Number(r.workorderId), due: parseNick(r.customerDevice && r.customerDevice.name) || addDays(rfpSince(r), AUTO_DAYS) }));
       if (marks.length) {
         const j = await call('POST', '/auto', { marks }); // already-marked or removed ones are ignored
         if (j.created && j.created.length) c = await load(true);

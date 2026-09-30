@@ -41,7 +41,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "2.14.0"
+VERSION = "2.14.1"
 
 # Secret Gist that hosts the published script (account: Unix-Epoch).
 # The raw URL has no commit hash, so it always serves the latest revision.
