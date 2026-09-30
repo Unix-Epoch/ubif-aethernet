@@ -398,3 +398,21 @@ the Cloudflare login used with `npx wrangler login`).
 - Test a build against a local Worker: `npx wrangler dev --local` in
   `worker/`, then `WAYMARK_API=http://localhost:8787 python3 build.py`.
 
+
+## Feedback, usage and admin
+
+- **Send feedback** (avatar menu → Send Aethernet feedback, Settings footer,
+  Tampermonkey menu): a bug report or suggestion, stored by the Worker
+  (`feedback` table) with name, store, version, browser and page path; bug
+  reports can add diagnostics (enabled crystals, last Aethernet errors).
+  Submit-and-done. When a suggestion ships, credit the person in that
+  release's `patch-notes.json` entry: `"credits": ["Name (Store)"]`.
+- **Usage**: `AE.track('crystal:action')` / `AE.trackDaily(...)` count per
+  person, store, feature and day (`usage` table, kept 180 days), uploaded
+  every 5 minutes. Disclosed in Settings and About. No page contents or
+  customer data.
+- **Admin** (inbox + usage charts): ten quick clicks on the crystal in the
+  Settings header. Needs the `ADMIN_KEY` Worker secret, kept in
+  `worker/.admin-key` (git-ignored) and entered once per browser; it never
+  ships in the script. Set/rotate: `cat worker/.admin-key | npx wrangler secret put ADMIN_KEY`.
+- **Patch notes never mention the admin panel or usage analytics.**

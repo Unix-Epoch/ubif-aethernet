@@ -157,7 +157,7 @@ AE.crystal({
     function togglePanel(e) {
       e.stopPropagation();
       const p = document.getElementById(PANEL_ID);
-      if (p) p.remove(); else renderPanel();
+      if (p) p.remove(); else { renderPanel(); AE.track('cleaningRate:open'); }
     }
     document.addEventListener('click', (e) => {
       const p = document.getElementById(PANEL_ID), b = document.getElementById(BADGE_ID);

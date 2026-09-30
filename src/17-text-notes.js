@@ -73,6 +73,7 @@ AE.crystal({
         });
         logged[m.messageId] = Date.now();
         GM_setValue(LOGGED_KEY, logged);
+        AE.track('textNotes:note');
       }
       return fresh.length;
     }

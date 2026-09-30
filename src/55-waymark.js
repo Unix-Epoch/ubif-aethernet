@@ -77,6 +77,7 @@ AE.waymark = (() => {
 
   async function setTag(woId, tag, on) {
     if (AE.status.blocked('waymark')) return null;
+    AE.track(on ? 'waymark:tag' : 'waymark:untag');
     const j = await call('POST', '/wo/' + woId + (on ? '/tag' : '/untag'), { tag });
     if (cache) { if (j.tags.length) cache.tags[woId] = j.tags; else delete cache.tags[woId]; }
     AE.emit('waymark-changed', cache);
@@ -156,6 +157,7 @@ AE.waymark = (() => {
   async function pushMark(woId, due) {
     if (AE.status.blocked('waymark')) return;
     const j = await call('POST', '/wo/' + woId + '/push', { due });
+    AE.track('waymark:push');
     if (cache) cache.auto[woId] = Object.assign({}, cache.auto[woId], { due: j.auto.due });
     AE.emit('waymark-changed', cache);
     try { if (await syncNickname(woId, j.auto.due)) AE.toast('Auto-Waymark', 'Moved to ' + fmtDate(j.auto.due) + '; nickname is now ' + nickDate(j.auto.due) + '.', 'ok'); }
@@ -181,6 +183,7 @@ AE.waymark = (() => {
   async function unmark(woId) {
     if (AE.status.blocked('waymark')) return;
     await call('POST', '/wo/' + woId + '/unmark', {});
+    AE.track('waymark:unmark');
     if (cache) delete cache.auto[woId];
     AE.emit('waymark-changed', cache);
   }
@@ -590,6 +593,7 @@ AE.crystal({
           h('button', { type: 'button', class: 'sg-x', title: 'Close', onclick: () => board.remove() }, '✕')),
         h('div', { class: 'list' }, h('div', { class: 'sg-soft' }, h('span', { class: 'sg-spin', style: 'display:inline-block;vertical-align:-3px;margin-right:6px' }), 'Loading open work orders…')));
       document.body.appendChild(board);
+      AE.track('waymark:board');
       try {
         const [c, wos] = await Promise.all([W.load(true), AE.data.workorders(Date.now(), 0)]);
         drawBoard(board, c, wos);

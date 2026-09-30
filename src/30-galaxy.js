@@ -200,6 +200,7 @@ AE.crystal({
           if (suppressNextClick) { suppressNextClick = false; return; }
           dismissIntro(); // using it counts as having read it
           if (AE.status.blocked('galaxy')) return;
+          AE.track('galaxy:file');
           const woId = currentWoId();
           if (!woId) return;
           main.disabled = true;

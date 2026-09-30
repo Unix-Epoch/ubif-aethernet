@@ -375,6 +375,38 @@ const AE = (() => {
     return { workorders, arrivals, cleanings, belongs, imeiOf, custOf, nameOf };
   })();
 
+  // --------------------------------------------------- errors + usage
+  // The last few Aethernet errors, attached to bug reports ("Send feedback").
+  const recentErrors = [];
+  function noteError(where, e) {
+    recentErrors.push({ at: new Date().toISOString(), where, message: String((e && e.message) || e).slice(0, 300) });
+    if (recentErrors.length > 10) recentErrors.shift();
+  }
+
+  /*
+    Usage counts ("who uses what"): AE.track('autoClose:run') adds 1 to today's
+    count for this person. Counts are batched in Tampermonkey storage and sent
+    by the feedback module (06-feedback.js) every few minutes. Only feature
+    names and counts — never page contents or customer details.
+  */
+  const USAGE_KEY = 'ae_usage_pending';
+  const localDay = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  function track(feature) {
+    try {
+      const pend = GM_getValue(USAGE_KEY, {});
+      const day = (pend[localDay()] = pend[localDay()] || {});
+      day[feature] = (day[feature] || 0) + 1;
+      GM_setValue(USAGE_KEY, pend);
+    } catch (_) { /* never let tracking break a crystal */ }
+  }
+  // Once a day per person (e.g. "used Aethernet today", "has a Glamour theme on").
+  function trackDaily(feature) {
+    const k = 'ae_usage_daily', seen = GM_getValue(k, {});
+    if (seen[feature] === localDay()) return;
+    seen[feature] = localDay(); GM_setValue(k, seen);
+    track(feature);
+  }
+
   // --------------------------------------------------- crystal registry
   const crystals = [];
   function crystal(def) { crystals.push(def); }
@@ -385,7 +417,7 @@ const AE = (() => {
       if (t.sites && !t.sites.includes(location.hostname)) continue;
       // Paused remotely by an Aethernet notice (status.json); last-known copy.
       if (AE.status && AE.status.paused(t.id)) { console.info('[' + AE_NAME + '] ' + t.name + ' is paused by an Aethernet notice'); continue; }
-      try { t.run(); } catch (e) { console.error('[' + AE_NAME + '] ' + t.name + ' failed to start', e); }
+      try { t.run(); } catch (e) { noteError(t.name + ' start', e); console.error('[' + AE_NAME + '] ' + t.name + ' failed to start', e); }
     }
   }
 
@@ -393,7 +425,7 @@ const AE = (() => {
   // change without a load and Portal re-renders often.
   function every(ms, fn) {
     // Promise.resolve so async callbacks' rejections are caught too.
-    const safe = () => Promise.resolve().then(fn).catch((e) => console.error('[' + AE_NAME + ']', e));
+    const safe = () => Promise.resolve().then(fn).catch((e) => { noteError('timer', e); console.error('[' + AE_NAME + ']', e); });
     setInterval(safe, ms);
     safe();
   }
@@ -401,7 +433,7 @@ const AE = (() => {
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
     api, unwrap, Stopped, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
-    confirm: confirmDialog, toast, emit, on, data,
+    confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close crystal when it's enabled
   };

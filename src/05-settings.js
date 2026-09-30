@@ -69,6 +69,7 @@
   .sg-patch .tag.new { background:#ffcc00; color:#3d2e00; }
   .sg-patch ul { margin:0; padding:0 14px 12px 40px; }
   .sg-patch li { margin:4px 0; }
+  .sg-patch .credits { margin:-4px 14px 12px 40px; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); font-style:italic; }
   .sg-about-scrim { position:fixed; inset:0; z-index:2147483647; background:var(--aui-scrim-overlay, #0c0e1180);
     display:flex; align-items:center; justify-content:center; padding:16px; animation: sg-in .15s ease-out; }
   .sg-about { width:min(460px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:28px 24px 20px; font-size:14px; line-height:1.45; }
@@ -202,6 +203,8 @@
         h('span', { class: 'sg-chip' + (on[id] ? '' : ' chip-off'), title: on[id] ? 'On' : 'Off' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 16) }), name))),
       h('h4', null, 'Your setup'),
       kv(['Signed in', whoBox], ['Browser', browser], ['Script manager', manager]),
+      h('h4', null, 'Usage data'),
+      h('div', { class: 'sg-soft' }, AE_NAME + ' records which features each person uses (a count per feature per day, with name and store) to decide what to improve. It never records customer details or page contents. Bug reports and suggestions sent from Send feedback include your name and store.'),
       h('h4', null, 'Share with another store'),
       h('div', { class: 'link-row' }, linkInput, copyBtn),
       h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Open the link with Tampermonkey installed to add ' + AE_NAME + '. Installs update themselves.'),
@@ -238,7 +241,8 @@
           n.version === AE_VERSION ? h('span', { class: 'tag' }, 'Installed') : null,
           isNew ? h('span', { class: 'tag new' }, 'New') : null,
           h('span', { class: 'when' }, when)),
-        h('ul', null, n.notes.map((t) => h('li', { html: noteHtml(t) }))));
+        h('ul', null, n.notes.map((t) => h('li', { html: noteHtml(t) }))),
+        n.credits && n.credits.length ? h('div', { class: 'credits' }, 'Suggested by ' + n.credits.join(', ') + '. Thank you!') : null);
       panel.open = since ? isNew : i === 0;
       return panel;
     });
@@ -261,6 +265,7 @@
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
     document.getElementById('sg-settings')?.remove();
+    AE.track('settings:open');
     const s = AE.merge(AE.DEFAULTS, AE.settings); // working copy
 
     const input = (label, value, placeholder, onInput, type = 'text') =>
@@ -359,19 +364,25 @@
 
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
-        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 36) }),
+        // Hidden way in: ten quick clicks on the crystal open the admin panel (key entry first time).
+        h('span', { style: 'color:var(--aui-primary,#8223d2);cursor:default;user-select:none', html: icon('aetheryte', 36), onclick: (() => {
+          let n = 0, last = 0;
+          return () => { const t = Date.now(); n = t - last < 1500 ? n + 1 : 1; last = t; if (n >= 10) { n = 0; AE.feedback && AE.feedback.openAdmin(); } };
+        })() }),
         h('div', { style: 'flex:1' }, h('h2', { class: 'sg-wordmark', html: AE.wordmark(26) }), h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen · v' + AE_VERSION })),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
 
       section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
         who,
-        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.')),
+        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.'),
+        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, AE_NAME + ' records which features you use (a count per feature per day, with your name and store) to decide what to improve. It never records customer details or what\'s on the page.')),
 
       section('crystals', 'Crystals', true,
         () => CRYSTAL_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + CRYSTAL_INFO.length + ' on',
         h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => crystalRow(id, name, desc)))),
 
       h('div', { class: 'sg-foot-links' },
+        h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.feedback.openFeedback() }, 'Send feedback'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.status.checkNow() }, 'Check for updates'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: () => openPatchNotes() }, 'Patch notes'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…')),

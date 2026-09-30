@@ -26,3 +26,19 @@ CREATE TABLE IF NOT EXISTS auto_marks (  -- Auto-Waymark: follow-up date set whe
   removed_at TEXT,                       -- × removes; the row stays so it isn't re-created
   PRIMARY KEY (store, wo)
 );
+CREATE TABLE IF NOT EXISTS feedback (    -- bug reports and suggestions from the Feedback button
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  store INTEGER NOT NULL, store_name TEXT, user_id INTEGER, user_name TEXT,
+  kind TEXT NOT NULL,                    -- 'bug' | 'idea'
+  text TEXT NOT NULL,
+  version TEXT, page TEXT, browser TEXT, diag TEXT,  -- diag: JSON (enabled crystals, recent Aethernet errors)
+  status TEXT NOT NULL DEFAULT 'new',    -- new | planned | fixed | wontfix (admin only)
+  note TEXT,                             -- admin's own note
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS feedback_by_status ON feedback (status, id);
+CREATE TABLE IF NOT EXISTS usage (       -- feature use: one counter per day, store, person, feature
+  day TEXT NOT NULL, store INTEGER NOT NULL, store_name TEXT, user_id INTEGER NOT NULL, user_name TEXT,
+  feature TEXT NOT NULL, count INTEGER NOT NULL,
+  PRIMARY KEY (day, store, user_id, feature)
+);

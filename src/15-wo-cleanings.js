@@ -135,7 +135,7 @@ AE.crystal({
     function togglePop(e) {
       e.stopPropagation();
       const pop = document.getElementById(POP_ID);
-      if (pop) pop.remove(); else renderPop();
+      if (pop) pop.remove(); else { renderPop(); AE.track('woCleanings:open'); }
     }
     document.addEventListener('click', (e) => {
       const pop = document.getElementById(POP_ID), pill = document.getElementById(PILL_ID);

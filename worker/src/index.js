@@ -16,16 +16,25 @@
     POST /v1/:store/auto                { marks: [{wo, due}] }   Auto-Waymark new RFP WOs (existing/removed ignored)
     POST /v1/:store/wo/:wo/push         { due, by, byId }        move a mark later (never earlier)
     POST /v1/:store/wo/:wo/unmark       { by, byId }             remove a mark (stays removed)
-  Daily cron: drop tags + history for WOs closed more than 7 days ago.
+    POST /v1/:store/feedback            { kind, text, version, page, browser, diag, by, byId, storeName }
+    POST /v1/:store/usage               { day, counts: {feature: n}, by, byId, storeName }
+  Admin (x-aethernet-admin = the ADMIN_KEY secret; never shipped in the script):
+    GET  /v1/admin/ping
+    GET  /v1/admin/feedback?status=new|planned|fixed|wontfix|all
+    POST /v1/admin/feedback/:id         { status?, note? }
+    GET  /v1/admin/usage?days=30
+  Daily cron: drop tags + history for WOs closed more than 7 days ago; usage older than 180 days.
 */
 const COLORS = ['purple', 'blue', 'teal', 'green', 'lime', 'yellow', 'orange', 'red', 'grey'];
 const MAX_TAGS_PER_WO = 12, MAX_LIST = 40, KEEP_DAYS = 7;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const KINDS = ['bug', 'idea'], STATUSES = ['new', 'planned', 'fixed', 'wontfix'];
+const FEATURE_RE = /^[a-zA-Z]{1,24}(:[a-zA-Z-]{1,24})?$/;
 
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
-  'access-control-allow-headers': 'content-type, x-aethernet-key',
+  'access-control-allow-headers': 'content-type, x-aethernet-key, x-aethernet-admin',
   'access-control-max-age': '86400',
 };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...CORS } });
@@ -48,9 +57,41 @@ async function logHistory(env, store, wo, action, tag, detail, by) {
     .bind(store, wo, action, tag, detail, by.name, by.id, now()).run();
 }
 
+async function admin(req, env, url) {
+  if (!env.ADMIN_KEY || req.headers.get('x-aethernet-admin') !== env.ADMIN_KEY) return fail(403, 'admin key required');
+  const path = url.pathname.replace(/^\/v1\/admin/, '');
+  if (req.method === 'GET' && path === '/ping') return json({ ok: true });
+  if (req.method === 'GET' && path === '/feedback') {
+    const st = url.searchParams.get('status') || 'all';
+    const q = STATUSES.includes(st)
+      ? env.DB.prepare('SELECT * FROM feedback WHERE status = ? ORDER BY id DESC LIMIT 500').bind(st)
+      : env.DB.prepare('SELECT * FROM feedback ORDER BY id DESC LIMIT 500');
+    const counts = await env.DB.prepare('SELECT status, COUNT(*) AS n FROM feedback GROUP BY status').all();
+    return json({ feedback: (await q.all()).results, counts: Object.fromEntries(counts.results.map((r) => [r.status, r.n])) });
+  }
+  const fm = path.match(/^\/feedback\/(\d+)$/);
+  if (req.method === 'POST' && fm) {
+    const b = await body(req);
+    const row = await env.DB.prepare('SELECT status, note FROM feedback WHERE id = ?').bind(Number(fm[1])).first();
+    if (!row) return fail(404, 'no such report');
+    const status = STATUSES.includes(b.status) ? b.status : row.status;
+    const note = typeof b.note === 'string' ? clean(b.note, 1000) : row.note;
+    await env.DB.prepare('UPDATE feedback SET status = ?, note = ?, updated_at = ? WHERE id = ?').bind(status, note, now(), Number(fm[1])).run();
+    return json({ ok: true, status, note });
+  }
+  if (req.method === 'GET' && path === '/usage') {
+    const days = Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30));
+    const since = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
+    const r = await env.DB.prepare('SELECT day, store, store_name, user_id, user_name, feature, count FROM usage WHERE day >= ? ORDER BY day').bind(since).all();
+    return json({ since, rows: r.results });
+  }
+  return fail(404, 'not found');
+}
+
 async function route(req, env) {
   const url = new URL(req.url);
-  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|auto)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark))?$/);
+  if (url.pathname.startsWith('/v1/admin/')) return admin(req, env, url);
+  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|auto|feedback|usage)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark))?$/);
   if (!m) return fail(404, 'not found');
   const store = Number(m[1]);
   const wo = m[3] ? Number(m[3]) : null;
@@ -121,6 +162,34 @@ async function route(req, env) {
     return json({ auto: null });
   }
 
+  if (req.method === 'POST' && what === 'feedback') {
+    const b = await body(req);
+    const text = typeof b.text === 'string' ? b.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 4000) : '';
+    if (!KINDS.includes(b.kind) || text.length < 3) return fail(400, 'kind and text required');
+    const by = who(b);
+    let diag = null;
+    try { diag = b.diag ? JSON.stringify(b.diag).slice(0, 6000) : null; } catch (_) {}
+    const t = now();
+    const r = await env.DB.prepare('INSERT INTO feedback (store, store_name, user_id, user_name, kind, text, version, page, browser, diag, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(store, clean(b.storeName, 80), by.id, by.name, b.kind, text, clean(b.version, 20), clean(b.page, 200), clean(b.browser, 80), diag, t, t).run();
+    return json({ ok: true, id: r.meta.last_row_id });
+  }
+
+  if (req.method === 'POST' && what === 'usage') {
+    const b = await body(req);
+    const by = who(b);
+    if (by.id === null || !DATE_RE.test(b.day || '')) return fail(400, 'day and byId required');
+    const counts = Object.entries(b.counts && typeof b.counts === 'object' ? b.counts : {})
+      .filter(([f, n]) => FEATURE_RE.test(f) && Number.isInteger(n) && n > 0 && n <= 10000).slice(0, 60);
+    if (counts.length) {
+      await env.DB.batch(counts.map(([f, n]) => env.DB.prepare(
+        'INSERT INTO usage (day, store, store_name, user_id, user_name, feature, count) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+        'ON CONFLICT (day, store, user_id, feature) DO UPDATE SET count = count + excluded.count, user_name = excluded.user_name, store_name = excluded.store_name')
+        .bind(b.day, store, clean(b.storeName, 80), by.id, by.name, f, n)));
+    }
+    return json({ ok: true });
+  }
+
   if (req.method === 'PUT' && what === 'list') {
     const b = await body(req);
     const by = who(b);
@@ -162,6 +231,7 @@ async function cleanup(env) {
     env.DB.prepare(`DELETE FROM history WHERE wo IS NOT NULL AND (store, wo) IN (${expired})`).bind(cutoff),
     env.DB.prepare(`DELETE FROM auto_marks WHERE (store, wo) IN (${expired})`).bind(cutoff),
     env.DB.prepare('DELETE FROM wo_closed WHERE closed_at < ?').bind(cutoff),
+    env.DB.prepare('DELETE FROM usage WHERE day < ?').bind(new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10)),
     // List-change history: keep 90 days.
     env.DB.prepare('DELETE FROM history WHERE wo IS NULL AND at < ?').bind(new Date(Date.now() - 90 * 86400000).toISOString()),
   ]);

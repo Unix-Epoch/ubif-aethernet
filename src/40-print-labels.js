@@ -111,6 +111,7 @@ AE.crystal({
 
     async function onClickPrintAll() {
       if (AE.status.blocked('printLabels')) return;
+      AE.track('printLabels:run');
       if (active && active.panel.el.isConnected) { active.panel.flash(); return; }
       const ui = active = newUi();
       ui.panel.body.textContent = 'Expanding line items…';

@@ -281,5 +281,6 @@ AE.crystal({
   sites: ['portal.ubreakifix.net'],
   run() {
     AE.glamour.apply(AE.settings.glamour);
+    if (AE.settings.glamour && AE.settings.glamour.theme && AE.settings.glamour.theme !== 'portal') AE.trackDaily('glamour:themed');
   },
 });
