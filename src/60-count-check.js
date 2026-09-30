@@ -31,6 +31,8 @@ AE.crystal({
     };
     let state = null;   // { id, status: 'loading'|'ready'|'error', data, error, at }
     let loadingFor = null, tab = 'missing', query = '';
+    let cat = 'all', sortBy = 'missing';         // category filter + sort (Missing tab)
+    const open = new Set();                      // expanded entries ("item:<id>" / "bucket:<id>"); collapsed by default
 
     document.head.append(h('style', null, `
       #${PILL_ID} { position:fixed; z-index:2147483644; right:16px; bottom:88px; display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 14px 0 6px;
@@ -59,6 +61,18 @@ AE.crystal({
         background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font:13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
       #${PANEL_ID} .tools .sg-btn { height:32px; font-size:13px; }
       #${PANEL_ID} .list { overflow:auto; }
+      #${PANEL_ID} .cats { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:8px; }
+      #${PANEL_ID} .cat { height:26px; padding:0 10px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:10000rem; background:none; cursor:pointer;
+        color:var(--aui-on-surface, #1a1c1e); font:600 12px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+      #${PANEL_ID} .cat.on { background:var(--aui-primary, #8223d2); border-color:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); }
+      #${PANEL_ID} .cats select { height:26px; margin-left:auto; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; background:var(--aui-surface, #fff);
+        color:var(--aui-on-surface, #1a1c1e); font:12px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+      #${PANEL_ID} .cats .sg-btn { height:26px; padding:0 10px; font-size:12px; }
+      #${PANEL_ID} .section { margin:10px 0 2px; font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+      #${PANEL_ID} .item .t { cursor:pointer; user-select:none; }
+      #${PANEL_ID} .item .t .chev { width:14px; height:14px; flex:none; align-self:center; color:var(--aui-on-surface-soft, #5d5e61); transition:transform .15s; transform:rotate(-90deg); }
+      #${PANEL_ID} .item.open .t .chev { transform:none; }
+      #${PANEL_ID} .item:not(.open) .serials { display:none; }
       #${PANEL_ID} .item { padding:8px 2px; border-top:1px solid var(--aui-outline-soft, #eeedf1); }
       #${PANEL_ID} .item .t { display:flex; gap:8px; align-items:baseline; }
       #${PANEL_ID} .item .t b { flex:1; font-weight:600; }
@@ -144,7 +158,9 @@ AE.crystal({
               : h('span', { class: 'n' + (s.data.missingCount ? '' : ' zero') }, s.data.missingCount ? s.data.missingCount.toLocaleString() : '✓'));
         pill.title = 'Lay of the Land: expected serials not scanned yet' + (s.status === 'ready' ? ' (' + s.data.missingCount + ' missing, ' + s.data.unexpected.length + ' unexpected)' : '');
       }
-      if (document.getElementById(PANEL_ID)) renderPanel();
+      const panel = document.getElementById(PANEL_ID);
+      const dataKey = s.status + '|' + (s.at || '');
+      if (panel && panel.dataset.dataKey !== dataKey) renderPanel(); // not every second: that reset the scroll
     }
 
     function togglePanel(e) {
@@ -168,12 +184,27 @@ AE.crystal({
       document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
     }
 
+    const CHEV = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
+    // A collapsible entry: click the header to show/hide its serials (toggled in place, no redraw).
+    function entry(key, title, meta, serials) {
+      const el = h('div', { class: 'item' + (open.has(key) ? ' open' : '') },
+        h('div', { class: 't', role: 'button', tabindex: '0', 'aria-expanded': String(open.has(key)) }, h('span', { html: CHEV, style: 'line-height:0' }), ...title, meta),
+        h('div', { class: 'serials' }, serials));
+      const head = el.firstChild;
+      const flip = () => { const on = el.classList.toggle('open'); head.setAttribute('aria-expanded', String(on)); on ? open.add(key) : open.delete(key); };
+      head.onclick = flip;
+      head.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } };
+      return el;
+    }
+
     function renderPanel() {
       const id = countId();
       let p = document.getElementById(PANEL_ID);
       if (!p) { p = h('div', { id: PANEL_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': 'Missing serials' }); document.body.appendChild(p); }
-      const focused = document.activeElement && p.contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
       const s = state;
+      p.dataset.dataKey = s.status + '|' + (s.at || '');
+      const scroll = p.querySelector('.list') ? p.querySelector('.list').scrollTop : 0; // keep your place across redraws
+      const focused = document.activeElement && p.contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
       const head = h('div', { class: 'head' }, h('span', { html: AE.actionIcon('countCheck', 26) }),
         h('b', null, 'Lay of the Land ', h('span', { class: 'sub' }, id + (s.at ? ' · updated ' + new Date(s.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''))),
         h('button', { type: 'button', class: 'sg-btn', style: 'height:30px;font-size:13px', onclick: () => load(id) }, 'Refresh'),
@@ -187,32 +218,64 @@ AE.crystal({
       const q = query.trim().toLowerCase();
       const hit = (...xs) => !q || xs.some((x) => String(x || '').toLowerCase().includes(q));
       const search = h('input', { type: 'search', placeholder: 'Search serial or item', value: query, oninput: (e) => { query = e.target.value; renderPanel(); } });
-      const tabBtn = (t, label, n) => h('button', { type: 'button', class: 'tab' + (tab === t ? ' on' : ''), onclick: () => { tab = t; renderPanel(); } }, label + ' (' + n.toLocaleString() + ')');
-      let list;
+      const tabBtn = (t, label, n) => h('button', { type: 'button', class: 'tab' + (tab === t ? ' on' : ''), onclick: () => { tab = t; renderPanel(); p.querySelector('.list').scrollTop = 0; } }, label + ' (' + n.toLocaleString() + ')');
+      const serialBtn = (x, title) => h('button', { type: 'button', title: title || 'Copy', onclick: () => copy(x, x) }, x);
+      const setAll = (keys, on) => { keys.forEach((k) => (on ? open.add(k) : open.delete(k))); renderPanel(); };
+
+      let controls = null, list, shownMissing = [];
       if (tab === 'missing') {
-        const items = d.missing.map((m) => ({ ...m, shown: hit(m.name, m.itemId, m.group) ? m.missing : m.missing.filter((x) => hit(x)) })).filter((m) => m.shown.length);
-        list = items.length ? items.map((m) => h('div', { class: 'item' },
-          h('div', { class: 't' }, h('b', null, m.name), h('span', { class: 'grp' }, m.group),
-            h('span', { class: 'q' }, m.missing.length === m.expected ? 'all ' + m.expected + ' missing' : m.missing.length + ' of ' + m.expected + ' missing')),
-          h('div', { class: 'serials' }, m.shown.map((x) => h('button', { type: 'button', title: 'Copy', onclick: () => copy(x, x) }, x)))))
-          : [h('div', { class: 'sg-soft', style: 'padding:10px 0' }, d.missing.length ? 'Nothing matches.' : 'Every expected serial has been scanned.')];
+        // Categories (Portal's item groups), with how many serials each is missing.
+        const byCat = new Map();
+        for (const m of d.missing) byCat.set(m.group || 'Other', (byCat.get(m.group || 'Other') || 0) + m.missing.length);
+        const cats = [...byCat.entries()].sort((a, b) => b[1] - a[1]);
+        if (cat !== 'all' && !byCat.has(cat)) cat = 'all';
+        const items = d.missing
+          .filter((m) => cat === 'all' || (m.group || 'Other') === cat)
+          .map((m) => ({ ...m, shown: hit(m.name, m.itemId, m.group) ? m.missing : m.missing.filter((x) => hit(x)) }))
+          .filter((m) => m.shown.length)
+          .sort(sortBy === 'name' ? (a, b) => a.name.localeCompare(b.name)
+            : sortBy === 'category' ? (a, b) => (a.group || '').localeCompare(b.group || '') || b.missing.length - a.missing.length || a.name.localeCompare(b.name)
+              : (a, b) => b.missing.length - a.missing.length || a.name.localeCompare(b.name));
+        shownMissing = items.flatMap((m) => m.shown);
+        const keys = items.map((m) => 'item:' + m.itemId);
+        const anyClosed = keys.some((k) => !open.has(k));
+        const sortSel = h('select', { 'aria-label': 'Sort', onchange: (e) => { sortBy = e.target.value; renderPanel(); } },
+          [['missing', 'Most missing first'], ['name', 'Item name A–Z'], ['category', 'By category']].map(([v, l]) => { const o = h('option', { value: v }, l); o.selected = v === sortBy; return o; }));
+        controls = h('div', { class: 'cats' },
+          h('button', { type: 'button', class: 'cat' + (cat === 'all' ? ' on' : ''), onclick: () => { cat = 'all'; renderPanel(); } }, 'All ' + d.missingCount.toLocaleString()),
+          cats.map(([c, n]) => h('button', { type: 'button', class: 'cat' + (cat === c ? ' on' : ''), onclick: () => { cat = cat === c ? 'all' : c; renderPanel(); p.querySelector('.list').scrollTop = 0; } }, c + ' ' + n.toLocaleString())),
+          sortSel,
+          h('button', { type: 'button', class: 'sg-btn', onclick: () => setAll(keys, anyClosed) }, anyClosed ? 'Expand all' : 'Collapse all'));
+        const rows = [];
+        let lastGroup = null;
+        for (const m of items) {
+          if (sortBy === 'category' && m.group !== lastGroup) { lastGroup = m.group; rows.push(h('div', { class: 'section' }, (m.group || 'Other') + ' · ' + (byCat.get(m.group || 'Other') || 0) + ' missing')); }
+          rows.push(entry('item:' + m.itemId, [h('b', null, m.name), h('span', { class: 'grp' }, m.group)],
+            h('span', { class: 'q' }, (m.missing.length === m.expected ? 'all ' + m.expected : m.missing.length + ' of ' + m.expected) + ' missing'),
+            m.shown.map((x) => serialBtn(x))));
+        }
+        list = rows.length ? rows : [h('div', { class: 'sg-soft', style: 'padding:10px 0' }, d.missing.length ? 'Nothing matches.' : 'Every expected serial has been scanned.')];
       } else {
         const rows = d.unexpected.filter((u) => hit(u.serial, BUCKETS[u.bucket], u.by));
         const groups = Object.keys(BUCKETS).map((b) => [b, rows.filter((u) => u.bucket === b)]).filter(([, r]) => r.length);
-        list = groups.length ? groups.map(([b, r]) => h('div', { class: 'item' },
-          h('div', { class: 't' }, h('b', null, BUCKETS[b]), h('span', { class: 'q' }, r.length + ' scan' + (r.length === 1 ? '' : 's'))),
-          h('div', { class: 'serials' }, r.map((u) => h('button', { type: 'button', title: 'Scanned by ' + (u.by || '?') + (u.at ? ', ' + new Date(u.at).toLocaleString() : '') + ' — click to copy', onclick: () => copy(u.serial, u.serial) }, u.serial)))))
+        const keys = groups.map(([b]) => 'bucket:' + b);
+        const anyClosed = keys.some((k) => !open.has(k));
+        controls = groups.length ? h('div', { class: 'cats' }, h('span', { class: 'sg-soft', style: 'flex:1' }, 'Scans Portal didn\'t match to an expected serial.'),
+          h('button', { type: 'button', class: 'sg-btn', onclick: () => setAll(keys, anyClosed) }, anyClosed ? 'Expand all' : 'Collapse all')) : null;
+        list = groups.length ? groups.map(([b, r]) => entry('bucket:' + b, [h('b', null, BUCKETS[b])], h('span', { class: 'q' }, r.length + ' scan' + (r.length === 1 ? '' : 's')),
+          r.map((u) => serialBtn(u.serial, 'Scanned by ' + (u.by || '?') + (u.at ? ', ' + new Date(u.at).toLocaleString() : '') + ' — click to copy'))))
           : [h('div', { class: 'sg-soft', style: 'padding:10px 0' }, d.unexpected.length ? 'Nothing matches.' : 'No unexpected scans.')];
       }
-      const allMissing = d.missing.flatMap((m) => m.missing);
+      const listEl = h('div', { class: 'list' }, list);
       p.replaceChildren(head,
         h('div', { class: 'stats' }, stat('Expected', d.expected), stat('Scanned', d.scanned), stat('Missing', d.missingCount, d.missingCount > 0), stat('Unexpected', d.unexpected.length, d.unexpected.length > 0)),
         h('div', { class: 'tabs' }, tabBtn('missing', 'Missing', d.missingCount), tabBtn('unexpected', 'Unexpected', d.unexpected.length)),
         h('div', { class: 'tools' }, search,
-          h('button', { type: 'button', class: 'sg-btn', onclick: () => copy(allMissing.join('\n'), allMissing.length + ' missing serials, one per line') }, 'Copy missing'),
+          h('button', { type: 'button', class: 'sg-btn', onclick: () => copy(shownMissing.join('\n'), shownMissing.length + ' missing serials, one per line' + (cat !== 'all' || q ? ' (the ones shown)' : '')) }, 'Copy missing'),
           h('button', { type: 'button', class: 'sg-btn', onclick: () => download(d, id) }, 'Download CSV')),
-        h('div', { class: 'list' }, list),
-        h('div', { class: 'foot' }, 'Updates every 2 minutes while this page is open. Click a serial to copy it.'));
+        controls, listEl,
+        h('div', { class: 'foot' }, 'Updates every 2 minutes while this page is open. Click an item to show its serials; click a serial to copy it.'));
+      listEl.scrollTop = scroll;
       if (focused) { const inp = p.querySelector('.tools input'); inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
     }
     document.addEventListener('click', (e) => {

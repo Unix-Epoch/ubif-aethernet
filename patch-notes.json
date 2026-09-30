@@ -2,7 +2,7 @@
   {
     "version": "2.16.0",
     "notes": [
-      "New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, grouped by item, plus any unexpected scans (not in stock, not a serial, or scanned twice). Search, copy the list, or download it as a spreadsheet; it updates every 2 minutes while you count."
+      "New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates every 2 minutes while you count."
     ]
   },
   {
