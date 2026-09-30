@@ -54,6 +54,7 @@ AE.crystal({
     // ------------------------------------------------------------ PART A
     if (AE_ON_PORTAL) {
       let injectedForWoId = null;
+      let demoWo = null; // dev tools: show the button on this WO even without a GSPN ticket
       // Position persists across reloads and SPA route changes — tick()
       // rebuilds the button often, so this can't be a local variable.
       const POS_KEY = 'gde_btn_pos';
@@ -200,6 +201,7 @@ AE.crystal({
           if (suppressNextClick) { suppressNextClick = false; return; }
           dismissIntro(); // using it counts as having read it
           if (AE.status.blocked('galaxy')) return;
+          if (demoWo && !gspnTicketOnPage()) { toast('Demo button (dev tools): on a real Samsung WO with a GSPN ticket this files the exception.', 'ok', 'bottom'); return; }
           AE.track('galaxy:file');
           const woId = currentWoId();
           if (!woId) return;
@@ -228,11 +230,21 @@ AE.crystal({
         showIntro();
       }
 
+      // Dev tools: the button + first-time explainer on the current WO, whatever it is.
+      AE.hooks.galaxyDemo = () => {
+        const woId = currentWoId();
+        if (!woId) return false;
+        demoWo = woId; GM_deleteValue(INTRO_KEY);
+        document.getElementById('sg-galaxy-btn')?.remove(); document.getElementById('sg-galaxy-intro')?.remove();
+        injectedForWoId = null;
+        return true;
+      };
+
       AE.every(1000, () => {
         const woId = currentWoId();
         const existing = document.getElementById('sg-galaxy-btn');
         if (!woId) { existing?.remove(); document.getElementById('sg-galaxy-intro')?.remove(); injectedForWoId = null; return; }
-        const ticket = gspnTicketOnPage();
+        const ticket = gspnTicketOnPage() || (demoWo === woId ? 'demo' : null);
         if (ticket && (injectedForWoId !== woId || !existing)) { existing?.remove(); makeButton(); injectedForWoId = woId; }
         else if (!ticket && existing) { existing.remove(); document.getElementById('sg-galaxy-intro')?.remove(); injectedForWoId = null; }
       });

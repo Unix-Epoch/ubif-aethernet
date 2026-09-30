@@ -110,18 +110,18 @@ AE.waymark = (() => {
   // ------------------------------------------------------------ Auto-Waymark
   const AUTO_DAYS = 3, RFP_STATUS = 13; // 13 = Ready for pickup
   const EOD_HOUR = 19;                    // marks go on after end of day, 7 PM local
-  const afterEod = () => new Date().getHours() >= EOD_HOUR;
+  const afterEod = () => AE.nowDate().getHours() >= EOD_HOUR; // AE.nowDate: the dev tools can shift it
   const pad = (n) => String(n).padStart(2, '0');
   const isoDate = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); // store-local date
   const parseDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
   const addDays = (iso, n) => { const d = parseDate(iso); d.setDate(d.getDate() + n); return isoDate(d); };
-  const today = () => isoDate(new Date());
+  const today = () => isoDate(AE.nowDate());
   const fmtDate = (iso) => parseDate(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
   const dueState = (iso) => (iso < today() ? 'overdue' : iso === today() ? 'today' : 'upcoming');
   const autoOf = (woId) => (cache && cache.auto && cache.auto[woId]) || null;
   // When did it reach Ready for pickup? The list row's updatedAt is the best
   // hint (a WO sitting at RFP rarely changes); never later than now.
-  const rfpSince = (r) => { const t = Date.parse(r.updatedAt); return isoDate(new Date(isNaN(t) ? Date.now() : Math.min(t, Date.now()))); };
+  const rfpSince = (r) => { const t = Date.parse(r.updatedAt); return isoDate(new Date(isNaN(t) ? AE.now() : Math.min(t, AE.now()))); };
 
   // ---- the WO's device nickname mirrors its Auto-Waymark (M/DD, as the store writes it)
   const nickDate = (iso) => { const d = parseDate(iso); return (d.getMonth() + 1) + '/' + pad(d.getDate()); };
@@ -130,7 +130,7 @@ AE.waymark = (() => {
   function parseNick(name) {
     const found = [...String(name || '').matchAll(/(?:^|[^\d/])(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?![\d/])/g)];
     for (const m of found.reverse()) {
-      const mo = Number(m[1]) - 1, day = Number(m[2]), now = new Date();
+      const mo = Number(m[1]) - 1, day = Number(m[2]), now = AE.nowDate();
       const best = [-1, 0, 1].map((dy) => new Date(now.getFullYear() + dy, mo, day))
         .filter((d) => d.getMonth() === mo && d.getDate() === day)
         .sort((a, b) => Math.abs(a - now) - Math.abs(b - now))[0];
@@ -204,46 +204,63 @@ AE.waymark = (() => {
     const open = o && Date.now() - o.at < 30 * 60 * 1000 ? new Set(o.ids) : null;
     return Object.entries(cache.auto).filter(([id, m]) => m.due <= today() && (!open || open.has(Number(id))));
   }
-  async function scan(rows) {
+  /*
+    What a scan would do, as a plan: marks to create, marks that follow a later
+    date typed into the nickname, nicknames to rewrite, and WOs waiting for 7 PM.
+    The real scan carries it out; the dev tools' dry run just shows it.
+    noCreate: plan against existing marks only (after creating, when the
+    server may have ignored marks that were removed with ×).
+  */
+  function planScan(rows, c, noCreate) {
+    const plan = { create: [], follow: [], rename: [], waiting: [] };
+    for (const r of rows) {
+      if (Number(r.workorderStatusId) !== RFP_STATUS) continue;
+      const wo = Number(r.workorderId), nick = ((r.customerDevice && r.customerDevice.name) || '').trim();
+      let due = c.auto[wo] && c.auto[wo].due;
+      if (!due) {
+        if (noCreate) continue;
+        if (!(afterEod() || rfpSince(r) < today())) { plan.waiting.push({ wo, rfp: rfpSince(r), nick }); continue; } // today's RFPs wait for 7 PM
+        due = parseNick(nick) || addDays(rfpSince(r), AUTO_DAYS); // the nickname's date wins
+        plan.create.push({ wo, due, nick, from: parseNick(nick) ? 'nickname' : 'RFP day + ' + AUTO_DAYS });
+      }
+      if (nick === nickDate(due)) continue;
+      const typed = parseNick(nick);
+      if (typed && typed > due) { plan.follow.push({ wo, from: due, to: typed }); due = typed; } // a later date typed by hand: the mark follows
+      if (nick !== nickDate(due)) plan.rename.push({ wo, from: nick, to: nickDate(due), due });
+    }
+    return plan;
+  }
+
+  async function scan(rows, opts = {}) {
     if (!rows) {
-      if (Date.now() - GM_getValue(SCAN_KEY, 0) < SCAN_MS - 30000) return;
+      if (!opts.force && Date.now() - GM_getValue(SCAN_KEY, 0) < SCAN_MS - 30000) return null;
       GM_setValue(SCAN_KEY, Date.now());
       rows = await AE.data.workorders(Date.now(), 0);
     }
     GM_setValue(OPEN_KEY, { at: Date.now(), ids: rows.map((r) => Number(r.workorderId)) });
     let c = await load(true);
+    let plan = planScan(rows, c);
+    if (opts.dryRun) return Object.assign(plan, { rows });
     if (!AE.status.paused('waymark')) {
-      // Today's RFPs wait for end of day; earlier days' are overdue for marking now.
-      const marks = rows.filter((r) => Number(r.workorderStatusId) === RFP_STATUS && !c.auto[r.workorderId] && (afterEod() || rfpSince(r) < today()))
-        // The date already in the nickname wins; otherwise 3 days after the RFP day.
-        .map((r) => ({ wo: Number(r.workorderId), due: parseNick(r.customerDevice && r.customerDevice.name) || addDays(rfpSince(r), AUTO_DAYS) }));
-      if (marks.length) {
-        const j = await call('POST', '/auto', { marks }); // already-marked or removed ones are ignored
+      if (plan.create.length) {
+        const j = await call('POST', '/auto', { marks: plan.create.map(({ wo, due }) => ({ wo, due })) }); // removed ones are ignored
         if (j.created && j.created.length) c = await load(true);
+        plan = planScan(rows, c, true);
       }
-    }
-    // Keep nicknames and marks the same on every WO at Ready for pickup.
-    if (!AE.status.paused('waymark')) {
-      for (const r of rows) {
-        const m = c.auto[r.workorderId];
-        if (!m || Number(r.workorderStatusId) !== RFP_STATUS) continue;
-        const nick = ((r.customerDevice && r.customerDevice.name) || '').trim();
-        if (nick === nickDate(m.due)) continue;
-        try {
-          const typed = parseNick(nick);
-          if (typed && typed > m.due) { // someone moved the date later in the nickname: the mark follows
-            await call('POST', '/wo/' + r.workorderId + '/push', { due: typed, by: 'Nickname edit' });
-            m.due = typed;
-          }
-          await syncNickname(r.workorderId, m.due); // also tidies "10/5" → "10/05"
-        } catch (e) { console.warn('[' + AE_NAME + '] Waymark nickname sync, WO ' + r.workorderId + ':', e.message || e); }
+      for (const f of plan.follow) {
+        try { await call('POST', '/wo/' + f.wo + '/push', { due: f.to, by: 'Nickname edit' }); } catch (e) { console.warn('[' + AE_NAME + '] Waymark follow, WO ' + f.wo + ':', e.message || e); }
+      }
+      for (const r of plan.rename) {
+        try { await syncNickname(r.wo, r.due); } catch (e) { console.warn('[' + AE_NAME + '] Waymark nickname sync, WO ' + r.wo + ':', e.message || e); }
       }
     }
     const open = new Set(rows.map((r) => Number(r.workorderId)));
     const known = [...new Set([...Object.keys(c.tags), ...Object.keys(c.auto)].map(Number))];
     const closed = known.filter((id) => !open.has(id));
     if (closed.length) await call('POST', '/closed', { wos: closed });
+    return plan;
   }
+
 
   // ------------------------------------------------------------ UI bits
   const CSS = `
@@ -438,7 +455,7 @@ AE.waymark = (() => {
   const listSig = () => JSON.stringify(cache && cache.list);
   const summary = () => (cache ? cache.list.length + ' tag' + (cache.list.length === 1 ? '' : 's') : 'Store tags');
 
-  return { API, configured, load, tagsOf, autoOf, checkWo, dueMarks, today, OPEN_KEY, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
+  return { API, configured, load, tagsOf, autoOf, checkWo, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
 })();
 
 AE.crystal({
@@ -532,7 +549,7 @@ AE.crystal({
       if (!b) b = h('button', { type: 'button', id: BTN_ID, class: 'sg', title: 'Waymark: work orders by tag', 'aria-label': 'Waymark board', html: AE.actionIcon('waymark', 26), onclick: (e) => { e.stopPropagation(); toggleBoard(); } });
       if (b.parentElement !== anchor.parentElement || b.nextSibling !== anchor) anchor.parentElement.insertBefore(b, anchor);
       // Badge: open Auto-Waymarks due today (or overdue).
-      const n = W.dueMarks().length;
+      const n = demoBadge != null ? demoBadge : W.dueMarks().length; // demoBadge: dev tools
       let badge = b.querySelector('.badge');
       if (!n) { badge?.remove(); b.title = 'Waymark: work orders by tag'; }
       else {
@@ -547,6 +564,7 @@ AE.crystal({
     // First Portal load of the day: if any Auto-Waymarks were left open past
     // their due day (so open past 9 PM that night), a speech bubble from the icon.
     const MORNING_KEY = 'ae_wm_morning_shown';
+    let demoBadge = null;
     function placeBubble() {
       const bub = document.getElementById('sg-wm-bubble'), b = document.getElementById(BTN_ID);
       if (!bub || !b) return;
@@ -565,7 +583,10 @@ AE.crystal({
       const open = new Set(rows.map((r) => String(r.workorderId)));
       const late = Object.entries(c.auto).filter(([id, m]) => open.has(String(id)) && m.due < W.today()).length;
       GM_setValue(MORNING_KEY, W.today()); // once a day, whether or not there's anything to say
-      if (!late || document.getElementById('sg-wm-bubble')) return;
+      if (late) showBubble(late);
+    }
+    function showBubble(late) {
+      if (document.getElementById('sg-wm-bubble')) return;
       const bub = h('div', { id: 'sg-wm-bubble', class: 'sg sg-card', role: 'alert' },
         h('span', { class: 'tail' }),
         h('div', { class: 'top' }, h('span', { class: 'n' }, String(late)),
@@ -683,6 +704,13 @@ AE.crystal({
         setTimeout(() => W.checkWo(woId).catch((e) => console.warn('[' + AE_NAME + '] Auto-Waymark check:', e.message || e)), 1500);
       }).observe({ type: 'resource', buffered: false });
     } catch (_) { /* no PerformanceObserver: the 10-minute scan still covers it */ }
+
+    // Dev tools (dev builds only) drive these.
+    Object.assign(AE.hooks, {
+      waymarkBubble: (n) => { document.getElementById('sg-wm-bubble')?.remove(); showBubble(n); },
+      waymarkBadge: (n) => { demoBadge = n; renderButton(); },
+      waymarkMorning: () => { GM_deleteValue(MORNING_KEY); return morningNotice(); },
+    });
 
     AE.on('waymark-changed', () => { renderRow(); });
     W.load().catch(() => {});

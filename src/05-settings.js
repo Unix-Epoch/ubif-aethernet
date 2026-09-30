@@ -225,7 +225,7 @@
   // newer than it; otherwise just the latest is open.
   const PATCH_NOTES = __PATCH_NOTES__;
   const verTuple = (v) => String(v || '0').split('.').map(Number);
-  const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+  const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
   function openPatchNotes(since) {
     AE.ensureCss();
@@ -436,16 +436,20 @@
     logout.parentElement.insertBefore(item, logout);
   });
 
-  if (updated) {
+  function showUpdatedPill(fromVersion) {
+    document.getElementById('sg-update-pill')?.remove();
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
     const x = h('span', { class: 'x', role: 'button', 'aria-label': 'Dismiss', title: 'Dismiss' }, '✕');
     const pill = h('button', { type: 'button', class: 'sg sg-update-pill', id: 'sg-update-pill', title: "See what's new" },
       h('span', { html: icon('aetheryte', 20) }), AE_NAME + ' has updated!', h('span', { class: 'ver' }, 'v' + AE_VERSION), x);
     // Settings opens underneath (that's where new crystals are marked), with the patch notes on top.
-    pill.onclick = (e) => { pill.remove(); if (e.target !== x) { open(); openPatchNotes(lastVersion || AE_VERSION); } };
+    pill.onclick = (e) => { pill.remove(); if (e.target !== x) { open(); openPatchNotes(fromVersion || AE_VERSION); } };
     document.body.appendChild(pill);
   }
+  if (updated) showUpdatedPill(lastVersion);
+  AE.hooks.updatedPill = showUpdatedPill; // dev tools
+  AE.hooks.patchVersions = PATCH_NOTES.map((n) => n.version);
 
   if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(AE_NAME + ' settings', open);
   AE.openSettings = open;
