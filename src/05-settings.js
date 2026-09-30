@@ -19,6 +19,7 @@
     ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
     ['glamour', 'Glamour', 'Page theming: recolour Portal with a preset theme or one you make.'],
     ['waymark', 'Waymark', 'Work-order tags: tag WOs for the whole store and see them grouped on a board.'],
+    ['countCheck', 'Lay of the Land', 'Inventory count check: on a count, shows which expected serials haven\'t been scanned yet, and any unexpected scans.'],
   ];
 
   /*
