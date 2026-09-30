@@ -87,8 +87,8 @@ DEV = {
 # The demo channel: a cut-down build that must read as the real thing (no
 # "demo" anywhere a user can see: name, namespace, Gist, About).
 DEMO = {
-    "gist_id": "",                     # secret Gist, account Unix-Epoch
-    "version": "2.16.0",               # bump for each --demo publish
+    "gist_id": "70bd9467c98413dccf10e8d27cdea7ea",  # secret Gist, account Unix-Epoch
+    "version": "2.16.1",               # bump for each --demo publish
     "name": "Aethernet",
     "namespace": "garrett.aethernet",  # its own install + storage (can sit beside the public one)
     "dist": "dist-demo",

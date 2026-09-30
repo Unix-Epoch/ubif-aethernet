@@ -405,7 +405,7 @@ const AE = (() => {
     by the feedback module (06-feedback.js) every few minutes. Only feature
     names and counts — never page contents or customer details.
   */
-  const USAGE_KEY = 'ae_usage_pending';
+  const USAGE_KEY = AE_DEMO ? '' : 'ae_usage_pending';
   const localDay = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
   function track(feature) {
     if (AE_DEMO) return; // the demo build sends nothing anywhere
