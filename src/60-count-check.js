@@ -258,7 +258,7 @@ AE.crystal({
       const head = h('div', { class: 'head' }, h('span', { html: AE.actionIcon('countCheck', 26) }),
         h('b', null, 'Lay of the Land ', h('span', { class: 'sub' }, id + (s.at ? ' · updated ' + new Date(s.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''))),
         h('button', { type: 'button', class: 'sg-btn', style: 'height:30px;font-size:13px', onclick: () => load(id, false, true) }, 'Refresh'),
-        h('button', { type: 'button', class: 'sg-x', title: 'Close', onclick: () => p.remove() }, '✕'));
+        h('button', { type: 'button', class: 'sg-x', title: 'Close', onclick: () => { giveBackFocus(); p.remove(); } }, '✕'));
       if (s.status !== 'ready') {
         p.replaceChildren(head, h('div', { class: 'sg-soft', style: 'padding:10px 0' }, s.status === 'loading' ? 'Comparing expected and scanned serials…' : "Couldn't load this count: " + s.error));
         return;
@@ -268,7 +268,9 @@ AE.crystal({
       const stat = (k, v, bad) => h('div', { class: 'stat' + (bad ? ' bad' : '') }, h('div', { class: 'v' }, v.toLocaleString()), h('div', { class: 'k' }, k));
       const q = query.trim().toLowerCase();
       const hit = (...xs) => !q || xs.some((x) => String(x || '').toLowerCase().includes(q));
-      const search = h('input', { type: 'search', placeholder: 'Search serial or item', value: query, oninput: (e) => { query = e.target.value; renderPanel(); } });
+      const search = h('input', { type: 'search', placeholder: 'Search serial or item', value: query,
+        oninput: (e) => { query = e.target.value; renderPanel(); clearTimeout(searchIdle); searchIdle = setTimeout(giveBackFocus, 4000); },
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); giveBackFocus(); } } });
       const tabBtn = (t, label, n) => h('button', { type: 'button', class: 'tab' + (tab === t ? ' on' : ''), onclick: () => { tab = t; renderPanel(); p.querySelector('.list').scrollTop = 0; } }, label + ' (' + n.toLocaleString() + ')');
       const serialBtn = (x, title) => h('button', { type: 'button', title: title || 'Copy', onclick: () => copy(x, x) }, x);
       const setAll = (keys, on) => { keys.forEach((k) => (on ? open.add(k) : open.delete(k))); renderPanel(); };
@@ -290,7 +292,7 @@ AE.crystal({
         shownMissing = items.flatMap((m) => m.shown);
         const keys = items.map((m) => 'item:' + m.itemId);
         const anyClosed = keys.some((k) => !open.has(k));
-        const sortSel = h('select', { 'aria-label': 'Sort', onchange: (e) => { sortBy = e.target.value; renderPanel(); } },
+        const sortSel = h('select', { 'aria-label': 'Sort', onchange: (e) => { sortBy = e.target.value; renderPanel(); giveBackFocus(); } },
           [['missing', 'Most missing first'], ['name', 'Item name A–Z'], ['category', 'By category']].map(([v, l]) => { const o = h('option', { value: v }, l); o.selected = v === sortBy; return o; }));
         controls = h('div', { class: 'cats' },
           h('button', { type: 'button', class: 'cat' + (cat === 'all' ? ' on' : ''), onclick: () => { cat = 'all'; renderPanel(); } }, 'All ' + d.missingCount.toLocaleString()),
@@ -332,6 +334,32 @@ AE.crystal({
       }
       if (focused) { const inp = p.querySelector('.tools input'); inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
     }
+    /*
+      Scanners type into Portal's scan box (ending with Enter), so our UI must
+      never keep keyboard focus: a scan would land in it — or its Enter would
+      press one of our buttons. Buttons don't take focus when clicked; the sort
+      menu and the search box hand it back to the page field used last.
+    */
+    const OURS = '#' + PANEL_ID + ', #' + PILL_ID;
+    let lastPageField = null, searchIdle = null;
+    document.addEventListener('focusin', (e) => {
+      const t = e.target;
+      if (t.closest && !t.closest(OURS) && t.matches('input, textarea, select, [contenteditable="true"]')) lastPageField = t;
+    }, true);
+    function giveBackFocus() {
+      clearTimeout(searchIdle);
+      const a = document.activeElement;
+      // Leave it alone if it's already on something of the page's; otherwise (ours,
+      // or dropped to <body> when a redraw removed the focused control) put it back.
+      if (a && a !== document.body && a.closest && !a.closest(OURS)) return;
+      if (lastPageField && lastPageField.isConnected && !lastPageField.disabled) lastPageField.focus({ preventScroll: true });
+      else a.blur();
+    }
+    document.addEventListener('mousedown', (e) => {
+      const t = e.target.closest && e.target.closest(OURS);
+      if (t && !e.target.closest('input, select')) e.preventDefault(); // click without taking focus
+    }, true);
+
     document.addEventListener('click', (e) => {
       const p = document.getElementById(PANEL_ID), path = e.composedPath();
       if (p && !path.includes(p) && !path.includes(document.getElementById(PILL_ID))) p.remove();
