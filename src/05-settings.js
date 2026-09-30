@@ -27,6 +27,7 @@
     ...(AE_DEMO ? [] : [
     ['waymark', 'Waymark', 'Work-order tags: tag WOs for the whole store and see them grouped on a board.'],
     ['countCheck', 'Lay of the Land', 'Inventory count check: on a count, shows which expected serials haven\'t been scanned yet, and any unexpected scans.'],
+    ['rowColors', 'Rainbow Drip', 'WO list colors: colors each row of the work-order list by its status.'],
     ]),
   ];
 

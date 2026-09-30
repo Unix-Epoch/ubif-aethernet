@@ -1,5 +1,11 @@
 [
   {
+    "version": "2.17.0",
+    "notes": [
+      "New crystal: **Rainbow Drip**. Work-order lists color each row by its status: red for Ready for work; blue for Diagnostics, Work in progress and Quality check; green for Ready for pickup; purple for Need to order, Ready for diag and Repair summary; yellow for Awaiting callback, Awaiting item and Awaiting device."
+    ]
+  },
+  {
     "version": "2.16.0",
     "notes": [
       "New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates as each item is scanned, without losing your place in the list.",

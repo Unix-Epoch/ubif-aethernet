@@ -29,7 +29,7 @@ const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
     crystals: AE_DEMO ? { cleaningRate: true, autoClose: true, glamour: true }
-      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true },
+      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true },
     cleaningRate: { target: 75 },
     glamour: { theme: 'portal', custom: [] }, // custom: [{ id, name, bg, fg, accent, custom: true }]
     ...(AE_DEMO ? {} : {
