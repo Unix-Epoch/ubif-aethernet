@@ -35,7 +35,7 @@ const AE = (() => {
       login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
     ...(AE_DEMO ? {} : {
       printLabels: { delayMs: 900 },
-      fixes: { logoLink: true, scanNav: true, woSort: true }, // Master's Mend: one switch per fix (src/58-fixes.js)
+      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true }, // Master's Mend: one switch per fix (src/58-fixes.js)
       // Blank = use the logged-in user / current store automatically.
       galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
     }),
@@ -93,7 +93,8 @@ const AE = (() => {
       - refresh { tags? }       → invalidate Portal's RTK Query tags in use
                                   (or just `tags`): what's on screen refetches,
                                   as after Portal's own edits. { stores, apis, tags }
-      - select { slice, key }   → state[slice][key] from the store that has it
+      - select { slice, key, pick? } → state[slice][key] from the store that has
+                                  it (pick: for a list, just those fields of each item)
       - query { endpoint, list, field } → the newest loaded result of an RTK
                                   Query endpoint: `field` of each item in data[list]
       - dispatch { slice, action } → the action, to the stores that have `slice`
@@ -145,7 +146,10 @@ const AE = (() => {
       '    },',
       '    select: function (a) {',
       '      var st = stores().map(function (s) { return s.getState() || {}; }).find(function (st) { return st[a.slice]; });',
-      '      return { found: !!st, value: st ? st[a.slice][a.key] : null };',
+      '      var v = st ? st[a.slice][a.key] : null;',
+      // pick: for a list, only these fields of each item (keeps the answer small)
+      '      if (a.pick && Array.isArray(v)) v = v.map(function (x) { var o = {}; a.pick.forEach(function (k) { o[k] = x && x[k]; }); return o; });',
+      '      return { found: !!st, value: v };',
       '    },',
       '    query: function (a) {',
       // The newest loaded result of an RTK Query endpoint: one field from each item of a list in it.

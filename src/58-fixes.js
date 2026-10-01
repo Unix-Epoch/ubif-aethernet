@@ -31,6 +31,15 @@
     sends Portal the same scanDetected event, so Portal's own scan features
     work with those scanners too.
 
+  - autoNotes: a "Hide auto notes" switch at the top of a WO's notes.
+    Portal's notes are noteType Auto (1: status changes, "X started
+    check-in", estimate/contact logs…) or Manual (2: what people write; also
+    Recitation's text notes). The notes tab (data-testid "notes-tab") draws
+    each as a card with id "note-<noteId>" from the Redux "notes" slice, so
+    the auto ones' ids come from there (AE.portal select) and a stylesheet
+    hides them; nothing is changed or deleted, and Portal's cards aren't
+    touched. The switch is remembered in this browser; flip it back any time.
+
   - woSort: sort the Work orders list by any column. Portal's table only
     offers ▲▼ on one or two columns per tab (repair.js FA[…].sortableColumns),
     though the server sorts by more. The list's sort is Redux state
@@ -53,6 +62,7 @@
 */
 AE.fixesInfo = [
   ['logoLink', 'Logo link', 'The ubreakifix logo is a real link to the dashboard: middle-click or right-click it to open a new tab.'],
+  ['autoNotes', 'Hide auto notes switch', 'A switch at the top of a work order\'s notes hides the automatic ones (status changes, check-in logs…) so only what people wrote shows. Flip it back any time; nothing is deleted.'],
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
   ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Never on inventory, check-in or check-out pages, or while typing in a field.'],
 ];
@@ -82,6 +92,61 @@ AE.crystal({
           });
           wrap.append(link);
         });
+      },
+      autoNotes() {
+        const KEY = 'ae_hide_auto_notes', AUTO = 1; // Portal's NoteType.Auto
+        const BAR = 'ae-notes-bar', STYLE = 'ae-notes-hide';
+        document.head.append(AE.h('style', null, `
+          #${BAR} { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin:-4px 0 -6px; font-size:13px; color:var(--aui-on-surface-soft, #5d5e61); }
+          #${BAR} label { display:inline-flex; align-items:center; gap:8px; padding:4px 10px 4px 6px; border-radius:10000rem; cursor:pointer; user-select:none;
+            border:1px solid var(--aui-outline, #c6c6ca); background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font-weight:600; }
+          #${BAR} label:hover { border-color:var(--aui-primary, #8223d2); }
+          #${BAR} input { position:absolute; opacity:0; pointer-events:none; }
+          #${BAR} .knob { position:relative; width:30px; height:18px; border-radius:10000rem; background:var(--aui-outline, #c6c6ca); transition:background .15s; flex:none; }
+          #${BAR} .knob::after { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; transition:left .15s; }
+          #${BAR} input:checked + .knob { background:var(--aui-primary, #8223d2); }
+          #${BAR} input:checked + .knob::after { left:14px; }
+          #${BAR} input:focus-visible + .knob { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; }
+          #${BAR} .n { font-weight:400; }
+        `));
+        let hide = !!GM_getValue(KEY, false);
+        const style = AE.h('style', { id: STYLE });
+        document.head.append(style);
+
+        function autoIds() {
+          const r = AE.portal('select', { slice: 'notes', key: 'notes', pick: ['noteId', 'noteType'] });
+          return r && Array.isArray(r.value) ? r.value.filter((n) => Number(n.noteType) === AUTO || /^auto$/i.test(n.noteType)).map((n) => String(n.noteId)) : null;
+        }
+        function paint() {
+          const tab = document.querySelector('[data-testid="notes-tab"]');
+          if (!tab) { if (style.textContent) style.textContent = ''; return; }
+          const cards = [...tab.querySelectorAll('[id^="note-"]')].filter((c) => /^note-\d+$/.test(c.id));
+          const ids = autoIds();
+          const shownAuto = ids ? cards.filter((c) => ids.includes(c.id.slice(5))) : [];
+          const css = hide && shownAuto.length ? shownAuto.map((c) => '#' + CSS.escape(c.id)).join(',') + ' { display:none !important; }' : '';
+          if (style.textContent !== css) style.textContent = css;
+
+          let bar = document.getElementById(BAR);
+          const list = cards[0] && cards[0].parentElement;
+          if (!list) { bar?.remove(); return; }
+          if (!bar || bar.nextElementSibling !== list) {
+            bar?.remove();
+            const input = AE.h('input', { type: 'checkbox', checked: hide, onchange: (e) => { hide = e.target.checked; GM_setValue(KEY, hide); AE.track(hide ? 'fixes:hideAutoNotes' : 'fixes:showAutoNotes'); paint(); } });
+            bar = AE.h('div', { id: BAR },
+              AE.h('span', { class: 'n' }),
+              AE.h('label', { title: 'Hide the automatic notes (status changes, check-in logs…). Nothing is deleted; flip it back any time.' },
+                input, AE.h('span', { class: 'knob' }), 'Hide auto notes'));
+            list.before(bar); // Portal's list is a flex column; we sit just above it
+          }
+          bar.querySelector('input').checked = hide;
+          bar.querySelector('.n').textContent = ids === null ? "Can't tell note types apart here"
+            : hide ? (shownAuto.length ? shownAuto.length + ' auto note' + (shownAuto.length === 1 ? '' : 's') + ' hidden' : 'No auto notes')
+            : shownAuto.length + ' auto note' + (shownAuto.length === 1 ? '' : 's');
+        }
+        let queued = false;
+        new MutationObserver(() => { if (!queued) { queued = true; setTimeout(() => { queued = false; try { paint(); } catch (e) { AE.noteError('autoNotes', e); } }, 150); } })
+          .observe(document.body, { childList: true, subtree: true });
+        paint();
       },
       woSort() {
         // Header text → Portal's column id (repair.js WA), and whether the server sorts it.
