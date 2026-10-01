@@ -243,7 +243,7 @@ AE.crystal({
       running = true; stopRequested = false;
       const runner = fake ? (it, log) => fakeRun(it, log, fake) : (it, log) => run(it.arrivalId, log);
       const panel = AE.progressPanel(castingTitle(items.length) + (fake ? ' (test)' : ''),
-        { icon: castOf(items.length)[0], total: items.reduce((n, it) => n + stepsFor(it.programId) + 1, 0) }); // +1: each cleaning's "1 of 2" line
+        { icon: castOf(items.length)[0], total: items.reduce((n, it) => n + stepsFor(it.programId) + 1, 0), hold: true }); // +1: each cleaning's "1 of 2" line
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       const done = [], notes = [];
@@ -291,7 +291,7 @@ AE.crystal({
       if (!checked && await storeClosed()) return;
       AE.track('autoClose:run');
       running = true; stopRequested = false;
-      const panel = AE.progressPanel(castingTitle(1), { icon: 'autoClose', total: 9 });
+      const panel = AE.progressPanel(castingTitle(1), { icon: 'autoClose', total: 9, hold: true });
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       let woId = null;

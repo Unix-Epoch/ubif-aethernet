@@ -364,6 +364,15 @@ const AE = (() => {
   .sg-aicon { display:inline-block; flex:none; border-radius:22%; vertical-align:middle; box-shadow:0 0 0 1px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.25); }
   @keyframes sg-spin { to { transform: rotate(360deg); } }
   @keyframes sg-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+  .sg-hold { display:flex; gap:6px; align-items:flex-start; margin:0 0 10px; padding:6px 9px; border-radius:8px; font-size:12px;
+    background:var(--aui-status-warning-soft, #fff4cc); color:var(--aui-status-on-warning-soft, #3d2e00); }
+  .sg-hold.nudge { animation:sg-nudge .45s ease-in-out 2; }
+  @keyframes sg-nudge { 0%,100% { transform:none; } 25% { transform:translateX(-4px); } 75% { transform:translateX(4px); } }
+  .sg-min-wrap { position:relative; display:inline-flex; }
+  .sg-collapse-tip { position:absolute; right:-12px; bottom:calc(100% + 12px); z-index:1; white-space:nowrap; padding:8px 12px; font-size:13px; font-weight:700;
+    cursor:pointer; animation:sg-in .25s ease-out; }
+  .sg-collapse-tip::after { content:''; position:absolute; bottom:-8px; right:20px; width:16px; height:16px; transform:rotate(45deg);
+    background:var(--aui-surface, #fff); box-shadow:2px 2px 3px rgba(12,14,17,.08); }
   @keyframes sg-flash { 0%,100% { box-shadow:0 8px 28px rgba(12,14,17,.18); } 50% { box-shadow:0 0 0 3px var(--aui-primary, #8223d2); } }
   `;
   function ensureCss() {
@@ -451,22 +460,61 @@ const AE = (() => {
     const rect = (cls) => '<rect class="' + cls + '" x="' + i + '" y="' + i + '" width="' + side + '" height="' + side + '" rx="' + r + '" pathLength="' + n + '" stroke-width="' + w + '"/>';
     sp.append(h('span', { class: 'ants', html: '<svg width="' + z + '" height="' + z + '" viewBox="0 0 ' + z + ' ' + z + '">' + rect('under') + rect('run') + '</svg>' }));
   }
-  function progressPanel(title, { clock = true, icon: iconId = null, total = 0 } = {}) {
+  /*
+    Holding the page while a run must not be cut off (Swiftcast & co.): F5 /
+    Ctrl+R / Cmd+R (with or without Shift) are swallowed and onBlocked() is
+    called; anything else that would unload the page (the browser's reload
+    button, closing the tab, a full navigation) gets the browser's own
+    "Leave site?" prompt. Browsers don't let a page refuse that outright, so
+    the run's box also says not to reload. Returns release().
+  */
+  const holds = new Set();
+  function onUnload(e) { if (!holds.size) return; e.preventDefault(); e.returnValue = ''; return ''; }
+  function onKey(e) {
+    if (!holds.size) return;
+    const k = (e.key || '').toLowerCase();
+    if (k === 'f5' || ((e.ctrlKey || e.metaKey) && k === 'r')) { e.preventDefault(); e.stopImmediatePropagation(); [...holds].forEach((x) => x.onBlocked && x.onBlocked()); }
+  }
+  function holdPage(onBlocked) {
+    const x = { onBlocked };
+    if (!holds.size) { window.addEventListener('beforeunload', onUnload, true); window.addEventListener('keydown', onKey, true); }
+    holds.add(x);
+    return () => {
+      if (!holds.delete(x) || holds.size) return;
+      window.removeEventListener('beforeunload', onUnload, true); window.removeEventListener('keydown', onKey, true);
+    };
+  }
+  const COLLAPSE_TIP_KEY = 'ae_collapse_tip_seen';
+
+  // hold: keep the page from being reloaded until finish() (see holdPage).
+  function progressPanel(title, { clock = true, icon: iconId = null, total = 0, hold = false } = {}) {
     ensureCss();
     document.querySelectorAll('.sg-panel[data-sg-title="' + title + '"]').forEach((p) => { p._orb?.remove(); p.remove(); });
     const head = iconId ? spellIcon(iconId, 30) : h('span', { class: 'sg-spin' });
     const titleEl = h('span', { class: 'sg-panel-title' }, title);
     const clk = clock ? h('span', { class: 'sg-clock' }, '0.0s') : null;
-    const shrink = iconId ? h('button', { class: 'sg-x sg-min', title: 'Collapse to the spell icon', onclick: () => api.collapse() }, '–') : null;
+    const shrink = iconId ? h('button', { class: 'sg-x sg-min', title: 'Collapse to the spell icon', onclick: () => { tipSeen(); api.collapse(); } }, '–') : null;
+    // First collapsible box this user sees: a speech bubble over the – button.
+    let tip = null;
+    const tipSeen = () => { if (tip) { tip.remove(); tip = null; GM_setValue(COLLAPSE_TIP_KEY, true); } };
+    if (shrink && !GM_getValue(COLLAPSE_TIP_KEY, false) && !document.querySelector('.sg-collapse-tip')) {
+      tip = h('div', { class: 'sg-card sg-collapse-tip', role: 'note', title: 'Click to dismiss', onclick: tipSeen }, 'This is now collapsible!');
+    }
+    const holdNote = hold ? h('div', { class: 'sg-hold' }, h('span', null, '🔒'),
+      h('span', null, h('b', null, 'Don\'t reload or close this tab'), ' until this finishes, or work orders can be left half-done. Reloading is blocked here; your browser will ask before leaving.')) : null;
     const close = h('button', { class: 'sg-x', title: 'Close', style: 'display:none', onclick: () => { orb?.remove(); panel.remove(); } }, '✕');
     const steps = h('ul', { class: 'sg-steps' });
     const body = h('div');
     const msg = h('div', { class: 'sg-msg', style: 'display:none' });
     const actions = h('div', { class: 'sg-actions' });
     const panel = h('div', { class: 'sg sg-card sg-panel' + (iconId ? ' sg-spellbox' : ''), 'data-sg-title': title },
-      h('div', { class: 'sg-panel-head' }, head, titleEl, clk, shrink, close),
-      body, steps, msg, actions);
+      h('div', { class: 'sg-panel-head' }, head, titleEl, clk, shrink && (tip ? h('span', { class: 'sg-min-wrap' }, shrink, tip) : shrink), close),
+      holdNote, body, steps, msg, actions);
     document.body.appendChild(panel);
+    const release = hold ? holdPage(() => {
+      api.flash();
+      holdNote.classList.remove('nudge'); void holdNote.offsetWidth; holdNote.classList.add('nudge');
+    }) : () => {};
 
     let done = 0, planned = total, shown = 0, target = 0, anim = null, finished = null, orb = null;
     const icons = () => [head, orb && orb.querySelector('.sg-spell')].filter((x) => x && x.classList && x.classList.contains('sg-spell'));
@@ -514,6 +562,7 @@ const AE = (() => {
       expand() { if (orb) orb.remove(); panel.style.display = ''; },
       finish(kind, html) { // kind: 'ok' | 'err' | 'stop'
         finished = kind;
+        release(); holdNote?.remove(); tipSeen();
         if (timer) { clearInterval(timer); clk.textContent = fmt(performance.now() - t0); }
         if (iconId) {
           if (kind === 'ok') setTarget(1);
@@ -770,7 +819,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
-    api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,

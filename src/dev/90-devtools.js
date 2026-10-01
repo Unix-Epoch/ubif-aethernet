@@ -245,6 +245,7 @@
       row(btn('Fake Dualcast run', () => { if (!AE.hooks.dualcastFake) throw new Error('Turn Swiftcast on first.'); AE.hooks.dualcastFake(); }, { close: true, title: 'The real confirmation and progress panel, simulated steps: nothing is sent to Portal.' }),
         btn('Fake Dualcast, 2nd fails', () => { if (!AE.hooks.dualcastFake) throw new Error('Turn Swiftcast on first.'); AE.hooks.dualcastFake({ fail: true }); }, { close: true })),
       row(btn('Swiftcast progress panel (fake)', demoProgress, { close: true }),
+        btn('… with the collapse tip', () => { GM_deleteValue('ae_collapse_tip_seen'); demoProgress(); }, { close: true, title: 'Shows the "This is now collapsible!" bubble again. The fake run also blocks reloading until it ends.' }),
         btn('Toast: done', () => AE.toast('Waymark', 'Tag list saved for everyone at the store.', 'ok')),
         btn('Toast: error', () => AE.toast("Couldn't send", 'HTTP 503 — try again in a minute.', 'err')),
         btn('Toast: busy', () => { const t = AE.toast('Checking for updates…', '', 'busy'); setTimeout(() => t.remove(), 3000); }),
@@ -265,7 +266,7 @@
 
   function demoProgress() {
     const steps = ['IMEI validated', 'Created WO 500000000', 'Checked in', 'Started work', 'Diagnostics done', 'Work done', 'QC done', 'Ready for pickup', 'Sale complete'];
-    const panel = AE.progressPanel('Swiftcasting… (test)', { icon: 'autoClose', total: steps.length });
+    const panel = AE.progressPanel('Swiftcasting… (test)', { icon: 'autoClose', total: steps.length, hold: true });
     let i = 0, stop = false;
     const stopBtn = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stop = true; } }, '■ Stop');
     panel.actions(stopBtn);
