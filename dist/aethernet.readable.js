@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.16.0
+// @version      2.17.0
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -35,10 +35,13 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.16.0';            // filled in by build.py
+const AE_VERSION = '2.17.0';            // filled in by build.py
 const AE_DEV = false;                      // true only in the dev channel ("Aethernet (dev)")
-const AE_BUILD_TIME = '2026-09-30T18:37:40-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = '0dc515b-dirty';   // git commit it was built from ("-dirty" = uncommitted changes)
+// false (used bare, never declared): build.py swaps it for true in the demo
+// channel's build (build.py --demo: only a few crystals, nothing else) and
+// false everywhere else, so the other side's code is dropped by the minifier.
+const AE_BUILD_TIME = '2026-10-01T01:28:46-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = '87de4cf-dirty';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';
 const AE_READABLE_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.readable.js'; // same build, unminified     // where installs update from
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
@@ -46,12 +49,17 @@ const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
-    crystals: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true },
+    crystals: false ? { cleaningRate: true, autoClose: true, glamour: true }
+      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, fixes: true },
     cleaningRate: { target: 75 },
-    printLabels: { delayMs: 900 },
-    glamour: { theme: 'portal', custom: [] }, // custom: [{ id, name, bg, fg, accent, custom: true }]
-    // Blank = use the logged-in user / current store automatically.
-    galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
+    glamour: { theme: 'portal', custom: [], // custom: [{ id, name, bg, fg, accent, custom: true }]
+      login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
+    ...(false ? {} : {
+      printLabels: { delayMs: 900 },
+      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all' }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
+      // Blank = use the logged-in user / current store automatically.
+      galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
+    }),
   };
 
   // Cleaning programs, from the ubif-workorders audit rules. Shared by the
@@ -96,6 +104,157 @@ const AE = (() => {
     try { return text ? JSON.parse(text) : null; } catch (_) { return text; }
   }
   const unwrap = (j) => (j && j.data && !Array.isArray(j.data) ? j.data : j);
+
+  /*
+    Portal's state, from inside the page. Portal is several React apps
+    (single-spa), each with its own Redux store; a userscript can't reach
+    React or Redux, so a small script in the page finds the stores through
+    React's fiber trees (cached a few seconds) and answers AE.portal(op, args)
+    synchronously over DOM events (JSON in, JSON out):
+      - refresh { tags? }       → invalidate Portal's RTK Query tags in use
+                                  (or just `tags`): what's on screen refetches,
+                                  as after Portal's own edits. { stores, apis, tags }
+      - select { slice, key, pick? } → state[slice][key] from the store that has
+                                  it (pick: for a list, just those fields of each item)
+      - query { endpoint, list, field } → the newest loaded result of an RTK
+                                  Query endpoint: `field` of each item in data[list],
+                                  plus the arguments it was loaded with (args)
+      - patch { endpoint, patches } → change the newest loaded result of an RTK
+                                  Query endpoint in place (immer patches on its data),
+                                  as Portal's own patchQueryData does; the screen follows
+      - dispatch { slice, action } → the action, to the stores that have `slice`
+  */
+  const BRIDGE_EVENT = 'aethernet:portal';
+  function bridgeHook() {
+    if (document.getElementById('ae-portal-hook')) return;
+    // A plain string: it runs in the page, outside Aethernet (see Glamour).
+    const code = [
+      '(function (evt) {',
+      '  var key = function (n, p) { return Object.keys(n).find(function (k) { return k.indexOf(p) === 0; }); };',
+      '  var cache = null, cachedAt = 0;',
+      '  function stores() {',
+      '    if (cache && Date.now() - cachedAt < 5000) return cache;',
+      '    var found = [];',
+      '    document.querySelectorAll("*").forEach(function (el) {',
+      '      var k = key(el, "__reactContainer$"); if (!k) return;',
+      // The container keeps the root fiber from creation; the live tree hangs off its FiberRoot.current.
+      '      var root = el[k], stack = [root && root.stateNode && root.stateNode.current || root], seen = 0;',
+      '      while (stack.length && seen++ < 20000) {',
+      '        var f = stack.pop(); if (!f) continue;',
+      '        var p = f.memoizedProps, s = p && (p.store || (p.value && p.value.store));',
+      '        if (s && typeof s.dispatch === "function" && typeof s.getState === "function" && found.indexOf(s) < 0) found.push(s);',
+      '        if (f.sibling) stack.push(f.sibling);',
+      '        if (f.child) stack.push(f.child);',
+      '      }',
+      '    });',
+      '    cache = found; cachedAt = Date.now();',
+      '    return found;',
+      '  }',
+      '  var ops = {',
+      '    refresh: function (a) {',
+      '      var want = a.tags || null, out = { stores: 0, apis: 0, tags: [] };',
+      '      stores().forEach(function (store) {',
+      '        out.stores++;',
+      '        var state = store.getState() || {};',
+      '        Object.keys(state).forEach(function (path) {',
+      '          var v = state[path];',
+      '          if (!v || typeof v !== "object" || !v.queries || !v.config || !v.provided) return;',
+      '          var provided = v.provided.tags || v.provided;',
+      '          var types = Object.keys(provided).filter(function (t) { return t !== "keys" && (!want || want.indexOf(t) >= 0); });',
+      '          if (!types.length) return;',
+      '          store.dispatch({ type: path + "/invalidateTags", payload: types });',
+      '          out.apis++;',
+      '          types.forEach(function (t) { if (out.tags.indexOf(t) < 0) out.tags.push(t); });',
+      '        });',
+      '      });',
+      '      return out;',
+      '    },',
+      '    select: function (a) {',
+      '      var st = stores().map(function (s) { return s.getState() || {}; }).find(function (st) { return st[a.slice]; });',
+      '      var v = st ? st[a.slice][a.key] : null;',
+      // pick: for a list, only these fields of each item (keeps the answer small)
+      '      if (a.pick && Array.isArray(v)) v = v.map(function (x) { var o = {}; a.pick.forEach(function (k) { o[k] = x && x[k]; }); return o; });',
+      '      return { found: !!st, value: v };',
+      '    },',
+      '    query: function (a) {',
+      // The newest loaded result of an RTK Query endpoint: one field from each item of a list in it.
+      '      var best = null;',
+      '      stores().forEach(function (s) {',
+      '        var st = s.getState() || {};',
+      '        Object.keys(st).forEach(function (k) {',
+      '          var q = st[k] && st[k].queries; if (!q || typeof q !== "object") return;',
+      '          Object.keys(q).forEach(function (id) {',
+      '            var e = q[id];',
+      '            if (e && e.endpointName === a.endpoint && e.status === "fulfilled" && e.data && (!best || e.fulfilledTimeStamp > best.fulfilledTimeStamp)) best = e;',
+      '          });',
+      '        });',
+      '      });',
+      '      var list = best && best.data && best.data[a.list];',
+      '      return { found: !!best, at: best ? best.fulfilledTimeStamp : 0, args: best ? best.originalArgs : null, items: Array.isArray(list) ? list.map(function (x) { return x && x[a.field]; }) : null };',
+      '    },',
+      '    patch: function (a) {',
+      // Patch the newest loaded result of an endpoint in place (RTK's own patchQueryData action).
+      '      var best = null;',
+      '      stores().forEach(function (s) {',
+      '        var st = s.getState() || {};',
+      '        Object.keys(st).forEach(function (k) {',
+      '          var q = st[k] && st[k].queries; if (!q || typeof q !== "object") return;',
+      '          Object.keys(q).forEach(function (id) {',
+      '            var e = q[id];',
+      '            if (e && e.endpointName === a.endpoint && e.status === "fulfilled" && (!best || e.fulfilledTimeStamp > best.e.fulfilledTimeStamp)) best = { s: s, k: k, id: id, e: e };',
+      '          });',
+      '        });',
+      '      });',
+      '      if (!best) return { ok: false };',
+      '      best.s.dispatch({ type: best.k + "/queries/queryResultPatched", payload: { queryCacheKey: best.id, patches: a.patches } });',
+      '      return { ok: true };',
+      '    },',
+      '    dispatch: function (a) {',
+      '      var n = 0;',
+      '      stores().forEach(function (s) { if ((s.getState() || {})[a.slice]) { s.dispatch(a.action); n++; } });',
+      '      return { stores: n };',
+      '    },',
+      '  };',
+      '  document.addEventListener(evt, function (e) {',
+      '    var out;',
+      '    try { var req = JSON.parse(e.detail); out = ops[req.op](req.args || {}); }',
+      '    catch (err) { out = { error: String(err && err.message || err) }; }',
+      '    document.dispatchEvent(new CustomEvent(evt + ":done", { detail: JSON.stringify(out) }));',
+      '  });',
+      '})(' + JSON.stringify(BRIDGE_EVENT) + ');',
+    ].join('\n');
+    const s = document.createElement('script');
+    s.id = 'ae-portal-hook';
+    s.textContent = code;
+    (document.head || document.documentElement).append(s);
+  }
+  function portal(op, args) {
+    let result = { error: 'no answer' };
+    const done = (e) => { try { result = JSON.parse(e.detail); } catch (_) {} };
+    try {
+      bridgeHook();
+      document.addEventListener(BRIDGE_EVENT + ':done', done, { once: true });
+      document.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: JSON.stringify({ op, args }) })); // handled synchronously
+    } catch (e) { result = { error: e.message }; }
+    document.removeEventListener(BRIDGE_EVENT + ':done', done);
+    return result;
+  }
+
+  // Refresh what's on screen without reloading, after a crystal changes
+  // Portal data behind its back (a note, a nickname, a new WO).
+  let refreshing = null;
+  function refreshView(tags) {
+    if (refreshing) return refreshing; // several changes in a row → one refresh
+    refreshing = new Promise((resolve) => {
+      setTimeout(() => {
+        refreshing = null;
+        const result = portal('refresh', { tags: tags || null });
+        if (!result.stores || result.error) console.warn('[' + AE_NAME + '] in-place refresh found nothing to refresh', result);
+        resolve(result);
+      }, 250);
+    });
+    return refreshing;
+  }
 
   // ------------------------------------------------------------ profile
   let profilePromise = null;
@@ -180,7 +339,7 @@ const AE = (() => {
   // Minimal element builder: h('div', {class:'x', onclick}, child, 'text')
   // Each crystal's FFXIV action icon, plus a few FFXIV UI pieces under "ui/<name>"
   // (embedded by build.py from assets/icons/ and assets/ui/).
-  const ACTION_ICONS = {"autoClose": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAMKADAAQAAAABAAAAMAAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAMAAwAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwQDAwMEBQQEBAQFBwUFBQUFBwgHBwcHBwcICAgICAgICAoKCgoKCgsLCwsLDQ0NDQ0NDQ0NDf/bAEMBAgICAwMDBgMDBg0JBwkNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDf/dAAQAA//aAAwDAQACEQMRAD8A/KL9pS9+OfxD8ez/ABQ+N4nl1LVYoZEZ4XtoUs2JMSWyPnEADEpjIwc5NfRH7PH7EPjv4zaWupXB/sLwdeYlgv7hN08oP3hBDwX/AN8kJnOCRiv2A8EfDbwh+2d8NPBXxE+Ititxc6RC+n4GCl/DbFWh8zOWCOAd654fdjAavEPjV+0Z4m03xBP8KPhPZPo+naWRZXOqQwgOdnyGO0XAWOOLGNw5OPlwOvl8NZrVx1GrVULqL0dt1ZXdrvZtxfnFn6PwZgp1MXPDYZRvOyTetk0079015b2PMfF37DX7MPwE8A3PizxUmq+Ib2ILBaR3l55AvL6XiKJUhVcBm5PJwoPNa3g79i/9l/43fDvT/GXhS31PQZr6HbOlteed9lu0AEkZSZWyFbpyMqQc16J8Z7X/AIWi/h+XURdT6X4autOt7RMlVvLyfy1luHzywyCq9+vrVX4Baofh1pF2bq1m07R9Uk1OCeIkskF9YzTQxyoeoWUpj249K5M9wWecS4DE5XwdiJ0Mww0oTjZLkqRu1UpyTTi/d96Cau5R5VpJmPE+TLAxpOpBcqupeTlbkt321XS+p+fHx9/Yi8T/AAotJdV0iUa34ctg0j3US7Z484x58fOB0+YErx1HSvjb4Y/Fr4hfs9fEiz+JXw0vRp2rWO5BuXfDPC5BeGZMjfG+0blyM4r9zPAvxw1HxTqi+A/G9o1zLqBe3gumjBWTfkeXOuMMG6bu/Q5618V/tQ/seaR4R1OfxBo92kFvqXmTR2Kgn7M0YzIhI4CjIxk98V97mUeJsDhnlPFMKft6TX72kvcqxVoxlb7El9qNkru6SW/wkcXGri5YCUPeSbTjdppav0ceq7a7H//Q9+/YVv8AVtA/Ys0yOWcx6nqV1epY72yN8spSGMHqodkKAjoXzXCXfhnxLJq63nhnXrTyrlxM0GpWkc8/lN83lq5wfruyQRwa4r9n74nWl/8Asg6VfaNsu5fDuvpYTCT5WR7hv3UgwThg0ylSTjIr1P4heJ79V07xFp6wCLU4ku42A2kNK7JcRHbjmG6SVD227SeteZhsqpTzn+zqcnCM07OO2t+zs093dPVn7Hw7k+F5G6E/ejJ295JtaWvo736ej+XX6z4c+MviGfw34fgtLFNKt9e0m5udTtSuXtYpon8pkHzK29T1A3AccdcKz0D48Q3OteHr/TNPsdBs9V1aS31e4CFZbZ7h2gjRGyWkBJJIUjs2Otet6H8UND8G6r4SvLkrdarqsUFnNP5zRWiW9xMqD5eGmcEnbn5R1weDWZ4/+Jll420zxdeoP7L1OymNnDcmV57S4t4HkVOASYCcclcqScnHWvv+AKGJwFWonQTjU5Ie1abfuyklLl5r395xbta6vyW1POzbH4mWLpxpwTVLnly2TUne2t77bq219rHx94qsPEOmP9u8T+K7O0SAlhDpEMcFzNjkBpEyUxwNwK/Sq/x/8dXnj/8AZ7T+wUMUiRRTSMWLyy/Z3MLl3I3MT1P514R4l8aSz3Dw3UkRbJGMBgfcMc5H0rd8ZeKdN0D4K266gYx9qtJlVQNuGmuGI4XHO1M/jX7dmHBuVYbD1qmIquc3Ft3eiVnt21eh8M3WzbEQnVhGlGElJqL9U7+6ujt9x//R/LL9mn4t6V4Vl1X4beMrmWLwn4zhFnqLhzttZl5troKO8UmCT12nPav16+HGhrq/w8uPCXiG8ha78OSxXdo5kXy72xvtsFy8LE4cb0t7lQCesnvn8KvjD8HfiJ+z58Q7z4efEWx/s3W9OKyjY2+GaJidk8L4G+J9p2tgZx0r6B+EHx+1/wAM+Hrfw5q07arp+10hUyFbi1DffEMpBKLzyhBXngAV2YDA1sRXTofEreTVu3n/AMD5/f8ABWYNVXh5vTv89v076vufen7Vviy78H6h4W1/QJP3ehWCTWgH3JWt2JcHHUNtx9K6f4ceNLvxJ8K/Ft7rUoae78iSEnCkSOXcx47fKMge9fKfxT8b+HPiJ8JvD9wmrxwNBc3cAbUI3QhSq4VjD5gJUnI7HPSu4bVvBHgv4Vabc6h4l8+DULuSWSLS4nd5mTaEAkmEYQAcZwcehr7Lh/OqTnTwU5r3amrbS0TcuvqtPI9bH5tTlP2FK3Klyptr4r7vXrbX1Z56nhi+8W+JI7e2HlWkZ8y/u8fJBADy7dtx5CjqzYFeQftG/FHSNYceG9CPlWOmbIYVVsgrGAqr6HAHJ7nJ710/xB+N9ldaMfD/AITiGkWMxLKI23SyyY4MsnG4n9OcYGQfmP4Y/CT4lftEfE22+HXw/sTqGu37O7CRtkUESECSad8Hy40LDc2DjPevqPEXPnKk6GE+Co/el3tqo+nV9/z+czqnRwFL2WHfNKdnJrpbaK8urb3dtNNf/9k=", "buybacks": "data:image/jpeg;base64,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", "cleaningRate": "data:image/jpeg;base64,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", "countCheck": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAMKADAAQAAAABAAAAMAAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAMAAwAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwQDAwMEBQQEBAQFBwUFBQUFBwgHBwcHBwcICAgICAgICAoKCgoKCgsLCwsLDQ0NDQ0NDQ0NDf/bAEMBAgICAwMDBgMDBg0JBwkNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDf/dAAQAA//aAAwDAQACEQMRAD8A4D4i+NL/AOKnim48X+M3S91C4ATdghI41JKxovO1FycCuG/s3Qv+faP8jXm1/rV7pcrQX0ckLqcENxj86of8Jcv94/mK/C6mDxjk3OTv6s+9hiaXKuS1vkev2mkeH57mKGSGJFdwpY8BQe/4V9zaB8D/ANna70C/tvDyXnjnXNKjWW7GmkWsbROdrNAJI5GkETY3HAyGz0Br4Z+Cvg/UvjP4tHhXS72KyYRPNJPOSUREGScLlmPsBX6Gfs/fDvV/gL4m8bav4wuYprDRNPbNzEzCGdHi835WIBBK7QR1BYV9DkOTYuc1KpG8JXXM9bWTb8vvTPi+KM/w1L91Craaa0Xn/kru3kfA3iHSvB0esXKaNZtHaByI0udplUejFMKSPUAZ9BW/8OvGl/8ACvxTb+L/AAY6WWoW4KbsEpJGxBaN143I2BkVy/xys4/B/jR59Mna70XW4k1PSbof8t7S5yyE/wC2hzG47OrCuG0ODV9azMg8i2TmSeY7I0Hux4/DrXi/2djlXapt8yfRs+lwuZYeeEjUm1ZrXb7j/9D4q+HXxZsPGt9b+EvHFul59oIjhuiMzIfdupH1r638RfsEeIb2Wz1HwRrtnf6dqCRzRMJdjrFIM7ijc4HfGcd6+OP2WPhDdTavdeOvGdvKLTQ9OvNWWy5WW4WziaTb6qGIAzXns37bnxUFp4t08XCofEVumnwPGXj/ALKsopfMNvZKrBY0kwFk4JZe+SSYWWUY0E8ZDmb276d2fOYvGYudecMola1r9tb7fcftx+zf8L/hL8KNXu/B+la1ZeJPGkMX2m8uYfn+yxjCmNCCQpy3zc57HHSvov4oaEPEnw58R+GbaeCzu/EEK2kTySJB5kjyIX5YqCfLU574FfBn/BNTwNa2Pwq1L4r6q7yaprtzJb+fMxCpa24VmwTx8znJPbbUf/BUjStfPwf8K+MNEuZI7TSdUuLe7WNiAHuUV4pOPaJlz249a9unCFLLbKmkn0XZ933Pzuj7StmU41Kl3zW5n68t/ld28uxveNfhn4f+HnwsfwR4tuLPWNb8Nafca/oxkk+XyHJa6tN7bQeEM8a9yHA5bn8kPFfxk1vxHKYZJRb2sZIjt4fkjUeyjj+ta/wl/aMvPGt9Z/C/4y3k2r6Pqvlaba6ncMXu9OZzshIkPzPCrEbkYnAyVweDx/xo+Bfi74Z61fwQI13bWk7xSGPLNGVP8QHY9QehFeDjMsVWmpYdWj1XX5n6XlVRYTESo4t++9V2+X5fd8//0bvgb9rz9nHQ9Nk0HQ/DkMZvIzBdXDX6SXFxG4wyO8kQ+RhwVBUEV8AfGj9jO/1e7vPH/wCzq/8Awk/hy7ZrltJjZTqmm7jkxtFnMqL0V0ySOo7n5I+Mnwb+If7P/wAQL74cfEexOm6zYbX/AHbFop4XJCTQvgb4n2na2BnFN8B/Gbx/8PdRgvtA1a5h8lgdqyMMj0r1Pr1OpH2deOnluj5l5LXw03iMFU97qmtGvP8ARn7M/Cb4jX3gD/gnj4rtbozaR4j8O+bpptZYzHcJ9vnj6xuAwV0eRd2OMda9NsfHmm/tdfsLeI9Gtry3k8UWGlwm7gnKxsLzTmEisu7AzNCjBSOrEr9fnT4Zft/Q/EfUdN8PeIvD+neUkUcN7YXMQuU1FVxvJecyMJDjK9gcV+kfhvxN8IrXVPDvhr4c2+m6fF4vSWW5kgt4YXtsIywRyKijDiY8gjOAcdRXVGnCcHyzurWtb/g7n5/iMur0KntakFGd316Nvy6N79LH4O/s3fsjeMPEPiWy8e/Eu2l8MeCdGuEu7m8v1MEl0IW3CK3jfDuXIxkDA9zwf0d+Lv7TX7M3iKKe31vR3XVUVo0v47qKGdtvC+aqLIrjGOGBOOM1+bv7Xfxm+L0PxK134b+Jb26tX0O6ktJY3kJOUOMjoArDBGAAQRXzb8Hvg/8AEb9oT4hWXw6+Hdm2p63qG6QmRysUMKEB5pnwdkSbhubBxnpXO8ZSox9nQV+7fU+4w2W4jHuOMxc7XWiXRPXr1fX9D//Z", "galaxy": "data:image/jpeg;base64,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", "glamour": "data:image/jpeg;base64,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", "printLabels": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAMKADAAQAAAABAAAAMAAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAMAAwAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwQDAwMEBQQEBAQFBwUFBQUFBwgHBwcHBwcICAgICAgICAoKCgoKCgsLCwsLDQ0NDQ0NDQ0NDf/bAEMBAgICAwMDBgMDBg0JBwkNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDf/dAAQAA//aAAwDAQACEQMRAD8A9l1ltT+Kniefxbrtqk95IFM1zP8AKkUS5Kxgn7qjJCqPyr23wn8L9HtrAX94uTNyvlxiKMZ/uluTge1R+D9Hha0Gv6rbKtsH22Vkv3CR35+8fVjyc16brGsTaXAk9yBLfSj91EPuQ9MAD1Gevr9K/PMuoqtTePxT+LZP8L/LXyu7n6Jjata8cNQ0S7f1/Vkc3ceAfDCWxhe1VXuBghwCdn0I5LH2rg9T/Zl+FHiWKSTWtJiRYxumuIxskUHooPHJ6dK1rrXrlrk26XJWZgZLu7J+cIByFP8AAuBxj+EZPWvEPGHx0sYbO4kj1L+wPCGkEtcXp5uLyToSi/ed3PEa9+/AJF4LEYariGsOryXXt3+/8NEcGIweKlTfM/dW/wCiPL/if+xtoXiPU28TQXRGh2CLGLFFCuIol/d20B6At3Y5xkscmvz3l8XfFr9n/wCLkfxN8DA+HtU0sGC3s1jLWgsQQPs7JkebE20b+cucknNfW2qft0wX+pJDpNhdQaXb4jgjkmR22f3pAQd8j9W59hxVfxn43+HvxF00/wBpGGPVLgBImddv2aaRSVEgJ+Xf0AyQfXNe+69WjOMIxu3+CPG+rRlFzqO0fzZ//9D9Q4PCscN7a2CDMWn+ZEOOCRHvDY9ySfyFc5rnhi4vb2W7fPy7QCegypZifZR19zXuVrpTm9kmkyF/e4J6sWBUH8FrO1y0VbJ4YwcsDuA5Jz/D+AHJr8jzGjjo4GpWmrKF2l3Vv69fmfeUcdNVVZ62/wCHPz++KIvdK8KXC2obzdZuCkjjhktVOMf8CxzX5LfHzV7/AF/xAmhwufsOmDCxA4RXA+ZsdM9hX7c/F7TIZvDNm5jDk3uGQHAkI+6ueyDP4/y/Fz4raLM+t6hKMJCZXaeXG0FiThVHfHQAV8/4eZ8quGTfxNL8Vd/iz9LweTLH5a6zWkW7rv0/p9vuPlGTUX0uUvZp+9T7kjDIQn+If7XoT0pNLS+mjm1nVbp4bMH95IzHzJiT0UHqc9/Wuk1DT7KFTd3ykW6EmKAH55yO59Fz1P4CuNvkvtYH2+9ItbGP5Y+MIuP4Y143H1/Uiv2GhVUleGl9319F5n5RmuElGo4tXtsun/DH/9H93TFGf4R+Vcb4k03bZStCCdwOep4rtpgICA5xnpnjpWTqvly2EoJ4Knkc9q8rN8LTxGCq0ZdYtfgd2BrTp1otbXPiL4pI0vhS6EIzJZ3EVyXxuKqDtPA4HX6V+SXxdsFk1e/VvnKSOVXaXyST6fLk1+vHxBmSPTtQtG+WGeGWLYzMpLEZTPy8/MBxX5V/EGe5mlmuYiI9yAmTeFCcYJ578e5r+UPDjHNUvZXvKEmn2Vm7dF0fr+B/W3AFKE8rrwqaR3++3n5P0Pi/W9Ms9LJu9dBub18eVYp19jKR0Hoo5NeT61Fq2r3ixTDdcdEtYhhYE7A4+VB7fnXqXiLUrO0nl+zMxkJbzLlvmlPsmeFz/ePNZ3wz+HPxD+Onje1+Gfwt08S6hf5Zl3bVWJSN89xNglY1yNxxgZ6V/TWVQqtKXXu+noun5vq0fh3GFWiqsoQ0j+L9X/SXRH//2Q==", "textNotes": "data:image/jpeg;base64,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", "waymark": "data:image/jpeg;base64,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", "woCleanings": "data:image/jpeg;base64,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", "ui/macro-gear": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAB0AAAAdCAYAAABWk2cPAAAIBElEQVR4AYxWfVBU1xX/7duFXWBZBF3EVRcFooEIUYkCKga1pmpt+qGhqRnbSY1prZNqazKt0z+y/Zgmf6Tt2LFOY22mTSamCtYYPxADBoQCrQJ+ABYQBARZWJZ1v9/ue/u252iWAGLrzj17z7v3d86599zfPe8J+B+/48ehrvsdYir2Y3rlzzGbJPXTN2G+9BsYP7Ng2pmfIbHcgmQe47laC0x1FiSxDds+yvUjgx63IDqqDfFDgzD5FGQGFCwLhrBCkJEreZEphzCfnKZJPjwVCmCZHEZBQEIuyQL3KFISu6G/8i6iCPNQmzLo8RegDtqhC7iQTM4zVQqKhDC+ZsrZtGve6t2vQ4XnoOBZMi5SARvTin74xqynNu0i78+HVSiM1iBdJWK6exDasAUEo5lx7aEBnqtIhODwQh/ww6yEkPfk+r2vPLuv5rs5Ww8Wpq3Zt8KU/dWdggrFGgHF5sVf+d4Ta1/Py37h4OqVe2t2pK358ashCUtVElLIl64ki5ZIyvg2ISivymKBxtCDaFFCkl9Gxvy8b23MKPpRqi5hNm3qgem8tW8kx+oNBfEGw/KM9T+d/mAU0BImtfC1DHPe9o20Y1NQRrzeCg2fL/uO4MaCcv4/8SEux4OkzHTMSYxBhlbAInH4PzMj4EivS5iD7JeO3hfWI+OR3j3YOlMVxpNkP089DJOxDYlVQCzHYMz9oLy79tvQQ8BMNYETY/FMQiwKDHFYEnZcM8mii7ETJG5mFlgmDNIDY72DTQtUAvJDIaxUA7mKhAUhINnhQCzvmoOq0jzQym4YxQAyw0DREwUv7TIvWLLFaEBedIxBkIlR5O+xGmOjdAa1Ro0N08xLt5mXb99NPldR8DTFg6Q5/YgWiKmCewTxxEZzmEiTtX7PjkXP/2rl8ldOpBf85Kp68Y4zmCqFj1oBY9mGbZe+XJr5xIZfFGWs3ftqWMYSrYrI5UKMUAKovUHE+4Iwh8PInpu7dW7EoUZnmDKgs7cBfTUH7gvrEXyk58BsG3lOydmSRvpCJQyjAugEnRNRPglxFHjGrKx1GeNZSsAJjc/rxofbUPvnbb31pw5crj15oKn63W0DPMZzE8DjHpjVM7I2LaACEieB0uvsheD2Qe0WISSYcmLGYR9Sb574AXraGupH3Tg57EJJ3yg+7h7Gxdbmhhaee8hg3ED8rKf1wRBkIlVYELVQPCL8FNRR/Y/fX2v++26P6OwfB3+gchqHOhvaKUUXocZ5tx9lw/dQZnOiwnoPzbdbGwaclPYH6C/+2VdL6WujrWVvXSTW2ukIRSGYhJBGCy8d8iBdZmt3c5n16l82wzvU9oUlac6+f4FY2K1WoSNWg85eH7pvDKHTL6FNlNFJCx9iDEHHGvtgX9aWs10qYCiswCVHQxKMRiimJAST9PDFauGj8qaMWU1S1AJCcTrIiXEIfSkXcpoJ0ox4iHHREHluEnzske5siOqxrNPQHaFRIcUDVZwKUbpo6ON1mJa2dFMKU37yxU8w54EcpwKYJ2gwd7qEWc+lI2WuEbOnxcCk1yGZMTQ/1uKogLAv06LN6Wo1ZqjUiNcEESUENFBTeuJVKszK3bxv1dPFBw1M+THLz5WE1Hwkzc/PpvSupjStptWv1EZhlUGHwml65Jkz81MZ8zl8rGNfmd/8gzF93f4NoTCmUxyd4OiC4HJD6wkg0dbTHBpDT6FkbvkTEufnf5mO4EUixLcp6IuU2q3zsvILeG4Kk7EhR3+zP6RAJ0RBJbRrEL4XgOIVIXc0XbSJzgHiyxh2gsIXngv94u1HszPW7Nm8cN2ejctePrqQx3huAnjcA/u0tpzvkmWIdGUkIcmFUECCRwzCOurFnY66j+wRPF94cYrrw2k0F+4BC+sRfKRnG7aNPPc3ld4JyLhF9LfR0YhCVQ8kVwhOfwBdIx40nv3o0IWq9/e1Vx38urXut4sVpjw7iTj4fz1j2YZtaw59o/9y6f7GpnMH3g8qaKZqdDfWSDeEnCj9MjzBMO7QuTbaXKioOH3y2NXm65V37LgR9LsUjdZAsMdrjJVEV2jEjYaum9dONX127AhlsZrI0oE42PvnIEhFAqivR8BxF6NePzqdftTZvPjU7kE1VZsWJSFneKrz4ovPMnkpjNUmL+lRFNQSWyuo0tW6AmiTJVhpp77iYoQ4KBMnXNIGX8AO+xU7+luG0THsxs0RF7pgSHdOdswp5CLPwvrk+djkLCvdy+t0L28ODeH2DQ1s0VZ4iy0IMpaDcs+BFQosXb8Ovwfw0legjd4+PfUVJxuvn3tnRBzH6vbyt52DNld7v9V1q63sLTc7YGFM58UDfV31H15QA3eocjn0KxA4fBhScQlCjGGJBGWdhYOHF8qQqA67fDK67F5cOXfsUPlf9xdeqj6ys63p9NstV/95rnTQgTO9I7hwqbKssuHErzurjuxs/fiXhZ8QaT6gb+Rm+uK9SxXM/yYelD52HpHJQXmcUy1Tqt1E756AiH8Tq8sHHDjbUFP5Qd3pw3+k4n6aSFdmc+P8gB3nzpe+996Vusq/Ofw45fOjiojTTtmyz06HqLI8XtBIYN8NL2xDIjrcXtQ5Pbhwz4tyclodAJr8QbTS6+2qK4gat4RyImG5x4daeuu0qGIw0KmD+5nvg7jD7ibKVDtlRJj+wsRqsaQGox3dGKgbQWdTDzqu9KGnwYOhVmC0LQhbox19LTTe2INblyX0Gr2wfecd+CwWyORjyvZfAAAA//9HRHr8AAAABklEQVQDAGjrvW9hISf/AAAAAElFTkSuQmCC"};
+  const ACTION_ICONS = {"autoClose": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAMKADAAQAAAABAAAAMAAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAMAAwAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwQDAwMEBQQEBAQFBwUFBQUFBwgHBwcHBwcICAgICAgICAoKCgoKCgsLCwsLDQ0NDQ0NDQ0NDf/bAEMBAgICAwMDBgMDBg0JBwkNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDf/dAAQAA//aAAwDAQACEQMRAD8A/KL9pS9+OfxD8ez/ABQ+N4nl1LVYoZEZ4XtoUs2JMSWyPnEADEpjIwc5NfRH7PH7EPjv4zaWupXB/sLwdeYlgv7hN08oP3hBDwX/AN8kJnOCRiv2A8EfDbwh+2d8NPBXxE+Ititxc6RC+n4GCl/DbFWh8zOWCOAd654fdjAavEPjV+0Z4m03xBP8KPhPZPo+naWRZXOqQwgOdnyGO0XAWOOLGNw5OPlwOvl8NZrVx1GrVULqL0dt1ZXdrvZtxfnFn6PwZgp1MXPDYZRvOyTetk0079015b2PMfF37DX7MPwE8A3PizxUmq+Ib2ILBaR3l55AvL6XiKJUhVcBm5PJwoPNa3g79i/9l/43fDvT/GXhS31PQZr6HbOlteed9lu0AEkZSZWyFbpyMqQc16J8Z7X/AIWi/h+XURdT6X4autOt7RMlVvLyfy1luHzywyCq9+vrVX4Baofh1pF2bq1m07R9Uk1OCeIkskF9YzTQxyoeoWUpj249K5M9wWecS4DE5XwdiJ0Mww0oTjZLkqRu1UpyTTi/d96Cau5R5VpJmPE+TLAxpOpBcqupeTlbkt321XS+p+fHx9/Yi8T/AAotJdV0iUa34ctg0j3US7Z484x58fOB0+YErx1HSvjb4Y/Fr4hfs9fEiz+JXw0vRp2rWO5BuXfDPC5BeGZMjfG+0blyM4r9zPAvxw1HxTqi+A/G9o1zLqBe3gumjBWTfkeXOuMMG6bu/Q5618V/tQ/seaR4R1OfxBo92kFvqXmTR2Kgn7M0YzIhI4CjIxk98V97mUeJsDhnlPFMKft6TX72kvcqxVoxlb7El9qNkru6SW/wkcXGri5YCUPeSbTjdppav0ceq7a7H//Q9+/YVv8AVtA/Ys0yOWcx6nqV1epY72yN8spSGMHqodkKAjoXzXCXfhnxLJq63nhnXrTyrlxM0GpWkc8/lN83lq5wfruyQRwa4r9n74nWl/8Asg6VfaNsu5fDuvpYTCT5WR7hv3UgwThg0ylSTjIr1P4heJ79V07xFp6wCLU4ku42A2kNK7JcRHbjmG6SVD227SeteZhsqpTzn+zqcnCM07OO2t+zs093dPVn7Hw7k+F5G6E/ejJ295JtaWvo736ej+XX6z4c+MviGfw34fgtLFNKt9e0m5udTtSuXtYpon8pkHzK29T1A3AccdcKz0D48Q3OteHr/TNPsdBs9V1aS31e4CFZbZ7h2gjRGyWkBJJIUjs2Otet6H8UND8G6r4SvLkrdarqsUFnNP5zRWiW9xMqD5eGmcEnbn5R1weDWZ4/+Jll420zxdeoP7L1OymNnDcmV57S4t4HkVOASYCcclcqScnHWvv+AKGJwFWonQTjU5Ie1abfuyklLl5r395xbta6vyW1POzbH4mWLpxpwTVLnly2TUne2t77bq219rHx94qsPEOmP9u8T+K7O0SAlhDpEMcFzNjkBpEyUxwNwK/Sq/x/8dXnj/8AZ7T+wUMUiRRTSMWLyy/Z3MLl3I3MT1P514R4l8aSz3Dw3UkRbJGMBgfcMc5H0rd8ZeKdN0D4K266gYx9qtJlVQNuGmuGI4XHO1M/jX7dmHBuVYbD1qmIquc3Ft3eiVnt21eh8M3WzbEQnVhGlGElJqL9U7+6ujt9x//R/LL9mn4t6V4Vl1X4beMrmWLwn4zhFnqLhzttZl5troKO8UmCT12nPav16+HGhrq/w8uPCXiG8ha78OSxXdo5kXy72xvtsFy8LE4cb0t7lQCesnvn8KvjD8HfiJ+z58Q7z4efEWx/s3W9OKyjY2+GaJidk8L4G+J9p2tgZx0r6B+EHx+1/wAM+Hrfw5q07arp+10hUyFbi1DffEMpBKLzyhBXngAV2YDA1sRXTofEreTVu3n/AMD5/f8ABWYNVXh5vTv89v076vufen7Vviy78H6h4W1/QJP3ehWCTWgH3JWt2JcHHUNtx9K6f4ceNLvxJ8K/Ft7rUoae78iSEnCkSOXcx47fKMge9fKfxT8b+HPiJ8JvD9wmrxwNBc3cAbUI3QhSq4VjD5gJUnI7HPSu4bVvBHgv4Vabc6h4l8+DULuSWSLS4nd5mTaEAkmEYQAcZwcehr7Lh/OqTnTwU5r3amrbS0TcuvqtPI9bH5tTlP2FK3Klyptr4r7vXrbX1Z56nhi+8W+JI7e2HlWkZ8y/u8fJBADy7dtx5CjqzYFeQftG/FHSNYceG9CPlWOmbIYVVsgrGAqr6HAHJ7nJ710/xB+N9ldaMfD/AITiGkWMxLKI23SyyY4MsnG4n9OcYGQfmP4Y/CT4lftEfE22+HXw/sTqGu37O7CRtkUESECSad8Hy40LDc2DjPevqPEXPnKk6GE+Co/el3tqo+nV9/z+czqnRwFL2WHfNKdnJrpbaK8urb3dtNNf/9k=", "buybacks": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAMKADAAQAAAABAAAAMAAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAMAAwAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwQDAwMEBQQEBAQFBwUFBQUFBwgHBwcHBwcICAgICAgICAoKCgoKCgsLCwsLDQ0NDQ0NDQ0NDf/bAEMBAgICAwMDBgMDBg0JBwkNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDf/dAAQAA//aAAwDAQACEQMRAD8A/PT4i+N/iL8dPHD/ALTul6o+s6vAY/7T0thmTT4EJxFFHzutAGYLjOASG9T2HhLwjoFt4jtvGOhxZ8E/EC3k0vVLUc/2deTD/VsOwWTDIT2qv8P9F8Nalr8Gt+BJZvAni6L/AFukXwb7Dd5+8iM3QN02tn619teCfhgJ4L28TS10uDUyo1PTmZRaC7HKywMSFBY9AP51/MfGXFzoOVOo5Xa5dfj5XsnbSXK/ep1Itq65ZWbbf7jknDPMlNJWTvp8N+6vtzLScXbuux84eHfhVe2eieFdHvYy114L8VtEGx961mYMrD24B/Gm6/8ACq9vND8VaPZRlbrxp4sWItj7trCzMzH25J/CvrrxD4t8B+BvHtl8NvE4uv7ZvLaG4uZIAj/ZmcEwo8ZIeSQoN5VfmCsu0MWAr0bVfANzbX62dpNa3Ujo8tssU0ZmkSQZLpHnzOnX5cjvX57ieJM6w0KeY16LjTqe/GVvdfve0v6c/vWfTyPoKWT5XVcsNTqpyWjV/Ll+fu6aH5f+LfCPh+58RXXjHXI8eCfh/bx6XpdqeP7RvIR9xR3DSZZyO1cb8OvG/wARfgX45j/ad1TU5NG1ecyf2ZpajD6hA5GYZY+NtoQqhvUABfUff/jX4Zm2WyludGe9TTATpmlyL5dsbluTPOW4bB55/ma+KfiBovhrTdfn1vx3NL478XS/6rSLEN9htMfdR2XqF6bVx9a/QeC+L/rHLCk22lbTWXKui6R5n71SpJpXfLG7Sa8DPOGHC7klvfXa/d9XyrSMUn3e9n//0PKfBFrrOqCK013XvDnjCAEbZHXbdgeofbuz9azv20rzxD4X8O+AoNHlMVjPbXji235xNFKimRkY5OUcKrkdmUHqK27jxhd/Br4fweOLrwRo+lzXV8bK3h2C4nTEDyhyrHaPmUD5sj254+UtV+Pv/CbatJr3xK0RPEdxJ0PmNAFVf9WixxFVWOMZCoqgDJJ5JJ/mngXhzFV86hnacVQp8yS913k046KHuK3VrXp5r+huNMfh6eGeUK/O+Vt9lul3fzOo8DfCTx38W9RsPihpurXPiJjewLq8crl7y0kUJGpk53NGyIoSTn7u1sMBn6E/aC+EnjLw14+8beOFvZ/Dek6HqEk0WpxM0NxNchi8SWzKQ7S55BBAQAsSB1+o/wBiP4jfCWOK58S2XhCLwjYxstpJezXkrieaUcQokh/eO/UrjgcnAxXsf7bnj/4fx+GLs3nhuHxguhzmDULVbqSF7KWQ4DvHGRlZDxv5BIwecZ/fYQXLZWstLdLdvT8D4dUKcbUORuLi3z6aPTz/AFT1Wnf8ov2af2hbq98Yz+AviX4jMnh/Xba4LT6pPJKtvdrGZIpPOYs0Zdl2OejBstyAa9a+Imla1oEklnoXiDw14StZkWVZ4QHuJYpBuVxJjJDKQQR1zXwh8UfHHw+1e8jHgTwbBoM0bbGeOeeRh/tHfIVP/AhX3ZDrlp8Sfhjoms+GPDGn+Iv7C06w0jUo7kgXBuIYAN0bg/vEbYSOhAwCK/FvEXhuhhsbTznDwUYytGatBRuvhk1K0bu6jd+Xz+t4HzB1pVcqrSva8ou7v5xXy10P/9H5n8a6FpWvfCi/0Dwvf3fiTWNIujqmqXJLMq2/kvCTGDn5I2cFz2X5ugr4TvTJouoJYXRDSBzGdoI2sPUHqPev0217w94y+Bvjb/hStjposdQfadRu5lDpeW0mQWUnrA4Bwe4/SbTdC+CGseN9Tu5/D76pZ6fAZtSlurk+TJMOSEMSxygFuf8AWZ469c/hOU8TU8lo1cNmFObteS25rbe8tFFuWkI9u2p/VXGXAWNzjE080yecZRlFXvLstGn1UlZJLW/4fFPhn4na++r+HtKvrkrp2l3Mfk24+VEJYFmwP4mPLE8njnAFd9+0j8X9Yi+Ovi3W9EvJhHfzzRyR78wSxv8AKyunRlI/hORXvWp/Bv4P+M7DStX0hrnwzqWt3MkdpE5+1WijkoSxxOo45JMnHb1+efHH7LnxMudX1HUrOa11u3hn8q4u7O4Ro43YnmTzDG8a45LSKoHrX1mU8aZVim4qpyS6qXu7Pl9Hrpo2fA51wlxBgYezqUHJXsnFcy3t0v1016nyBdXM11KWP8bZ2L0GfavvP4N2mg/8KUey1rU7jQNRu9YEmn3cbEI2yAKyyAdsmtHwj+zz8Nvh7qOkr8Vr/wDte61SAy20WlykWMch+4s9yVDvg/eWIKP9s16z4Z8N+KPjJ4ni+AMWh2/mWxdtLewhWCGygBGZX2jmPkF3OWOckk14PEPEVDNILL8v5pNtPmj2Ts+VNNTs1aUez66H1nAXAuPy6v8A23m1qVOMZaSdnZpq7/lS6p2fkf/Z", "cleaningRate": "data:image/jpeg;base64,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", "countCheck": "data:image/jpeg;base64,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", "fixes": "data:image/jpeg;base64,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", "galaxy": "data:image/jpeg;base64,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", "glamour": "data:image/jpeg;base64,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", "printLabels": "data:image/jpeg;base64,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", "rowColors": "data:image/jpeg;base64,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", "textNotes": "data:image/jpeg;base64,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", "waymark": "data:image/jpeg;base64,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", "woCleanings": "data:image/jpeg;base64,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", "ui/macro-gear": "data:image/png;base64,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"};
   const actionIcon = (id, size = 24, extra = '') => ACTION_ICONS[id]
     ? '<img class="sg-aicon" src="' + ACTION_ICONS[id] + '" width="' + size + '" height="' + size + '" alt="" draggable="false"' + (extra ? ' ' + extra : '') + '>'
     : '';
@@ -420,9 +579,10 @@ const AE = (() => {
     by the feedback module (06-feedback.js) every few minutes. Only feature
     names and counts — never page contents or customer details.
   */
-  const USAGE_KEY = 'ae_usage_pending';
+  const USAGE_KEY = false ? '' : 'ae_usage_pending';
   const localDay = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
   function track(feature) {
+    if (false) return; // the demo build sends nothing anywhere
     try {
       const pend = GM_getValue(USAGE_KEY, {});
       const day = (pend[localDay()] = pend[localDay()] || {});
@@ -432,6 +592,7 @@ const AE = (() => {
   }
   // Once a day per person (e.g. "used Aethernet today", "has a Glamour theme on").
   function trackDaily(feature) {
+    if (false) return;
     const k = 'ae_usage_daily', seen = GM_getValue(k, {});
     if (seen[feature] === localDay()) return;
     seen[feature] = localDay(); GM_setValue(k, seen);
@@ -441,8 +602,30 @@ const AE = (() => {
   // --------------------------------------------------- crystal registry
   const crystals = [];
   function crystal(def) { crystals.push(def); }
+  /*
+    "A text went to a customer from this WO": event text-sent { woId } for
+    any crystal (Recitation logs it, Auto-Waymark follows up), so each works
+    with the other switched off. Portal keeps its own fetch, so the send is
+    seen in the browser's network log (POST …/messages/v1/send), not by
+    wrapping fetch. Sends that failed (status 4xx/5xx, where the browser
+    reports it) are skipped; texts sent outside a WO page carry woId null.
+  */
+  const TEXT_SEND_RE = /\/messages\/v1\/send(?:[?#]|$)/;
+  function watchTexts() {
+    if (typeof PerformanceObserver === 'undefined') return;
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        if (!TEXT_SEND_RE.test(e.name) || (e.responseStatus && e.responseStatus >= 400)) continue;
+        const m = location.pathname.match(/^\/repair\/workorder\/(\d+)/);
+        emit('text-sent', { woId: m ? m[1] : null });
+        break;
+      }
+    }).observe({ type: 'resource', buffered: false });
+  }
+
   function start() {
     ensureCss();
+    if (AE_ON_PORTAL) watchTexts();
     // Which Aethernet builds are running on this page (the dev build warns if both are).
     const root = document.documentElement;
     root.dataset.aethernet = ((root.dataset.aethernet || '') + ' ' + (AE_DEV ? 'dev' : 'public')).trim();
@@ -466,7 +649,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
-    api, unwrap, Stopped, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, portal, refreshView, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
@@ -560,6 +743,103 @@ AE.gate = (() => {
       else if (!known) { notice(p, 'unverified'); setTimeout(gate, 60000); }
     }
   };
+})();
+
+// ===== 01b-login.js =====
+/*
+  Glamour on the login page: your own picture in place of Portal's (the photo
+  on the purple panel, or filling the whole panel), and the Aethernet mark in
+  the bottom-left corner. Settings: Glamour → Login page
+  (settings.glamour.login = { image: data URL or '', fill, mark }).
+
+  Runs before the store check (01-access.js): nobody is signed in on the
+  login page, so there's no store to check. It applies only if this browser
+  last loaded Portal at a store with access (the cached answer), and only
+  while Glamour is on.
+
+  Portal's login page (main-layout app, /login): a left column with the logo
+  image and the SSO button, and a right panel (a purple gradient over a
+  doodle pattern) holding a headline and a photo. Class names are generated,
+  so the panel is found as the element with a gradient background that holds
+  an image. React's nodes are hidden, never removed or changed; ours sit
+  beside them and go away when the page leaves /login.
+*/
+AE.loginPage = (() => {
+  if (!AE_ON_PORTAL) return null;
+  const CSS = `
+    .ae-login-hidden { display: none !important; }
+    #ae-login-img { object-fit: contain !important; object-position: center bottom; max-width: 100%; } /* any shape shows whole, standing on the bottom like Portal's photo */
+    .ae-login-fill { background: var(--ae-login-image) center / cover no-repeat !important; }
+    .ae-login-fill > :not(#ae-login-img) { visibility: hidden; }
+    #ae-login-mark { position: fixed; left: 16px; bottom: 14px; z-index: 10; display: flex; align-items: center; gap: 6px; color: #8223d2; opacity: .85; }
+  `;
+  const allowed = () => false || (GM_getValue('ae_access', null) || {}).allowed === true;
+  const cfg = () => (AE.settings.crystals.glamour && AE.settings.glamour && AE.settings.glamour.login) || {};
+
+  function findPanel() {
+    for (const img of document.querySelectorAll('img')) {
+      const p = img.parentElement;
+      if (p && p.id !== 'ae-login-img' && /linear-gradient/.test(getComputedStyle(p).backgroundImage)) return { panel: p, photo: img };
+    }
+    return null;
+  }
+
+  let painted = false;
+  function clear() {
+    if (!painted) return;
+    painted = false;
+    document.getElementById('ae-login-img')?.remove();
+    document.getElementById('ae-login-mark')?.remove();
+    document.querySelectorAll('.ae-login-hidden').forEach((e) => e.classList.remove('ae-login-hidden'));
+    document.querySelectorAll('.ae-login-fill').forEach((e) => { e.classList.remove('ae-login-fill'); e.style.removeProperty('--ae-login-image'); });
+  }
+
+  function paint() {
+    if (location.pathname !== '/login' || !allowed()) return clear();
+    const c = cfg();
+    const found = findPanel();
+    if (!found) return;
+    if (!document.getElementById('ae-login-css')) document.head.append(AE.h('style', { id: 'ae-login-css' }, CSS));
+    painted = true;
+    const { panel, photo } = found;
+
+    // The picture
+    let mine = document.getElementById('ae-login-img');
+    if (!c.image) {
+      mine?.remove(); photo.classList.remove('ae-login-hidden');
+      panel.classList.remove('ae-login-fill'); panel.style.removeProperty('--ae-login-image');
+    } else if (c.fill) {
+      mine?.remove(); photo.classList.remove('ae-login-hidden');
+      panel.style.setProperty('--ae-login-image', 'url("' + c.image + '")');
+      panel.classList.add('ae-login-fill');
+    } else {
+      panel.classList.remove('ae-login-fill'); panel.style.removeProperty('--ae-login-image');
+      if (!mine) {
+        mine = AE.h('img', { id: 'ae-login-img', alt: '', class: photo.className, style: photo.getAttribute('style') || '' }); // same size and place as Portal's
+        photo.after(mine);
+      }
+      if (mine.getAttribute('src') !== c.image) mine.src = c.image;
+      photo.classList.add('ae-login-hidden');
+    }
+
+    // The Aethernet mark, in the bottom-left corner of the page (clear of the sign-in content)
+    const mark = document.getElementById('ae-login-mark');
+    if (!c.mark) { mark?.remove(); return; }
+    if (mark) return;
+    document.body.append(AE.h('div', { id: 'ae-login-mark', title: AE_NAME },
+      AE.h('span', { style: 'line-height:0', html: AE.icon('aetheryte', 28) }),
+      AE.h('span', { style: 'line-height:0', html: AE.wordmark(20) })));
+  }
+
+  // Portal is a single-page app: /login comes and goes without a page load.
+  let timer = null;
+  function watch() {
+    if (timer) return;
+    timer = setInterval(() => { try { paint(); } catch (e) { console.warn('[' + AE_NAME + '] login page:', e); } }, 500);
+    paint();
+  }
+  watch();
+  return { paint, findPanel };
 })();
 
 AE.boot = function aethernetBoot() {
@@ -814,15 +1094,25 @@ AE.status = (() => {
   // Crystals are named after FFXIV actions; the description says what each does.
   const CRYSTAL_INFO = [
     ['cleaningRate', 'Divination', "Live cleaning rate: header badge with today's cleaning percentage."],
+    // The demo build (false) ships only Divination, Swiftcast and Glamour; the
+    // rest sit in false ? [] : […] so their text isn't in that file at all.
+    ...(false ? [] : [
     ['woCleanings', 'Esuna', 'WO cleanings pill: shows whether a work order\'s device has cleanings, with Create for available ones.'],
     ['textNotes', 'Recitation', 'Text → WO note: when you text a customer from a WO, the text is added to the WO notes.'],
+    ]),
     ['autoClose', 'Swiftcast', 'Cleaning auto-close: one-click check-in → complete sale on cleaning arrivals.'],
+    ...(false ? [] : [
     ['galaxy', 'Macrocosmos', 'Galaxy Diagnostics exception: pre-fills the Sprinklr exception form from a Samsung WO.'],
     ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
     ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
+    ]),
     ['glamour', 'Glamour', 'Page theming: recolour Portal with a preset theme or one you make.'],
+    ...(false ? [] : [
     ['waymark', 'Waymark', 'Work-order tags: tag WOs for the whole store and see them grouped on a board.'],
     ['countCheck', 'Lay of the Land', 'Inventory count check: on a count, shows which expected serials haven\'t been scanned yet, and any unexpected scans.'],
+    ['rowColors', 'Rainbow Drip', 'WO list colors: colors each row of the work-order list by its status.'],
+    ['fixes', "Master's Mend", 'Small fixes to Portal, each with its own switch.'],
+    ]),
   ];
 
   /*
@@ -830,6 +1120,12 @@ AE.status = (() => {
     once with it listed; new ones get a yellow sheen. The first run of a build
     after an update shows an "Aethernet has updated!" pill (once) that opens
     Settings. A fresh install sees neither.
+
+    What's updated. A patch-notes entry can list the existing crystals it
+    changed ("updated": [ids]); after an update those get an "Updated" tag and
+    a purple sheen (New wins if both), until Settings is closed once.
+    ae_updates_seen is the version whose updates were last seen; the first
+    run that tracks it starts from the version you updated from.
   */
   const SEEN_KEY = 'ae_seen_crystals', VERSION_KEY = 'ae_last_version';
   const allIds = () => CRYSTAL_INFO.map(([id]) => id);
@@ -840,7 +1136,16 @@ AE.status = (() => {
   // Before 2.7 nothing was tracked: count every crystal as already seen.
   if (GM_getValue(SEEN_KEY) === undefined) GM_setValue(SEEN_KEY, allIds());
   const isNew = (id) => !GM_getValue(SEEN_KEY, []).includes(id);
-  const markAllSeen = () => GM_setValue(SEEN_KEY, [...new Set([...GM_getValue(SEEN_KEY, []), ...allIds()])]);
+  const UPD_KEY = 'ae_updates_seen';
+  if (GM_getValue(UPD_KEY) === undefined) GM_setValue(UPD_KEY, lastVersion || AE_VERSION);
+  const isUpdated = (id) => {
+    const seen = GM_getValue(UPD_KEY, AE_VERSION);
+    return PATCH_NOTES.some((n) => newer(n.version, seen) && !newer(n.version, AE_VERSION) && (n.updated || []).includes(id));
+  };
+  const markAllSeen = () => {
+    GM_setValue(SEEN_KEY, [...new Set([...GM_getValue(SEEN_KEY, []), ...allIds()])]);
+    GM_setValue(UPD_KEY, AE_VERSION);
+  };
   if (lastVersion !== AE_VERSION) GM_setValue(VERSION_KEY, AE_VERSION);
 
   const MODAL_CSS = `
@@ -957,6 +1262,12 @@ AE.status = (() => {
   .sg-issue-tag.paused, .sg-issue-tag.error { background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); }
   .sg-new-tag { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:10000rem; vertical-align:2px;
     background:#ffcc00; color:#3d2e00; font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
+  /* updated crystals: the same sheen in Aethernet purple, until Settings is closed once */
+  .sg-crystal.sg-upd { position:relative; margin:0 -10px; padding:0 10px; border-radius:10px; border-top-color:transparent;
+    background:linear-gradient(105deg, rgba(130,35,210,.08) 0%, rgba(130,35,210,.08) 38%, rgba(196,140,255,.38) 50%, rgba(130,35,210,.08) 62%, rgba(130,35,210,.08) 100%);
+    background-size:250% 100%; box-shadow:inset 0 0 0 1px rgba(130,35,210,.45); animation:sg-sheen 2.6s ease-in-out infinite; }
+  .sg-crystal.sg-upd + .sg-crystal { border-top-color:transparent; }
+  .sg-new-tag.upd { background:#8223d2; color:#fff; }
   /* "Aethernet has updated!" pill */
   .sg-update-pill { position:fixed; z-index:2147483645; left:50%; bottom:20px; transform:translateX(-50%);
     display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 14px; border:0; border-radius:10000rem; cursor:pointer;
@@ -967,8 +1278,19 @@ AE.status = (() => {
   .sg-update-pill .ver { font-weight:400; opacity:.8; }
   .sg-update-pill .x { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:50%; font-weight:400; opacity:.8; }
   .sg-update-pill .x:hover { opacity:1; background:rgba(255,255,255,.18); }
+  /* it dismisses itself after 10 s: a ring around the ✕ runs down (paused while hovered) */
+  .sg-update-pill .x { position:relative; width:26px; height:26px; opacity:.9; }
+  .sg-update-pill .x .ring { position:absolute; inset:0; width:26px; height:26px; transform:rotate(-90deg); pointer-events:none; }
+  .sg-update-pill .x .ring circle { fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-dasharray:69.1; stroke-dashoffset:0;
+    animation:sg-countdown 10s linear forwards; }
+  .sg-update-pill:hover .x .ring circle { animation-play-state:paused; }
+  @keyframes sg-countdown { to { stroke-dashoffset:69.1; } }
+  /* Save & reload, while there are changes to save */
+  .sg-btn.sg-primary.sg-pending { background:linear-gradient(105deg, var(--aui-primary, #8223d2) 0%, var(--aui-primary, #8223d2) 40%, #b36cf0 50%, var(--aui-primary, #8223d2) 60%, var(--aui-primary, #8223d2) 100%);
+    background-size:250% 100%; animation:sg-sheen 2.4s ease-in-out infinite, sg-save-pulse 1.6s ease-out infinite; }
+  @keyframes sg-save-pulse { 0% { box-shadow:0 0 0 0 rgba(130,35,210,.5); } 100% { box-shadow:0 0 0 10px rgba(130,35,210,0); } }
   @keyframes sg-pill-in { from { opacity:0; transform:translate(-50%, 10px); } to { opacity:1; transform:translate(-50%, 0); } }
-  @media (prefers-reduced-motion: reduce) { .sg-crystal.sg-new, .sg-update-pill { animation:none; } }
+  @media (prefers-reduced-motion: reduce) { .sg-crystal.sg-new, .sg-crystal.sg-upd, .sg-update-pill, .sg-btn.sg-pending { animation:none; } .sg-update-pill .x .ring { display:none; } }
   `;
 
   // About — its own modal, above the settings panel.
@@ -993,7 +1315,17 @@ AE.status = (() => {
     const whoBox = h('span', null, '…');
     AE.profile().then((p) => { whoBox.textContent = (p.name || '—') + (p.storeId ? ' · ' + p.storeId + ' ' + p.storeName : ''); }).catch(() => { whoBox.textContent = '—'; });
 
-    const card = h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
+    // The demo build's About is the bare minimum: name, version, author, icon credit.
+    const card = false ? h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
+      h('div', { class: 'hero' },
+        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
+        h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
+        h('div', { class: 'sg-soft' }, 'v' + AE_VERSION)),
+      h('h4', null, 'Authored by'),
+      kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914'], ['With', 'Claude (Anthropic)']),
+      h('div', { class: 'fine' }, 'Crystal icons are FINAL FANTASY XIV action icons. © SQUARE ENIX.'),
+      h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')))
+    : h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
       h('div', { class: 'hero' },
         h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
         h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
@@ -1027,11 +1359,12 @@ AE.status = (() => {
   // Patch notes — its own modal, above Settings. Every release is a panel,
   // newest first. `since` (the version you updated from) expands everything
   // newer than it; otherwise just the latest is open.
-  const PATCH_NOTES = [{"version": "2.16.0", "notes": ["New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates as each item is scanned, without losing your place in the list.", "**Divination**: its icon now shows in its panel.", "Aethernet is now available store by store. If your store doesn't have access yet, you'll see a notice instead, and nothing else loads until it's added.", "**Swiftcast** won't create cleanings while the store is closed (after **Close store** in Portal). Open the store first.", "**Bountiful Yield** now works on RMA orders too: **Add all RMA parts** in the Add RMA parts popout. It stops if the RMA's line limit is reached."], "date": "2026-09-30T22:37:40Z"}, {"version": "2.15.0", "notes": ["New: **Send feedback**. Report a bug or suggest something straight from Portal: avatar menu \u2192 **Send Aethernet feedback**, or the link at the bottom of Settings. Bug reports can include technical details to help track the problem down (never customer details).", "Suggestions that get built are credited here in the patch notes."], "date": "2026-09-30T05:45:13Z"}, {"version": "2.14.1", "notes": ["Auto-Waymark: if a work order's nickname already has a date in it (like \"PS5 SLIM (10/01)\"), that date becomes its Auto-Waymark date. Otherwise it's 3 days after it reached Ready for pickup, as before.", "Fixed: work orders already at Ready for pickup when 2.14.0 arrived were dated from their last update instead of the date in their nickname. Their Auto-Waymarks have been corrected."], "date": "2026-09-30T00:47:16Z"}, {"version": "2.14.0", "notes": ["New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.", "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.", "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **\u00d7** removes it for good.", "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.", "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."], "date": "2026-09-30T00:37:49Z"}, {"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
+  const PATCH_NOTES = [{"version": "2.17.0", "notes": ["New crystal: **Rainbow Drip**. Work-order lists color each row by its status: red for Ready for work; blue for Diagnostics, Work in progress and Quality check; green for Ready for pickup; purple for Need to order, Ready for diag and Repair summary; yellow for Awaiting callback, Awaiting item and Awaiting device. It replaces the **UBIF Status Row Classes** script: if that's still running, you'll see how to turn it off. Thank you to **B.Young** at Lexington for letting us crystallize Rainbow Drip from their script!", "New crystal: **Master's Mend**, small fixes to Portal, each with its own switch in Settings. First fix: the ubreakifix logo in the top left is now a real link to the dashboard, so you can middle-click or right-click it to open a new tab.", "No more reloading to see changes: a text logged by **Recitation** shows in the WO notes right away, and so do Auto-Waymark nickname changes and cleanings closed out by **Swiftcast**. The page refreshes its data in place.", "**Master's Mend**: scan to open. Scan a WO label to open that work order, or an item label to open the item, from the dashboard, the work-order list or a customer. On a WO, scanned items are still added to it, and scanning does nothing on inventory, check-in or check-out pages or while you're typing in a field. Scanners that were a little too slow for Portal's own scan features now work with them too.", "**Glamour**: make the login page yours. In Glamour's settings, under **Login page**, choose a picture to replace Portal's photo (best fit: 768 \u00d7 871 px, shown in the setting), or fill the whole purple panel with it, and show the Aethernet mark in the bottom-left corner.", "**Master's Mend**: sort the Work orders list by any column. Click the arrows beside a column name. Most columns sort across every page; Customer, Device/Issue, Location, Service Outcome, Completed and Created/Cancelled By sort the page you're on (their arrows are underlined).", "**Auto-Waymark**: texting the customer from a work order at Ready for pickup restarts its follow-up: the Auto-Waymark (and nickname) moves to 3 days from that day. It only ever moves later, and works whether or not Recitation is on.", "**Waymark**: managers can clear a tag straight from the board with the \u00d7 on it. Everyone else removes tags from the work order as before.", "**Master's Mend**: a **Hide auto notes** switch at the top of a work order's notes hides the automatic notes (status changes, check-in logs and the like), and loads every note on the work order, so you see the whole history of what people wrote, not just the first page. Flip it back any time; nothing is deleted.", "**Master's Mend**: a **Not contacted** chip on the Arrivals page, next to Portal's own (look for the Aethernet mark on its corner), lists every arrival that hasn't been contacted yet, from every page at once. Click an arrival to open it as usual; any other chip goes back to Portal's list. In Settings (Master's Mend), choose whether it lists all statuses or only arrivals that are still Not confirmed.", "Crystals that changed in an update now get a purple **Updated** sheen in Settings, like the yellow one on new crystals.", "Settings: **Save & reload** glows while you have changes to save. The **Aethernet has updated!** pill now goes away by itself after 10 seconds (the ring around its \u2715 counts down; hovering pauses it)."], "updated": ["textNotes", "autoClose", "glamour", "waymark"], "date": "2026-10-01T05:28:46Z"}, {"version": "2.16.0", "notes": ["New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates as each item is scanned, without losing your place in the list.", "**Divination**: its icon now shows in its panel.", "Aethernet is now available store by store. If your store doesn't have access yet, you'll see a notice instead, and nothing else loads until it's added.", "**Swiftcast** won't create cleanings while the store is closed (after **Close store** in Portal). Open the store first.", "**Bountiful Yield** now works on RMA orders too: **Add all RMA parts** in the Add RMA parts popout. It stops if the RMA's line limit is reached."], "date": "2026-09-30T22:37:40Z"}, {"version": "2.15.0", "notes": ["New: **Send feedback**. Report a bug or suggest something straight from Portal: avatar menu \u2192 **Send Aethernet feedback**, or the link at the bottom of Settings. Bug reports can include technical details to help track the problem down (never customer details).", "Suggestions that get built are credited here in the patch notes."], "date": "2026-09-30T05:45:13Z"}, {"version": "2.14.1", "notes": ["Auto-Waymark: if a work order's nickname already has a date in it (like \"PS5 SLIM (10/01)\"), that date becomes its Auto-Waymark date. Otherwise it's 3 days after it reached Ready for pickup, as before.", "Fixed: work orders already at Ready for pickup when 2.14.0 arrived were dated from their last update instead of the date in their nickname. Their Auto-Waymarks have been corrected."], "date": "2026-09-30T00:47:16Z"}, {"version": "2.14.0", "notes": ["New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.", "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.", "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **\u00d7** removes it for good.", "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.", "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."], "date": "2026-09-30T00:37:49Z"}, {"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
   const verTuple = (v) => String(v || '0').split('.').map(Number);
   const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
   function openPatchNotes(since) {
+    if (false) return; // no patch notes in the demo build
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
     document.getElementById('sg-notes')?.remove();
@@ -1071,6 +1404,7 @@ AE.status = (() => {
     document.getElementById('sg-settings')?.remove();
     AE.track('settings:open');
     const s = AE.merge(AE.DEFAULTS, AE.settings); // working copy
+    let saveBtn = null;
 
     const input = (label, value, placeholder, onInput, type = 'text') =>
       h('label', { class: 'sg-field' }, h('span', null, label),
@@ -1112,19 +1446,26 @@ AE.status = (() => {
     const OPTIONS = {
       cleaningRate: [() => 'Target ' + s.cleaningRate.target + '%',
         input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; repaintSums(); }, 'number')],
-      galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
-        h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Leave blank to use your login. Only fill in to override.'),
-        (galaxyInputs.technicianName = input('Technician name', s.galaxy.technicianName, '', (v) => { s.galaxy.technicianName = v.trim(); repaintSums(); })),
-        (galaxyInputs.email = input('Your email', s.galaxy.email, '', (v) => { s.galaxy.email = v.trim(); repaintSums(); })),
-        (galaxyInputs.location = input('UBIF location (as shown in the form)', s.galaxy.location, '', (v) => { s.galaxy.location = v.trim(); repaintSums(); })),
-        input('Store email (optional)', s.galaxy.storeEmail, 'Left blank', (v) => { s.galaxy.storeEmail = v.trim(); }),
-        input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
-        input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
-        h('button', { class: 'sg-btn', style: 'margin:4px 0', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')],
       glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
-      waymark: [() => AE.waymark.summary(), AE.waymark.editor()],
-      printLabels: [() => s.printLabels.delayMs + ' ms between labels',
-        input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
+      ...(false ? {} : { // not in the demo build
+        galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
+          h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Leave blank to use your login. Only fill in to override.'),
+          (galaxyInputs.technicianName = input('Technician name', s.galaxy.technicianName, '', (v) => { s.galaxy.technicianName = v.trim(); repaintSums(); })),
+          (galaxyInputs.email = input('Your email', s.galaxy.email, '', (v) => { s.galaxy.email = v.trim(); repaintSums(); })),
+          (galaxyInputs.location = input('UBIF location (as shown in the form)', s.galaxy.location, '', (v) => { s.galaxy.location = v.trim(); repaintSums(); })),
+          input('Store email (optional)', s.galaxy.storeEmail, 'Left blank', (v) => { s.galaxy.storeEmail = v.trim(); }),
+          input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
+          input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
+          h('button', { class: 'sg-btn', style: 'margin:4px 0', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')],
+        waymark: [() => AE.waymark.summary(), AE.waymark.editor()],
+        fixes: [() => AE.fixesInfo.filter(([id]) => s.fixes[id] !== false).length + ' of ' + AE.fixesInfo.length + ' on',
+          ...AE.fixesInfo.flatMap(([id, name, desc, extra]) => [h('div', { class: 'sg-row', style: 'margin:8px 0' },
+            h('div', null, h('b', null, name), h('span', { class: 'sg-soft', style: 'display:block' }, desc)),
+            toggle(s.fixes[id] !== false, (v) => { s.fixes[id] = v; repaintSums(); })),
+            extra ? extra(s, h) : null])],
+        printLabels: [() => s.printLabels.delayMs + ' ms between labels',
+          input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
+      }),
     };
     // A live Aethernet notice about this crystal (status.json): say so on its row.
     const issueTag = (id) => {
@@ -1136,7 +1477,7 @@ AE.status = (() => {
     };
     const CHEV = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
     const crystalRow = (id, name, desc) => {
-      const fresh = isNew(id);
+      const fresh = isNew(id), upd = !fresh && isUpdated(id);
       let optToggle = null, optBody = null;
       if (OPTIONS[id]) {
         const [summary, ...kids] = OPTIONS[id];
@@ -1157,9 +1498,9 @@ AE.status = (() => {
         sums.push(paintSum);
         paintSum();
       }
-      return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : ''), 'data-crystal': id },
+      return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : upd ? ' sg-upd' : ''), 'data-crystal': id },
         h('div', { class: 'sg-row' },
-          h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : null,
+          h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : upd ? h('span', { class: 'sg-new-tag upd' }, 'Updated') : null,
               issueTag(id)),
             h('span', { class: 'sg-soft' }, desc), optToggle ? h('div', null, optToggle) : null),
           toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); })),
@@ -1169,7 +1510,7 @@ AE.status = (() => {
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
         // Hidden way in: ten quick clicks on the crystal open the admin panel (key entry first time).
-        h('span', { style: 'color:var(--aui-primary,#8223d2);cursor:default;user-select:none', html: icon('aetheryte', 36), onclick: (() => {
+        h('span', { style: 'color:var(--aui-primary,#8223d2);cursor:default;user-select:none', html: icon('aetheryte', 36), onclick: false ? null : (() => {
           let n = 0, last = 0;
           return () => { const t = Date.now(); n = t - last < 1500 ? n + 1 : 1; last = t; if (n >= 10) { n = 0; AE.feedback && AE.feedback.openAdmin(); } };
         })() }),
@@ -1179,25 +1520,36 @@ AE.status = (() => {
       section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
         who,
         h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.'),
-        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, AE_NAME + ' records which features you use (a count per feature per day, with your name and store) to decide what to improve. It never records customer details or what\'s on the page.')),
+        false ? null : h('div', { class: 'sg-soft', style: 'margin-top:6px' }, AE_NAME + ' records which features you use (a count per feature per day, with your name and store) to decide what to improve. It never records customer details or what\'s on the page.')),
 
       section('crystals', 'Crystals', true,
         () => CRYSTAL_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + CRYSTAL_INFO.length + ' on',
         h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => crystalRow(id, name, desc)))),
 
       h('div', { class: 'sg-foot-links' },
-        h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.feedback.openFeedback() }, 'Send feedback'),
-        h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.status.checkNow() }, 'Check for updates'),
-        h('button', { type: 'button', class: 'sg-about-link', onclick: () => openPatchNotes() }, 'Patch notes'),
+        false ? null : h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.feedback.openFeedback() }, 'Send feedback'),
+        false ? null : h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.status.checkNow() }, 'Check for updates'),
+        false ? null : h('button', { type: 'button', class: 'sg-about-link', onclick: () => openPatchNotes() }, 'Patch notes'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…')),
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => close() }, 'Cancel'),
-        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(true); location.reload(); } }, 'Save & reload')));
+        (saveBtn = h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(true); location.reload(); } }, 'Save & reload'))));
 
     const scrim = h('div', { class: 'sg sg-scrim', id: 'sg-settings', onclick: (e) => { if (e.target === scrim) close(); } }, sheet);
     // Every way out ends the "new" sheen: the crystals have now been seen.
+    // Save & reload animates while the working copy differs from what's saved (checked after
+    // anything in the sheet changes; editors that fill in defaults do so before the baseline).
+    const baseline = JSON.stringify(s);
+    const checkPending = () => {
+      const pending = JSON.stringify(s) !== baseline;
+      saveBtn.classList.toggle('sg-pending', pending);
+      saveBtn.title = pending ? 'You have changes to save' : '';
+    };
+    ['input', 'change', 'click'].forEach((t) => sheet.addEventListener(t, () => setTimeout(checkPending, 0)));
+    const pendingTimer = setInterval(checkPending, 1000); // async edits (e.g. a login picture being prepared)
     function close(saving) {
+      clearInterval(pendingTimer);
       scrim.remove(); document.removeEventListener('keydown', onKey); markAllSeen();
       // Glamour previews live; closing without saving puts the saved theme back.
       if (!saving) AE.glamour.apply(AE.settings.crystals.glamour ? AE.settings.glamour : null);
@@ -1215,7 +1567,7 @@ AE.status = (() => {
         h('dt', null, 'Email'), h('dd', null, p.email || '—'),
         h('dt', null, 'Store'), h('dd', null, loc || '—'));
       galaxyAuto.technicianName = p.name; galaxyAuto.email = p.email; galaxyAuto.location = loc;
-      for (const k of Object.keys(galaxyAuto)) galaxyInputs[k].querySelector('input').placeholder = 'Auto: ' + (galaxyAuto[k] || '—');
+      for (const k of Object.keys(galaxyAuto)) if (galaxyInputs[k]) galaxyInputs[k].querySelector('input').placeholder = 'Auto: ' + (galaxyAuto[k] || '—');
       repaintSums();
     }).catch((e) => { who.replaceChildren(h('dt', null, 'Error'), h('dd', null, esc(e.message))); });
   }
@@ -1244,14 +1596,19 @@ AE.status = (() => {
     document.getElementById('sg-update-pill')?.remove();
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
-    const x = h('span', { class: 'x', role: 'button', 'aria-label': 'Dismiss', title: 'Dismiss' }, '✕');
+    const x = h('span', { class: 'x', role: 'button', 'aria-label': 'Dismiss', title: 'Dismiss' }, '✕',
+      h('span', { html: '<svg class="ring" viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="11"/></svg>', style: 'display:contents' }));
     const pill = h('button', { type: 'button', class: 'sg sg-update-pill', id: 'sg-update-pill', title: "See what's new" },
       h('span', { html: icon('aetheryte', 20) }), AE_NAME + ' has updated!', h('span', { class: 'ver' }, 'v' + AE_VERSION), x);
     // Settings opens underneath (that's where new crystals are marked), with the patch notes on top.
-    pill.onclick = (e) => { pill.remove(); if (e.target !== x) { open(); openPatchNotes(fromVersion || AE_VERSION); } };
+    pill.onclick = (e) => { pill.remove(); if (!x.contains(e.target)) { open(); openPatchNotes(fromVersion || AE_VERSION); } };
+    // Gone by itself after 10 s, in step with the ring; hovering pauses both.
+    let left = 10000, since = Date.now(), timer = setTimeout(() => pill.remove(), left);
+    pill.addEventListener('mouseenter', () => { clearTimeout(timer); left -= Date.now() - since; });
+    pill.addEventListener('mouseleave', () => { since = Date.now(); timer = setTimeout(() => pill.remove(), Math.max(0, left)); });
     document.body.appendChild(pill);
   }
-  if (updated) showUpdatedPill(lastVersion);
+  if (updated && !false) showUpdatedPill(lastVersion); // it opens the patch notes, which the demo build doesn't have
   AE.hooks.updatedPill = showUpdatedPill; // dev tools
   AE.hooks.patchVersions = PATCH_NOTES.map((n) => n.version);
 
@@ -1996,7 +2353,8 @@ AE.crystal({
 
   How (v2.3.2): the browser's own network log (PerformanceObserver) reports
   every request the page makes, however Portal's code issues it. When a
-  POST …/messages/v1/send shows up while a WO page is open, read that WO
+  POST …/messages/v1/send shows up while a WO page is open (core's
+  text-sent event, shared with Auto-Waymark since 2.17), read that WO
   customer's message history (GET /api/messages/v1/customers/{id}, the same
   call the chat panel makes right after sending) and log each of *your*
   outbound messages from the last few minutes that isn't logged yet. Finding
@@ -2007,7 +2365,8 @@ AE.crystal({
   wrapper never saw the send (confirmed on Zen with a HAR, Sep 26 2026).
 
   The note is a regular (noteType 2) note tagged with the WO's current
-  status, using Portal's own status → tag map.
+  status, using Portal's own status → tag map. Afterwards the WO view is
+  refreshed in place (AE.refreshView), so the note shows without a reload.
 */
 AE.crystal({
   id: 'textNotes',
@@ -2021,7 +2380,6 @@ AE.crystal({
       11: 'quality_check', 12: 'repair_summary', 13: 'ready_for_pickup', 14: 'sale_complete', 15: 'closed', 17: 'device_abandoned',
       22: 'request_buyout_replacement', 23: 'transferred_to_depot', 24: 'ready_for_diag', 25: 'cancelled', 26: 'send_to_depot', 27: 'shipped_by_depot',
     };
-    const SEND_RE = /\/messages\/v1\/send(?:[?#]|$)/;
     const WINDOW_MS = 3 * 60 * 1000;        // how recent a sent message must be
     const LOGGED_KEY = 'ae_text_notes_logged'; // messageId → time logged (shared across tabs)
     const loadLogged = () => {
@@ -2075,6 +2433,7 @@ AE.crystal({
         try {
           let n = await logRecentTexts(m[1]);
           if (!n) { await AE.sleep(2500); n = await logRecentTexts(m[1]); } // history can lag a moment
+          if (n) AE.refreshView();
           if (n) AE.toast('Text logged', (n > 1 ? n + ' texts' : 'Text') + ' added to WO ' + m[1] + "'s notes.", 'ok', 4000);
         } catch (e) {
           AE.toast('Text sent, but not logged', "Couldn't add the WO note: " + (e.message || e) + ' — add it by hand.', 'err', 12000);
@@ -2083,10 +2442,7 @@ AE.crystal({
       return busy;
     }
 
-    if (typeof PerformanceObserver === 'undefined') return;
-    new PerformanceObserver((list) => {
-      for (const e of list.getEntries()) if (SEND_RE.test(e.name)) { onSend(); break; }
-    }).observe({ type: 'resource', buffered: false });
+    AE.on('text-sent', () => onSend());
     AE.textNotesDebug = { onSend, logRecentTexts }; // for testing
   },
 });
@@ -2267,6 +2623,7 @@ AE.crystal({
         running = false;
         if (btn) btn.disabled = false;
         AE.emit('cleaning-changed', { arrivalId, woId }); // badge + WO pill refresh
+        if (woId) AE.refreshView(); // Portal's own lists (arrivals, WOs) show the change without a reload
       }
     }
 
@@ -3317,7 +3674,86 @@ AE.glamour = (() => {
   .sg-glam-warn { margin-top:6px; font-size:12px; color:var(--aui-status-error, #b91a24); }
   .sg-glam-edit .sg-actions { margin-top:10px; justify-content:flex-start; }
   .sg-glam-edit .sg-actions .sg-btn { flex:none; }
+  .sg-glam-login { margin-top:14px; padding-top:10px; border-top:1px solid var(--aui-outline-soft, #eeedf1); }
+  .sg-glam-login .row { display:flex; gap:12px; align-items:center; margin-top:8px; }
+  .sg-glam-login .thumb { flex:none; width:72px; height:90px; border-radius:8px; border:1px solid var(--aui-outline, #c6c6ca);
+    background:linear-gradient(45deg, #8223d2, #ae4fd2) center / cover no-repeat; display:flex; align-items:flex-end; justify-content:center;
+    color:#fff; font-size:10px; padding-bottom:4px; text-align:center; }
+  .sg-glam-login .btns { display:flex; flex-wrap:wrap; gap:6px; }
+  .sg-glam-login .btns .sg-btn { flex:none; height:30px; font-size:13px; }
+  .sg-glam-login label.chk { display:flex; gap:8px; align-items:center; margin-top:8px; font-size:13px; cursor:pointer; }
   `;
+
+  /*
+    Login page picture: shrunk in the browser to at most 1400 px on the long
+    side and saved inside your settings as a data URL (WebP keeps
+    transparency, like Portal's cut-out photo; JPEG if WebP isn't available),
+    kept under ~1.2 MB.
+  */
+  function shrinkImage(file) {
+    return new Promise((resolve, reject) => {
+      if (!/^image\//.test(file.type)) return reject(new Error('That file isn\'t an image.'));
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Couldn\'t read that image.')); };
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, 1400 / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const webp = c.toDataURL('image/webp', 0.85).startsWith('data:image/webp');
+        for (const q of [0.85, 0.7, 0.55, 0.4]) {
+          const d = c.toDataURL(webp ? 'image/webp' : 'image/jpeg', q);
+          if (d.length < 1.2e6) return resolve(d);
+        }
+        reject(new Error('That image is too detailed to store; try a smaller one.'));
+      };
+      img.src = url;
+    });
+  }
+
+  function loginEditor(s, repaint) {
+    s.glamour.login = Object.assign({ image: '', fill: false, mark: true }, s.glamour.login);
+    const L = s.glamour.login;
+    const thumb = h('div', { class: 'thumb' });
+    const status = h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:4px' });
+    const file = h('input', { type: 'file', accept: 'image/*', style: 'display:none', onchange: async () => {
+      const f = file.files[0]; file.value = '';
+      if (!f) return;
+      status.textContent = 'Preparing…';
+      try { L.image = await shrinkImage(f); status.textContent = 'Picked. Save to use it.'; } catch (e) { status.textContent = e.message; }
+      paint(); repaint();
+    } });
+    const fill = h('input', { type: 'checkbox', checked: !!L.fill, onchange: (e) => { L.fill = e.target.checked; paint(); repaint(); } });
+    const mark = h('input', { type: 'checkbox', checked: L.mark !== false, onchange: (e) => { L.mark = e.target.checked; repaint(); } });
+    const reset = h('button', { type: 'button', class: 'sg-btn', onclick: () => { L.image = ''; status.textContent = "Back to Portal's picture once you save."; paint(); repaint(); } }, "Portal's picture");
+    // Recommended sizes: Portal's own photo is a 768 × 871 cut-out PNG; the panel
+    // is the right 60% of the window, full height (about square: 1152 × 1080 on 1080p).
+    const tip = h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' });
+    function paint() {
+      tip.textContent = L.fill
+        ? 'Best fit: about 1400 × 1300 px. The panel\'s shape changes with the window, so the edges may be trimmed; keep the subject in the middle.'
+        : 'Best fit: 768 × 871 px (portrait), a PNG with a transparent background, like Portal\'s own photo. It stands at the bottom of the purple panel.';
+      thumb.style.backgroundImage = L.image ? 'url("' + L.image + '")' + (L.fill ? '' : ', linear-gradient(45deg, #8223d2, #ae4fd2)') : '';
+      thumb.style.backgroundSize = L.image && !L.fill ? 'contain, cover' : 'cover';
+      thumb.style.backgroundPosition = L.image && !L.fill ? 'center bottom, center' : 'center';
+      thumb.textContent = L.image ? '' : "Portal's";
+      reset.disabled = !L.image;
+      fill.disabled = !L.image;
+    }
+    paint();
+    return h('div', { class: 'sg-glam-login' },
+      h('b', null, 'Login page'),
+      h('div', { class: 'sg-soft', style: 'font-size:12px' }, 'Shown on Portal\'s sign-in page in this browser.'),
+      h('div', { class: 'row' }, thumb,
+        h('div', null,
+          h('div', { class: 'btns' }, h('button', { type: 'button', class: 'sg-btn', onclick: () => file.click() }, 'Choose picture…'), reset, file),
+          status,
+          h('label', { class: 'chk' }, fill, 'Fill the whole purple panel'),
+          tip,
+          h('label', { class: 'chk' }, mark, 'Aethernet mark in the bottom-left corner'))));
+  }
 
   function editor(s, repaint) {
     if (!document.getElementById('sg-glamour-css')) document.head.append(h('style', { id: 'sg-glamour-css' }, EDITOR_CSS));
@@ -3379,7 +3815,7 @@ AE.glamour = (() => {
         ...(editingTheme ? [edit(editingTheme)] : []));
     }
     render();
-    return root;
+    return h('div', null, root, loginEditor(s, repaint));
   }
 
   const summary = (cfg) => (find(cfg, cfg.theme) || PRESETS[0]).name;
@@ -3409,6 +3845,8 @@ AE.crystal({
   - On a WO page: tag chips next to the customer name, and "+ Tag" (managed
     tags as toggles, a box for one-off tags, and the WO's tag history).
   - Header button: the board — open WOs grouped by tag, filterable.
+    Managers (the roles below) get × on each tag there to clear it;
+    everyone else removes tags from the WO itself.
   - Auto-Waymark: a WO that reaches Ready for pickup gets a follow-up date
     3 days after that day (its own kind of mark, not a tag), added after end
     of day (7 PM local) — or on the first Portal load after that if nobody
@@ -3426,6 +3864,10 @@ AE.crystal({
     Auto-Waymark date ("10/02", the store's usual M/DD) and is kept that way:
     pushes rewrite it, and the scan puts it back if it drifts. A later date
     typed into the nickname by hand moves the mark to match instead.
+  - Texting the customer from a WO at Ready for pickup moves its
+    Auto-Waymark to 3 days from that day (only ever later), credited
+    "<name> (texted the customer)". Uses core's text-sent event, so it works
+    with Recitation off.
   - Settings → Waymark: the store's managed tag list. Only Portal's
     Store Manager / District Manager / Store Owner roles (for the current
     store) can edit it; everyone can tag and add one-offs.
@@ -3551,17 +3993,37 @@ AE.waymark = (() => {
       customerDeviceId: dev.customerDeviceId, customerId: dev.customerId, passcode: dev.passcode, serial: dev.serial,
       imei: dev.imei, deviceCatalogId: dev.deviceCatalogId, name,
     });
+    if (location.pathname.indexOf('/repair/workorder/' + woId) === 0) AE.refreshView(); // show the new nickname
     return true;
   }
 
-  async function pushMark(woId, due) {
+  // opts.by: who it's credited to in the history; opts.why: start of the toast (e.g. "Customer texted").
+  async function pushMark(woId, due, opts = {}) {
     if (AE.status.blocked('waymark')) return;
-    const j = await call('POST', '/wo/' + woId + '/push', { due });
-    AE.track('waymark:push');
+    const j = await call('POST', '/wo/' + woId + '/push', opts.by ? { due, by: opts.by } : { due });
+    AE.track(opts.track || 'waymark:push');
     if (cache) cache.auto[woId] = Object.assign({}, cache.auto[woId], { due: j.auto.due });
     AE.emit('waymark-changed', cache);
-    try { if (await syncNickname(woId, j.auto.due)) AE.toast('Auto-Waymark', 'Moved to ' + fmtDate(j.auto.due) + '; nickname is now ' + nickDate(j.auto.due) + '.', 'ok'); }
-    catch (e) { fail('mark moved, but the nickname couldn\'t be updated', e); }
+    const lead = opts.why ? opts.why + ': Auto-Waymark moved to ' : 'Moved to ';
+    try {
+      if (await syncNickname(woId, j.auto.due)) AE.toast('Auto-Waymark', lead + fmtDate(j.auto.due) + '; nickname is now ' + nickDate(j.auto.due) + '.', 'ok');
+      else if (opts.why) AE.toast('Auto-Waymark', lead + fmtDate(j.auto.due) + '.', 'ok');
+    } catch (e) { fail('mark moved, but the nickname couldn\'t be updated', e); }
+  }
+
+  // A text to the customer from a WO at Ready for pickup restarts its follow-up:
+  // the mark moves to 3 days from today, never earlier than it already is.
+  async function customerTexted(woId) {
+    if (!configured() || AE.status.blocked('waymark')) return;
+    const c = await load(true);
+    const m = c.auto && c.auto[woId];
+    if (!m) return;
+    const due = addDays(today(), AUTO_DAYS);
+    if (due <= m.due) return;
+    const wo = await woDetail(woId);
+    if (!wo || Number(wo.workorderStatusId) !== RFP_STATUS) return;
+    const p = await me();
+    await pushMark(woId, due, { by: (p.name || 'Someone') + ' (texted the customer)', why: 'Customer texted', track: 'waymark:pushTexted' });
   }
 
   // Right after a tech sets this WO to Ready for pickup (seen from the WO page).
@@ -3855,7 +4317,7 @@ AE.waymark = (() => {
   const listSig = () => JSON.stringify(cache && cache.list);
   const summary = () => (cache ? cache.list.length + ' tag' + (cache.list.length === 1 ? '' : 's') : 'Store tags');
 
-  return { API, configured, load, tagsOf, autoOf, checkWo, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
+  return { API, configured, load, tagsOf, autoOf, checkWo, customerTexted, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
 })();
 
 AE.crystal({
@@ -3867,6 +4329,11 @@ AE.crystal({
     const W = AE.waymark;
     if (!W.configured()) return;
     W.ensureCss();
+    AE.on('text-sent', ({ woId }) => {
+      if (!woId) return;
+      AE.sleep(1500).then(() => W.customerTexted(woId)) // let Portal's send land first
+        .catch((e) => W.fail("the text went out, but the Auto-Waymark couldn't be moved", e));
+    });
     const ROW_ID = 'sg-wm-row', POP_ID = 'sg-wm-pop', BTN_ID = 'sg-wm-btn', BOARD_ID = 'sg-wm-board';
     const currentWoId = () => { const m = location.pathname.match(/^\/repair\/workorder\/(\d+)/); return m ? m[1] : null; };
     const nameRow = (woId) => {
@@ -4005,6 +4472,7 @@ AE.crystal({
 
     let boardFilter = null; // tag name, or null = all
     let boardTab = 'tags';  // 'tags' | 'auto'
+    let boardManager = false; // managers clear tags right from the board
     async function toggleBoard() {
       if (document.getElementById(BOARD_ID)) { document.getElementById(BOARD_ID).remove(); return; }
       const header = document.querySelector('.components-header');
@@ -4016,7 +4484,8 @@ AE.crystal({
       document.body.appendChild(board);
       AE.track('waymark:board');
       try {
-        const [c, wos] = await Promise.all([W.load(true), AE.data.workorders(Date.now(), 0)]);
+        const [c, wos, role] = await Promise.all([W.load(true), AE.data.workorders(Date.now(), 0), W.canEdit().catch(() => ({ ok: false }))]);
+        boardManager = !!role.ok;
         drawBoard(board, c, wos);
         W.scan(wos).then(() => W.load()).then((c2) => { if (board.isConnected) drawBoard(board, c2, wos); }).catch(() => {});
       } catch (e) {
@@ -4068,7 +4537,14 @@ AE.crystal({
           h('div', null,
             h('a', { href: '/repair/workorder/' + id }, 'WO ' + id), ' · ', AE.data.nameOf(r) || 'Customer',
             h('div', { class: 'meta' }, [r.workorderStatusName, dev].filter(Boolean).join(' · '))),
-          h('div', { class: 'chips' }, ts.map((t) => W.chip(t.tag))));
+          h('div', { class: 'chips' }, ts.map((t) => W.chip(t.tag, !boardManager ? {} : {
+            title: t.tag + ' · added by ' + (t.by || 'someone') + ', ' + W.when(t.at),
+            onRemove: async () => {
+              try { await W.setTag(id, t.tag, false); } catch (e) { return W.fail("couldn't remove " + t.tag, e); }
+              AE.track('waymark:boardUntag');
+              drawBoard(board, await W.load(), wos);
+            },
+          }))));
       };
       const filterChip = (n) => {
         const el = W.chip(n, { label: n + ' (' + counts[n] + ')', cls: 'toggle' + (boardFilter && boardFilter !== n ? ' off' : ''), title: 'Show only ' + n });
@@ -4126,6 +4602,674 @@ AE.crystal({
     // Managers' morning notice, once the header is up.
     setTimeout(() => morningNotice().catch((e) => console.warn('[' + AE_NAME + '] Waymark morning notice:', e.message || e)), 4000);
     setInterval(tick, 60 * 1000); // scan() itself waits out the 10 minutes
+  },
+});
+
+// ===== 57-row-colors.js =====
+/*
+  Rainbow Drip (WO list row colors) — colors each row of a work-order list
+  by its status (Garrett's colors, Sep 30, 2026).
+
+  Portal draws the status as a tag in a "Status" column and puts nothing on
+  the row itself, so every row with a work-order link gets a class
+  `status-<status name>` (e.g. status-ready-for-pickup) and the CSS below
+  colors its cells. The Status column is found by its header; without one,
+  the first cell whose text is a known status is used. React reuses rows,
+  so the class is swapped whenever a row's status text changes.
+
+  It replaces another dev's userscript, "UBIF Status Row Classes", which does
+  the same thing the same way. If that (or a Stylus style) is still running,
+  a notice explains how to turn it off. Signs of it: a stylesheet that isn't
+  ours styling `tr.status-…`, or a row that already has a status- class we
+  didn't put there.
+*/
+AE.crystal({
+  id: 'rowColors',
+  name: 'Rainbow Drip',
+  sites: ['portal.ubreakifix.net'],
+  run() {
+    const RED = '#ff00007a', BLUE = '#24b0ff73', GREEN = '#2bff3875', PURPLE = '#a900ff6e', YELLOW = '#fffe0073';
+    const COLORS = {
+      'ready-for-work': RED,
+      'diagnostics': BLUE,
+      'work-in-progress': BLUE,
+      'quality-check': BLUE,
+      'ready-for-pickup': GREEN,
+      'need-to-order': PURPLE,
+      'awaiting-callback': YELLOW,
+      'awaiting-item': YELLOW,
+      'awaiting-device': YELLOW,
+      'ready-for-diag': PURPLE,
+      'repair-summary': PURPLE,
+    };
+    const slug = (t) => t.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+    document.head.append(AE.h('style', { id: 'ae-row-colors' }, Object.entries(COLORS).map(([s, c]) =>
+      `tr.status-${s} td, [role="row"].status-${s} > [role="cell"], [role="row"].status-${s} > [role="gridcell"] { background: ${c} !important; }`).join('\n')));
+
+    const cellsOf = (row) => [...row.children].filter((c) => /^(TD|TH)$/.test(c.tagName) || /^(cell|gridcell|columnheader)$/.test(c.getAttribute('role') || ''));
+    // Index of the "Status" column, from the table's header row.
+    function statusIndex(table) {
+      const head = table.querySelector('thead tr, [role="row"]:has(> [role="columnheader"])');
+      return head ? cellsOf(head).findIndex((c) => c.textContent.trim().toLowerCase() === 'status') : -1;
+    }
+
+    function paint() {
+      const rows = document.querySelectorAll('tbody tr, [role="row"]');
+      const idx = new Map();
+      for (const row of rows) {
+        if (!row.querySelector('a[href*="/repair/workorder/"]')) continue;
+        const table = row.closest('table, [role="table"], [role="grid"]');
+        if (table && !idx.has(table)) idx.set(table, statusIndex(table));
+        const cells = cellsOf(row), i = table ? idx.get(table) : -1;
+        let status = i >= 0 && cells[i] ? slug(cells[i].textContent) : '';
+        if (!status) status = cells.map((c) => slug(c.textContent)).find((s) => s in COLORS) || '';
+        // A status- class on a row we haven't touched yet, or one that isn't ours.
+        const mine = row.dataset.aeStatus === undefined ? null : 'status-' + row.dataset.aeStatus;
+        if (!foreign && [...row.classList].some((c) => c.startsWith('status-') && c !== mine)) foundOther('row class');
+        if (row.dataset.aeStatus === status) continue;
+        if (row.dataset.aeStatus) row.classList.remove('status-' + row.dataset.aeStatus);
+        if (status) row.classList.add('status-' + status);
+        row.dataset.aeStatus = status;
+      }
+    }
+    // ------------------------------------------------ the old script, still on?
+    let foreign = null;
+    const OTHER_CSS = /tr\.status-[a-z]/;
+    function otherStylesheet() {
+      for (const el of document.querySelectorAll('style')) if (el.id !== 'ae-row-colors' && OTHER_CSS.test(el.textContent)) return true;
+      for (const sh of [...(document.adoptedStyleSheets || [])]) {
+        try { if ([...sh.cssRules].some((r) => OTHER_CSS.test(r.cssText))) return true; } catch (_) {}
+      }
+      return false;
+    }
+    function foundOther(how) {
+      foreign = how;
+      console.info('[' + AE_NAME + '] Rainbow Drip: another script is also coloring WO rows (' + how + ')');
+      notice();
+    }
+    // Checked every few seconds for the first two minutes of a page (the other
+    // script may start after us).
+    const started = Date.now();
+    const styleCheck = setInterval(() => {
+      if (foreign || Date.now() - started > 120000) return clearInterval(styleCheck);
+      if (otherStylesheet()) foundOther('stylesheet');
+    }, 3000);
+
+    const DISMISS_KEY = 'ae_row_colors_other_dismissed';
+    function notice(opts = {}) {
+      const id = 'sg-rowcolors-notice';
+      document.getElementById(id)?.remove();
+      try { if (!opts.force && sessionStorage.getItem(DISMISS_KEY)) return; } catch (_) {}
+      const { h } = AE;
+      const close = () => card.remove();
+      const card = h('div', { id, class: 'sg sg-card', role: 'status', style:
+        'position:fixed;z-index:2147483645;left:16px;bottom:16px;max-width:440px;padding:12px 14px;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.45;animation:sg-in .2s ease-out' },
+        h('span', { style: 'line-height:0;flex:none', html: AE.actionIcon('rowColors', 28) }),
+        h('div', { style: 'flex:1' },
+          h('b', { style: 'display:block;margin-bottom:2px' }, 'Another script is also coloring these rows'),
+          h('div', { class: 'sg-soft', style: 'font-size:13px' },
+            'Rainbow Drip in ' + AE_NAME + ' now colors work orders by status, so ', h('b', null, 'UBIF Status Row Classes'), " isn't needed. Turn it off so the two don't clash:"),
+          h('ol', { class: 'sg-soft', style: 'font-size:13px;margin:6px 0;padding-left:20px' },
+            h('li', null, 'Click the ', h('b', null, 'Tampermonkey'), " icon in your browser's toolbar (it may be under the puzzle-piece Extensions menu)."),
+            h('li', null, 'Find ', h('b', null, 'UBIF Status Row Classes'), ' in the list and click its switch so it turns off.'),
+            h('li', null, 'Reload this page.')),
+          h('div', { class: 'sg-soft', style: 'font-size:12px' }, "If it's a style in Stylus instead, click the Stylus icon and untick it."),
+          h('div', { style: 'display:flex;gap:8px;margin-top:10px' },
+            h('button', { type: 'button', class: 'sg-btn sg-primary', style: 'height:30px;font-size:13px', onclick: () => location.reload() }, 'Reload page'),
+            h('button', { type: 'button', class: 'sg-btn', style: 'height:30px;font-size:13px', onclick: () => { try { sessionStorage.setItem(DISMISS_KEY, '1'); } catch (_) {} close(); } }, 'Later'))),
+        h('button', { type: 'button', class: 'sg-x', title: 'Dismiss', onclick: close }, '✕'));
+      (document.body || document.documentElement).appendChild(card);
+    }
+    AE.hooks.rowColorsNotice = () => notice({ force: true }); // dev tools
+
+    // Lists render and re-render without a page load: repaint on DOM changes (once per frame).
+    let queued = false;
+    new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; paint(); }); } })
+      .observe(document.body, { childList: true, subtree: true, characterData: true });
+    paint();
+    AE.trackDaily('rowColors:on');
+  },
+});
+
+// ===== 58-fixes.js =====
+/*
+  Master's Mend — small fixes to Portal, each with its own switch under the
+  crystal in Settings (settings.fixes[id]). New fixes go in FIXES below.
+
+  - logoLink: the ubreakifix logo (top left) is a <button> that routes to the
+    dashboard ("/") on click, so it can't be middle-clicked or right-clicked
+    into a new tab. A real link to "/" sits over it: middle click, Ctrl/⌘
+    click and the right-click menu act on the link; a plain click still goes
+    through Portal's own button (no page reload). React owns the button and
+    image, so they're never moved; the link is an extra child of the logo
+    wrapper, put back if Portal re-renders the header.
+
+  - scanNav: scan to open. Portal already detects barcode scans (its root
+    layout: keys under features.scan_delay_ms = 40 ms apart, ending in Enter →
+    window event "scanDetected" {scan}) and uses them in a few places: an
+    item label on a WO adds it to the cart, an "SO…/WO…" receipt opens a
+    "Navigate to work order" dialog, the open global search looks up a
+    12-character scan. Nothing handled a WO label (the bare WO number), so
+    scanning one did nothing. This fix:
+      · WO label (a 9-digit WO number, or WO<number>) → opens that WO,
+        anywhere except inventory (/boh), check-in and check-out, where
+        scans are data entry. Checked against Portal first.
+      · item label (<item number>-<10+ digit serial>) → opens the item's
+        page, but only from the dashboard, WO lists, customers and the
+        store-products pages. On a WO, Portal adds it to the WO instead.
+      · never while you're typing in a field or a dialog/drawer is open
+        (the scan is meant for that field), and never acts on scans
+        Portal's own pages consume.
+    Scanners slower than Portal's 40 ms window were missed entirely; when
+    Aethernet sees a scan (keys up to 60 ms apart) that Portal didn't, it
+    sends Portal the same scanDetected event, so Portal's own scan features
+    work with those scanners too.
+
+  - autoNotes: a "Hide auto notes" switch at the top of a WO's notes.
+    Portal's notes are noteType Auto (1: status changes, "X started
+    check-in", estimate/contact logs…) or Manual (2: what people write; also
+    Recitation's text notes). The notes tab (data-testid "notes-tab") draws
+    each as a card with id "note-<noteId>" from the Redux "notes" slice, so
+    the auto ones' ids come from there (AE.portal select) and a stylesheet
+    hides them; nothing is changed or deleted, and Portal's cards aren't
+    touched. The switch is remembered in this browser; flip it back any time.
+    While it's on, all of the WO's notes are loaded straight away (Portal's
+    own "Show more", data-testid "show-more-link", clicked until it's gone),
+    so what's left is the full history of what people wrote, not just page 1.
+
+  - notContacted: a "Not contacted" chip on the Arrivals page
+    (/check-in/arrivals), in Portal's chip row (ManualSelectionChips:
+    data-aui "chips.manual-selection", each chip a .chipElement with
+    role=checkbox/aria-checked; ours is cloned from Portal's chip, and the
+    Aethernet mark floats over its corner, since the row clips anything that
+    sticks out). Contacted arrivals carry arrival attribute 53
+    (ArrivalAttributeType.Contacted, Portal's ubif-types bundle) with a value;
+    that's what draws the Contacted tag. Portal's list is paged (10 a page)
+    and the server only filters *contacted* (contacted=false acts like true),
+    so the chip selects Portal's "All" underneath, Aethernet loads every page
+    itself (GET /api/arrivals/upcoming-arrivals with the args Portal's
+    getUpcomingArrivals query was loaded with), and Portal's own table is
+    handed the not-contacted ones: the loaded result is patched in place
+    (AE.portal patch = RTK's patchQueryData), so it looks and behaves like
+    every other Arrivals page. Settings can limit it to arrivals still Not
+    confirmed (status 20). It follows Portal's day, reloads every minute
+    (and re-patches if Portal refetches), and any of Portal's chips reloads
+    Portal's own list. Like Portal's chips, it isn't remembered once you
+    leave the page.
+
+  - woSort: sort the Work orders list by any column. Portal's table only
+    offers ▲▼ on one or two columns per tab (repair.js FA[…].sortableColumns),
+    though the server sorts by more. The list's sort is Redux state
+    (repair.workorderlistFilterSelection[<primary filter>], `order` =
+    "<column id>,ASC|DESC", per tab under tabs[<tab>].order), and the list
+    refetches when it changes, so a header click here sets it exactly as
+    Portal's own icons do (AE.portal dispatch of
+    repair/setWorkorderlistFilterSelection, back to page 1).
+      · Sorted by the server, across every page (checked Oct 1, 2026): WO #,
+        Created, Program, Status, Next update, Last update, Closed, Cancelled,
+        Total.
+      · The server ignores or fails on Customer, Device/Issue, Location,
+        Service Outcome, Completed, Created By, Cancelled By: those sort the
+        rows on the page you're looking at (pick 100 per page for more), and
+        say so in their tooltip.
+    Portal's own ▲▼ columns are left as they are. Rows moved for a page sort
+    are React's, and React re-renders assuming its own order, so the list's
+    real order is read from Portal's loaded data (getAllWorkOrders) and the
+    rows are put back in it whenever no page sort is on.
+*/
+AE.fixesInfo = [
+  ['logoLink', 'Logo link', 'The ubreakifix logo is a real link to the dashboard: middle-click or right-click it to open a new tab.'],
+  ['autoNotes', 'Hide auto notes switch', 'A switch at the top of a work order\'s notes hides the automatic ones (status changes, check-in logs…) and loads every note, so you see everything people wrote. Flip it back any time; nothing is deleted.'],
+  ['notContacted', 'Not contacted (Arrivals)', 'A "Not contacted" chip on the Arrivals page, next to Portal\'s own, lists every arrival that hasn\'t been contacted yet (no Contacted tag), from every page.',
+    // Which statuses the chip lists: everything not contacted, or only the ones still Not confirmed.
+    (s, h) => {
+      const pick = (v) => { s.fixes.notContactedStatus = v; paint(); };
+      const btn = (v, label) => h('button', { type: 'button', class: 'sg-btn', 'data-v': v, style: 'height:28px;font-size:12px;padding:0 10px', onclick: () => pick(v) }, label);
+      const box = h('div', { style: 'display:flex;align-items:center;gap:6px;margin:-2px 0 10px 14px;font-size:12px', class: 'sg-soft' },
+        'Statuses:', btn('all', 'All'), btn('notConfirmed', 'Not confirmed only'));
+      function paint() {
+        const cur = s.fixes.notContactedStatus === 'notConfirmed' ? 'notConfirmed' : 'all';
+        box.querySelectorAll('button').forEach((b) => { const on = b.dataset.v === cur; b.classList.toggle('sg-primary', on); b.setAttribute('aria-pressed', String(on)); });
+      }
+      paint();
+      return box;
+    }],
+  ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
+  ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Never on inventory, check-in or check-out pages, or while typing in a field.'],
+];
+
+AE.crystal({
+  id: 'fixes',
+  name: "Master's Mend",
+  sites: ['portal.ubreakifix.net'],
+  run() {
+    const on = AE.settings.fixes || {};
+    const FIXES = {
+      logoLink() {
+        const ID = 'ae-logo-link';
+        document.head.append(AE.h('style', null, `
+          .components-header-logo { position: relative; }
+          #${ID} { position: absolute; inset: 0; z-index: 1; }
+        `));
+        AE.every(1000, () => {
+          const wrap = document.querySelector('.components-header-logo');
+          if (!wrap || wrap.querySelector('#' + ID)) return;
+          const btn = wrap.querySelector('button');
+          const link = AE.h('a', { id: ID, href: '/', 'aria-label': 'Dashboard', title: 'Dashboard', tabindex: '-1' });
+          link.addEventListener('click', (e) => {
+            if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return; // new tab / window: the browser's
+            e.preventDefault();
+            (btn && btn.isConnected ? btn : wrap.querySelector('button'))?.click(); // Portal's own route change
+          });
+          wrap.append(link);
+        });
+      },
+      autoNotes() {
+        const KEY = 'ae_hide_auto_notes', AUTO = 1; // Portal's NoteType.Auto
+        const BAR = 'ae-notes-bar', STYLE = 'ae-notes-hide';
+        document.head.append(AE.h('style', null, `
+          #${BAR} { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin:-4px 0 -6px; font-size:13px; color:var(--aui-on-surface-soft, #5d5e61); }
+          #${BAR} label { display:inline-flex; align-items:center; gap:8px; padding:4px 10px 4px 6px; border-radius:10000rem; cursor:pointer; user-select:none;
+            border:1px solid var(--aui-outline, #c6c6ca); background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font-weight:600; }
+          #${BAR} label:hover { border-color:var(--aui-primary, #8223d2); }
+          #${BAR} input { position:absolute; opacity:0; pointer-events:none; }
+          #${BAR} .knob { position:relative; width:30px; height:18px; border-radius:10000rem; background:var(--aui-outline, #c6c6ca); transition:background .15s; flex:none; }
+          #${BAR} .knob::after { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; transition:left .15s; }
+          #${BAR} input:checked + .knob { background:var(--aui-primary, #8223d2); }
+          #${BAR} input:checked + .knob::after { left:14px; }
+          #${BAR} input:focus-visible + .knob { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; }
+          #${BAR} .n { font-weight:400; }
+        `));
+        let hide = !!GM_getValue(KEY, false);
+        const style = AE.h('style', { id: STYLE });
+        document.head.append(style);
+
+        function autoIds() {
+          const r = AE.portal('select', { slice: 'notes', key: 'notes', pick: ['noteId', 'noteType'] });
+          return r && Array.isArray(r.value) ? r.value.filter((n) => Number(n.noteType) === AUTO || /^auto$/i.test(n.noteType)).map((n) => String(n.noteId)) : null;
+        }
+        // Load every page of notes: click Portal's own Show more until it goes away.
+        let loading = null, loadedFor = null;
+        const more = (tab) => { const b = tab.querySelector('[data-testid="show-more-link"]'); return b && b.offsetParent !== null && b.getAttribute('aria-disabled') !== 'true' ? b : null; };
+        async function loadAll(tab) {
+          const wo = location.pathname;
+          if (loading || loadedFor === wo) return;
+          loading = (async () => {
+            for (let i = 0; i < 60; i++) {           // 60 pages is far more than any WO has
+              const b = more(tab);
+              if (!b || !tab.isConnected || location.pathname !== wo) break;
+              const before = tab.querySelectorAll('[id^="note-"]').length;
+              b.click();
+              for (let t = 0; t < 50; t++) {        // up to 10 s for the page to land
+                await AE.sleep(200);
+                const busy = tab.querySelector('[data-testid="loading-more"]');
+                if (tab.querySelectorAll('[id^="note-"]').length > before && !(busy && busy.offsetParent)) break;
+              }
+            }
+            if (location.pathname === wo) loadedFor = wo;
+          })().finally(() => { loading = null; paint(); });
+        }
+
+        function paint() {
+          const tab = document.querySelector('[data-testid="notes-tab"]');
+          if (!tab) { if (style.textContent) style.textContent = ''; return; }
+          const cards = [...tab.querySelectorAll('[id^="note-"]')].filter((c) => /^note-\d+$/.test(c.id));
+          const ids = autoIds();
+          const shownAuto = ids ? cards.filter((c) => ids.includes(c.id.slice(5))) : [];
+          const css = hide && shownAuto.length ? shownAuto.map((c) => '#' + CSS.escape(c.id)).join(',') + ' { display:none !important; }' : '';
+          if (style.textContent !== css) style.textContent = css;
+
+          let bar = document.getElementById(BAR);
+          const list = cards[0] && cards[0].parentElement;
+          if (!list) { bar?.remove(); return; }
+          if (!bar || bar.nextElementSibling !== list) {
+            bar?.remove();
+            const input = AE.h('input', { type: 'checkbox', checked: hide, onchange: (e) => { hide = e.target.checked; GM_setValue(KEY, hide); AE.track(hide ? 'fixes:hideAutoNotes' : 'fixes:showAutoNotes'); paint(); } });
+            bar = AE.h('div', { id: BAR },
+              AE.h('span', { class: 'n' }),
+              AE.h('label', { title: 'Hide the automatic notes (status changes, check-in logs…). Nothing is deleted; flip it back any time.' },
+                input, AE.h('span', { class: 'knob' }), 'Hide auto notes'));
+            list.before(bar); // Portal's list is a flex column; we sit just above it
+          }
+          bar.querySelector('input').checked = hide;
+          if (hide && more(tab) && loadedFor !== location.pathname) loadAll(tab);
+          bar.querySelector('.n').textContent = loading ? 'Loading all notes…' : ids === null ? "Can't tell note types apart here"
+            : hide ? (shownAuto.length ? shownAuto.length + ' auto note' + (shownAuto.length === 1 ? '' : 's') + ' hidden' : 'No auto notes')
+            : shownAuto.length + ' auto note' + (shownAuto.length === 1 ? '' : 's');
+        }
+        let queued = false;
+        new MutationObserver(() => { if (!queued) { queued = true; setTimeout(() => { queued = false; try { paint(); } catch (e) { AE.noteError('autoNotes', e); } }, 150); } })
+          .observe(document.body, { childList: true, subtree: true });
+        paint();
+      },
+      notContacted() {
+        const CONTACTED = 53, NOT_CONFIRMED = 20, ENDPOINT = 'getUpcomingArrivals'; // Portal's ArrivalAttributeType.Contacted, ArrivalStatusEnum.NotConfirmed; the list's query
+        const onlyUnconfirmed = AE.settings.fixes.notContactedStatus === 'notConfirmed'; // Settings: Statuses
+        const CHIP = 'ae-nc-chip', BADGE = 'ae-nc-badge', BUSY = 'ae-nc-busy', MUTED = 'ae-nc-muted';
+        document.head.append(AE.h('style', null, `
+          #${BADGE} { position:fixed; z-index:20; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+            background:var(--aui-surface, #fff); color:var(--aui-primary, #8223d2); box-shadow:0 0 0 1px var(--aui-outline, #c6c6ca), 0 1px 3px rgba(12,14,17,.2); line-height:0; pointer-events:none; }
+          .${MUTED} > [data-aui="icon"]:first-of-type { display:none !important; } /* Portal's ✓ on the chip we've taken over from */
+          .${BUSY} { opacity:.45; pointer-events:none; transition:opacity .15s; }
+        `));
+        // on: our page is showing. Like Portal's own chips it resets when you leave the page.
+        let on = false, rows = null, loading = null, loadedKey = null, loadedAt = 0, muted = null; // muted: { el, cls }
+        const contacted = (a) => (a.arrivalAttributes || []).some((x) => Number(x.arrivalAttributeTypeId) === CONTACTED && x.value !== '' && x.value != null);
+        const shown = () => AE.portal('query', { endpoint: ENDPOINT, list: 'data', field: 'arrivalId' }) || {};
+        const keyOf = (args) => JSON.stringify(args && Object.assign({}, args, { page: 0, pageSize: 0 }));
+        const chipsBox = () => document.querySelector('[data-aui="chips.manual-selection"]');
+        const portalChips = (box) => [...box.querySelectorAll('.chipElement')].filter((c) => c.id !== CHIP);
+        const labelOf = (c) => (c.querySelector('.textElement') || c).textContent.trim();
+
+        async function loadAll(args) {
+          const base = Object.assign({}, args); delete base.page; delete base.pageSize;
+          const all = [];
+          for (let page = 1; page <= 20; page++) {
+            const q = new URLSearchParams();
+            for (const [k, v] of Object.entries(Object.assign({}, base, { page, pageSize: 100 }))) if (v !== undefined && v !== null && v !== '') q.set(k, v);
+            const j = await AE.api('GET', '/api/arrivals/upcoming-arrivals?' + q);
+            const data = (j && j.data) || [];
+            all.push(...data);
+            if (!data.length || all.length >= ((j && j.rowCount) || 0)) break;
+          }
+          return all;
+        }
+        // One load at a time; if Portal's day/filters changed meanwhile, paint() starts the next one.
+        function refresh(args, key) {
+          loading = loadAll(args || {})
+            .then((all) => {
+              rows = all.filter((a) => !contacted(a) && (!onlyUnconfirmed || Number(a.arrivalStatus && a.arrivalStatus.arrivalStatusId) === NOT_CONFIRMED));
+              loadedKey = key; loadedAt = Date.now();
+            })
+            .catch((e) => { AE.toast('Not contacted', "Couldn't load the arrivals: " + (e.message || e), 'err'); turnOff(); })
+            .finally(() => { loading = null; paint(); });
+        }
+        // Portal's own table shows them: its loaded page becomes the not-contacted list (all of it, one page).
+        function showInPortal() {
+          const ids = rows.map((a) => a.arrivalId);
+          if ((shown().items || []).join() === ids.join()) return;
+          AE.portal('patch', { endpoint: ENDPOINT, patches: [{ op: 'replace', path: ['data'], value: rows }, { op: 'replace', path: ['rowCount'], value: Math.min(rows.length, 1) }] });
+        }
+
+        // Our chip, built from Portal's own: an unselected chip when off, the selected one when on.
+        function makeChip(box) {
+          const chips = portalChips(box);
+          const tpl = on ? chips.find((c) => c.getAttribute('aria-checked') === 'true') : chips.find((c) => c.getAttribute('aria-checked') !== 'true');
+          if (!tpl) return null;
+          const c = tpl.cloneNode(true);
+          c.id = CHIP; c.dataset.on = String(on);
+          c.setAttribute('aria-checked', String(on));
+          c.title = 'Arrivals nobody has contacted yet (no Contacted tag)' + (onlyUnconfirmed ? ', still Not confirmed' : '') + ', from every page. Added by ' + AE_NAME + ' (Settings → Master\'s Mend).';
+          (c.querySelector('.textElement') || c).textContent = 'Not contacted';
+          c.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (!on) turnOn(box); });
+          c.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !on) { e.preventDefault(); turnOn(box); } });
+          return c;
+        }
+        // The Aethernet mark on the chip's corner. Portal's chip row clips what sticks out,
+        // so it floats above the page, pinned to the chip, over whatever is above it.
+        function placeBadge() {
+          const chip = document.getElementById(CHIP);
+          let b = document.getElementById(BADGE);
+          const r = chip && chip.getBoundingClientRect();
+          if (!r || !r.width) { b?.remove(); return; }
+          if (!b) { b = AE.h('span', { id: BADGE, html: AE.icon('aetheryte', 14) }); document.body.append(b); }
+          b.style.left = Math.round(r.left - 7) + 'px';
+          b.style.top = Math.round(r.top - 7) + 'px';
+        }
+        addEventListener('scroll', () => requestAnimationFrame(placeBadge), true);
+        addEventListener('resize', () => requestAnimationFrame(placeBadge));
+
+        function unmute() { if (muted) { if (muted.el.isConnected && muted.el.classList.contains(MUTED)) { muted.el.className = muted.cls; muted.el.setAttribute('aria-checked', 'true'); } muted = null; } }
+        function turnOn(box) {
+          const all = portalChips(box)[0]; // "All": our page is every arrival, not contacted
+          if (all && all.getAttribute('aria-checked') !== 'true') all.click();
+          on = true; AE.track('fixes:notContacted');
+          paint();
+        }
+        function turnOff() {
+          if (!on) return;
+          on = false; unmute();
+          AE.portal('refresh', { tags: ['Arrivals'] }); // Portal reloads its own page of arrivals
+          paint();
+        }
+
+        function paint() {
+          const box = chipsBox();
+          const list = document.querySelector('[data-testid="arrivals-container"]');
+          const here = /^\/check-in\/arrivals(\/\d+)?\/?$/.test(location.pathname) && box && list;
+          let chip = document.getElementById(CHIP);
+          if (!here || !on) document.querySelectorAll('.' + BUSY).forEach((el) => el.classList.remove(BUSY));
+          if (!here) {
+            chip?.remove(); placeBadge();
+            if (on) { on = false; unmute(); }
+            return;
+          }
+          if (!chip || chip.dataset.on !== String(on) || chip.parentElement !== box) {
+            chip?.remove();
+            chip = makeChip(box);
+            if (chip) {
+              const after = portalChips(box).find((c) => /^contacted$/i.test(labelOf(c)));
+              if (after) after.after(chip); else box.append(chip);
+            }
+          }
+          placeBadge();
+          if (!on) return;
+          // Portal's selected chip ("All") stays selected underneath; show it as unselected while ours is.
+          const sel = portalChips(box).find((c) => c.getAttribute('aria-checked') === 'true');
+          const plain = portalChips(box).find((c) => c.getAttribute('aria-checked') !== 'true');
+          if (sel && plain && (!muted || muted.el !== sel)) {
+            unmute();
+            muted = { el: sel, cls: sel.className };
+            sel.className = plain.className + ' ' + MUTED;
+            sel.setAttribute('aria-checked', 'false');
+          }
+          const args = shown().args, key = keyOf(args);
+          const fresh = loadedKey === key && rows;
+          if (!loading && (!fresh || Date.now() - loadedAt > 60000)) refresh(args, key); // new day/filters, or a minute old
+          if (fresh) showInPortal();
+          list.classList.toggle(BUSY, !fresh); // Portal's unfiltered page, dimmed, until the full list is in
+          const label = chip && chip.querySelector('.textElement');
+          if (label) label.textContent = fresh ? 'Not contacted · ' + rows.length : 'Not contacted · …';
+        }
+        // Any of Portal's own chips hands the list back to Portal.
+        document.addEventListener('click', (e) => {
+          const c = e.target.closest && e.target.closest('[data-aui="chips.manual-selection"] .chipElement');
+          if (c && c.id !== CHIP && on) turnOff();
+        }, true);
+        let queued = false;
+        new MutationObserver((ms) => {
+          if (ms.every((m) => m.target.closest && m.target.closest('#' + CHIP + ', #' + BADGE))) return; // our own redraws
+          if (!queued) { queued = true; setTimeout(() => { queued = false; try { paint(); } catch (e) { AE.noteError('notContacted', e); } }, 150); }
+        }).observe(document.body, { childList: true, subtree: true });
+        setInterval(() => { if (on) paint(); }, 30000);
+        paint();
+      },
+      woSort() {
+        // Header text → Portal's column id (repair.js WA), and whether the server sorts it.
+        const COLS = {
+          'WO #': ['woId', 1], 'Created': ['createdDate', 1], 'Customer': ['customerName', 0], 'Device/Issue': ['deviceCatalogName', 0],
+          'Program': ['woProgram', 1], 'Next update': ['nextUpdate', 1], 'Location': ['location', 0], 'Status': ['woStatus', 1],
+          'Closed': ['closed', 1], 'Cancelled': ['cancelled', 1], 'Created By': ['createdBy', 0], 'Cancelled By': ['cancelledBy', 0],
+          'Last update': ['lastUpdate', 1], 'Service Outcome': ['serviceOutcome', 0], 'Completed': ['completed', 0], 'Total': ['workorderTotal', 1],
+        };
+        const TEXT_FIRST_ASC = ['customerName', 'deviceCatalogName', 'woProgram', 'location', 'woStatus', 'createdBy', 'cancelledBy', 'serviceOutcome'];
+        const BTN = 'ae-wosort';
+        document.head.append(AE.h('style', null, `
+          .${BTN} { display:inline-flex; flex-direction:column; vertical-align:middle; margin-left:4px; padding:0 2px; border:0; background:none; cursor:pointer;
+            color:var(--aui-on-surface-soft, #5d5e61); line-height:0; border-radius:4px; }
+          .${BTN}:hover { background:var(--aui-neutral-soft, #f1f0f4); color:var(--aui-on-surface, #1a1c1e); }
+          .${BTN} svg { width:10px; height:7px; opacity:.45; }
+          .${BTN}[data-dir="ASC"] .up, .${BTN}[data-dir="DESC"] .down { opacity:1; color:var(--aui-primary, #8223d2); }
+          .${BTN}.page { border-bottom:1px dashed currentColor; border-radius:0; }
+        `));
+        const ARROWS = '<svg class="up" viewBox="0 0 10 7"><path fill="currentColor" d="M5 0l5 7H0z"/></svg><svg class="down" viewBox="0 0 10 7"><path fill="currentColor" d="M5 7L0 0h10z"/></svg>';
+
+        const getSel = () => { const r = AE.portal('select', { slice: 'repair', key: 'workorderlistFilterSelection' }); return r && r.found ? r.value : null; };
+        function current(sel) {
+          const pf = sel && Object.keys(sel).find((k) => sel[k] && sel[k].selected);
+          if (!pf) return { pf: null, order: '' };
+          const g = sel[pf], tab = g.activeTab, t = tab && g.tabs && g.tabs[tab];
+          return { pf, g, tab, order: (t && t.order !== undefined ? t.order : g.order) || '' };
+        }
+        function serverSort(id, dir) {
+          const sel = getSel(), c = current(sel);
+          if (!c.pf) return AE.toast('Sort', "Couldn't find the list's settings in Portal.", 'err');
+          const order = id + ',' + dir;
+          const entry = Object.assign({}, c.g, { order, page: 1 });
+          if (c.tab) entry.tabs = Object.assign({}, c.g.tabs, { [c.tab]: Object.assign({}, (c.g.tabs || {})[c.tab], { order }) });
+          const r = AE.portal('dispatch', { slice: 'repair', action: { type: 'repair/setWorkorderlistFilterSelection', payload: { [c.pf]: entry } } });
+          if (!r.stores) AE.toast('Sort', "Couldn't reach Portal's list.", 'err');
+          pageSort = null;
+          AE.track('fixes:woSort');
+        }
+
+        // Page-only sort: reorder the rows on screen (kept through re-renders).
+        let pageSort = null, moved = false; // { header, dir }; moved: rows aren't in React's order any more
+        const woOf = (row) => { const a = row.querySelector('a[href*="/repair/workorder/"]'); const m = a && a.getAttribute('href').match(/workorder\/(\d+)/); return m ? Number(m[1]) : null; };
+        // Portal's own order for the rows on screen (the list query's data), as WO id → position.
+        function portalOrder() {
+          const r = AE.portal('query', { endpoint: 'getAllWorkOrders', list: 'workOrders', field: 'workorderId' });
+          return r && r.items ? new Map(r.items.map((id, i) => [Number(id), i])) : null;
+        }
+        const cellsOf = (row) => [...row.children].filter((c) => /^(TD|TH)$/.test(c.tagName) || /^(cell|gridcell)$/.test(c.getAttribute('role') || ''));
+        const keyOf = (text) => { const t = text.trim(); const d = Date.parse(t.replace(/\s+/g, ' ')); return { t, d: /\d/.test(t) && !isNaN(d) ? d : null }; };
+        function applyPageSort(table, headers) {
+          const body = table.tBodies ? table.tBodies[0] : null;
+          if (!body || (!pageSort && !moved)) return;
+          const rows = [...body.rows];
+          const base = portalOrder();
+          const pos = (row) => { const id = woOf(row); return base && base.has(id) ? base.get(id) : rows.indexOf(row); };
+          const i = pageSort ? headers.findIndex((h) => h.label === pageSort.header) : -1;
+          const sorted = rows.slice().sort((a, b) => {
+            if (i >= 0) {
+              const x = keyOf((cellsOf(a)[i] || {}).innerText || ''), y = keyOf((cellsOf(b)[i] || {}).innerText || '');
+              const r = x.d !== null && y.d !== null ? x.d - y.d : x.t.localeCompare(y.t, undefined, { numeric: true, sensitivity: 'base' });
+              if (r) return pageSort.dir === 'ASC' ? r : -r;
+            }
+            return pos(a) - pos(b); // ties, and no page sort: Portal's order
+          });
+          if (!pageSort && base) moved = false; // back in Portal's order
+          if (sorted.every((r, k) => r === rows[k])) return;
+          body.append(...sorted);
+          if (pageSort) moved = true;
+        }
+
+        function paint() {
+          if (!/^\/repair\/workorders\/?$/.test(location.pathname)) { pageSort = null; moved = false; return; }
+          const link = document.querySelector('tbody a[href*="/repair/workorder/"], tbody tr');
+          const table = link && link.closest('table');
+          const head = table && table.tHead && table.tHead.rows[0];
+          if (!head) return;
+          const order = current(getSel()).order;
+          const headers = [...head.cells].map((th) => ({ th, label: (th.innerText || '').trim().split('\n')[0].trim() }));
+          for (const { th, label } of headers) {
+            const col = COLS[label];
+            if (!col || th.querySelector('[data-testid^="sort-icon"]')) continue; // Portal's own ▲▼
+            const [id, server] = col;
+            let b = th.querySelector('.' + BTN);
+            if (!b) {
+              b = AE.h('button', { type: 'button', class: BTN + (server ? '' : ' page'), html: ARROWS,
+                title: server ? 'Sort by ' + label : 'Sort this page by ' + label + " (Portal can't sort this column across pages)" });
+              b.addEventListener('click', (e) => {
+                e.preventDefault(); e.stopPropagation();
+                const was = b.dataset.dir, first = TEXT_FIRST_ASC.includes(id) ? 'ASC' : 'DESC';
+                const dir = was ? (was === 'ASC' ? 'DESC' : 'ASC') : first;
+                if (server) serverSort(id, dir);
+                else { pageSort = { header: label, dir }; moved = true; AE.track('fixes:woSortPage'); paint(); }
+              });
+              (th.querySelector('span, div') || th).append(b);
+            }
+            const dir = server ? (order.split(',')[0] === id ? order.split(',')[1] : '') : (pageSort && pageSort.header === label ? pageSort.dir : '');
+            if ((b.dataset.dir || '') !== (dir || '')) { if (dir) b.dataset.dir = dir; else delete b.dataset.dir; }
+          }
+          applyPageSort(table, headers);
+        }
+        let queued = false;
+        new MutationObserver(() => { if (!queued) { queued = true; setTimeout(() => { queued = false; try { paint(); } catch (e) { AE.noteError('woSort', e); } }, 120); } })
+          .observe(document.body, { childList: true, subtree: true });
+        paint();
+      },
+      scanNav() {
+        const GAP_MS = 60; // longest pause between a scanner's keys (Portal uses 40)
+        const PORTAL_EVENT = 'scanDetected', RESEND_EVENT = 'aethernet:scan';
+        // Portal's scan event has to come from the page itself (the scan is in
+        // its `detail`), so a tiny page script sends it for us. Plain string: see Glamour.
+        const hook = () => {
+          if (document.getElementById('ae-scan-hook')) return;
+          const s = document.createElement('script');
+          s.id = 'ae-scan-hook';
+          s.textContent = '(function (a, p) { document.addEventListener(a, function (e) { dispatchEvent(new CustomEvent(p, { detail: { scan: String(e.detail) } })); }); })(' +
+            JSON.stringify(RESEND_EVENT) + ',' + JSON.stringify(PORTAL_EVENT) + ');';
+          (document.head || document.documentElement).append(s);
+        };
+        let portalSaw = 0;
+        window.addEventListener(PORTAL_EVENT, () => { portalSaw = performance.now(); });
+
+        const WO_RE = /^(?:WO)?(\d{9})$/i, ITEM_RE = /^([A-Za-z0-9]{2,})-(\d{10,})$/;
+        const path = () => location.pathname;
+        const busyTyping = () => {
+          const a = document.activeElement;
+          return !!a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+        };
+        const dialogOpen = () => [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')]
+          .some((d) => d.offsetParent !== null && !d.closest('.sg')); // Aethernet's own cards don't count
+        const scanPage = () => /^\/(boh|check-in|check-out)(\/|$)/.test(path());
+        const itemPage = () => path() === '/' || /^\/repair\/workorders\/?$/.test(path()) || /^\/customer(s)?(\/|$)/.test(path()) ||
+          /^\/boh\/inventory\/store-products(\/|$)/.test(path());
+        // Same-tab route change without a reload: Portal's router (and single-spa) follow popstate.
+        const go = (url) => { history.pushState(null, '', url); dispatchEvent(new PopStateEvent('popstate', { state: null })); };
+
+        async function act(scan, why, devTools) {
+          const wo = scan.match(WO_RE), item = scan.match(ITEM_RE);
+          if (!wo && !item) return 'not a WO or item label';
+          if (busyTyping() && !devTools) return 'typing in a field';
+          if (dialogOpen()) return 'a dialog is open';
+          if (wo) {
+            if (scanPage()) return 'scans are data entry on this page';
+            const id = wo[1];
+            if (path().startsWith('/repair/workorder/' + id)) return 'already on WO ' + id;
+            try { await AE.api('GET', '/api/workorder/' + id); } catch (e) {
+              AE.toast('Scan', "Couldn't open WO " + id + ': ' + (/HTTP 404/.test(e.message) ? 'no such work order.' : e.message), 'err', 6000);
+              return 'WO lookup failed';
+            }
+            go('/repair/workorder/' + id);
+            AE.track('fixes:scanWo');
+            return 'opened WO ' + id + (why ? ' (' + why + ')' : '');
+          }
+          if (!itemPage()) return 'item scans belong to this page';
+          go('/boh/inventory/store-products/' + encodeURIComponent(item[1]));
+          AE.track('fixes:scanItem');
+          return 'opened item ' + item[1];
+        }
+
+        // Scanner = keys arriving faster than any person types, ending in Enter.
+        let buf = '', last = 0;
+        window.addEventListener('keydown', (e) => {
+          if (e.isComposing || /^(Shift|Control|Alt|Meta|CapsLock)$/.test(e.key)) return;
+          const t = e.timeStamp, quick = t - last <= GAP_MS;
+          last = t;
+          if (e.key === 'Enter') {
+            const scan = quick ? buf : '';
+            buf = '';
+            if (scan.length < 4) return;
+            const before = portalSaw;
+            setTimeout(() => {  // Portal handles the Enter (keypress) after this keydown
+              if (portalSaw === before) { hook(); document.dispatchEvent(new CustomEvent(RESEND_EVENT, { detail: scan })); }
+              act(scan).then((r) => console.debug('[' + AE_NAME + '] scan "' + scan + '": ' + r));
+            }, 60);
+            return;
+          }
+          if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) { buf = ''; return; }
+          buf = quick ? buf + e.key : e.key;
+        }, true);
+        AE.hooks.scan = (text) => act(String(text).trim(), 'dev tools', true); // dev tools: act on a pretend scan
+      },
+    };
+    for (const [id] of AE.fixesInfo) {
+      if (on[id] === false || !FIXES[id]) continue;
+      try { FIXES[id](); } catch (e) { AE.noteError("Master's Mend: " + id, e); console.error('[' + AE_NAME + "] Master's Mend: " + id + ' failed', e); }
+    }
   },
 });
 
