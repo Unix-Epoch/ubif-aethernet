@@ -175,7 +175,8 @@ NOTES_FILE = "patch-notes.json"
 
 def load_notes(root: Path) -> list:
     # Newest first: [{version, date (UTC ISO, stamped at release), notes: [...],
-    # credits?, updated?: [ids of existing crystals it changed → "Updated" sheen]}]
+    # credits?: [names whose suggestion shipped], thanks?: ["**Name** at Store, for …"] (both shown with a flair),
+    # updated?: [ids of existing crystals it changed → "Updated" sheen]}]
     notes = json.loads((root / NOTES_FILE).read_text())
     known = crystal_ids(root)
     for n in notes:
