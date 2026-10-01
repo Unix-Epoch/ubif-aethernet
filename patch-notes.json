@@ -12,7 +12,8 @@
       "**Waymark**: managers can clear a tag straight from the board with the × on it. Everyone else removes tags from the work order as before.",
       "**Master's Mend**: a **Hide auto notes** switch at the top of a work order's notes hides the automatic notes (status changes, check-in logs and the like), and loads every note on the work order, so you see the whole history of what people wrote, not just the first page. Flip it back any time; nothing is deleted.",
       "**Master's Mend**: a **Not contacted** chip on the Arrivals page, next to Portal's own (look for the Aethernet mark on its corner), lists every arrival that hasn't been contacted yet, from every page at once. Click an arrival to open it as usual; any other chip goes back to Portal's list. In Settings (Master's Mend), choose whether it lists all statuses or only arrivals that are still Not confirmed.",
-      "Crystals that changed in an update now get a purple **Updated** sheen in Settings, like the yellow one on new crystals."
+      "Crystals that changed in an update now get a purple **Updated** sheen in Settings, like the yellow one on new crystals.",
+      "Settings: **Save & reload** glows while you have changes to save. The **Aethernet has updated!** pill now goes away by itself after 10 seconds (the ring around its ✕ counts down; hovering pauses it)."
     ],
     "updated": [
       "textNotes",

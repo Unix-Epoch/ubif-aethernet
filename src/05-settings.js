@@ -195,8 +195,19 @@
   .sg-update-pill .ver { font-weight:400; opacity:.8; }
   .sg-update-pill .x { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:50%; font-weight:400; opacity:.8; }
   .sg-update-pill .x:hover { opacity:1; background:rgba(255,255,255,.18); }
+  /* it dismisses itself after 10 s: a ring around the ✕ runs down (paused while hovered) */
+  .sg-update-pill .x { position:relative; width:26px; height:26px; opacity:.9; }
+  .sg-update-pill .x .ring { position:absolute; inset:0; width:26px; height:26px; transform:rotate(-90deg); pointer-events:none; }
+  .sg-update-pill .x .ring circle { fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-dasharray:69.1; stroke-dashoffset:0;
+    animation:sg-countdown 10s linear forwards; }
+  .sg-update-pill:hover .x .ring circle { animation-play-state:paused; }
+  @keyframes sg-countdown { to { stroke-dashoffset:69.1; } }
+  /* Save & reload, while there are changes to save */
+  .sg-btn.sg-primary.sg-pending { background:linear-gradient(105deg, var(--aui-primary, #8223d2) 0%, var(--aui-primary, #8223d2) 40%, #b36cf0 50%, var(--aui-primary, #8223d2) 60%, var(--aui-primary, #8223d2) 100%);
+    background-size:250% 100%; animation:sg-sheen 2.4s ease-in-out infinite, sg-save-pulse 1.6s ease-out infinite; }
+  @keyframes sg-save-pulse { 0% { box-shadow:0 0 0 0 rgba(130,35,210,.5); } 100% { box-shadow:0 0 0 10px rgba(130,35,210,0); } }
   @keyframes sg-pill-in { from { opacity:0; transform:translate(-50%, 10px); } to { opacity:1; transform:translate(-50%, 0); } }
-  @media (prefers-reduced-motion: reduce) { .sg-crystal.sg-new, .sg-crystal.sg-upd, .sg-update-pill { animation:none; } }
+  @media (prefers-reduced-motion: reduce) { .sg-crystal.sg-new, .sg-crystal.sg-upd, .sg-update-pill, .sg-btn.sg-pending { animation:none; } .sg-update-pill .x .ring { display:none; } }
   `;
 
   // About — its own modal, above the settings panel.
@@ -310,6 +321,7 @@
     document.getElementById('sg-settings')?.remove();
     AE.track('settings:open');
     const s = AE.merge(AE.DEFAULTS, AE.settings); // working copy
+    let saveBtn = null;
 
     const input = (label, value, placeholder, onInput, type = 'text') =>
       h('label', { class: 'sg-field' }, h('span', null, label),
@@ -439,11 +451,22 @@
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => close() }, 'Cancel'),
-        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(true); location.reload(); } }, 'Save & reload')));
+        (saveBtn = h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(true); location.reload(); } }, 'Save & reload'))));
 
     const scrim = h('div', { class: 'sg sg-scrim', id: 'sg-settings', onclick: (e) => { if (e.target === scrim) close(); } }, sheet);
     // Every way out ends the "new" sheen: the crystals have now been seen.
+    // Save & reload animates while the working copy differs from what's saved (checked after
+    // anything in the sheet changes; editors that fill in defaults do so before the baseline).
+    const baseline = JSON.stringify(s);
+    const checkPending = () => {
+      const pending = JSON.stringify(s) !== baseline;
+      saveBtn.classList.toggle('sg-pending', pending);
+      saveBtn.title = pending ? 'You have changes to save' : '';
+    };
+    ['input', 'change', 'click'].forEach((t) => sheet.addEventListener(t, () => setTimeout(checkPending, 0)));
+    const pendingTimer = setInterval(checkPending, 1000); // async edits (e.g. a login picture being prepared)
     function close(saving) {
+      clearInterval(pendingTimer);
       scrim.remove(); document.removeEventListener('keydown', onKey); markAllSeen();
       // Glamour previews live; closing without saving puts the saved theme back.
       if (!saving) AE.glamour.apply(AE.settings.crystals.glamour ? AE.settings.glamour : null);
@@ -490,11 +513,16 @@
     document.getElementById('sg-update-pill')?.remove();
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
-    const x = h('span', { class: 'x', role: 'button', 'aria-label': 'Dismiss', title: 'Dismiss' }, '✕');
+    const x = h('span', { class: 'x', role: 'button', 'aria-label': 'Dismiss', title: 'Dismiss' }, '✕',
+      h('span', { html: '<svg class="ring" viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="11"/></svg>', style: 'display:contents' }));
     const pill = h('button', { type: 'button', class: 'sg sg-update-pill', id: 'sg-update-pill', title: "See what's new" },
       h('span', { html: icon('aetheryte', 20) }), AE_NAME + ' has updated!', h('span', { class: 'ver' }, 'v' + AE_VERSION), x);
     // Settings opens underneath (that's where new crystals are marked), with the patch notes on top.
-    pill.onclick = (e) => { pill.remove(); if (e.target !== x) { open(); openPatchNotes(fromVersion || AE_VERSION); } };
+    pill.onclick = (e) => { pill.remove(); if (!x.contains(e.target)) { open(); openPatchNotes(fromVersion || AE_VERSION); } };
+    // Gone by itself after 10 s, in step with the ring; hovering pauses both.
+    let left = 10000, since = Date.now(), timer = setTimeout(() => pill.remove(), left);
+    pill.addEventListener('mouseenter', () => { clearTimeout(timer); left -= Date.now() - since; });
+    pill.addEventListener('mouseleave', () => { since = Date.now(); timer = setTimeout(() => pill.remove(), Math.max(0, left)); });
     document.body.appendChild(pill);
   }
   if (updated && !AE_DEMO) showUpdatedPill(lastVersion); // it opens the patch notes, which the demo build doesn't have
