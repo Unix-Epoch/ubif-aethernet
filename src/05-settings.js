@@ -95,7 +95,18 @@
   .sg-patch .tag.new { background:#ffcc00; color:#3d2e00; }
   .sg-patch ul { margin:0; padding:0 14px 12px 40px; }
   .sg-patch li { margin:4px 0; }
-  .sg-patch .credits { margin:-4px 14px 12px 40px; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); font-style:italic; }
+  /* Thank-yous and attributions: a flair so they stand out (gold-to-purple border that shimmers) */
+  .sg-flair { display:flex; align-items:flex-start; gap:9px; margin:2px 14px 12px 40px; padding:8px 12px; border-radius:10px; font-size:13px; line-height:1.4;
+    border:1.5px solid transparent; color:var(--aui-on-surface, #1a1c1e);
+    background:linear-gradient(var(--aui-surface, #fff), var(--aui-surface, #fff)) padding-box,
+      linear-gradient(105deg, #ffcc00 0%, #e8a6ff 35%, #8223d2 50%, #e8a6ff 65%, #ffcc00 100%) border-box;
+    background-size:100% 100%, 250% 100%; animation:sg-flair 4s ease-in-out infinite; }
+  .sg-flair + .sg-flair { margin-top:-6px; }
+  .sg-flair .ic { flex:none; width:18px; height:18px; margin-top:1px; color:#d6a000; line-height:0; }
+  .sg-flair b { color:var(--aui-primary, #8223d2); }
+  @keyframes sg-flair { 0%, 100% { background-position:0 0, 100% 0; } 50% { background-position:0 0, 0% 0; } }
+  .sg-patch .tag.thanks { background:linear-gradient(105deg, #ffcc00, #b36cf0); color:#2b0a47; }
+  @media (prefers-reduced-motion: reduce) { .sg-flair { animation:none; } }
   .sg-about-scrim { position:fixed; inset:0; z-index:2147483647; background:var(--aui-scrim-overlay, #0c0e1180);
     display:flex; align-items:center; justify-content:center; padding:16px; animation: sg-in .15s ease-out; }
   .sg-about { width:min(460px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:28px 24px 20px; font-size:14px; line-height:1.45; }
@@ -280,6 +291,8 @@
   const verTuple = (v) => String(v || '0').split('.').map(Number);
   const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
+  const HEART = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 3 4.5 6.8 4.5c2.1 0 3.6 1.2 4.4 2.5.8-1.3 2.3-2.5 4.4-2.5 3.8 0 5.9 3.9 4.4 7.3C19.5 16.4 12 21 12 21z"/></svg>';
+  const flair = (text) => h('div', { class: 'sg-flair' }, h('span', { class: 'ic', html: HEART }), h('span', { html: noteHtml(text) }));
   function openPatchNotes(since) {
     if (AE_DEMO) return; // no patch notes in the demo build
     AE.ensureCss();
@@ -294,9 +307,12 @@
         h('summary', null, h('span', { html: CHEV_SVG }), h('span', { class: 'ver' }, 'v' + n.version),
           n.version === AE_VERSION ? h('span', { class: 'tag' }, 'Installed') : null,
           isNew ? h('span', { class: 'tag new' }, 'New') : null,
+          (n.thanks || []).length || (n.credits || []).length ? h('span', { class: 'tag thanks', title: 'This version thanks someone' }, '♥ Thanks') : null,
           h('span', { class: 'when' }, when)),
         h('ul', null, n.notes.map((t) => h('li', { html: noteHtml(t) }))),
-        n.credits && n.credits.length ? h('div', { class: 'credits' }, 'Suggested by ' + n.credits.join(', ') + '. Thank you!') : null);
+        // Attributions get a flair: "thanks" (free text, **bold** works) and "credits" (who suggested what shipped).
+        (n.thanks || []).map((t) => flair('Thank you to ' + t)),
+        n.credits && n.credits.length ? flair('Suggested by ' + n.credits.map((c) => '**' + c + '**').join(', ') + '. Thank you!') : null);
       panel.open = since ? isNew : i === 0;
       return panel;
     });
