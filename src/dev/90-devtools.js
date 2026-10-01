@@ -264,7 +264,7 @@
   }
 
   function demoProgress() {
-    const panel = AE.progressPanel('Swiftcast · cleaning auto-close (demo)');
+    const panel = AE.progressPanel('Swiftcasting… (test)');
     const steps = ['IMEI validated', 'Created WO 500000000', 'Checked in', 'Started work', 'Diagnostics done', 'Work done', 'QC done', 'Ready for pickup', 'Sale complete'];
     let i = 0, stop = false;
     const stopBtn = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stop = true; } }, '■ Stop');

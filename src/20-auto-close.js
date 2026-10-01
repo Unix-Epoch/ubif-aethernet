@@ -228,6 +228,8 @@ AE.crystal({
     }
 
     // Dualcast: several cleanings in one go, one after another, in one panel.
+    // The progress panel's heading: Swiftcasting… / Dualcasting… / Triplecasting… (n).
+    const castingTitle = (n) => (n >= 3 ? 'Triplecasting… (' + n + ')' : n === 2 ? 'Dualcasting…' : 'Swiftcasting…');
     // fake (dev tools only): the same confirmation and panel, with simulated steps and no API calls.
     async function runMany(items, customerName, fake) {
       if (running || (!fake && AE.status.blocked('autoClose'))) return;
@@ -235,7 +237,7 @@ AE.crystal({
       if (!fake) AE.track('autoClose:dualcast');
       running = true; stopRequested = false;
       const runner = fake ? (it, log) => fakeRun(it, log, fake) : (it, log) => run(it.arrivalId, log);
-      const panel = AE.progressPanel('Dualcast · ' + items.length + ' cleanings' + (customerName ? ' for ' + customerName : '') + (fake ? ' (test)' : ''));
+      const panel = AE.progressPanel(castingTitle(items.length) + (fake ? ' (test)' : ''));
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       const done = [], notes = [];
@@ -283,7 +285,7 @@ AE.crystal({
       if (!checked && await storeClosed()) return;
       AE.track('autoClose:run');
       running = true; stopRequested = false;
-      const panel = AE.progressPanel('Swiftcast · cleaning auto-close');
+      const panel = AE.progressPanel(castingTitle(1));
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       let woId = null;
