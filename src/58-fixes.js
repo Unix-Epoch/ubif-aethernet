@@ -39,6 +39,9 @@
     the auto ones' ids come from there (AE.portal select) and a stylesheet
     hides them; nothing is changed or deleted, and Portal's cards aren't
     touched. The switch is remembered in this browser; flip it back any time.
+    While it's on, all of the WO's notes are loaded straight away (Portal's
+    own "Show more", data-testid "show-more-link", clicked until it's gone),
+    so what's left is the full history of what people wrote, not just page 1.
 
   - woSort: sort the Work orders list by any column. Portal's table only
     offers ▲▼ on one or two columns per tab (repair.js FA[…].sortableColumns),
@@ -117,6 +120,28 @@ AE.crystal({
           const r = AE.portal('select', { slice: 'notes', key: 'notes', pick: ['noteId', 'noteType'] });
           return r && Array.isArray(r.value) ? r.value.filter((n) => Number(n.noteType) === AUTO || /^auto$/i.test(n.noteType)).map((n) => String(n.noteId)) : null;
         }
+        // Load every page of notes: click Portal's own Show more until it goes away.
+        let loading = null, loadedFor = null;
+        const more = (tab) => { const b = tab.querySelector('[data-testid="show-more-link"]'); return b && b.offsetParent !== null && b.getAttribute('aria-disabled') !== 'true' ? b : null; };
+        async function loadAll(tab) {
+          const wo = location.pathname;
+          if (loading || loadedFor === wo) return;
+          loading = (async () => {
+            for (let i = 0; i < 60; i++) {           // 60 pages is far more than any WO has
+              const b = more(tab);
+              if (!b || !tab.isConnected || location.pathname !== wo) break;
+              const before = tab.querySelectorAll('[id^="note-"]').length;
+              b.click();
+              for (let t = 0; t < 50; t++) {        // up to 10 s for the page to land
+                await AE.sleep(200);
+                const busy = tab.querySelector('[data-testid="loading-more"]');
+                if (tab.querySelectorAll('[id^="note-"]').length > before && !(busy && busy.offsetParent)) break;
+              }
+            }
+            if (location.pathname === wo) loadedFor = wo;
+          })().finally(() => { loading = null; paint(); });
+        }
+
         function paint() {
           const tab = document.querySelector('[data-testid="notes-tab"]');
           if (!tab) { if (style.textContent) style.textContent = ''; return; }
@@ -139,7 +164,8 @@ AE.crystal({
             list.before(bar); // Portal's list is a flex column; we sit just above it
           }
           bar.querySelector('input').checked = hide;
-          bar.querySelector('.n').textContent = ids === null ? "Can't tell note types apart here"
+          if (hide && more(tab) && loadedFor !== location.pathname) loadAll(tab);
+          bar.querySelector('.n').textContent = loading ? 'Loading all notes…' : ids === null ? "Can't tell note types apart here"
             : hide ? (shownAuto.length ? shownAuto.length + ' auto note' + (shownAuto.length === 1 ? '' : 's') + ' hidden' : 'No auto notes')
             : shownAuto.length + ' auto note' + (shownAuto.length === 1 ? '' : 's');
         }
