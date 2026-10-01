@@ -196,6 +196,8 @@
     background-size:250% 100%; box-shadow:inset 0 0 0 1px rgba(130,35,210,.45); animation:sg-sheen 2.6s ease-in-out infinite; }
   .sg-crystal.sg-upd + .sg-crystal { border-top-color:transparent; }
   .sg-new-tag.upd { background:#8223d2; color:#fff; }
+  .sg-exp-tag { display:inline-block; padding:1px 7px; border-radius:10000rem; font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
+    background:repeating-linear-gradient(135deg, #fff0c0 0 6px, #ffe28a 6px 12px); color:#5a4300; border:1px solid #d6a000; }
   /* "Aethernet has updated!" pill */
   .sg-update-pill { position:fixed; z-index:2147483645; left:50%; bottom:20px; transform:translateX(-50%);
     display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 14px; border:0; border-radius:10000rem; cursor:pointer;
@@ -380,12 +382,16 @@
       cleaningRate: [() => 'Target ' + s.cleaningRate.target + '%',
         input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; repaintSums(); }, 'number')],
       glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
-      autoClose: [() => (s.autoClose.dualcast !== false ? 'Dualcast on' : 'Dualcast off'),
+      autoClose: [() => (s.autoClose.dualcast !== false ? 'Dualcast on' : 'Dualcast off') + ((s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT) ? ' · refresh labor on' : ''),
         h('div', { class: 'sg-row', style: 'margin:8px 0' },
           h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, h('span', { html: AE.actionIcon('dualcast', 20), style: 'line-height:0' }), 'Dualcast'),
             h('span', { class: 'sg-soft', style: 'display:block' }, 'When a device has two or more cleanings waiting, one button creates them all, one after the other. Shown in the arrival' +
               (AE_DEMO ? ' and in Divination\'s panel.' : ', in Esuna\'s list and in Divination\'s panel.'))),
-          toggle(s.autoClose.dualcast !== false, (v) => { s.autoClose.dualcast = v; repaintSums(); }))],
+          toggle(s.autoClose.dualcast !== false, (v) => { s.autoClose.dualcast = v; repaintSums(); })),
+        h('div', { class: 'sg-row', style: 'margin:8px 0' },
+          h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, 'Refresh labor (10156)', h('span', { class: 'sg-exp-tag' }, 'Experimental')),
+            h('span', { class: 'sg-soft', style: 'display:block' }, 'Adds the refresh labor SKU 10156 to VZ Device Refresh cleanings, for commission. Still being tested and may not work yet: if it can\'t be added, the cleaning is completed without it. Off until it\'s verified.')),
+          toggle(!!(s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT), (v) => { s.autoClose.refreshLabor = v; repaintSums(); }))],
       ...(AE_DEMO ? {} : { // not in the demo build
         galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
           h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Leave blank to use your login. Only fill in to override.'),

@@ -26,6 +26,9 @@ const AE_READABLE_URL = '__READABLE_URL__'; // same build, unminified     // whe
 // The Portal sandbox (sandbox/server.py: Portal's real app on fake data) — dev builds only.
 const AE_SANDBOX = AE_DEV && location.host === 'localhost:8790';
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net' || AE_SANDBOX;
+// Swiftcast's refresh labor (SKU 10156) is EXPERIMENTAL: off unless switched on. Flip to true
+// (with a notice) once it's verified; everyone who never chose follows it.
+const AE_REFRESH_LABOR_DEFAULT = false;
 
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
@@ -33,7 +36,9 @@ const AE = (() => {
     crystals: AE_DEMO ? { cleaningRate: true, autoClose: true, glamour: true }
       : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, fixes: true },
     cleaningRate: { target: 75 },
-    autoClose: { dualcast: true }, // Swiftcast: offer Dualcast (all of a device's cleanings at once)
+    // Swiftcast: offer Dualcast (all of a device's cleanings at once); refreshLabor: null = follow
+    // AE.REFRESH_LABOR_DEFAULT (only a user's own choice is stored, so the default can change in a release).
+    autoClose: { dualcast: true, refreshLabor: null },
     glamour: { theme: 'portal', custom: [], // custom: [{ id, name, bg, fg, accent, custom: true }]
       login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
     ...(AE_DEMO ? {} : {

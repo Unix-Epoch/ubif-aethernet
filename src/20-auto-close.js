@@ -7,7 +7,8 @@
                 update-service-job-status → PUT checkin/workorder   (status 8)
     status walk PATCH status 9, then PUT workorder 10 → 11 → 12 → 13,
                 each followed by the same auto-note the UI posts
-    labor       VZ Device Refresh (program 11759) only: labor SKU 10156 into the
+    labor       EXPERIMENTAL, off unless switched on (Settings → Swiftcast; default
+                AE_REFRESH_LABOR_DEFAULT). VZ Device Refresh (program 11759) only: labor SKU 10156 into the
                 cart (Portal's own POST order/cart/item/add, LineType labor),
                 which earns the tech commission. If it ever leaves anything to
                 pay, it's taken back out before checkout (order/cart/item/remove)
@@ -119,7 +120,8 @@ AE.crystal({
       // VZ Device Refresh: add the refresh labor SKU (commission). Never stops the run.
       laborNote = null;
       let laborAdded = false;
-      if (Number(programId) === REFRESH_PROGRAM) {
+      const laborOn = !!((AE.settings.autoClose || {}).refreshLabor ?? AE_REFRESH_LABOR_DEFAULT); // EXPERIMENTAL, off by default
+      if (Number(programId) === REFRESH_PROGRAM && laborOn) {
         try {
           const w = await getWoForCart(woId);
           const cart = cartOf(await api('GET', '/api/get-cart/' + encodeURIComponent(w.csuCartId) + '?includePartStatus=true'));
@@ -266,7 +268,7 @@ AE.crystal({
       const pause = async () => { await AE.sleep(450); if (stopRequested) throw new AE.Stopped(); };
       const woId = ++fakeWo;
       const steps = ['IMEI validated', ['Created WO ' + woId, woId], 'Checked in'];
-      if (Number(it.programId) === REFRESH_PROGRAM) steps.push('Added refresh labor ' + REFRESH_LABOR_SKU);
+      if (Number(it.programId) === REFRESH_PROGRAM && ((AE.settings.autoClose || {}).refreshLabor ?? AE_REFRESH_LABOR_DEFAULT)) steps.push('Added refresh labor ' + REFRESH_LABOR_SKU);
       steps.push('Started work', 'Diagnostics done', 'Work done', 'QC done', 'Ready for pickup', 'Sale complete (SO-TEST)');
       for (const st of steps) {
         await pause();
