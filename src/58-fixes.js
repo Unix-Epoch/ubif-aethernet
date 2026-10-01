@@ -57,7 +57,8 @@
     getUpcomingArrivals query was loaded with), and Portal's own table is
     handed the not-contacted ones: the loaded result is patched in place
     (AE.portal patch = RTK's patchQueryData), so it looks and behaves like
-    every other Arrivals page. It follows Portal's day, reloads every minute
+    every other Arrivals page. Settings can limit it to arrivals still Not
+    confirmed (status 20). It follows Portal's day, reloads every minute
     (and re-patches if Portal refetches), and any of Portal's chips reloads
     Portal's own list. Like Portal's chips, it isn't remembered once you
     leave the page.
@@ -84,8 +85,21 @@
 */
 AE.fixesInfo = [
   ['logoLink', 'Logo link', 'The ubreakifix logo is a real link to the dashboard: middle-click or right-click it to open a new tab.'],
-  ['autoNotes', 'Hide auto notes switch', 'A switch at the top of a work order\'s notes hides the automatic ones (status changes, check-in logs…) so only what people wrote shows. Flip it back any time; nothing is deleted.'],
-  ['notContacted', 'Not contacted (Arrivals)', 'A "Not contacted" chip on the Arrivals page, next to Portal\'s own, lists every arrival that hasn\'t been contacted yet (no Contacted tag), from every page.'],
+  ['autoNotes', 'Hide auto notes switch', 'A switch at the top of a work order\'s notes hides the automatic ones (status changes, check-in logs…) and loads every note, so you see everything people wrote. Flip it back any time; nothing is deleted.'],
+  ['notContacted', 'Not contacted (Arrivals)', 'A "Not contacted" chip on the Arrivals page, next to Portal\'s own, lists every arrival that hasn\'t been contacted yet (no Contacted tag), from every page.',
+    // Which statuses the chip lists: everything not contacted, or only the ones still Not confirmed.
+    (s, h) => {
+      const pick = (v) => { s.fixes.notContactedStatus = v; paint(); };
+      const btn = (v, label) => h('button', { type: 'button', class: 'sg-btn', 'data-v': v, style: 'height:28px;font-size:12px;padding:0 10px', onclick: () => pick(v) }, label);
+      const box = h('div', { style: 'display:flex;align-items:center;gap:6px;margin:-2px 0 10px 14px;font-size:12px', class: 'sg-soft' },
+        'Statuses:', btn('all', 'All'), btn('notConfirmed', 'Not confirmed only'));
+      function paint() {
+        const cur = s.fixes.notContactedStatus === 'notConfirmed' ? 'notConfirmed' : 'all';
+        box.querySelectorAll('button').forEach((b) => { const on = b.dataset.v === cur; b.classList.toggle('sg-primary', on); b.setAttribute('aria-pressed', String(on)); });
+      }
+      paint();
+      return box;
+    }],
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
   ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Never on inventory, check-in or check-out pages, or while typing in a field.'],
 ];
@@ -195,7 +209,8 @@ AE.crystal({
         paint();
       },
       notContacted() {
-        const CONTACTED = 53, ENDPOINT = 'getUpcomingArrivals'; // Portal's ArrivalAttributeType.Contacted; the list's query
+        const CONTACTED = 53, NOT_CONFIRMED = 20, ENDPOINT = 'getUpcomingArrivals'; // Portal's ArrivalAttributeType.Contacted, ArrivalStatusEnum.NotConfirmed; the list's query
+        const onlyUnconfirmed = AE.settings.fixes.notContactedStatus === 'notConfirmed'; // Settings: Statuses
         const CHIP = 'ae-nc-chip', BADGE = 'ae-nc-badge', BUSY = 'ae-nc-busy', MUTED = 'ae-nc-muted';
         document.head.append(AE.h('style', null, `
           #${BADGE} { position:fixed; z-index:20; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center;
@@ -228,7 +243,10 @@ AE.crystal({
         // One load at a time; if Portal's day/filters changed meanwhile, paint() starts the next one.
         function refresh(args, key) {
           loading = loadAll(args || {})
-            .then((all) => { rows = all.filter((a) => !contacted(a)); loadedKey = key; loadedAt = Date.now(); })
+            .then((all) => {
+              rows = all.filter((a) => !contacted(a) && (!onlyUnconfirmed || Number(a.arrivalStatus && a.arrivalStatus.arrivalStatusId) === NOT_CONFIRMED));
+              loadedKey = key; loadedAt = Date.now();
+            })
             .catch((e) => { AE.toast('Not contacted', "Couldn't load the arrivals: " + (e.message || e), 'err'); turnOff(); })
             .finally(() => { loading = null; paint(); });
         }
@@ -247,7 +265,7 @@ AE.crystal({
           const c = tpl.cloneNode(true);
           c.id = CHIP; c.dataset.on = String(on);
           c.setAttribute('aria-checked', String(on));
-          c.title = 'Arrivals nobody has contacted yet (no Contacted tag), from every page. Added by ' + AE_NAME + '.';
+          c.title = 'Arrivals nobody has contacted yet (no Contacted tag)' + (onlyUnconfirmed ? ', still Not confirmed' : '') + ', from every page. Added by ' + AE_NAME + ' (Settings → Master\'s Mend).';
           (c.querySelector('.textElement') || c).textContent = 'Not contacted';
           c.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (!on) turnOn(box); });
           c.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !on) { e.preventDefault(); turnOn(box); } });

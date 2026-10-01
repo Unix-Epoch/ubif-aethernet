@@ -35,7 +35,7 @@ const AE = (() => {
       login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
     ...(AE_DEMO ? {} : {
       printLabels: { delayMs: 900 },
-      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true, notContacted: true }, // Master's Mend: one switch per fix (src/58-fixes.js)
+      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all' }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
       // Blank = use the logged-in user / current store automatically.
       galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
     }),
