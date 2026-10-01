@@ -1,7 +1,7 @@
 /*
   Glamour on the login page: your own picture in place of Portal's (the photo
-  on the purple panel, or filling the whole panel), and the Aethernet mark
-  under the ubreakifix logo. Settings: Glamour → Login page
+  on the purple panel, or filling the whole panel), and the Aethernet mark in
+  the bottom-left corner. Settings: Glamour → Login page
   (settings.glamour.login = { image: data URL or '', fill, mark }).
 
   Runs before the store check (01-access.js): nobody is signed in on the
@@ -23,7 +23,7 @@ AE.loginPage = (() => {
     #ae-login-img { object-fit: contain !important; object-position: center bottom; max-width: 100%; } /* any shape shows whole, standing on the bottom like Portal's photo */
     .ae-login-fill { background: var(--ae-login-image) center / cover no-repeat !important; }
     .ae-login-fill > :not(#ae-login-img) { visibility: hidden; }
-    #ae-login-mark { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: #8223d2; opacity: .9; }
+    #ae-login-mark { position: fixed; left: 16px; bottom: 14px; z-index: 10; display: flex; align-items: center; gap: 6px; color: #8223d2; opacity: .85; }
   `;
   const allowed = () => AE_DEMO || (GM_getValue('ae_access', null) || {}).allowed === true;
   const cfg = () => (AE.settings.crystals.glamour && AE.settings.glamour && AE.settings.glamour.login) || {};
@@ -74,13 +74,11 @@ AE.loginPage = (() => {
       photo.classList.add('ae-login-hidden');
     }
 
-    // The Aethernet mark, under the ubreakifix logo
+    // The Aethernet mark, in the bottom-left corner of the page (clear of the sign-in content)
     const mark = document.getElementById('ae-login-mark');
     if (!c.mark) { mark?.remove(); return; }
     if (mark) return;
-    const logo = [...document.querySelectorAll('img')].find((i) => i !== photo && !panel.contains(i));
-    if (!logo || !logo.parentElement) return;
-    logo.parentElement.after(AE.h('div', { id: 'ae-login-mark', title: AE_NAME },
+    document.body.append(AE.h('div', { id: 'ae-login-mark', title: AE_NAME },
       AE.h('span', { style: 'line-height:0', html: AE.icon('aetheryte', 28) }),
       AE.h('span', { style: 'line-height:0', html: AE.wordmark(20) })));
   }

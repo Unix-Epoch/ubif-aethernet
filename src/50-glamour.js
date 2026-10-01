@@ -276,7 +276,7 @@ AE.glamour = (() => {
           h('div', { class: 'btns' }, h('button', { type: 'button', class: 'sg-btn', onclick: () => file.click() }, 'Choose picture…'), reset, file),
           status,
           h('label', { class: 'chk' }, fill, 'Fill the whole purple panel'),
-          h('label', { class: 'chk' }, mark, 'Aethernet mark under the ubreakifix logo'))));
+          h('label', { class: 'chk' }, mark, 'Aethernet mark in the bottom-left corner'))));
   }
 
   function editor(s, repaint) {
