@@ -12,7 +12,7 @@
      card: the Macrocosmos macro icon (gear and all) sits where the button was
      on Portal (gde_btn_pos), its cooldown sweep filling field by field; done →
      it flashes like a skill coming off cooldown, then fades away with a
-     downward wipe (Patch notes open the opposite way). If fields couldn't be
+     drop downwards (no wipe). If fields couldn't be
      filled, it stays with a ✕ and a note listing them; click to dismiss.
 
   Filling needs real interactions: element.click() for the custom
@@ -316,7 +316,7 @@ AE.crystal({
           background:rgba(12,12,18,.85); color:#fff; font:600 12px "Myriad Pro", Myriad, Meiryo, "Helvetica Neue", Arial, sans-serif; }
         #sg-galaxy-cast.leave { animation:sg-cast-leave .7s ease-in forwards; }
         #sg-galaxy-cast.failed { cursor:pointer; }
-        @keyframes sg-cast-leave { from { opacity:1; transform:none; clip-path:inset(0 0 0 0); } to { opacity:0; transform:translateY(16px); clip-path:inset(100% 0 0 0); } }
+        @keyframes sg-cast-leave { from { opacity:1; transform:none; } to { opacity:0; transform:translateY(24px); } }
         @media (prefers-reduced-motion: reduce) { #sg-galaxy-cast.leave { animation:sg-fade-out .3s forwards; } @keyframes sg-fade-out { to { opacity:0; } } }
       `;
       function castIcon(total) {
