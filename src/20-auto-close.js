@@ -34,12 +34,24 @@ AE.crystal({
     const DEVICE_ISSUES = ['Cleaning'];
     const BIN = ''; // cleanings aren't physical — no bin
     const STEP_DELAY_MS = 400;
-    const BTN_ID = 'sg-autoclose-btn', DUAL_ID = 'sg-dualcast-btn';
+    const BTN_ID = 'sg-autoclose-btn', MENU_ID = 'sg-cast-menu', INTRO_ID = 'sg-cast-intro';
     document.head.append(h('style', null, `
-      .sg-dual { position:relative; padding:0; overflow:visible; background:#1a1c1e; }
-      .sg-dual img, .sg-dual .sg-aicon { border-radius:50%; display:block; margin:auto; }
-      .sg-dual .n { position:absolute; right:-4px; top:-4px; min-width:18px; height:18px; padding:0 4px; border-radius:10000rem; background:#d1344b; color:#fff;
+      .sg-cast { position:relative; padding:0; overflow:visible; background:#1a1c1e; }
+      .sg-cast .sg-aicon { border-radius:50%; display:block; width:100%; height:100%; }
+      .sg-cast .n { position:absolute; right:-4px; top:-4px; min-width:18px; height:18px; padding:0 4px; border-radius:10000rem; background:#d1344b; color:#fff;
         font:700 11px/18px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; box-shadow:0 0 0 2px var(--aui-surface, #fff); }
+      #${MENU_ID} { position:fixed; z-index:2147483646; width:280px; padding:6px; }
+      #${MENU_ID} .opt { display:flex; flex-direction:column; align-items:flex-start; gap:1px; width:100%; padding:8px 10px; border:0; border-radius:8px; background:none; cursor:pointer;
+        text-align:left; font:inherit; color:inherit; }
+      #${MENU_ID} .opt:hover { background:var(--aui-neutral-soft, #f1f0f4); }
+      #${MENU_ID} .opt .sg-soft { font-size:12px; }
+      #${INTRO_ID} { position:fixed; z-index:2147483646; width:300px; padding:12px 14px; font-size:13px; line-height:1.45; }
+      #${INTRO_ID}::after { content:''; position:absolute; bottom:-8px; left:var(--tail, 20px); width:16px; height:16px; transform:rotate(45deg);
+        background:var(--aui-surface, #fff); box-shadow:2px 2px 3px rgba(12,14,17,.08); }
+      #${INTRO_ID} .hd { display:flex; align-items:center; gap:8px; font-size:15px; margin-bottom:6px; }
+      #${INTRO_ID} .hd .sg-aicon { border-radius:6px; }
+      #${INTRO_ID} p { margin:0 0 6px; }
+      #${INTRO_ID} .sg-actions { margin-top:8px; justify-content:flex-end; }
     `));
     const REFRESH_PROGRAM = 11759, REFRESH_LABOR_SKU = '10156'; // VZ Device Refresh → its labor SKU (commission)
     const LABOR_LINE = { '@odata.type': '#Microsoft.Dynamics.Commerce.Runtime.DataModel.AttributeTextValue', Name: 'LineType', TextValue: 'labor' };
@@ -295,22 +307,84 @@ AE.crystal({
     // Also callable from the cleaning-rate list and the WO cleanings pill.
     // Those are one step removed from the arrival itself, so they always ask
     // first; the drawer button (you're looking at the arrival) doesn't.
+    /*
+      One round button, named for how many cleanings are waiting for the device:
+      1 → Swiftcast (this cleaning), 2 → Dualcast, 3+ → Triplecast (all of them,
+      after one confirmation). Right-click Dualcast/Triplecast: close only this cleaning.
+      The first time a Dualcast/Triplecast shows, a speech bubble explains it.
+    */
+    const castOf = (n) => (n >= 3 ? ['triplecast', 'Triplecast'] : n === 2 ? ['dualcast', 'Dualcast'] : ['autoClose', 'Swiftcast']);
+    function castButton({ size, items, customerName, single, fake }) {
+      const n = items.length, [iconId, name] = castOf(n);
+      const names = items.map((it) => AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning');
+      const b = h('button', {
+        type: 'button', class: 'sg-fab sg-cast' + (n > 1 ? ' multi' : ''), 'aria-label': name,
+        title: n > 1
+          ? name + ': create all ' + n + ' cleanings waiting for this device (' + names.join(' + ') + '), one after the other. Right-click to close only this one.'
+          : 'Swiftcast: check in, walk to Ready for pickup, and complete the $0 sale',
+        style: 'align-self:center;width:' + size + 'px;height:' + size + 'px',
+        html: AE.actionIcon(iconId, size) + (n > 1 ? '<span class="n">' + n + '</span>' : ''),
+        onclick: () => (n > 1 ? AE.autoClose.dualcast({ items, customerName, fake }) : single()),
+      });
+      if (n > 1) b.addEventListener('contextmenu', (e) => { e.preventDefault(); castMenu(e.clientX, e.clientY, items, single, () => AE.autoClose.dualcast({ items, customerName, fake })); });
+      return b;
+    }
+    function castMenu(x, y, items, single, all) {
+      document.getElementById(MENU_ID)?.remove();
+      const [, name] = castOf(items.length);
+      const opt = (label, sub, fn) => h('button', { type: 'button', class: 'opt', role: 'menuitem', onclick: () => { menu.remove(); fn(); } }, h('b', null, label), h('span', { class: 'sg-soft' }, sub));
+      const menu = h('div', { id: MENU_ID, class: 'sg sg-card', role: 'menu', style: 'left:' + Math.min(x, innerWidth - 300) + 'px;top:' + Math.max(8, y - 120) + 'px' },
+        opt('Close only this cleaning', AE.CLEANING_PROGRAMS[items[0].programId] || 'This arrival', single),
+        opt(name + ': close all ' + items.length, items.map((it) => AE.CLEANING_PROGRAMS[it.programId]).join(' + '), all));
+      document.body.appendChild(menu);
+      const off = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', off, true); } };
+      setTimeout(() => document.addEventListener('mousedown', off, true), 0);
+      return menu;
+    }
+    const INTRO_KEY = 'ae_dualcast_intro_seen';
+    function castIntro(btn, items, force) {
+      if (!force && GM_getValue(INTRO_KEY, false)) return;
+      document.getElementById(INTRO_ID)?.remove();
+      const [iconId, name] = castOf(items.length);
+      const names = items.map((it) => AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning');
+      const bubble = h('div', { id: INTRO_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': name },
+        h('div', { class: 'hd' }, h('span', { html: AE.actionIcon(iconId, 28), style: 'line-height:0' }), h('b', null, name)),
+        h('p', null, 'This device has ' + items.length + ' cleanings waiting (' + names.join(' + ') + '). Click to create them all, one after the other, after one confirmation.'),
+        h('p', null, h('b', null, 'Right-click'), ' to close ', h('b', null, 'only this cleaning'), ' instead.'),
+        h('p', { class: 'sg-soft' }, 'With one cleaning waiting, this button is Swiftcast; with three or more, Triplecast.'),
+        h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => { GM_setValue(INTRO_KEY, true); bubble.remove(); } }, 'Got it')));
+      document.body.appendChild(bubble);
+      const place = () => {
+        if (!btn.isConnected || !bubble.isConnected) { bubble.remove(); return; }
+        const r = btn.getBoundingClientRect();
+        bubble.style.left = Math.max(8, Math.min(r.left - 14, innerWidth - bubble.offsetWidth - 8)) + 'px';
+        bubble.style.top = Math.max(8, r.top - bubble.offsetHeight - 14) + 'px';
+        bubble.style.setProperty('--tail', Math.max(14, r.left - parseFloat(bubble.style.left) + r.width / 2 - 8) + 'px');
+        requestAnimationFrame(place);
+      };
+      place();
+    }
+
     // Dev tools: a fake Dualcast (confirmation + progress, no API calls), and the drawer's two buttons on a test card.
     const FAKE_ITEMS = [{ arrivalId: 900001, programId: REFRESH_PROGRAM }, { arrivalId: 900002, programId: 9470 }];
     AE.hooks.dualcastFake = (opts = {}) => AE.autoClose.dualcast({ items: FAKE_ITEMS, customerName: 'Jordan Reyes', fake: { fail: !!opts.fail } });
-    AE.hooks.dualcastButton = () => {
+    // n: how many cleanings the test device has waiting (1 Swiftcast, 2 Dualcast, 3 Triplecast); the explainer always shows.
+    AE.hooks.dualcastButton = (n = 2) => {
       document.getElementById('sg-dual-test')?.remove();
+      const items = [{ arrivalId: 900001, programId: REFRESH_PROGRAM }, { arrivalId: 900002, programId: 9470 }, { arrivalId: 900003, programId: 11009 }].slice(0, n);
       const card = h('div', { id: 'sg-dual-test', class: 'sg sg-card', style: 'position:fixed;z-index:2147483645;right:24px;bottom:24px;width:380px;padding:14px 16px' },
         h('div', { style: 'display:flex;align-items:center;margin-bottom:12px' }, h('b', { style: 'flex:1' }, 'Customer arrival (test)'),
-          h('button', { type: 'button', class: 'sg-x', onclick: () => card.remove() }, '✕')),
-        h('div', { class: 'sg-soft', style: 'font-size:13px;margin-bottom:12px' }, 'VZ Device Refresh for Jordan Reyes; a VZ Sanitization waits for the same device. Nothing here is sent to Portal.'));
-      const row = h('div', { style: 'display:flex;align-items:center;justify-content:flex-end;gap:8px' });
-      const bolt = h('button', { type: 'button', class: 'sg-fab', title: 'Auto-close cleaning (test: does nothing)', style: 'margin-right:8px;color:#fff;width:48px;height:48px', html: icon('bolt', 24) });
-      const dual = h('button', { type: 'button', class: 'sg-fab sg-dual', title: 'Dualcast (test run)', style: 'margin-right:auto;width:48px;height:48px',
-        html: AE.actionIcon('dualcast', 40) + '<span class="n">2</span>', onclick: () => { card.remove(); AE.hooks.dualcastFake(); } });
-      row.append(bolt, dual, h('button', { type: 'button', class: 'sg-btn', style: 'height:48px' }, 'Cancel'), h('button', { type: 'button', class: 'sg-btn sg-primary', style: 'height:48px' }, 'Check-in'));
+          h('button', { type: 'button', class: 'sg-x', onclick: () => { card.remove(); document.getElementById(INTRO_ID)?.remove(); } }, '✕')),
+        h('div', { class: 'sg-soft', style: 'font-size:13px;margin-bottom:12px' }, n + ' cleaning' + (n > 1 ? 's' : '') + ' waiting for Jordan Reyes\'s device. Nothing here is sent to Portal.'));
+      const fake = { fail: false };
+      const btn = castButton({ size: 48, items, customerName: 'Jordan Reyes', fake,
+        single: () => runMany(items.slice(0, 1), 'Jordan Reyes', fake) });
+      btn.style.marginRight = 'auto';
+      const row = h('div', { style: 'display:flex;align-items:center;justify-content:flex-end;gap:8px' }, btn,
+        h('button', { type: 'button', class: 'sg-btn', style: 'height:48px' }, 'Cancel'), h('button', { type: 'button', class: 'sg-btn sg-primary', style: 'height:48px' }, 'Check-in'));
       card.append(row);
       document.body.appendChild(card);
+      if (n > 1) castIntro(btn, items, true);
     };
     const dualcastOn = () => !AE.settings.autoClose || AE.settings.autoClose.dualcast !== false;
     AE.autoClose = {
@@ -352,11 +426,11 @@ AE.crystal({
     async function tick() {
       const m = location.pathname.match(/^\/check-in\/arrivals\/(\d+)$/);
       const existing = document.getElementById(BTN_ID);
-      if (!m) { existing?.remove(); document.getElementById(DUAL_ID)?.remove(); checkedArrivalId = null; return; }
+      if (!m) { existing?.remove(); document.getElementById(INTRO_ID)?.remove(); checkedArrivalId = null; return; }
       const arrivalId = Number(m[1]);
       if (checkedArrivalId !== arrivalId) {
         checkedArrivalId = arrivalId; isCleaning = false; siblings = []; thisArrival = null;
-        existing?.remove(); document.getElementById(DUAL_ID)?.remove();
+        existing?.remove();
         try {
           const a = unwrap(await AE.api('GET', '/api/arrivals/' + arrivalId));
           isCleaning = !!AE.CLEANING_PROGRAMS[a && a.program && a.program.programId];
@@ -378,27 +452,12 @@ AE.crystal({
         if (getComputedStyle(el).justifyContent === 'flex-end') { footer = el; break; }
       }
       const size = checkin.offsetHeight || 48;
-      const b = h('button', {
-        id: BTN_ID, type: 'button', class: 'sg-fab', 'aria-label': 'Auto-close cleaning',
-        title: 'Auto-close cleaning: check in, walk to Ready for pickup, and complete the $0 sale',
-        style: 'margin-right:auto;align-self:center;color:#fff;width:' + size + 'px;height:' + size + 'px',
-        html: icon('bolt', Math.round(size * 0.5)),
-        onclick: () => onClick(arrivalId),
-      });
+      const items = [thisArrival, ...(dualcastOn() ? siblings : [])].map((x) => ({ arrivalId: x.arrivalId, programId: x.program.programId }));
+      const b = castButton({ size, items, customerName: AE.data.nameOf(thisArrival), single: () => onClick(arrivalId) });
+      b.id = BTN_ID;
+      b.style.marginRight = 'auto';
       footer.insertBefore(b, footer.firstChild);
-      if (siblings.length && dualcastOn()) {
-        const items = [thisArrival, ...siblings].map((x) => ({ arrivalId: x.arrivalId, programId: x.program.programId }));
-        const names = items.map((it) => AE.CLEANING_PROGRAMS[it.programId]).join(' + ');
-        b.style.marginRight = '8px';
-        const d = h('button', {
-          id: DUAL_ID, type: 'button', class: 'sg-fab sg-dual', 'aria-label': 'Dualcast: all cleanings for this device',
-          title: 'Dualcast: create all ' + items.length + ' cleanings waiting for this device (' + names + ') in one go',
-          style: 'margin-right:auto;align-self:center;width:' + size + 'px;height:' + size + 'px',
-          html: AE.actionIcon('dualcast', size - 8) + '<span class="n">' + items.length + '</span>',
-          onclick: () => AE.autoClose.dualcast({ items, customerName: AE.data.nameOf(thisArrival) }),
-        });
-        b.after(d);
-      }
+      if (items.length > 1) castIntro(b, items);
     }
     AE.every(1000, tick);
   },
