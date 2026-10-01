@@ -54,7 +54,13 @@ AE.crystal({
       #${PANEL_ID} a:hover { text-decoration:underline; }
       #${PANEL_ID} .sg-soft a { font-weight:400; }
       #${PANEL_ID} .miss { color:var(--aui-status-error,#b91a24); font-weight:600; }
-      #${PANEL_ID} .sg-dual-row { display:inline-flex; align-items:center; gap:5px; height:26px; padding:0 9px; margin:4px 0 0 4px; font-size:12px; }
+      #${PANEL_ID} .sg-cast-group { display:inline-flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:0; margin:0 0 4px 4px; padding:4px 4px 0 4px;
+        border:1.5px dashed var(--aui-primary, #8223d2); border-radius:14px; }
+      #${PANEL_ID} .sg-cast-group .sg-chip { margin:0 0 4px 4px; }
+      #${PANEL_ID} .sg-cast-go { display:inline-flex; align-items:center; gap:5px; height:22px; margin:0 auto 4px 0; padding:0 9px 0 3px; border:0; border-radius:10000rem; cursor:pointer;
+        background:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); font:700 12px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+      #${PANEL_ID} .sg-cast-go .b { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; background:rgba(255,255,255,.22); }
+      #${PANEL_ID} .sg-cast-go:hover { filter:brightness(1.1); }
     `));
 
     async function compute() {
@@ -122,13 +128,18 @@ AE.crystal({
         label + ' · pending</a>' + mk + '</span>';
     }
 
-    // Dualcast: every pending cleaning of one order in one go.
-    const dualBtn = (matched, wo) => {
+    // An order's cleanings. With 2+ pending (and Dualcast on), the pending chips sit in one
+    // dashed purple outline, led by a ⚡ that runs them all (Dualcast, or Triplecast for 3+);
+    // each chip keeps its own ⚡ for just that one.
+    const chips = (matched, wo) => {
       const waiting = matched.filter((c) => c.pending);
-      if (!AE.autoClose || !AE.autoClose.dualcastOn() || waiting.length < 2) return '';
-      return '<button type="button" class="sg-btn sg-dual-row" title="Dualcast: create all ' + waiting.length + ' pending cleanings for this order" data-dual="' +
+      if (!AE.autoClose || !AE.autoClose.dualcastOn() || waiting.length < 2) return matched.map((c) => chip(c, wo)).join('');
+      const name = waiting.length >= 3 ? 'Triplecast' : 'Dualcast';
+      const go = '<button type="button" class="sg-cast-go" title="' + name + ': create all ' + waiting.length + ' pending cleanings for this order, one after the other" data-dual="' +
         esc(JSON.stringify(waiting.map((c) => ({ arrivalId: c.arrivalId, programId: c.programId })))) + '" data-name="' + esc(nameOf(wo)) + '">' +
-        AE.actionIcon('dualcast', 16) + 'Dualcast</button>';
+        '<span class="b">' + AE.icon('bolt', 12) + '</span>' + name + '</button>';
+      return matched.filter((c) => !c.pending).map((c) => chip(c, wo)).join('') +
+        '<span class="sg-cast-group">' + go + waiting.map((c) => chip(c, wo)).join('') + '</span>';
     };
     function renderPanel() {
       let p = document.getElementById(PANEL_ID);
@@ -146,7 +157,7 @@ AE.crystal({
         ? '<table>' + last.rows.map(({ p: wo, matched }) =>
           '<tr><td><div class="who">' + esc(nameOf(wo) || 'Unknown customer') + '</div>' +
           '<div class="sg-soft"><a href="/repair/workorder/' + wo.workorderId + '">' + wo.workorderId + '</a> · ' + fmtTime(new Date(wo.createdAt)) + '</div></td>' +
-          '<td style="text-align:right">' + (matched.length ? matched.map((c) => chip(c, wo)).join('') : '<span class="miss">No cleanings</span>') + dualBtn(matched, wo) + '</td></tr>'
+          '<td style="text-align:right">' + (matched.length ? chips(matched, wo) : '<span class="miss">No cleanings</span>') + '</td></tr>'
         ).join('') + '</table>'
         : '<p class="sg-soft">No Asurion Mobility orders created today yet.</p>';
       const extra = last.unlinked.length
@@ -164,7 +175,7 @@ AE.crystal({
         '<p class="sg-soft" style="margin:10px 0 0"><a href="/reporting/metrics">Past days: Reports → Cleaning rate history</a></p>';
       p.scrollTop = scroll;
       p.querySelector('[data-refresh]').onclick = (e) => { e.stopPropagation(); refresh(); };
-      p.querySelectorAll('.sg-dual-row').forEach((btn) => {
+      p.querySelectorAll('.sg-cast-go').forEach((btn) => {
         btn.onclick = (e) => {
           e.preventDefault(); e.stopPropagation();
           p.remove();
