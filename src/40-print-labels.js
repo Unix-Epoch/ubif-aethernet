@@ -80,9 +80,11 @@ AE.crystal({
       const count = h('div', null);
       const bar = h('div', { class: 'sg-bar' }, h('i'));
       ui.panel.body.replaceChildren(count, bar);
+      ui.panel.title('Synthesizing… (' + total + ')');
       const paint = () => {
         count.textContent = done + ' / ' + total + ' sent' + (missed.length ? ' · ' + missed.length + ' missed' : '');
         bar.firstChild.style.width = Math.round(((done + missed.length) / total) * 100) + '%';
+        ui.panel.progress(done + missed.length, total); // the spell icon's cooldown sweep
       };
       paint();
       const stop = btn('■ Stop', 'sg-danger', () => { ui.stop = true; stop.disabled = true; stop.textContent = 'Stopping…'; });
@@ -107,7 +109,7 @@ AE.crystal({
       } else ui.panel.actions(close);
     }
 
-    function newUi() { return { panel: AE.progressPanel('Quick Synthesis · print all labels', { clock: false }), running: false, stop: false }; }
+    function newUi() { return { panel: AE.progressPanel('Quick Synthesis', { clock: false, icon: 'printLabels' }), running: false, stop: false }; }
 
     async function onClickPrintAll() {
       if (AE.status.blocked('printLabels')) return;
@@ -124,6 +126,7 @@ AE.crystal({
         ui.panel.actions(btn('Close', '', () => { ui.panel.el.remove(); active = null; }));
         return;
       }
+      ui.panel.title('Quick Synthesis · ' + rows.length + ' labels');
       ui.panel.body.innerHTML = 'Ready to print <b>' + rows.length + '</b> labels, one every ' + DELAY_MS + ' ms (~' +
         Math.ceil((rows.length * (DELAY_MS + 150)) / 1000) + ' s).<div class="sg-soft" style="margin:6px 0 12px">Make sure the DYMO label printer is on and loaded.</div>';
       ui.panel.actions(

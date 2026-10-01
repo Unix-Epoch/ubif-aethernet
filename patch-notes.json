@@ -5,12 +5,14 @@
       "**Divination**: a **Cleaning rate history** card on the Reports page shows your cleaning percentage over the last 7, 30 or 90 days, this month or last month: the overall rate, how many days hit the target, a bar for each day and a day-by-day table.",
       "**Master's Mend**: if Portal's Reports page is stuck loading, a warning explains the usual cause: an ad blocker like uBlock Origin blocks Portal's reports. Turn it off for Portal and reload.",
       "**Swiftcast**: new **experimental** option to add the refresh labor SKU (10156) to Verizon Device Refresh cleanings, for commission. It's still being tested, so it's off by default (Settings → Swiftcast → Refresh labor). If the labor can't be added, the cleaning is still completed at $0.",
-      "**Swiftcast**: one button, named for what's waiting. With one cleaning it's **Swiftcast** (now with its real icon); with two it becomes **Dualcast** and creates both, one after the other; with three or more, **Triplecast**. Right-click Dualcast or Triplecast to close only this cleaning. A short explainer shows the first time. Dualcast is also in Esuna's list and Divination's panel, and can be turned off in Settings under Swiftcast."
+      "**Swiftcast**: one button, named for what's waiting. With one cleaning it's **Swiftcast** (now with its real icon); with two it becomes **Dualcast** and creates both, one after the other; with three or more, **Triplecast**. Right-click Dualcast or Triplecast to close only this cleaning. A short explainer shows the first time. Dualcast is also in Esuna's list and Divination's panel, and can be turned off in Settings under Swiftcast.",
+      "**Swiftcast** and **Quick Synthesis**: their progress boxes now show the spell's icon with an FFXIV-style cooldown sweep that fills as each step finishes, and say what's being cast (Swiftcasting…, Dualcasting…, Synthesizing…). Collapse one with **–** to keep just the floating spell icon; it flashes when the cast is done. Click it to open the box again, or hover and click ✕ to dismiss. It stays put while you move around Portal."
     ],
     "updated": [
       "cleaningRate",
       "autoClose",
-      "woCleanings"
+      "woCleanings",
+      "printLabels"
     ]
   },
   {

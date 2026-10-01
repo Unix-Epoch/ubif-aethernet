@@ -72,6 +72,7 @@ AE.crystal({
     async function run(arrivalId, log) {
       const arrival = unwrap(await api('GET', '/api/arrivals/' + arrivalId));
       const programId = arrival.program && arrival.program.programId;
+      if (log.plan) log.plan(stepsFor(programId)); // the spell icon's cooldown sweep
       if (!AE.CLEANING_PROGRAMS[programId]) throw new Error('Not a cleaning program (' + programId + ') — refusing.');
       const dev = arrival.customerDevice || {};
       const customerId = String(arrival.customer.customerId);
@@ -229,6 +230,10 @@ AE.crystal({
 
     // Dualcast: several cleanings in one go, one after another, in one panel.
     // The progress panel's heading: Swiftcasting… / Dualcasting… / Triplecasting… (n).
+    // Steps a run logs (IMEI, created, checked in, started, diagnostics, work, QC, RFP, sale = 9,
+    // + the labor line when it applies): the spell icon's cooldown sweep fills one step at a time.
+    const laborOnNow = () => !!((AE.settings.autoClose || {}).refreshLabor ?? AE_REFRESH_LABOR_DEFAULT);
+    const stepsFor = (programId) => 9 + (Number(programId) === REFRESH_PROGRAM && laborOnNow() ? 1 : 0);
     const castingTitle = (n) => (n >= 3 ? 'Triplecasting… (' + n + ')' : n === 2 ? 'Dualcasting…' : 'Swiftcasting…');
     // fake (dev tools only): the same confirmation and panel, with simulated steps and no API calls.
     async function runMany(items, customerName, fake) {
@@ -237,7 +242,8 @@ AE.crystal({
       if (!fake) AE.track('autoClose:dualcast');
       running = true; stopRequested = false;
       const runner = fake ? (it, log) => fakeRun(it, log, fake) : (it, log) => run(it.arrivalId, log);
-      const panel = AE.progressPanel(castingTitle(items.length) + (fake ? ' (test)' : ''));
+      const panel = AE.progressPanel(castingTitle(items.length) + (fake ? ' (test)' : ''),
+        { icon: castOf(items.length)[0], total: items.reduce((n, it) => n + stepsFor(it.programId) + 1, 0) }); // +1: each cleaning's "1 of 2" line
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       const done = [], notes = [];
@@ -285,11 +291,12 @@ AE.crystal({
       if (!checked && await storeClosed()) return;
       AE.track('autoClose:run');
       running = true; stopRequested = false;
-      const panel = AE.progressPanel(castingTitle(1));
+      const panel = AE.progressPanel(castingTitle(1), { icon: 'autoClose', total: 9 });
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       let woId = null;
       const log = (t, id) => { if (id) woId = id; panel.step(t); };
+      log.plan = (n) => panel.plan(n);
       const btn = document.getElementById(BTN_ID);
       if (btn) btn.disabled = true;
       try {

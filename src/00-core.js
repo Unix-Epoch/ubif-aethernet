@@ -305,6 +305,32 @@ const AE = (() => {
   .sg-panel { position:fixed; right:20px; bottom:20px; z-index:2147483646; width:340px; padding:16px; font-size:14px; line-height:1.4; }
   .sg-panel-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
   .sg-panel-title { flex:1; font-size:16px; font-weight:700; }
+  /* FFXIV-style spell icon: action icon + cooldown sweep (grey clears clockwise) + "ready" glint */
+  .sg-spell { position:relative; flex:none; display:inline-block; border-radius:22%; overflow:hidden; line-height:0;
+    box-shadow:0 0 0 1px #2b2a2f, 0 0 0 2px #c9a75a55; --a:0deg; }
+  .sg-spell .img, .sg-spell .img > * { display:block; width:100%; height:100%; }
+  .sg-spell .img > svg { width:60%; height:60%; margin:20%; color:var(--aui-primary, #8223d2); }
+  .sg-spell .cd { position:absolute; inset:0; background:conic-gradient(transparent 0 var(--a), rgba(10,10,16,.66) var(--a) 360deg); pointer-events:none; }
+  .sg-spell .glint { position:absolute; inset:-40%; pointer-events:none; opacity:0;
+    background:linear-gradient(115deg, transparent 38%, rgba(255,255,255,.95) 50%, transparent 62%); }
+  .sg-spell.ready { animation:sg-ready 1.1s ease-out 2; }
+  .sg-spell.ready .glint { animation:sg-glint 1.1s ease-out 2; }
+  .sg-orb .sg-spell .mark { min-width:20px; height:20px; font-size:12px; line-height:20px; right:3px; bottom:3px; }
+  .sg-spell .mark { position:absolute; right:1px; bottom:1px; min-width:14px; height:14px; border-radius:50%; font:800 9px/14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    text-align:center; color:#fff; background:var(--aui-status-success, #136d31); box-shadow:0 0 0 1px #fff; }
+  .sg-spell.err .mark, .sg-spell.stop .mark { background:var(--aui-status-error, #b91a24); }
+  @keyframes sg-ready { 0% { filter:brightness(1); box-shadow:0 0 0 1px #2b2a2f, 0 0 0 2px #c9a75a55; }
+    25% { filter:brightness(1.9); box-shadow:0 0 0 2px #fff, 0 0 18px 4px rgba(255,226,140,.95); }
+    100% { filter:brightness(1); box-shadow:0 0 0 1px #2b2a2f, 0 0 0 2px #c9a75a55; } }
+  @keyframes sg-glint { 0% { opacity:0; transform:translateX(-60%); } 15% { opacity:1; } 70% { opacity:1; transform:translateX(60%); } 100% { opacity:0; transform:translateX(60%); } }
+  .sg-min { font-size:20px; font-weight:700; }
+  .sg-orb { position:fixed; bottom:20px; z-index:2147483646; width:56px; height:56px; cursor:pointer; border-radius:14px;
+    box-shadow:0 6px 20px rgba(12,14,17,.35); animation:sg-in .2s ease-out; }
+  .sg-orb .sg-spell { box-shadow:0 0 0 2px #1a1a1f, 0 0 0 3.5px #c9a75a; }
+  .sg-orb .dismiss { display:none; position:absolute; top:-8px; right:-8px; width:20px; height:20px; padding:0; border-radius:50%; border:0; cursor:pointer;
+    background:#1a1c1e; color:#fff; font-size:11px; line-height:20px; box-shadow:0 0 0 2px #fff; }
+  .sg-orb.done:hover .dismiss { display:block; }
+  @media (prefers-reduced-motion: reduce) { .sg-spell.ready, .sg-spell.ready .glint { animation:none; } }
   .sg-soft { color: var(--aui-on-surface-soft, #5d5e61); font-size:12px; }
   .sg-x { background:none; border:0; padding:4px; cursor:pointer; color:var(--aui-on-surface-soft, #5d5e61); font-size:18px; line-height:1; }
   .sg-steps { list-style:none; margin:0 0 12px; padding:0; max-height:240px; overflow:auto; }
@@ -390,40 +416,103 @@ const AE = (() => {
     ticked step list, a result message, and whatever action buttons the crystal
     sets. Used by auto-close and print-all-labels.
   */
-  function progressPanel(title, { clock = true } = {}) {
+  /*
+    Progress box for a crystal's run (Swiftcast, Dualcast, Quick Synthesis…),
+    styled after FFXIV casting:
+      - the crystal's action icon in the header, with a cooldown sweep: a grey
+        infill that clears clockwise as each step completes (total known up
+        front: opts.total, panel.plan(n), or panel.progress(done, total));
+      - "–" collapses it into a floating spell icon with the same sweep; when the
+        run ends the icon flashes like a skill coming off cooldown and shows ✓/✕.
+        Click the icon to expand the box; once finished, hover shows a ✕ to
+        dismiss. The box and icon live on <body>, outside Portal's own page, so
+        they stay put as Portal changes pages.
+  */
+  function spellIcon(iconId, size) {
+    const el = h('span', { class: 'sg-spell', style: 'width:' + size + 'px;height:' + size + 'px' },
+      h('span', { html: actionIcon(iconId, size) || icon('bolt', Math.round(size * 0.6)), class: 'img' }), h('span', { class: 'cd' }), h('span', { class: 'glint' }));
+    return el;
+  }
+  function progressPanel(title, { clock = true, icon: iconId = null, total = 0 } = {}) {
     ensureCss();
-    document.querySelectorAll('.sg-panel[data-sg-title="' + title + '"]').forEach((p) => p.remove());
-    const state = h('span', { class: 'sg-spin' });
+    document.querySelectorAll('.sg-panel[data-sg-title="' + title + '"]').forEach((p) => { p._orb?.remove(); p.remove(); });
+    const head = iconId ? spellIcon(iconId, 30) : h('span', { class: 'sg-spin' });
+    const titleEl = h('span', { class: 'sg-panel-title' }, title);
     const clk = clock ? h('span', { class: 'sg-clock' }, '0.0s') : null;
-    const close = h('button', { class: 'sg-x', title: 'Close', style: 'display:none', onclick: () => panel.remove() }, '✕');
+    const shrink = iconId ? h('button', { class: 'sg-x sg-min', title: 'Collapse to the spell icon', onclick: () => api.collapse() }, '–') : null;
+    const close = h('button', { class: 'sg-x', title: 'Close', style: 'display:none', onclick: () => { orb?.remove(); panel.remove(); } }, '✕');
     const steps = h('ul', { class: 'sg-steps' });
     const body = h('div');
     const msg = h('div', { class: 'sg-msg', style: 'display:none' });
     const actions = h('div', { class: 'sg-actions' });
-    const panel = h('div', { class: 'sg sg-card sg-panel', 'data-sg-title': title },
-      h('div', { class: 'sg-panel-head' }, state, h('span', { class: 'sg-panel-title' }, title), clk, close),
+    const panel = h('div', { class: 'sg sg-card sg-panel' + (iconId ? ' sg-spellbox' : ''), 'data-sg-title': title },
+      h('div', { class: 'sg-panel-head' }, head, titleEl, clk, shrink, close),
       body, steps, msg, actions);
     document.body.appendChild(panel);
+
+    let done = 0, planned = total, shown = 0, target = 0, anim = null, finished = null, orb = null;
+    const icons = () => [head, orb && orb.querySelector('.sg-spell')].filter((x) => x && x.classList && x.classList.contains('sg-spell'));
+    const paintSweep = () => icons().forEach((el) => el.style.setProperty('--a', Math.round(shown * 360) + 'deg'));
+    function setTarget(p) {
+      target = Math.max(0, Math.min(1, p));
+      if (anim) return;
+      const tick = () => { shown += (target - shown) * 0.18; if (Math.abs(target - shown) < 0.002) shown = target; paintSweep(); anim = shown === target ? null : requestAnimationFrame(tick); };
+      anim = requestAnimationFrame(tick);
+    }
+    // Steps beyond the plan (rare extras) never complete the circle early; finishing does.
+    const fromSteps = () => (planned ? Math.min(done / planned, 0.97) : 0);
+    const markOf = (kind) => h('span', { class: 'mark' }, kind === 'ok' ? '✓' : kind === 'stop' ? '■' : '✕');
+    const ready = (sp, kind) => { sp.querySelector('.mark')?.remove(); sp.classList.remove('ready'); void sp.offsetWidth; sp.classList.add('ready', kind); sp.append(markOf(kind)); };
+    paintSweep();
 
     const t0 = performance.now();
     const fmt = (ms) => { const s = ms / 1000; return s < 60 ? s.toFixed(1) + 's' : Math.floor(s / 60) + 'm ' + String(Math.floor(s % 60)).padStart(2, '0') + 's'; };
     const timer = clk ? setInterval(() => { clk.textContent = fmt(performance.now() - t0); }, 100) : null;
 
-    return {
+    function makeOrb() {
+      const others = document.querySelectorAll('.sg-orb').length;
+      const o = h('div', { class: 'sg sg-orb', role: 'button', tabindex: '0', title: titleEl.textContent + ' — click to expand', style: 'right:' + (20 + others * 72) + 'px' },
+        spellIcon(iconId, 56), h('span', { class: 'badge' }),
+        h('button', { type: 'button', class: 'dismiss', title: 'Dismiss', onclick: (e) => { e.stopPropagation(); o.remove(); panel.remove(); } }, '✕'));
+      o.addEventListener('click', () => api.expand());
+      o.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); api.expand(); } });
+      return o;
+    }
+    const api = {
       el: panel,
       body,
-      step(text) { steps.append(h('li', null, text)); steps.scrollTop = steps.scrollHeight; },
+      title(t) { titleEl.textContent = t; if (orb) orb.title = t + ' — click to expand'; },
+      plan(n) { planned = n; setTarget(fromSteps()); },
+      progress(n, of) { if (of) planned = of; done = n; setTarget(fromSteps()); },
+      step(text) { steps.append(h('li', null, text)); steps.scrollTop = steps.scrollHeight; done++; setTarget(fromSteps()); },
       actions(...btns) { actions.replaceChildren(...btns); },
+      collapse() {
+        if (!iconId) return;
+        if (!orb) { orb = makeOrb(); panel._orb = orb; }
+        if (finished) { orb.classList.add('done', finished); const sp = orb.querySelector('.sg-spell'); if (!sp.querySelector('.mark')) { sp.classList.add(finished); sp.append(markOf(finished)); } }
+        document.body.appendChild(orb);
+        panel.style.display = 'none';
+        paintSweep();
+      },
+      expand() { if (orb) orb.remove(); panel.style.display = ''; },
       finish(kind, html) { // kind: 'ok' | 'err' | 'stop'
+        finished = kind;
         if (timer) { clearInterval(timer); clk.textContent = fmt(performance.now() - t0); }
-        const done = h('span', { class: 'sg-icon-state' }, kind === 'ok' ? '✓' : kind === 'stop' ? '■' : '✕');
-        done.style.color = kind === 'ok' ? 'var(--aui-status-success, #136d31)' : 'var(--aui-status-error, #b91a24)';
-        state.replaceWith(done);
+        if (iconId) {
+          if (kind === 'ok') setTarget(1);
+          ready(head, kind);
+          if (orb) { orb.classList.add('done', kind); ready(orb.querySelector('.sg-spell'), kind); }
+        } else {
+          const st = h('span', { class: 'sg-icon-state' }, kind === 'ok' ? '✓' : kind === 'stop' ? '■' : '✕');
+          st.style.color = kind === 'ok' ? 'var(--aui-status-success, #136d31)' : 'var(--aui-status-error, #b91a24)';
+          head.replaceWith(st);
+        }
         if (html) { msg.className = 'sg-msg ' + (kind === 'ok' ? 'ok' : 'err'); msg.innerHTML = html; msg.style.display = 'block'; }
         close.style.display = '';
       },
-      flash() { panel.style.animation = 'sg-flash .8s'; setTimeout(() => { panel.style.animation = ''; }, 800); },
+      flash() { if (orb && orb.isConnected) { api.expand(); } panel.style.animation = 'sg-flash .8s'; setTimeout(() => { panel.style.animation = ''; }, 800); },
     };
+    return api;
   }
 
   /*
