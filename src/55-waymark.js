@@ -151,6 +151,7 @@ AE.waymark = (() => {
       customerDeviceId: dev.customerDeviceId, customerId: dev.customerId, passcode: dev.passcode, serial: dev.serial,
       imei: dev.imei, deviceCatalogId: dev.deviceCatalogId, name,
     });
+    if (location.pathname.indexOf('/repair/workorder/' + woId) === 0) AE.refreshView(); // show the new nickname
     return true;
   }
 

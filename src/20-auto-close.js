@@ -173,6 +173,7 @@ AE.crystal({
         running = false;
         if (btn) btn.disabled = false;
         AE.emit('cleaning-changed', { arrivalId, woId }); // badge + WO pill refresh
+        if (woId) AE.refreshView(); // Portal's own lists (arrivals, WOs) show the change without a reload
       }
     }
 

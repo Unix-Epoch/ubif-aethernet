@@ -19,7 +19,8 @@
   wrapper never saw the send (confirmed on Zen with a HAR, Sep 26 2026).
 
   The note is a regular (noteType 2) note tagged with the WO's current
-  status, using Portal's own status → tag map.
+  status, using Portal's own status → tag map. Afterwards the WO view is
+  refreshed in place (AE.refreshView), so the note shows without a reload.
 */
 AE.crystal({
   id: 'textNotes',
@@ -87,6 +88,7 @@ AE.crystal({
         try {
           let n = await logRecentTexts(m[1]);
           if (!n) { await AE.sleep(2500); n = await logRecentTexts(m[1]); } // history can lag a moment
+          if (n) AE.refreshView();
           if (n) AE.toast('Text logged', (n > 1 ? n + ' texts' : 'Text') + ' added to WO ' + m[1] + "'s notes.", 'ok', 4000);
         } catch (e) {
           AE.toast('Text sent, but not logged', "Couldn't add the WO note: " + (e.message || e) + ' — add it by hand.', 'err', 12000);

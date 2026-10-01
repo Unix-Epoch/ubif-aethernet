@@ -163,6 +163,10 @@
 
     // Swiftcast + general
     const general = section('Panels, toasts, dialogs',
+      row(btn('Refresh view in place', async () => {
+        const r = await AE.refreshView();
+        AE.toast('Refresh view', r.stores ? r.stores + ' store(s), ' + r.apis + ' API cache(s): ' + (r.tags.join(', ') || 'no tags in use') : 'Found no Portal data to refresh' + (r.error ? ': ' + r.error : '.'), r.stores ? 'ok' : 'err', 8000);
+      }, { title: 'What Recitation, Waymark and Swiftcast do after a change: refetch what Portal shows, no page reload.' })),
       row(btn('Swiftcast progress panel (fake)', demoProgress, { close: true }),
         btn('Toast: done', () => AE.toast('Waymark', 'Tag list saved for everyone at the store.', 'ok')),
         btn('Toast: error', () => AE.toast("Couldn't send", 'HTTP 503 — try again in a minute.', 'err')),

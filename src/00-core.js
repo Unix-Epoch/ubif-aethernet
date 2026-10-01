@@ -83,6 +83,89 @@ const AE = (() => {
   }
   const unwrap = (j) => (j && j.data && !Array.isArray(j.data) ? j.data : j);
 
+  /*
+    Refresh what's on screen without reloading the page, after a crystal
+    changes Portal data behind its back (a note, a nickname, a new WO).
+    Portal loads its data with Redux Toolkit Query: every query is cached
+    under tags ("Notes", "Workorder", "Arrivals"…), and invalidating a tag
+    refetches the queries on screen that use it, exactly as Portal does
+    after its own edits. A userscript can't reach React or Redux, so a small
+    script in the page finds each app's Redux store through React's fiber
+    tree (Portal is several apps, each with its own store) and dispatches
+    `<api>/invalidateTags` for the tags currently in use (or just `tags`).
+    Resolves to { stores, apis, tags } — stores: 0 means nothing was found.
+  */
+  const REFRESH_EVENT = 'aethernet:refresh-view';
+  function refreshHook() {
+    if (document.getElementById('ae-refresh-hook')) return;
+    // A plain string: it runs in the page, outside Aethernet (see Glamour).
+    const code = [
+      '(function (evt) {',
+      '  var key = function (n, p) { return Object.keys(n).find(function (k) { return k.indexOf(p) === 0; }); };',
+      '  function stores() {',
+      '    var found = [];',
+      '    document.querySelectorAll("*").forEach(function (el) {',
+      '      var k = key(el, "__reactContainer$"); if (!k) return;',
+      '      var stack = [el[k]], seen = 0;',
+      '      while (stack.length && seen++ < 20000) {',
+      '        var f = stack.pop(); if (!f) continue;',
+      '        var p = f.memoizedProps, s = p && (p.store || (p.value && p.value.store));',
+      '        if (s && typeof s.dispatch === "function" && typeof s.getState === "function" && found.indexOf(s) < 0) found.push(s);',
+      '        if (f.sibling) stack.push(f.sibling);',
+      '        if (f.child) stack.push(f.child);',
+      '      }',
+      '    });',
+      '    return found;',
+      '  }',
+      '  document.addEventListener(evt, function (e) {',
+      '    var want = null, out = { stores: 0, apis: 0, tags: [] };',
+      '    try { want = JSON.parse(e.detail || "{}").tags || null; } catch (_) {}',
+      '    try {',
+      '      stores().forEach(function (store) {',
+      '        out.stores++;',
+      '        var state = store.getState() || {};',
+      '        Object.keys(state).forEach(function (path) {',
+      '          var v = state[path];',
+      '          if (!v || typeof v !== "object" || !v.queries || !v.config || !v.provided) return;',
+      '          var provided = v.provided.tags || v.provided;',
+      '          var types = Object.keys(provided).filter(function (t) { return t !== "keys" && (!want || want.indexOf(t) >= 0); });',
+      '          if (!types.length) return;',
+      '          store.dispatch({ type: path + "/invalidateTags", payload: types });',
+      '          out.apis++;',
+      '          types.forEach(function (t) { if (out.tags.indexOf(t) < 0) out.tags.push(t); });',
+      '        });',
+      '      });',
+      '    } catch (err) { out.error = String(err && err.message || err); }',
+      '    document.dispatchEvent(new CustomEvent(evt + ":done", { detail: JSON.stringify(out) }));',
+      '  });',
+      '})(' + JSON.stringify(REFRESH_EVENT) + ');',
+    ].join('\n');
+    const s = document.createElement('script');
+    s.id = 'ae-refresh-hook';
+    s.textContent = code;
+    (document.head || document.documentElement).append(s);
+  }
+  let refreshing = null;
+  function refreshView(tags) {
+    if (refreshing) return refreshing; // several changes in a row → one refresh
+    refreshing = new Promise((resolve) => {
+      setTimeout(() => {
+        refreshing = null;
+        let result = { stores: 0, apis: 0, tags: [] };
+        const done = (e) => { try { result = JSON.parse(e.detail); } catch (_) {} };
+        try {
+          refreshHook();
+          document.addEventListener(REFRESH_EVENT + ':done', done, { once: true });
+          document.dispatchEvent(new CustomEvent(REFRESH_EVENT, { detail: JSON.stringify({ tags: tags || null }) })); // handled synchronously
+        } catch (e) { result.error = e.message; }
+        document.removeEventListener(REFRESH_EVENT + ':done', done);
+        if (!result.stores || result.error) console.warn('[' + AE_NAME + '] in-place refresh found nothing to refresh', result);
+        resolve(result);
+      }, 250);
+    });
+    return refreshing;
+  }
+
   // ------------------------------------------------------------ profile
   let profilePromise = null;
   function profile() {
@@ -454,7 +537,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
-    api, unwrap, Stopped, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, refreshView, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,

@@ -3,7 +3,8 @@
     "version": "2.17.0",
     "notes": [
       "New crystal: **Rainbow Drip**. Work-order lists color each row by its status: red for Ready for work; blue for Diagnostics, Work in progress and Quality check; green for Ready for pickup; purple for Need to order, Ready for diag and Repair summary; yellow for Awaiting callback, Awaiting item and Awaiting device. It replaces the **UBIF Status Row Classes** script: if that's still running, you'll see how to turn it off.",
-      "New crystal: **Master's Mend**, small fixes to Portal, each with its own switch in Settings. First fix: the ubreakifix logo in the top left is now a real link to the dashboard, so you can middle-click or right-click it to open a new tab."
+      "New crystal: **Master's Mend**, small fixes to Portal, each with its own switch in Settings. First fix: the ubreakifix logo in the top left is now a real link to the dashboard, so you can middle-click or right-click it to open a new tab.",
+      "No more reloading to see changes: a text logged by **Recitation** shows in the WO notes right away, and so do Auto-Waymark nickname changes and cleanings closed out by **Swiftcast**. The page refreshes its data in place."
     ]
   },
   {
