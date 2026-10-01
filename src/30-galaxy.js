@@ -8,7 +8,12 @@
      email and store from the logged-in user (overridable in settings),
      and opens the Sprinklr form in a new tab.
   B. Sprinklr form: picks up that handoff and fills every field, including
-     the Issue → Exception → Reason cascade. It does NOT submit.
+     the Issue → Exception → Reason cascade. It does NOT submit. No status
+     card: the Macrocosmos macro icon (gear and all) sits where the button was
+     on Portal (gde_btn_pos), its cooldown sweep filling field by field; done →
+     it flashes like a skill coming off cooldown, then fades away with a
+     downward wipe (Patch notes open the opposite way). If fields couldn't be
+     filled, it stays with a ✕ and a note listing them; click to dismiss.
 
   Filling needs real interactions: element.click() for the custom
   dropdowns, and the native value setter + input event for text fields
@@ -300,16 +305,69 @@ AE.crystal({
         return oldest;
       }
 
+      // The macro icon, cast-style, where the Portal button was.
+      const CAST_CSS = `
+        #sg-galaxy-cast { position:fixed; z-index:2147483646; width:56px; height:56px; border-radius:14px; cursor:default; box-shadow:0 6px 20px rgba(12,14,17,.35);
+          animation:sg-in .2s ease-out; }
+        #sg-galaxy-cast .sg-spell { box-shadow:0 0 0 2px #1a1a1f, 0 0 0 3.5px #c9a75a; }
+        #sg-galaxy-cast .gear { position:absolute; left:-4px; top:-4px; width:16px; height:16px; pointer-events:none; z-index:2; }
+        #sg-galaxy-cast .mname { position:absolute; left:50%; bottom:calc(100% + 8px); transform:translateX(-50%); white-space:nowrap; padding:2px 7px; border-radius:6px;
+          background:rgba(12,12,18,.85); color:#fff; font:600 12px "Myriad Pro", Myriad, Meiryo, "Helvetica Neue", Arial, sans-serif; }
+        #sg-galaxy-cast.leave { animation:sg-cast-leave .7s ease-in forwards; }
+        #sg-galaxy-cast.failed { cursor:pointer; }
+        @keyframes sg-cast-leave { from { opacity:1; transform:none; clip-path:inset(0 0 0 0); } to { opacity:0; transform:translateY(16px); clip-path:inset(100% 0 0 0); } }
+        @media (prefers-reduced-motion: reduce) { #sg-galaxy-cast.leave { animation:sg-fade-out .3s forwards; } @keyframes sg-fade-out { to { opacity:0; } } }
+      `;
+      function castIcon(total) {
+        AE.ensureCss();
+        if (!document.getElementById('sg-galaxy-cast-css')) document.head.append(h('style', { id: 'sg-galaxy-cast-css' }, CAST_CSS));
+        document.getElementById('sg-galaxy-cast')?.remove();
+        const pos = GM_getValue('gde_btn_pos', { right: 16, bottom: 16 });
+        const spell = AE.spellIcon('galaxy', 56);
+        const el = h('div', { id: 'sg-galaxy-cast', class: 'sg', title: 'GD Exception: filling the form…',
+          style: 'right:' + Math.min(pos.right, Math.max(0, innerWidth - 60)) + 'px;bottom:' + Math.min(pos.bottom, Math.max(0, innerHeight - 60)) + 'px' },
+          spell, h('img', { class: 'gear', src: AE.asset('ui/macro-gear'), alt: '' }), h('span', { class: 'mname' }, 'GD Exception'));
+        document.body.appendChild(el);
+        let done = 0, shown = 0, target = 0, anim = null;
+        const paint = () => spell.style.setProperty('--a', Math.round(shown * 360) + 'deg');
+        const to = (p) => {
+          target = Math.min(1, p);
+          if (anim) return;
+          const tick = () => { shown += (target - shown) * 0.2; if (Math.abs(target - shown) < 0.002) shown = target; paint(); anim = shown === target ? null : requestAnimationFrame(tick); };
+          anim = requestAnimationFrame(tick);
+        };
+        paint();
+        return {
+          step() { done++; to(Math.min(done / total, 0.97)); },
+          finish(ok, note) {
+            to(1);
+            spell.classList.add('ready', ok ? 'ok' : 'err');
+            spell.append(h('span', { class: 'mark', style: 'min-width:20px;height:20px;font-size:12px;line-height:20px;right:3px;bottom:3px' }, ok ? '✓' : '✕'));
+            if (ok) {
+              el.title = 'GD Exception: filled — check it over, then hit Submit yourself.';
+              setTimeout(() => { el.classList.add('leave'); setTimeout(() => el.remove(), 750); }, 2400); // after the flash
+            } else {
+              el.classList.add('failed');
+              el.title = note + ' Click to dismiss.';
+              toast(note, 'err');
+              el.onclick = () => { el.remove(); document.getElementById('sg-galaxy-toast')?.remove(); };
+            }
+          },
+        };
+      }
+
       async function fill() {
         const data = takeHandoff();
         if (!data) return; // not opened from the WO button, or stale
-        toast('Auto-filling from WO ' + data.woId + '…', 'busy');
+        const total = 13 + (data.storeEmail ? 1 : 0); // email + the 12 fields below (+ store email)
+        const cast = castIcon(total);
         const email = await waitForField('Your email address', 8000);
-        if (!email) { toast('Form did not load in time — fill it in by hand.', 'err'); return; }
+        if (!email) { cast.finish(false, 'Form did not load in time — fill it in by hand.'); return; }
 
         const failed = [];
-        const step = async (label, ok) => { if (!(await ok)) failed.push(label); };
+        const step = async (label, ok) => { if (!(await ok)) failed.push(label); cast.step(); };
         setNativeValue(email, data.email);
+        cast.step();
         if (!data.email) failed.push('Your email (none found)');
         await step('UBIF Location', selectOption('UBIF Location', data.location, data.locationSearch));
         await step('Repair Location Type', selectOption('Repair Location Type', FIXED.REPAIR_LOCATION_TYPE));
@@ -330,8 +388,8 @@ AE.crystal({
         if (!data.imei) failed.push('IMEI (none on the WO)');
         if (!data.deviceName) failed.push('Device Full SKU (none on the WO)');
 
-        if (failed.length) toast('WO ' + data.woId + ': could NOT fill ' + failed.join(', ') + ' — fill those in by hand before submitting.', 'err');
-        else toast('Filled from WO ' + data.woId + ' — check it over, then hit Submit yourself.', 'ok');
+        if (failed.length) cast.finish(false, 'WO ' + data.woId + ': could NOT fill ' + failed.join(', ') + ' — fill those in by hand before submitting.');
+        else cast.finish(true);
       }
       setTimeout(fill, 800); // the form renders client-side
     }

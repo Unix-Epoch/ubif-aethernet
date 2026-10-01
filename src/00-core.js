@@ -753,7 +753,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
-    api, unwrap, Stopped, portal, refreshView, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, portal, refreshView, profile, spellIcon, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
