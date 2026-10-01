@@ -310,6 +310,7 @@ AE.crystal({
         #sg-galaxy-cast { position:fixed; z-index:2147483646; width:56px; height:56px; border-radius:14px; cursor:default; box-shadow:0 6px 20px rgba(12,14,17,.35);
           animation:sg-in .2s ease-out; }
         #sg-galaxy-cast .sg-spell { box-shadow:0 0 0 2px #1a1a1f, 0 0 0 3.5px #c9a75a; }
+        #sg-galaxy-cast .sg-spell .mark { min-width:20px; height:20px; font-size:12px; line-height:20px; right:3px; bottom:3px; }
         #sg-galaxy-cast .gear { position:absolute; left:-4px; top:-4px; width:16px; height:16px; pointer-events:none; z-index:2; }
         #sg-galaxy-cast .mname { position:absolute; left:50%; bottom:calc(100% + 8px); transform:translateX(-50%); white-space:nowrap; padding:2px 7px; border-radius:6px;
           background:rgba(12,12,18,.85); color:#fff; font:600 12px "Myriad Pro", Myriad, Meiryo, "Helvetica Neue", Arial, sans-serif; }
@@ -341,8 +342,7 @@ AE.crystal({
           step() { done++; to(Math.min(done / total, 0.97)); },
           finish(ok, note) {
             to(1);
-            spell.classList.add('ready', ok ? 'ok' : 'err');
-            spell.append(h('span', { class: 'mark', style: 'min-width:20px;height:20px;font-size:12px;line-height:20px;right:3px;bottom:3px' }, ok ? '✓' : '✕'));
+            AE.spellDone(spell, ok ? 'ok' : 'err');
             if (ok) {
               el.title = 'GD Exception: filled — check it over, then hit Submit yourself.';
               setTimeout(() => { el.classList.add('leave'); setTimeout(() => el.remove(), 750); }, 2400); // after the flash

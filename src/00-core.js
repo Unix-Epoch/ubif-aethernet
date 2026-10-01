@@ -319,6 +319,12 @@ const AE = (() => {
   .sg-spell .mark { position:absolute; right:1px; bottom:1px; min-width:14px; height:14px; border-radius:50%; font:800 9px/14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif;
     text-align:center; color:#fff; background:var(--aui-status-success, #136d31); box-shadow:0 0 0 1px #fff; }
   .sg-spell.err .mark, .sg-spell.stop .mark { background:var(--aui-status-error, #b91a24); }
+  /* Finished OK: XIV's "marching ants", an orange dashed border crawling around the icon */
+  .sg-spell .ants { position:absolute; inset:0; pointer-events:none; overflow:visible; }
+  .sg-spell .ants rect { fill:none; }
+  .sg-spell .ants .under { stroke:rgba(40,16,0,.75); }
+  .sg-spell .ants .run { stroke:#ffa31a; stroke-dasharray:.55 .45; animation:sg-ants .6s linear infinite; filter:drop-shadow(0 0 2px rgba(255,170,40,.9)); }
+  @keyframes sg-ants { to { stroke-dashoffset:-1; } }
   @keyframes sg-ready { 0% { filter:brightness(1); box-shadow:0 0 0 1px #2b2a2f, 0 0 0 2px #c9a75a55; }
     25% { filter:brightness(1.9); box-shadow:0 0 0 2px #fff, 0 0 18px 4px rgba(255,226,140,.95); }
     100% { filter:brightness(1); box-shadow:0 0 0 1px #2b2a2f, 0 0 0 2px #c9a75a55; } }
@@ -330,7 +336,7 @@ const AE = (() => {
   .sg-orb .dismiss { display:none; position:absolute; top:-8px; right:-8px; width:20px; height:20px; padding:0; border-radius:50%; border:0; cursor:pointer;
     background:#1a1c1e; color:#fff; font-size:11px; line-height:20px; box-shadow:0 0 0 2px #fff; }
   .sg-orb.done:hover .dismiss { display:block; }
-  @media (prefers-reduced-motion: reduce) { .sg-spell.ready, .sg-spell.ready .glint { animation:none; } }
+  @media (prefers-reduced-motion: reduce) { .sg-spell.ready, .sg-spell.ready .glint, .sg-spell .ants .run { animation:none; } }
   .sg-soft { color: var(--aui-on-surface-soft, #5d5e61); font-size:12px; }
   .sg-x { background:none; border:0; padding:4px; cursor:pointer; color:var(--aui-on-surface-soft, #5d5e61); font-size:18px; line-height:1; }
   .sg-steps { list-style:none; margin:0 0 12px; padding:0; max-height:240px; overflow:auto; }
@@ -423,7 +429,7 @@ const AE = (() => {
         infill that clears clockwise as each step completes (total known up
         front: opts.total, panel.plan(n), or panel.progress(done, total));
       - "–" collapses it into a floating spell icon with the same sweep; when the
-        run ends the icon flashes like a skill coming off cooldown and shows ✓/✕.
+        run ends the icon flashes like a skill coming off cooldown, then shows marching ants (OK) or ✕/■.
         Click the icon to expand the box; once finished, hover shows a ✕ to
         dismiss. The box and icon live on <body>, outside Portal's own page, so
         they stay put as Portal changes pages.
@@ -432,6 +438,18 @@ const AE = (() => {
     const el = h('span', { class: 'sg-spell', style: 'width:' + size + 'px;height:' + size + 'px' },
       h('span', { html: actionIcon(iconId, size) || icon('bolt', Math.round(size * 0.6)), class: 'img' }), h('span', { class: 'cd' }), h('span', { class: 'glint' }));
     return el;
+  }
+  // A finished spell icon: flash like a skill coming off cooldown, then marching
+  // ants (OK) or a ✕/■ badge (failed/stopped).
+  function spellDone(sp, kind) {
+    sp.querySelector('.mark, .ants')?.remove();
+    sp.classList.remove('ready', 'ok', 'err', 'stop'); void sp.offsetWidth; sp.classList.add('ready', kind);
+    if (kind !== 'ok') return sp.append(h('span', { class: 'mark' }, kind === 'stop' ? '■' : '✕'));
+    const z = parseFloat(sp.style.width) || sp.offsetWidth || 56, w = Math.max(1.5, z / 22), i = w / 2 + 0.5, side = z - 2 * i;
+    const r = Math.max(0, z * 0.22 - i), per = 4 * (side - 2 * r) + 2 * Math.PI * r;
+    const n = Math.max(8, Math.round(per / Math.max(5, z / 8))); // whole dashes, so the loop has no seam
+    const rect = (cls) => '<rect class="' + cls + '" x="' + i + '" y="' + i + '" width="' + side + '" height="' + side + '" rx="' + r + '" pathLength="' + n + '" stroke-width="' + w + '"/>';
+    sp.append(h('span', { class: 'ants', html: '<svg width="' + z + '" height="' + z + '" viewBox="0 0 ' + z + ' ' + z + '">' + rect('under') + rect('run') + '</svg>' }));
   }
   function progressPanel(title, { clock = true, icon: iconId = null, total = 0 } = {}) {
     ensureCss();
@@ -461,8 +479,7 @@ const AE = (() => {
     }
     // Steps beyond the plan (rare extras) never complete the circle early; finishing does.
     const fromSteps = () => (planned ? Math.min(done / planned, 0.97) : 0);
-    const markOf = (kind) => h('span', { class: 'mark' }, kind === 'ok' ? '✓' : kind === 'stop' ? '■' : '✕');
-    const ready = (sp, kind) => { sp.querySelector('.mark')?.remove(); sp.classList.remove('ready'); void sp.offsetWidth; sp.classList.add('ready', kind); sp.append(markOf(kind)); };
+    const ready = spellDone;
     paintSweep();
 
     const t0 = performance.now();
@@ -489,7 +506,7 @@ const AE = (() => {
       collapse() {
         if (!iconId) return;
         if (!orb) { orb = makeOrb(); panel._orb = orb; }
-        if (finished) { orb.classList.add('done', finished); const sp = orb.querySelector('.sg-spell'); if (!sp.querySelector('.mark')) { sp.classList.add(finished); sp.append(markOf(finished)); } }
+        if (finished) { orb.classList.add('done', finished); const sp = orb.querySelector('.sg-spell'); if (!sp.querySelector('.mark, .ants')) spellDone(sp, finished); }
         document.body.appendChild(orb);
         panel.style.display = 'none';
         paintSweep();
@@ -753,7 +770,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
-    api, unwrap, Stopped, portal, refreshView, profile, spellIcon, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
