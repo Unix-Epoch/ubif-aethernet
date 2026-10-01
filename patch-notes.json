@@ -1,5 +1,28 @@
 [
   {
+    "version": "2.17.0",
+    "notes": [
+      "New crystal: **Rainbow Drip**. Work-order lists color each row by its status: red for Ready for work; blue for Diagnostics, Work in progress and Quality check; green for Ready for pickup; purple for Need to order, Ready for diag and Repair summary; yellow for Awaiting callback, Awaiting item and Awaiting device. It replaces the **UBIF Status Row Classes** script: if that's still running, you'll see how to turn it off. Thank you to **B.Young** at Lexington for letting us crystallize Rainbow Drip from their script!",
+      "New crystal: **Master's Mend**, small fixes to Portal, each with its own switch in Settings. First fix: the ubreakifix logo in the top left is now a real link to the dashboard, so you can middle-click or right-click it to open a new tab.",
+      "No more reloading to see changes: a text logged by **Recitation** shows in the WO notes right away, and so do Auto-Waymark nickname changes and cleanings closed out by **Swiftcast**. The page refreshes its data in place.",
+      "**Master's Mend**: scan to open. Scan a WO label to open that work order, or an item label to open the item, from the dashboard, the work-order list or a customer. On a WO, scanned items are still added to it, and scanning does nothing on inventory, check-in or check-out pages or while you're typing in a field. Scanners that were a little too slow for Portal's own scan features now work with them too.",
+      "**Glamour**: make the login page yours. In Glamour's settings, under **Login page**, choose a picture to replace Portal's photo (best fit: 768 × 871 px, shown in the setting), or fill the whole purple panel with it, and show the Aethernet mark in the bottom-left corner.",
+      "**Master's Mend**: sort the Work orders list by any column. Click the arrows beside a column name. Most columns sort across every page; Customer, Device/Issue, Location, Service Outcome, Completed and Created/Cancelled By sort the page you're on (their arrows are underlined).",
+      "**Auto-Waymark**: texting the customer from a work order at Ready for pickup restarts its follow-up: the Auto-Waymark (and nickname) moves to 3 days from that day. It only ever moves later, and works whether or not Recitation is on.",
+      "**Waymark**: managers can clear a tag straight from the board with the × on it. Everyone else removes tags from the work order as before.",
+      "**Master's Mend**: a **Hide auto notes** switch at the top of a work order's notes hides the automatic notes (status changes, check-in logs and the like), and loads every note on the work order, so you see the whole history of what people wrote, not just the first page. Flip it back any time; nothing is deleted.",
+      "**Master's Mend**: a **Not contacted** chip on the Arrivals page, next to Portal's own (look for the Aethernet mark on its corner), lists every arrival that hasn't been contacted yet, from every page at once. Click an arrival to open it as usual; any other chip goes back to Portal's list. In Settings (Master's Mend), choose whether it lists all statuses or only arrivals that are still Not confirmed.",
+      "Crystals that changed in an update now get a purple **Updated** sheen in Settings, like the yellow one on new crystals.",
+      "Settings: **Save & reload** glows while you have changes to save. The **Aethernet has updated!** pill now goes away by itself after 10 seconds (the ring around its ✕ counts down; hovering pauses it)."
+    ],
+    "updated": [
+      "textNotes",
+      "autoClose",
+      "glamour",
+      "waymark"
+    ]
+  },
+  {
     "version": "2.16.0",
     "notes": [
       "New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates as each item is scanned, without losing your place in the list.",

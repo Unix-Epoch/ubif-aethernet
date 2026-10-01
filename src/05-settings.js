@@ -11,15 +11,25 @@
   // Crystals are named after FFXIV actions; the description says what each does.
   const CRYSTAL_INFO = [
     ['cleaningRate', 'Divination', "Live cleaning rate: header badge with today's cleaning percentage."],
+    // The demo build (AE_DEMO) ships only Divination, Swiftcast and Glamour; the
+    // rest sit in AE_DEMO ? [] : […] so their text isn't in that file at all.
+    ...(AE_DEMO ? [] : [
     ['woCleanings', 'Esuna', 'WO cleanings pill: shows whether a work order\'s device has cleanings, with Create for available ones.'],
     ['textNotes', 'Recitation', 'Text → WO note: when you text a customer from a WO, the text is added to the WO notes.'],
+    ]),
     ['autoClose', 'Swiftcast', 'Cleaning auto-close: one-click check-in → complete sale on cleaning arrivals.'],
+    ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Galaxy Diagnostics exception: pre-fills the Sprinklr exception form from a Samsung WO.'],
     ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
     ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
+    ]),
     ['glamour', 'Glamour', 'Page theming: recolour Portal with a preset theme or one you make.'],
+    ...(AE_DEMO ? [] : [
     ['waymark', 'Waymark', 'Work-order tags: tag WOs for the whole store and see them grouped on a board.'],
     ['countCheck', 'Lay of the Land', 'Inventory count check: on a count, shows which expected serials haven\'t been scanned yet, and any unexpected scans.'],
+    ['rowColors', 'Rainbow Drip', 'WO list colors: colors each row of the work-order list by its status.'],
+    ['fixes', "Master's Mend", 'Small fixes to Portal, each with its own switch.'],
+    ]),
   ];
 
   /*
@@ -27,6 +37,12 @@
     once with it listed; new ones get a yellow sheen. The first run of a build
     after an update shows an "Aethernet has updated!" pill (once) that opens
     Settings. A fresh install sees neither.
+
+    What's updated. A patch-notes entry can list the existing crystals it
+    changed ("updated": [ids]); after an update those get an "Updated" tag and
+    a purple sheen (New wins if both), until Settings is closed once.
+    ae_updates_seen is the version whose updates were last seen; the first
+    run that tracks it starts from the version you updated from.
   */
   const SEEN_KEY = 'ae_seen_crystals', VERSION_KEY = 'ae_last_version';
   const allIds = () => CRYSTAL_INFO.map(([id]) => id);
@@ -37,7 +53,16 @@
   // Before 2.7 nothing was tracked: count every crystal as already seen.
   if (GM_getValue(SEEN_KEY) === undefined) GM_setValue(SEEN_KEY, allIds());
   const isNew = (id) => !GM_getValue(SEEN_KEY, []).includes(id);
-  const markAllSeen = () => GM_setValue(SEEN_KEY, [...new Set([...GM_getValue(SEEN_KEY, []), ...allIds()])]);
+  const UPD_KEY = 'ae_updates_seen';
+  if (GM_getValue(UPD_KEY) === undefined) GM_setValue(UPD_KEY, lastVersion || AE_VERSION);
+  const isUpdated = (id) => {
+    const seen = GM_getValue(UPD_KEY, AE_VERSION);
+    return PATCH_NOTES.some((n) => newer(n.version, seen) && !newer(n.version, AE_VERSION) && (n.updated || []).includes(id));
+  };
+  const markAllSeen = () => {
+    GM_setValue(SEEN_KEY, [...new Set([...GM_getValue(SEEN_KEY, []), ...allIds()])]);
+    GM_setValue(UPD_KEY, AE_VERSION);
+  };
   if (lastVersion !== AE_VERSION) GM_setValue(VERSION_KEY, AE_VERSION);
 
   const MODAL_CSS = `
@@ -154,6 +179,12 @@
   .sg-issue-tag.paused, .sg-issue-tag.error { background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); }
   .sg-new-tag { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:10000rem; vertical-align:2px;
     background:#ffcc00; color:#3d2e00; font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
+  /* updated crystals: the same sheen in Aethernet purple, until Settings is closed once */
+  .sg-crystal.sg-upd { position:relative; margin:0 -10px; padding:0 10px; border-radius:10px; border-top-color:transparent;
+    background:linear-gradient(105deg, rgba(130,35,210,.08) 0%, rgba(130,35,210,.08) 38%, rgba(196,140,255,.38) 50%, rgba(130,35,210,.08) 62%, rgba(130,35,210,.08) 100%);
+    background-size:250% 100%; box-shadow:inset 0 0 0 1px rgba(130,35,210,.45); animation:sg-sheen 2.6s ease-in-out infinite; }
+  .sg-crystal.sg-upd + .sg-crystal { border-top-color:transparent; }
+  .sg-new-tag.upd { background:#8223d2; color:#fff; }
   /* "Aethernet has updated!" pill */
   .sg-update-pill { position:fixed; z-index:2147483645; left:50%; bottom:20px; transform:translateX(-50%);
     display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 14px; border:0; border-radius:10000rem; cursor:pointer;
@@ -164,8 +195,19 @@
   .sg-update-pill .ver { font-weight:400; opacity:.8; }
   .sg-update-pill .x { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:50%; font-weight:400; opacity:.8; }
   .sg-update-pill .x:hover { opacity:1; background:rgba(255,255,255,.18); }
+  /* it dismisses itself after 10 s: a ring around the ✕ runs down (paused while hovered) */
+  .sg-update-pill .x { position:relative; width:26px; height:26px; opacity:.9; }
+  .sg-update-pill .x .ring { position:absolute; inset:0; width:26px; height:26px; transform:rotate(-90deg); pointer-events:none; }
+  .sg-update-pill .x .ring circle { fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-dasharray:69.1; stroke-dashoffset:0;
+    animation:sg-countdown 10s linear forwards; }
+  .sg-update-pill:hover .x .ring circle { animation-play-state:paused; }
+  @keyframes sg-countdown { to { stroke-dashoffset:69.1; } }
+  /* Save & reload, while there are changes to save */
+  .sg-btn.sg-primary.sg-pending { background:linear-gradient(105deg, var(--aui-primary, #8223d2) 0%, var(--aui-primary, #8223d2) 40%, #b36cf0 50%, var(--aui-primary, #8223d2) 60%, var(--aui-primary, #8223d2) 100%);
+    background-size:250% 100%; animation:sg-sheen 2.4s ease-in-out infinite, sg-save-pulse 1.6s ease-out infinite; }
+  @keyframes sg-save-pulse { 0% { box-shadow:0 0 0 0 rgba(130,35,210,.5); } 100% { box-shadow:0 0 0 10px rgba(130,35,210,0); } }
   @keyframes sg-pill-in { from { opacity:0; transform:translate(-50%, 10px); } to { opacity:1; transform:translate(-50%, 0); } }
-  @media (prefers-reduced-motion: reduce) { .sg-crystal.sg-new, .sg-update-pill { animation:none; } }
+  @media (prefers-reduced-motion: reduce) { .sg-crystal.sg-new, .sg-crystal.sg-upd, .sg-update-pill, .sg-btn.sg-pending { animation:none; } .sg-update-pill .x .ring { display:none; } }
   `;
 
   // About — its own modal, above the settings panel.
@@ -190,7 +232,17 @@
     const whoBox = h('span', null, '…');
     AE.profile().then((p) => { whoBox.textContent = (p.name || '—') + (p.storeId ? ' · ' + p.storeId + ' ' + p.storeName : ''); }).catch(() => { whoBox.textContent = '—'; });
 
-    const card = h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
+    // The demo build's About is the bare minimum: name, version, author, icon credit.
+    const card = AE_DEMO ? h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
+      h('div', { class: 'hero' },
+        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
+        h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
+        h('div', { class: 'sg-soft' }, 'v' + AE_VERSION)),
+      h('h4', null, 'Authored by'),
+      kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914'], ['With', 'Claude (Anthropic)']),
+      h('div', { class: 'fine' }, 'Crystal icons are FINAL FANTASY XIV action icons. © SQUARE ENIX.'),
+      h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')))
+    : h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
       h('div', { class: 'hero' },
         h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
         h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
@@ -229,6 +281,7 @@
   const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
   function openPatchNotes(since) {
+    if (AE_DEMO) return; // no patch notes in the demo build
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
     document.getElementById('sg-notes')?.remove();
@@ -268,6 +321,7 @@
     document.getElementById('sg-settings')?.remove();
     AE.track('settings:open');
     const s = AE.merge(AE.DEFAULTS, AE.settings); // working copy
+    let saveBtn = null;
 
     const input = (label, value, placeholder, onInput, type = 'text') =>
       h('label', { class: 'sg-field' }, h('span', null, label),
@@ -309,19 +363,26 @@
     const OPTIONS = {
       cleaningRate: [() => 'Target ' + s.cleaningRate.target + '%',
         input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; repaintSums(); }, 'number')],
-      galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
-        h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Leave blank to use your login. Only fill in to override.'),
-        (galaxyInputs.technicianName = input('Technician name', s.galaxy.technicianName, '', (v) => { s.galaxy.technicianName = v.trim(); repaintSums(); })),
-        (galaxyInputs.email = input('Your email', s.galaxy.email, '', (v) => { s.galaxy.email = v.trim(); repaintSums(); })),
-        (galaxyInputs.location = input('UBIF location (as shown in the form)', s.galaxy.location, '', (v) => { s.galaxy.location = v.trim(); repaintSums(); })),
-        input('Store email (optional)', s.galaxy.storeEmail, 'Left blank', (v) => { s.galaxy.storeEmail = v.trim(); }),
-        input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
-        input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
-        h('button', { class: 'sg-btn', style: 'margin:4px 0', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')],
       glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
-      waymark: [() => AE.waymark.summary(), AE.waymark.editor()],
-      printLabels: [() => s.printLabels.delayMs + ' ms between labels',
-        input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
+      ...(AE_DEMO ? {} : { // not in the demo build
+        galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
+          h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Leave blank to use your login. Only fill in to override.'),
+          (galaxyInputs.technicianName = input('Technician name', s.galaxy.technicianName, '', (v) => { s.galaxy.technicianName = v.trim(); repaintSums(); })),
+          (galaxyInputs.email = input('Your email', s.galaxy.email, '', (v) => { s.galaxy.email = v.trim(); repaintSums(); })),
+          (galaxyInputs.location = input('UBIF location (as shown in the form)', s.galaxy.location, '', (v) => { s.galaxy.location = v.trim(); repaintSums(); })),
+          input('Store email (optional)', s.galaxy.storeEmail, 'Left blank', (v) => { s.galaxy.storeEmail = v.trim(); }),
+          input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
+          input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
+          h('button', { class: 'sg-btn', style: 'margin:4px 0', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')],
+        waymark: [() => AE.waymark.summary(), AE.waymark.editor()],
+        fixes: [() => AE.fixesInfo.filter(([id]) => s.fixes[id] !== false).length + ' of ' + AE.fixesInfo.length + ' on',
+          ...AE.fixesInfo.flatMap(([id, name, desc, extra]) => [h('div', { class: 'sg-row', style: 'margin:8px 0' },
+            h('div', null, h('b', null, name), h('span', { class: 'sg-soft', style: 'display:block' }, desc)),
+            toggle(s.fixes[id] !== false, (v) => { s.fixes[id] = v; repaintSums(); })),
+            extra ? extra(s, h) : null])],
+        printLabels: [() => s.printLabels.delayMs + ' ms between labels',
+          input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
+      }),
     };
     // A live Aethernet notice about this crystal (status.json): say so on its row.
     const issueTag = (id) => {
@@ -333,7 +394,7 @@
     };
     const CHEV = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
     const crystalRow = (id, name, desc) => {
-      const fresh = isNew(id);
+      const fresh = isNew(id), upd = !fresh && isUpdated(id);
       let optToggle = null, optBody = null;
       if (OPTIONS[id]) {
         const [summary, ...kids] = OPTIONS[id];
@@ -354,9 +415,9 @@
         sums.push(paintSum);
         paintSum();
       }
-      return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : ''), 'data-crystal': id },
+      return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : upd ? ' sg-upd' : ''), 'data-crystal': id },
         h('div', { class: 'sg-row' },
-          h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : null,
+          h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : upd ? h('span', { class: 'sg-new-tag upd' }, 'Updated') : null,
               issueTag(id)),
             h('span', { class: 'sg-soft' }, desc), optToggle ? h('div', null, optToggle) : null),
           toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); })),
@@ -366,7 +427,7 @@
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
         // Hidden way in: ten quick clicks on the crystal open the admin panel (key entry first time).
-        h('span', { style: 'color:var(--aui-primary,#8223d2);cursor:default;user-select:none', html: icon('aetheryte', 36), onclick: (() => {
+        h('span', { style: 'color:var(--aui-primary,#8223d2);cursor:default;user-select:none', html: icon('aetheryte', 36), onclick: AE_DEMO ? null : (() => {
           let n = 0, last = 0;
           return () => { const t = Date.now(); n = t - last < 1500 ? n + 1 : 1; last = t; if (n >= 10) { n = 0; AE.feedback && AE.feedback.openAdmin(); } };
         })() }),
@@ -376,25 +437,36 @@
       section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
         who,
         h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.'),
-        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, AE_NAME + ' records which features you use (a count per feature per day, with your name and store) to decide what to improve. It never records customer details or what\'s on the page.')),
+        AE_DEMO ? null : h('div', { class: 'sg-soft', style: 'margin-top:6px' }, AE_NAME + ' records which features you use (a count per feature per day, with your name and store) to decide what to improve. It never records customer details or what\'s on the page.')),
 
       section('crystals', 'Crystals', true,
         () => CRYSTAL_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + CRYSTAL_INFO.length + ' on',
         h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => crystalRow(id, name, desc)))),
 
       h('div', { class: 'sg-foot-links' },
-        h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.feedback.openFeedback() }, 'Send feedback'),
-        h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.status.checkNow() }, 'Check for updates'),
-        h('button', { type: 'button', class: 'sg-about-link', onclick: () => openPatchNotes() }, 'Patch notes'),
+        AE_DEMO ? null : h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.feedback.openFeedback() }, 'Send feedback'),
+        AE_DEMO ? null : h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.status.checkNow() }, 'Check for updates'),
+        AE_DEMO ? null : h('button', { type: 'button', class: 'sg-about-link', onclick: () => openPatchNotes() }, 'Patch notes'),
         h('button', { type: 'button', class: 'sg-about-link', onclick: openAbout }, 'About ' + AE_NAME + '…')),
 
       h('div', { class: 'sg-sheet-foot' },
         h('button', { class: 'sg-btn sg-lg', onclick: () => close() }, 'Cancel'),
-        h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(true); location.reload(); } }, 'Save & reload')));
+        (saveBtn = h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(true); location.reload(); } }, 'Save & reload'))));
 
     const scrim = h('div', { class: 'sg sg-scrim', id: 'sg-settings', onclick: (e) => { if (e.target === scrim) close(); } }, sheet);
     // Every way out ends the "new" sheen: the crystals have now been seen.
+    // Save & reload animates while the working copy differs from what's saved (checked after
+    // anything in the sheet changes; editors that fill in defaults do so before the baseline).
+    const baseline = JSON.stringify(s);
+    const checkPending = () => {
+      const pending = JSON.stringify(s) !== baseline;
+      saveBtn.classList.toggle('sg-pending', pending);
+      saveBtn.title = pending ? 'You have changes to save' : '';
+    };
+    ['input', 'change', 'click'].forEach((t) => sheet.addEventListener(t, () => setTimeout(checkPending, 0)));
+    const pendingTimer = setInterval(checkPending, 1000); // async edits (e.g. a login picture being prepared)
     function close(saving) {
+      clearInterval(pendingTimer);
       scrim.remove(); document.removeEventListener('keydown', onKey); markAllSeen();
       // Glamour previews live; closing without saving puts the saved theme back.
       if (!saving) AE.glamour.apply(AE.settings.crystals.glamour ? AE.settings.glamour : null);
@@ -412,7 +484,7 @@
         h('dt', null, 'Email'), h('dd', null, p.email || '—'),
         h('dt', null, 'Store'), h('dd', null, loc || '—'));
       galaxyAuto.technicianName = p.name; galaxyAuto.email = p.email; galaxyAuto.location = loc;
-      for (const k of Object.keys(galaxyAuto)) galaxyInputs[k].querySelector('input').placeholder = 'Auto: ' + (galaxyAuto[k] || '—');
+      for (const k of Object.keys(galaxyAuto)) if (galaxyInputs[k]) galaxyInputs[k].querySelector('input').placeholder = 'Auto: ' + (galaxyAuto[k] || '—');
       repaintSums();
     }).catch((e) => { who.replaceChildren(h('dt', null, 'Error'), h('dd', null, esc(e.message))); });
   }
@@ -441,14 +513,19 @@
     document.getElementById('sg-update-pill')?.remove();
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
-    const x = h('span', { class: 'x', role: 'button', 'aria-label': 'Dismiss', title: 'Dismiss' }, '✕');
+    const x = h('span', { class: 'x', role: 'button', 'aria-label': 'Dismiss', title: 'Dismiss' }, '✕',
+      h('span', { html: '<svg class="ring" viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="11"/></svg>', style: 'display:contents' }));
     const pill = h('button', { type: 'button', class: 'sg sg-update-pill', id: 'sg-update-pill', title: "See what's new" },
       h('span', { html: icon('aetheryte', 20) }), AE_NAME + ' has updated!', h('span', { class: 'ver' }, 'v' + AE_VERSION), x);
     // Settings opens underneath (that's where new crystals are marked), with the patch notes on top.
-    pill.onclick = (e) => { pill.remove(); if (e.target !== x) { open(); openPatchNotes(fromVersion || AE_VERSION); } };
+    pill.onclick = (e) => { pill.remove(); if (!x.contains(e.target)) { open(); openPatchNotes(fromVersion || AE_VERSION); } };
+    // Gone by itself after 10 s, in step with the ring; hovering pauses both.
+    let left = 10000, since = Date.now(), timer = setTimeout(() => pill.remove(), left);
+    pill.addEventListener('mouseenter', () => { clearTimeout(timer); left -= Date.now() - since; });
+    pill.addEventListener('mouseleave', () => { since = Date.now(); timer = setTimeout(() => pill.remove(), Math.max(0, left)); });
     document.body.appendChild(pill);
   }
-  if (updated) showUpdatedPill(lastVersion);
+  if (updated && !AE_DEMO) showUpdatedPill(lastVersion); // it opens the patch notes, which the demo build doesn't have
   AE.hooks.updatedPill = showUpdatedPill; // dev tools
   AE.hooks.patchVersions = PATCH_NOTES.map((n) => n.version);
 

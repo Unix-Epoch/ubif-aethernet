@@ -16,6 +16,9 @@
 const AE_NAME = 'Aethernet';
 const AE_VERSION = '__VERSION__';            // filled in by build.py
 const AE_DEV = __DEV__;                      // true only in the dev channel ("Aethernet (dev)")
+// AE_DEMO (used bare, never declared): build.py swaps it for true in the demo
+// channel's build (build.py --demo: only a few crystals, nothing else) and
+// false everywhere else, so the other side's code is dropped by the minifier.
 const AE_BUILD_TIME = '__BUILD_TIME__';       // ISO time of the build
 const AE_BUILD_COMMIT = '__BUILD_COMMIT__';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = '__INSTALL_URL__';
@@ -25,12 +28,17 @@ const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
-    crystals: { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true },
+    crystals: AE_DEMO ? { cleaningRate: true, autoClose: true, glamour: true }
+      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, fixes: true },
     cleaningRate: { target: 75 },
-    printLabels: { delayMs: 900 },
-    glamour: { theme: 'portal', custom: [] }, // custom: [{ id, name, bg, fg, accent, custom: true }]
-    // Blank = use the logged-in user / current store automatically.
-    galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
+    glamour: { theme: 'portal', custom: [], // custom: [{ id, name, bg, fg, accent, custom: true }]
+      login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
+    ...(AE_DEMO ? {} : {
+      printLabels: { delayMs: 900 },
+      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all' }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
+      // Blank = use the logged-in user / current store automatically.
+      galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
+    }),
   };
 
   // Cleaning programs, from the ubif-workorders audit rules. Shared by the
@@ -75,6 +83,157 @@ const AE = (() => {
     try { return text ? JSON.parse(text) : null; } catch (_) { return text; }
   }
   const unwrap = (j) => (j && j.data && !Array.isArray(j.data) ? j.data : j);
+
+  /*
+    Portal's state, from inside the page. Portal is several React apps
+    (single-spa), each with its own Redux store; a userscript can't reach
+    React or Redux, so a small script in the page finds the stores through
+    React's fiber trees (cached a few seconds) and answers AE.portal(op, args)
+    synchronously over DOM events (JSON in, JSON out):
+      - refresh { tags? }       → invalidate Portal's RTK Query tags in use
+                                  (or just `tags`): what's on screen refetches,
+                                  as after Portal's own edits. { stores, apis, tags }
+      - select { slice, key, pick? } → state[slice][key] from the store that has
+                                  it (pick: for a list, just those fields of each item)
+      - query { endpoint, list, field } → the newest loaded result of an RTK
+                                  Query endpoint: `field` of each item in data[list],
+                                  plus the arguments it was loaded with (args)
+      - patch { endpoint, patches } → change the newest loaded result of an RTK
+                                  Query endpoint in place (immer patches on its data),
+                                  as Portal's own patchQueryData does; the screen follows
+      - dispatch { slice, action } → the action, to the stores that have `slice`
+  */
+  const BRIDGE_EVENT = 'aethernet:portal';
+  function bridgeHook() {
+    if (document.getElementById('ae-portal-hook')) return;
+    // A plain string: it runs in the page, outside Aethernet (see Glamour).
+    const code = [
+      '(function (evt) {',
+      '  var key = function (n, p) { return Object.keys(n).find(function (k) { return k.indexOf(p) === 0; }); };',
+      '  var cache = null, cachedAt = 0;',
+      '  function stores() {',
+      '    if (cache && Date.now() - cachedAt < 5000) return cache;',
+      '    var found = [];',
+      '    document.querySelectorAll("*").forEach(function (el) {',
+      '      var k = key(el, "__reactContainer$"); if (!k) return;',
+      // The container keeps the root fiber from creation; the live tree hangs off its FiberRoot.current.
+      '      var root = el[k], stack = [root && root.stateNode && root.stateNode.current || root], seen = 0;',
+      '      while (stack.length && seen++ < 20000) {',
+      '        var f = stack.pop(); if (!f) continue;',
+      '        var p = f.memoizedProps, s = p && (p.store || (p.value && p.value.store));',
+      '        if (s && typeof s.dispatch === "function" && typeof s.getState === "function" && found.indexOf(s) < 0) found.push(s);',
+      '        if (f.sibling) stack.push(f.sibling);',
+      '        if (f.child) stack.push(f.child);',
+      '      }',
+      '    });',
+      '    cache = found; cachedAt = Date.now();',
+      '    return found;',
+      '  }',
+      '  var ops = {',
+      '    refresh: function (a) {',
+      '      var want = a.tags || null, out = { stores: 0, apis: 0, tags: [] };',
+      '      stores().forEach(function (store) {',
+      '        out.stores++;',
+      '        var state = store.getState() || {};',
+      '        Object.keys(state).forEach(function (path) {',
+      '          var v = state[path];',
+      '          if (!v || typeof v !== "object" || !v.queries || !v.config || !v.provided) return;',
+      '          var provided = v.provided.tags || v.provided;',
+      '          var types = Object.keys(provided).filter(function (t) { return t !== "keys" && (!want || want.indexOf(t) >= 0); });',
+      '          if (!types.length) return;',
+      '          store.dispatch({ type: path + "/invalidateTags", payload: types });',
+      '          out.apis++;',
+      '          types.forEach(function (t) { if (out.tags.indexOf(t) < 0) out.tags.push(t); });',
+      '        });',
+      '      });',
+      '      return out;',
+      '    },',
+      '    select: function (a) {',
+      '      var st = stores().map(function (s) { return s.getState() || {}; }).find(function (st) { return st[a.slice]; });',
+      '      var v = st ? st[a.slice][a.key] : null;',
+      // pick: for a list, only these fields of each item (keeps the answer small)
+      '      if (a.pick && Array.isArray(v)) v = v.map(function (x) { var o = {}; a.pick.forEach(function (k) { o[k] = x && x[k]; }); return o; });',
+      '      return { found: !!st, value: v };',
+      '    },',
+      '    query: function (a) {',
+      // The newest loaded result of an RTK Query endpoint: one field from each item of a list in it.
+      '      var best = null;',
+      '      stores().forEach(function (s) {',
+      '        var st = s.getState() || {};',
+      '        Object.keys(st).forEach(function (k) {',
+      '          var q = st[k] && st[k].queries; if (!q || typeof q !== "object") return;',
+      '          Object.keys(q).forEach(function (id) {',
+      '            var e = q[id];',
+      '            if (e && e.endpointName === a.endpoint && e.status === "fulfilled" && e.data && (!best || e.fulfilledTimeStamp > best.fulfilledTimeStamp)) best = e;',
+      '          });',
+      '        });',
+      '      });',
+      '      var list = best && best.data && best.data[a.list];',
+      '      return { found: !!best, at: best ? best.fulfilledTimeStamp : 0, args: best ? best.originalArgs : null, items: Array.isArray(list) ? list.map(function (x) { return x && x[a.field]; }) : null };',
+      '    },',
+      '    patch: function (a) {',
+      // Patch the newest loaded result of an endpoint in place (RTK's own patchQueryData action).
+      '      var best = null;',
+      '      stores().forEach(function (s) {',
+      '        var st = s.getState() || {};',
+      '        Object.keys(st).forEach(function (k) {',
+      '          var q = st[k] && st[k].queries; if (!q || typeof q !== "object") return;',
+      '          Object.keys(q).forEach(function (id) {',
+      '            var e = q[id];',
+      '            if (e && e.endpointName === a.endpoint && e.status === "fulfilled" && (!best || e.fulfilledTimeStamp > best.e.fulfilledTimeStamp)) best = { s: s, k: k, id: id, e: e };',
+      '          });',
+      '        });',
+      '      });',
+      '      if (!best) return { ok: false };',
+      '      best.s.dispatch({ type: best.k + "/queries/queryResultPatched", payload: { queryCacheKey: best.id, patches: a.patches } });',
+      '      return { ok: true };',
+      '    },',
+      '    dispatch: function (a) {',
+      '      var n = 0;',
+      '      stores().forEach(function (s) { if ((s.getState() || {})[a.slice]) { s.dispatch(a.action); n++; } });',
+      '      return { stores: n };',
+      '    },',
+      '  };',
+      '  document.addEventListener(evt, function (e) {',
+      '    var out;',
+      '    try { var req = JSON.parse(e.detail); out = ops[req.op](req.args || {}); }',
+      '    catch (err) { out = { error: String(err && err.message || err) }; }',
+      '    document.dispatchEvent(new CustomEvent(evt + ":done", { detail: JSON.stringify(out) }));',
+      '  });',
+      '})(' + JSON.stringify(BRIDGE_EVENT) + ');',
+    ].join('\n');
+    const s = document.createElement('script');
+    s.id = 'ae-portal-hook';
+    s.textContent = code;
+    (document.head || document.documentElement).append(s);
+  }
+  function portal(op, args) {
+    let result = { error: 'no answer' };
+    const done = (e) => { try { result = JSON.parse(e.detail); } catch (_) {} };
+    try {
+      bridgeHook();
+      document.addEventListener(BRIDGE_EVENT + ':done', done, { once: true });
+      document.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: JSON.stringify({ op, args }) })); // handled synchronously
+    } catch (e) { result = { error: e.message }; }
+    document.removeEventListener(BRIDGE_EVENT + ':done', done);
+    return result;
+  }
+
+  // Refresh what's on screen without reloading, after a crystal changes
+  // Portal data behind its back (a note, a nickname, a new WO).
+  let refreshing = null;
+  function refreshView(tags) {
+    if (refreshing) return refreshing; // several changes in a row → one refresh
+    refreshing = new Promise((resolve) => {
+      setTimeout(() => {
+        refreshing = null;
+        const result = portal('refresh', { tags: tags || null });
+        if (!result.stores || result.error) console.warn('[' + AE_NAME + '] in-place refresh found nothing to refresh', result);
+        resolve(result);
+      }, 250);
+    });
+    return refreshing;
+  }
 
   // ------------------------------------------------------------ profile
   let profilePromise = null;
@@ -399,9 +558,10 @@ const AE = (() => {
     by the feedback module (06-feedback.js) every few minutes. Only feature
     names and counts — never page contents or customer details.
   */
-  const USAGE_KEY = 'ae_usage_pending';
+  const USAGE_KEY = AE_DEMO ? '' : 'ae_usage_pending';
   const localDay = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
   function track(feature) {
+    if (AE_DEMO) return; // the demo build sends nothing anywhere
     try {
       const pend = GM_getValue(USAGE_KEY, {});
       const day = (pend[localDay()] = pend[localDay()] || {});
@@ -411,6 +571,7 @@ const AE = (() => {
   }
   // Once a day per person (e.g. "used Aethernet today", "has a Glamour theme on").
   function trackDaily(feature) {
+    if (AE_DEMO) return;
     const k = 'ae_usage_daily', seen = GM_getValue(k, {});
     if (seen[feature] === localDay()) return;
     seen[feature] = localDay(); GM_setValue(k, seen);
@@ -420,8 +581,30 @@ const AE = (() => {
   // --------------------------------------------------- crystal registry
   const crystals = [];
   function crystal(def) { crystals.push(def); }
+  /*
+    "A text went to a customer from this WO": event text-sent { woId } for
+    any crystal (Recitation logs it, Auto-Waymark follows up), so each works
+    with the other switched off. Portal keeps its own fetch, so the send is
+    seen in the browser's network log (POST …/messages/v1/send), not by
+    wrapping fetch. Sends that failed (status 4xx/5xx, where the browser
+    reports it) are skipped; texts sent outside a WO page carry woId null.
+  */
+  const TEXT_SEND_RE = /\/messages\/v1\/send(?:[?#]|$)/;
+  function watchTexts() {
+    if (typeof PerformanceObserver === 'undefined') return;
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        if (!TEXT_SEND_RE.test(e.name) || (e.responseStatus && e.responseStatus >= 400)) continue;
+        const m = location.pathname.match(/^\/repair\/workorder\/(\d+)/);
+        emit('text-sent', { woId: m ? m[1] : null });
+        break;
+      }
+    }).observe({ type: 'resource', buffered: false });
+  }
+
   function start() {
     ensureCss();
+    if (AE_ON_PORTAL) watchTexts();
     // Which Aethernet builds are running on this page (the dev build warns if both are).
     const root = document.documentElement;
     root.dataset.aethernet = ((root.dataset.aethernet || '') + ' ' + (AE_DEV ? 'dev' : 'public')).trim();
@@ -445,7 +628,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
-    api, unwrap, Stopped, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, portal, refreshView, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,

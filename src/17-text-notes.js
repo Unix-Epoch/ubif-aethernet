@@ -8,7 +8,8 @@
 
   How (v2.3.2): the browser's own network log (PerformanceObserver) reports
   every request the page makes, however Portal's code issues it. When a
-  POST …/messages/v1/send shows up while a WO page is open, read that WO
+  POST …/messages/v1/send shows up while a WO page is open (core's
+  text-sent event, shared with Auto-Waymark since 2.17), read that WO
   customer's message history (GET /api/messages/v1/customers/{id}, the same
   call the chat panel makes right after sending) and log each of *your*
   outbound messages from the last few minutes that isn't logged yet. Finding
@@ -19,7 +20,8 @@
   wrapper never saw the send (confirmed on Zen with a HAR, Sep 26 2026).
 
   The note is a regular (noteType 2) note tagged with the WO's current
-  status, using Portal's own status → tag map.
+  status, using Portal's own status → tag map. Afterwards the WO view is
+  refreshed in place (AE.refreshView), so the note shows without a reload.
 */
 AE.crystal({
   id: 'textNotes',
@@ -33,7 +35,6 @@ AE.crystal({
       11: 'quality_check', 12: 'repair_summary', 13: 'ready_for_pickup', 14: 'sale_complete', 15: 'closed', 17: 'device_abandoned',
       22: 'request_buyout_replacement', 23: 'transferred_to_depot', 24: 'ready_for_diag', 25: 'cancelled', 26: 'send_to_depot', 27: 'shipped_by_depot',
     };
-    const SEND_RE = /\/messages\/v1\/send(?:[?#]|$)/;
     const WINDOW_MS = 3 * 60 * 1000;        // how recent a sent message must be
     const LOGGED_KEY = 'ae_text_notes_logged'; // messageId → time logged (shared across tabs)
     const loadLogged = () => {
@@ -87,6 +88,7 @@ AE.crystal({
         try {
           let n = await logRecentTexts(m[1]);
           if (!n) { await AE.sleep(2500); n = await logRecentTexts(m[1]); } // history can lag a moment
+          if (n) AE.refreshView();
           if (n) AE.toast('Text logged', (n > 1 ? n + ' texts' : 'Text') + ' added to WO ' + m[1] + "'s notes.", 'ok', 4000);
         } catch (e) {
           AE.toast('Text sent, but not logged', "Couldn't add the WO note: " + (e.message || e) + ' — add it by hand.', 'err', 12000);
@@ -95,10 +97,7 @@ AE.crystal({
       return busy;
     }
 
-    if (typeof PerformanceObserver === 'undefined') return;
-    new PerformanceObserver((list) => {
-      for (const e of list.getEntries()) if (SEND_RE.test(e.name)) { onSend(); break; }
-    }).observe({ type: 'resource', buffered: false });
+    AE.on('text-sent', () => onSend());
     AE.textNotesDebug = { onSend, logRecentTexts }; // for testing
   },
 });

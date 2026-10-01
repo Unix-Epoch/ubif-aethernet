@@ -9,6 +9,8 @@
   - On a WO page: tag chips next to the customer name, and "+ Tag" (managed
     tags as toggles, a box for one-off tags, and the WO's tag history).
   - Header button: the board — open WOs grouped by tag, filterable.
+    Managers (the roles below) get × on each tag there to clear it;
+    everyone else removes tags from the WO itself.
   - Auto-Waymark: a WO that reaches Ready for pickup gets a follow-up date
     3 days after that day (its own kind of mark, not a tag), added after end
     of day (7 PM local) — or on the first Portal load after that if nobody
@@ -26,6 +28,10 @@
     Auto-Waymark date ("10/02", the store's usual M/DD) and is kept that way:
     pushes rewrite it, and the scan puts it back if it drifts. A later date
     typed into the nickname by hand moves the mark to match instead.
+  - Texting the customer from a WO at Ready for pickup moves its
+    Auto-Waymark to 3 days from that day (only ever later), credited
+    "<name> (texted the customer)". Uses core's text-sent event, so it works
+    with Recitation off.
   - Settings → Waymark: the store's managed tag list. Only Portal's
     Store Manager / District Manager / Store Owner roles (for the current
     store) can edit it; everyone can tag and add one-offs.
@@ -151,17 +157,37 @@ AE.waymark = (() => {
       customerDeviceId: dev.customerDeviceId, customerId: dev.customerId, passcode: dev.passcode, serial: dev.serial,
       imei: dev.imei, deviceCatalogId: dev.deviceCatalogId, name,
     });
+    if (location.pathname.indexOf('/repair/workorder/' + woId) === 0) AE.refreshView(); // show the new nickname
     return true;
   }
 
-  async function pushMark(woId, due) {
+  // opts.by: who it's credited to in the history; opts.why: start of the toast (e.g. "Customer texted").
+  async function pushMark(woId, due, opts = {}) {
     if (AE.status.blocked('waymark')) return;
-    const j = await call('POST', '/wo/' + woId + '/push', { due });
-    AE.track('waymark:push');
+    const j = await call('POST', '/wo/' + woId + '/push', opts.by ? { due, by: opts.by } : { due });
+    AE.track(opts.track || 'waymark:push');
     if (cache) cache.auto[woId] = Object.assign({}, cache.auto[woId], { due: j.auto.due });
     AE.emit('waymark-changed', cache);
-    try { if (await syncNickname(woId, j.auto.due)) AE.toast('Auto-Waymark', 'Moved to ' + fmtDate(j.auto.due) + '; nickname is now ' + nickDate(j.auto.due) + '.', 'ok'); }
-    catch (e) { fail('mark moved, but the nickname couldn\'t be updated', e); }
+    const lead = opts.why ? opts.why + ': Auto-Waymark moved to ' : 'Moved to ';
+    try {
+      if (await syncNickname(woId, j.auto.due)) AE.toast('Auto-Waymark', lead + fmtDate(j.auto.due) + '; nickname is now ' + nickDate(j.auto.due) + '.', 'ok');
+      else if (opts.why) AE.toast('Auto-Waymark', lead + fmtDate(j.auto.due) + '.', 'ok');
+    } catch (e) { fail('mark moved, but the nickname couldn\'t be updated', e); }
+  }
+
+  // A text to the customer from a WO at Ready for pickup restarts its follow-up:
+  // the mark moves to 3 days from today, never earlier than it already is.
+  async function customerTexted(woId) {
+    if (!configured() || AE.status.blocked('waymark')) return;
+    const c = await load(true);
+    const m = c.auto && c.auto[woId];
+    if (!m) return;
+    const due = addDays(today(), AUTO_DAYS);
+    if (due <= m.due) return;
+    const wo = await woDetail(woId);
+    if (!wo || Number(wo.workorderStatusId) !== RFP_STATUS) return;
+    const p = await me();
+    await pushMark(woId, due, { by: (p.name || 'Someone') + ' (texted the customer)', why: 'Customer texted', track: 'waymark:pushTexted' });
   }
 
   // Right after a tech sets this WO to Ready for pickup (seen from the WO page).
@@ -455,7 +481,7 @@ AE.waymark = (() => {
   const listSig = () => JSON.stringify(cache && cache.list);
   const summary = () => (cache ? cache.list.length + ' tag' + (cache.list.length === 1 ? '' : 's') : 'Store tags');
 
-  return { API, configured, load, tagsOf, autoOf, checkWo, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
+  return { API, configured, load, tagsOf, autoOf, checkWo, customerTexted, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
 })();
 
 AE.crystal({
@@ -467,6 +493,11 @@ AE.crystal({
     const W = AE.waymark;
     if (!W.configured()) return;
     W.ensureCss();
+    AE.on('text-sent', ({ woId }) => {
+      if (!woId) return;
+      AE.sleep(1500).then(() => W.customerTexted(woId)) // let Portal's send land first
+        .catch((e) => W.fail("the text went out, but the Auto-Waymark couldn't be moved", e));
+    });
     const ROW_ID = 'sg-wm-row', POP_ID = 'sg-wm-pop', BTN_ID = 'sg-wm-btn', BOARD_ID = 'sg-wm-board';
     const currentWoId = () => { const m = location.pathname.match(/^\/repair\/workorder\/(\d+)/); return m ? m[1] : null; };
     const nameRow = (woId) => {
@@ -605,6 +636,7 @@ AE.crystal({
 
     let boardFilter = null; // tag name, or null = all
     let boardTab = 'tags';  // 'tags' | 'auto'
+    let boardManager = false; // managers clear tags right from the board
     async function toggleBoard() {
       if (document.getElementById(BOARD_ID)) { document.getElementById(BOARD_ID).remove(); return; }
       const header = document.querySelector('.components-header');
@@ -616,7 +648,8 @@ AE.crystal({
       document.body.appendChild(board);
       AE.track('waymark:board');
       try {
-        const [c, wos] = await Promise.all([W.load(true), AE.data.workorders(Date.now(), 0)]);
+        const [c, wos, role] = await Promise.all([W.load(true), AE.data.workorders(Date.now(), 0), W.canEdit().catch(() => ({ ok: false }))]);
+        boardManager = !!role.ok;
         drawBoard(board, c, wos);
         W.scan(wos).then(() => W.load()).then((c2) => { if (board.isConnected) drawBoard(board, c2, wos); }).catch(() => {});
       } catch (e) {
@@ -668,7 +701,14 @@ AE.crystal({
           h('div', null,
             h('a', { href: '/repair/workorder/' + id }, 'WO ' + id), ' · ', AE.data.nameOf(r) || 'Customer',
             h('div', { class: 'meta' }, [r.workorderStatusName, dev].filter(Boolean).join(' · '))),
-          h('div', { class: 'chips' }, ts.map((t) => W.chip(t.tag))));
+          h('div', { class: 'chips' }, ts.map((t) => W.chip(t.tag, !boardManager ? {} : {
+            title: t.tag + ' · added by ' + (t.by || 'someone') + ', ' + W.when(t.at),
+            onRemove: async () => {
+              try { await W.setTag(id, t.tag, false); } catch (e) { return W.fail("couldn't remove " + t.tag, e); }
+              AE.track('waymark:boardUntag');
+              drawBoard(board, await W.load(), wos);
+            },
+          }))));
       };
       const filterChip = (n) => {
         const el = W.chip(n, { label: n + ' (' + counts[n] + ')', cls: 'toggle' + (boardFilter && boardFilter !== n ? ' off' : ''), title: 'Show only ' + n });
