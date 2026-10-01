@@ -65,13 +65,14 @@
 
   - reportsRetry: Portal's Reports page (/reporting/metrics) shows its spinner
     until GET /api/reporting/metrics (RTK getMetricsConfig) has data, and has
-    no error state: one failed or blocked request (seen on Firefox, Oct 2026)
-    and it spins forever. If the page hasn't drawn its Reports card after
-    8 s, Aethernet notes why (the request's RTK status/error, whether the
-    browser saw the request at all, Portal's own script errors) where bug
-    reports pick it up, says so, and has Portal try again by switching the
-    page away and straight back (a fresh mount re-runs a failed query), at
-    most twice per visit.
+    no error state, so one blocked request spins forever. Cause confirmed by
+    Garrett (Oct 2026, Firefox): uBlock Origin blocks it (Firefox reports
+    "NetworkError when attempting to fetch resource"); turning it off for the
+    page brings Reports back. Retrying can't beat a blocker, so after 8 s
+    without the Reports card a warning says to turn off the ad blocker for
+    portal.ubreakifix.net and reload; the details (RTK status/error, whether
+    the browser sent the request, Portal's script errors) go where bug
+    reports pick them up.
 
   - woSort: sort the Work orders list by any column. Portal's table only
     offers ▲▼ on one or two columns per tab (repair.js FA[…].sortableColumns),
@@ -110,7 +111,7 @@ AE.fixesInfo = [
       paint();
       return box;
     }],
-  ['reportsRetry', 'Reports page retry', 'If Portal\'s Reports page is stuck loading, Aethernet tries it again and notes why it got stuck (included when you send a bug report).'],
+  ['reportsRetry', 'Reports page help', 'If Portal\'s Reports page is stuck loading, a warning explains the usual cause (an ad blocker like uBlock Origin) and how to fix it. The details are included if you send a bug report.'],
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
   ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Never on inventory, check-in or check-out pages, or while typing in a field.'],
 ];
@@ -362,51 +363,52 @@ AE.crystal({
         paint();
       },
       reportsRetry() {
-        const PATH = /^\/reporting\/metrics\/?$/, WAIT = 8000, MAX = 2;
-        let visit = 0, tries = 0, timer = null, lastPath = '';
+        const PATH = /^\/reporting\/metrics\/?$/, WAIT = 8000, CARD = 'ae-reports-warn';
+        let timer = null, lastPath = '';
         const loaded = () => !!document.querySelector('.reports-card');
-        const go = (url) => { history.pushState(null, '', url); dispatchEvent(new PopStateEvent('popstate', { state: null })); };
         function diagnose() {
           const st = AE.portal('status', { endpoint: 'getMetricsConfig' }) || {};
           const seen = performance.getEntriesByType('resource').filter((e) => /\/api\/reporting\/metrics(\?|$)/.test(e.name));
           const net = seen.length ? seen[seen.length - 1] : null;
-          const why = !st.found ? (st.stores ? "Portal never asked for the reports setup" : "Portal's page didn't start (no app state found)")
-            : st.status === 'pending' ? 'the reports setup request is still waiting on the server'
-            : st.status === 'rejected' ? 'the reports setup request failed' + (st.error ? ' (' + st.error.slice(0, 120) + ')' : '')
-            : st.hasData ? 'the data arrived but the page didn\'t draw' : 'the request finished with no data';
-          const detail = { why, rtk: st, browserSawRequest: !!net,
+          const blocked = !!(st.error && /FETCH_ERROR|NetworkError|Failed to fetch/i.test(st.error));
+          const detail = { rtk: st, blocked, browserSawRequest: !!net,
             request: net ? { status: net.responseStatus || null, ms: Math.round(net.duration), bytes: net.transferSize } : null,
             pageErrors: AE.pageErrors.slice(-3), ua: navigator.userAgent.slice(0, 160) };
           AE.noteError('Reports page stuck', JSON.stringify(detail));
           console.warn('[' + AE_NAME + '] Reports page stuck:', detail);
-          return { why, blocked: st.found && st.status === 'rejected' && !net };
+          return { blocked, st };
         }
-        function check(v) {
-          if (v !== visit || !PATH.test(location.pathname) || loaded()) return;
-          const { why, blocked } = diagnose();
-          if (tries >= MAX) {
-            AE.toast('Reports still won\'t load', why + (blocked ? '. The browser never sent it, so an extension or privacy setting may be blocking it.' : '.') +
-              ' Reload the page, and if it keeps happening, use Send feedback → Bug (the details are included).', 'err', 15000);
-            return;
-          }
-          tries++;
-          AE.toast('Reports was stuck', why + (blocked ? ' (the browser never sent it — possibly blocked)' : '') + '. Trying again…', 'busy', 4000);
-          AE.track('fixes:reportsRetry');
-          // A fresh mount of the page re-runs the failed request.
-          go('/');
-          setTimeout(() => { go('/reporting/metrics'); }, 400);
+        // A warning card on the page (stays until dismissed or the page loads).
+        function warn() {
+          const { blocked, st } = diagnose();
+          document.getElementById(CARD)?.remove();
+          const close = () => card.remove();
+          const card = AE.h('div', { id: CARD, class: 'sg sg-card', role: 'alert', style:
+            'position:fixed;z-index:2147483645;left:16px;bottom:16px;max-width:460px;padding:12px 14px;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.45;border-left:4px solid #d6a000' },
+            AE.h('span', { style: 'line-height:0;flex:none;color:#d6a000', html: AE.icon('aetheryte', 26) }),
+            AE.h('div', { style: 'flex:1' },
+              AE.h('b', { style: 'display:block;margin-bottom:2px' }, 'Reports isn\'t loading? Turn off your ad blocker on this page'),
+              AE.h('div', { class: 'sg-soft', style: 'font-size:13px' },
+                (blocked ? 'Your browser stopped Portal\'s reports request before it went out. ' : '') +
+                'Ad blockers like uBlock Origin block Portal\'s reports. Turn yours off for portal.ubreakifix.net (click its icon in the toolbar and switch it off for this site), then reload.'),
+              !blocked && st && st.status ? AE.h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:4px' }, 'Still stuck without one? Use Send feedback → Bug; the details are included.') : null,
+              AE.h('div', { style: 'display:flex;gap:8px;margin-top:10px' },
+                AE.h('button', { type: 'button', class: 'sg-btn sg-primary', style: 'height:30px;font-size:13px', onclick: () => location.reload() }, 'Reload page'))),
+            AE.h('button', { type: 'button', class: 'sg-x', title: 'Dismiss', onclick: close }, '✕'));
+          document.body.appendChild(card);
+          AE.track('fixes:reportsWarn');
         }
         AE.every(500, () => {
           const p = location.pathname;
+          if (loaded()) document.getElementById(CARD)?.remove();
           if (p === lastPath) return;
-          const back = PATH.test(p) && tries > 0 && lastPath === '/';
           lastPath = p;
-          if (!PATH.test(p)) { if (!(p === '/' && tries > 0)) tries = 0; return; } // our own hop to '/' keeps the count
-          const v = ++visit;
           clearTimeout(timer);
-          timer = setTimeout(() => check(v), back ? WAIT + 2000 : WAIT);
+          if (!PATH.test(p)) { document.getElementById(CARD)?.remove(); return; }
+          timer = setTimeout(() => { if (PATH.test(location.pathname) && !loaded()) warn(); }, WAIT);
         });
         AE.hooks.reportsDiagnose = diagnose; // dev tools
+        AE.hooks.reportsWarn = warn;
       },
       woSort() {
         // Header text → Portal's column id (repair.js WA), and whether the server sorts it.
