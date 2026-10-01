@@ -108,6 +108,7 @@
     // Settings
     const settings = section('Settings',
       row(btn('New-crystal sheen on every crystal', () => { GM_setValue('ae_seen_crystals', []); AE.openSettings(); }, { close: true }),
+        btn('Updated sheen (as after updating from 2.16)', () => { GM_setValue('ae_updates_seen', '2.16.0'); AE.openSettings(); }, { close: true }),
         btn('Open Settings at Waymark', () => AE.openSettings('waymark'), { close: true }),
         btn('Feedback window', () => AE.feedback.openFeedback(), { close: true }),
         btn('Admin panel', () => AE.feedback.openAdmin(), { close: true })));

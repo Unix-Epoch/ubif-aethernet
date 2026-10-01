@@ -37,6 +37,12 @@
     once with it listed; new ones get a yellow sheen. The first run of a build
     after an update shows an "Aethernet has updated!" pill (once) that opens
     Settings. A fresh install sees neither.
+
+    What's updated. A patch-notes entry can list the existing crystals it
+    changed ("updated": [ids]); after an update those get an "Updated" tag and
+    a purple sheen (New wins if both), until Settings is closed once.
+    ae_updates_seen is the version whose updates were last seen; the first
+    run that tracks it starts from the version you updated from.
   */
   const SEEN_KEY = 'ae_seen_crystals', VERSION_KEY = 'ae_last_version';
   const allIds = () => CRYSTAL_INFO.map(([id]) => id);
@@ -47,7 +53,16 @@
   // Before 2.7 nothing was tracked: count every crystal as already seen.
   if (GM_getValue(SEEN_KEY) === undefined) GM_setValue(SEEN_KEY, allIds());
   const isNew = (id) => !GM_getValue(SEEN_KEY, []).includes(id);
-  const markAllSeen = () => GM_setValue(SEEN_KEY, [...new Set([...GM_getValue(SEEN_KEY, []), ...allIds()])]);
+  const UPD_KEY = 'ae_updates_seen';
+  if (GM_getValue(UPD_KEY) === undefined) GM_setValue(UPD_KEY, lastVersion || AE_VERSION);
+  const isUpdated = (id) => {
+    const seen = GM_getValue(UPD_KEY, AE_VERSION);
+    return PATCH_NOTES.some((n) => newer(n.version, seen) && !newer(n.version, AE_VERSION) && (n.updated || []).includes(id));
+  };
+  const markAllSeen = () => {
+    GM_setValue(SEEN_KEY, [...new Set([...GM_getValue(SEEN_KEY, []), ...allIds()])]);
+    GM_setValue(UPD_KEY, AE_VERSION);
+  };
   if (lastVersion !== AE_VERSION) GM_setValue(VERSION_KEY, AE_VERSION);
 
   const MODAL_CSS = `
@@ -164,6 +179,12 @@
   .sg-issue-tag.paused, .sg-issue-tag.error { background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); }
   .sg-new-tag { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:10000rem; vertical-align:2px;
     background:#ffcc00; color:#3d2e00; font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
+  /* updated crystals: the same sheen in Aethernet purple, until Settings is closed once */
+  .sg-crystal.sg-upd { position:relative; margin:0 -10px; padding:0 10px; border-radius:10px; border-top-color:transparent;
+    background:linear-gradient(105deg, rgba(130,35,210,.08) 0%, rgba(130,35,210,.08) 38%, rgba(196,140,255,.38) 50%, rgba(130,35,210,.08) 62%, rgba(130,35,210,.08) 100%);
+    background-size:250% 100%; box-shadow:inset 0 0 0 1px rgba(130,35,210,.45); animation:sg-sheen 2.6s ease-in-out infinite; }
+  .sg-crystal.sg-upd + .sg-crystal { border-top-color:transparent; }
+  .sg-new-tag.upd { background:#8223d2; color:#fff; }
   /* "Aethernet has updated!" pill */
   .sg-update-pill { position:fixed; z-index:2147483645; left:50%; bottom:20px; transform:translateX(-50%);
     display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 14px; border:0; border-radius:10000rem; cursor:pointer;
@@ -175,7 +196,7 @@
   .sg-update-pill .x { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:50%; font-weight:400; opacity:.8; }
   .sg-update-pill .x:hover { opacity:1; background:rgba(255,255,255,.18); }
   @keyframes sg-pill-in { from { opacity:0; transform:translate(-50%, 10px); } to { opacity:1; transform:translate(-50%, 0); } }
-  @media (prefers-reduced-motion: reduce) { .sg-crystal.sg-new, .sg-update-pill { animation:none; } }
+  @media (prefers-reduced-motion: reduce) { .sg-crystal.sg-new, .sg-crystal.sg-upd, .sg-update-pill { animation:none; } }
   `;
 
   // About — its own modal, above the settings panel.
@@ -360,7 +381,7 @@
     };
     const CHEV = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
     const crystalRow = (id, name, desc) => {
-      const fresh = isNew(id);
+      const fresh = isNew(id), upd = !fresh && isUpdated(id);
       let optToggle = null, optBody = null;
       if (OPTIONS[id]) {
         const [summary, ...kids] = OPTIONS[id];
@@ -381,9 +402,9 @@
         sums.push(paintSum);
         paintSum();
       }
-      return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : ''), 'data-crystal': id },
+      return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : upd ? ' sg-upd' : ''), 'data-crystal': id },
         h('div', { class: 'sg-row' },
-          h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : null,
+          h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : upd ? h('span', { class: 'sg-new-tag upd' }, 'Updated') : null,
               issueTag(id)),
             h('span', { class: 'sg-soft' }, desc), optToggle ? h('div', null, optToggle) : null),
           toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); })),

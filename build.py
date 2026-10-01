@@ -174,8 +174,15 @@ NOTES_FILE = "patch-notes.json"
 
 
 def load_notes(root: Path) -> list:
-    # Newest first: [{version, date (UTC ISO, stamped at release), notes: [...]}]
-    return json.loads((root / NOTES_FILE).read_text())
+    # Newest first: [{version, date (UTC ISO, stamped at release), notes: [...],
+    # credits?, updated?: [ids of existing crystals it changed → "Updated" sheen]}]
+    notes = json.loads((root / NOTES_FILE).read_text())
+    known = crystal_ids(root)
+    for n in notes:
+        bad = [c for c in n.get("updated", []) if c not in known]
+        if bad:
+            sys.exit(f"{NOTES_FILE}: {n['version']} lists unknown crystal ids in \"updated\": {bad}")
+    return notes
 
 
 def stamp_release_date(root: Path) -> None:
