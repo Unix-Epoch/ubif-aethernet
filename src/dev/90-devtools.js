@@ -8,6 +8,11 @@
   Auto-Waymark scan (dry run, or for real), a shifted clock for the 7 PM and
   morning rules, and demo panels/toasts.
 
+  Portal cart recorder: while on, Portal's own cart requests (add/remove
+  items, repair-code lookups) are saved with their body and Portal's answer,
+  to copy exactly what Portal sends (e.g. for the VZ Refresh labor SKU).
+  Watches window.fetch from inside the page; records only, changes nothing.
+
   Simulations only change what this browser shows. Two exceptions write to
   Portal and are labelled that way: "Run the scan for real" and the real
   morning check (which only reads).
@@ -16,6 +21,43 @@
   if (!AE_ON_PORTAL || !AE_DEV) return;
   const { h, icon } = AE;
   const CLOCK_KEY = 'ae_dev_clock_offset';
+
+  // ---------------------------------------------------- Portal cart recorder
+  const REC_KEY = 'ae_dev_record_cart', REC_LOG = 'ae_dev_cart_log', REC_EVT = 'aethernet:cart-rec';
+  function recorderHook() {
+    if (document.getElementById('ae-cart-rec-hook')) return;
+    const code = [
+      '(function (evt) {',
+      '  var WATCH = /\\/api\\/order\\/(cart\\/|repair-codes)/;',
+      '  var orig = window.fetch;',
+      '  window.fetch = function (input, init) {',
+      '    var url = typeof input === "string" ? input : (input && input.url) || "";',
+      '    var p = orig.apply(this, arguments);',
+      '    if (!WATCH.test(url)) return p;',
+      '    var method = (init && init.method) || (input && input.method) || "GET";',
+      '    var bodyP = init && typeof init.body === "string" ? Promise.resolve(init.body) : (input && input.clone ? input.clone().text().catch(function () { return ""; }) : Promise.resolve(""));',
+      '    p.then(function (res) {',
+      '      Promise.all([bodyP, res.clone().text().catch(function () { return ""; })]).then(function (v) {',
+      '        document.dispatchEvent(new CustomEvent(evt, { detail: JSON.stringify({ at: new Date().toISOString(), method: method, url: url, body: v[0], status: res.status, response: v[1].slice(0, 3000) }) }));',
+      '      });',
+      '    }, function (err) {',
+      '      bodyP.then(function (b) { document.dispatchEvent(new CustomEvent(evt, { detail: JSON.stringify({ at: new Date().toISOString(), method: method, url: url, body: b, status: 0, response: String(err) }) })); });',
+      '    });',
+      '    return p;',
+      '  };',
+      '})(' + JSON.stringify(REC_EVT) + ');',
+    ].join('\n');
+    const el = document.createElement('script');
+    el.id = 'ae-cart-rec-hook';
+    el.textContent = code;
+    (document.head || document.documentElement).append(el);
+  }
+  document.addEventListener(REC_EVT, (e) => {
+    let rec; try { rec = JSON.parse(e.detail); } catch (_) { return; }
+    GM_setValue(REC_LOG, [rec, ...GM_getValue(REC_LOG, [])].slice(0, 15));
+    AE.toast('Recorded Portal cart request', rec.method + ' ' + rec.url.replace(/^https?:\/\/[^/]+/, '') + ' → ' + rec.status + '. Copy it from the dev tools.', rec.status && rec.status < 400 ? 'ok' : 'err', 6000);
+  });
+  if (GM_getValue(REC_KEY, false)) recorderHook();
 
   const CSS = `
   #sg-dev-tab { position:fixed; z-index:2147483645; left:0; top:45%; padding:10px 5px; border:0; border-radius:0 8px 8px 0; cursor:pointer;
@@ -170,6 +212,28 @@
       row(btn('"Another script is also coloring" notice', () => { if (!AE.hooks.rowColorsNotice) throw new Error('Turn Rainbow Drip on first.'); AE.hooks.rowColorsNotice(); }, { close: true })));
 
     // Swiftcast + general
+    const recOut = h('div');
+    const drawRec = () => {
+      const log = GM_getValue(REC_LOG, []);
+      recOut.replaceChildren(...(log.length ? log.map((r) => h('div', { style: 'margin:6px 0;padding:6px 8px;border:1px solid var(--aui-outline-soft,#eeedf1);border-radius:8px' },
+        h('div', { style: 'display:flex;gap:8px;align-items:center' }, h('b', { style: 'flex:1;font-size:12px' }, r.method + ' ' + r.url.replace(/^https?:\/\/[^/]+/, '') + ' → ' + r.status),
+          btn('Copy', async () => { await navigator.clipboard.writeText(JSON.stringify(r, null, 1)); AE.toast('Copied', 'The request and Portal\'s answer are on the clipboard.', 'ok'); })),
+        h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace;margin:4px 0 0;max-height:120px;overflow:auto' }, r.body || '(no body)'))) : [note('Nothing recorded yet.')]));
+    };
+    drawRec();
+    const recording = GM_getValue(REC_KEY, false);
+    const recorder = section('Portal cart recorder',
+      row(btn(recording ? 'Stop recording' : 'Record Portal\'s cart requests', () => {
+        const on = !GM_getValue(REC_KEY, false);
+        GM_setValue(REC_KEY, on);
+        if (on) recorderHook();
+        AE.toast('Cart recorder ' + (on ? 'on' : 'off'), on ? 'Add the item in Portal\'s cart as usual; the request is saved here. Reload to stop watching completely.' : 'Reload the page to stop watching completely.', 'ok', 6000);
+        open(); // redraw with the new state
+      }, { title: 'Saves Portal\'s own add/remove-item and repair-code requests (body + answer). Records only.' }),
+        btn('Clear', () => { GM_deleteValue(REC_LOG); drawRec(); })),
+      note(recording ? 'Recording: add the item in Portal\'s cart by hand, then copy the request below.' : 'Off.'),
+      recOut);
+
     const general = section('Panels, toasts, dialogs',
       row(btn('Refresh view in place', async () => {
         const r = await AE.refreshView();
@@ -191,7 +255,7 @@
     const card = h('div', { class: 'sg sg-card sg-dev', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' dev tools' },
       h('div', { class: 'head' }, h('span', { style: 'color:#e0761a;line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Dev tools'), h('span', { class: 'tag' }, 'DEV v' + AE_VERSION),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
-      h('div', { class: 'scroll' }, updates, notices, access, settings, macro, waymark, rows, scans, general));
+      h('div', { class: 'scroll' }, updates, notices, access, settings, macro, waymark, rows, scans, recorder, general));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-dev', onclick: (e) => { if (e.target === scrim) close(); } }, card);
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
