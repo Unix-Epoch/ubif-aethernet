@@ -34,7 +34,7 @@ const AE = (() => {
     glamour: { theme: 'portal', custom: [] }, // custom: [{ id, name, bg, fg, accent, custom: true }]
     ...(AE_DEMO ? {} : {
       printLabels: { delayMs: 900 },
-      fixes: { logoLink: true }, // Master's Mend: one switch per fix (src/58-fixes.js)
+      fixes: { logoLink: true, scanNav: true }, // Master's Mend: one switch per fix (src/58-fixes.js)
       // Blank = use the logged-in user / current store automatically.
       galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
     }),
