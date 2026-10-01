@@ -98,6 +98,9 @@ const AE = (() => {
       - query { endpoint, list, field } → the newest loaded result of an RTK
                                   Query endpoint: `field` of each item in data[list],
                                   plus the arguments it was loaded with (args)
+      - patch { endpoint, patches } → change the newest loaded result of an RTK
+                                  Query endpoint in place (immer patches on its data),
+                                  as Portal's own patchQueryData does; the screen follows
       - dispatch { slice, action } → the action, to the stores that have `slice`
   */
   const BRIDGE_EVENT = 'aethernet:portal';
@@ -167,6 +170,23 @@ const AE = (() => {
       '      });',
       '      var list = best && best.data && best.data[a.list];',
       '      return { found: !!best, at: best ? best.fulfilledTimeStamp : 0, args: best ? best.originalArgs : null, items: Array.isArray(list) ? list.map(function (x) { return x && x[a.field]; }) : null };',
+      '    },',
+      '    patch: function (a) {',
+      // Patch the newest loaded result of an endpoint in place (RTK's own patchQueryData action).
+      '      var best = null;',
+      '      stores().forEach(function (s) {',
+      '        var st = s.getState() || {};',
+      '        Object.keys(st).forEach(function (k) {',
+      '          var q = st[k] && st[k].queries; if (!q || typeof q !== "object") return;',
+      '          Object.keys(q).forEach(function (id) {',
+      '            var e = q[id];',
+      '            if (e && e.endpointName === a.endpoint && e.status === "fulfilled" && (!best || e.fulfilledTimeStamp > best.e.fulfilledTimeStamp)) best = { s: s, k: k, id: id, e: e };',
+      '          });',
+      '        });',
+      '      });',
+      '      if (!best) return { ok: false };',
+      '      best.s.dispatch({ type: best.k + "/queries/queryResultPatched", payload: { queryCacheKey: best.id, patches: a.patches } });',
+      '      return { ok: true };',
       '    },',
       '    dispatch: function (a) {',
       '      var n = 0;',

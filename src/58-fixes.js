@@ -46,18 +46,21 @@
   - notContacted: a "Not contacted" chip on the Arrivals page
     (/check-in/arrivals), in Portal's chip row (ManualSelectionChips:
     data-aui "chips.manual-selection", each chip a .chipElement with
-    role=checkbox/aria-checked; built by cloning Portal's own chip, with the
-    Aethernet mark on its corner). Contacted arrivals carry arrival attribute
-    53 (ArrivalAttributeType.Contacted, Portal's ubif-types bundle) with a
-    value; that's what draws the Contacted tag. Portal's list is paged (10 a
-    page) and the server only filters *contacted* (contacted=false acts like
-    true), so the chip selects Portal's "All" underneath and Aethernet loads
-    every page itself (GET /api/arrivals/upcoming-arrivals with the args
-    Portal's getUpcomingArrivals query was loaded with, via AE.portal) and
-    shows the ones without the attribute in place of Portal's table; a row
-    opens the arrival as Portal's would. It follows Portal's day, reloads
-    every minute, and any of Portal's chips hands the list back. Like
-    Portal's chips, it isn't remembered once you leave the page.
+    role=checkbox/aria-checked; ours is cloned from Portal's chip, and the
+    Aethernet mark floats over its corner, since the row clips anything that
+    sticks out). Contacted arrivals carry arrival attribute 53
+    (ArrivalAttributeType.Contacted, Portal's ubif-types bundle) with a value;
+    that's what draws the Contacted tag. Portal's list is paged (10 a page)
+    and the server only filters *contacted* (contacted=false acts like true),
+    so the chip selects Portal's "All" underneath, Aethernet loads every page
+    itself (GET /api/arrivals/upcoming-arrivals with the args Portal's
+    getUpcomingArrivals query was loaded with), and Portal's own table is
+    handed the not-contacted ones: the loaded result is patched in place
+    (AE.portal patch = RTK's patchQueryData), so it looks and behaves like
+    every other Arrivals page. It follows Portal's day, reloads every minute
+    (and re-patches if Portal refetches), and any of Portal's chips reloads
+    Portal's own list. Like Portal's chips, it isn't remembered once you
+    leave the page.
 
   - woSort: sort the Work orders list by any column. Portal's table only
     offers ▲▼ on one or two columns per tab (repair.js FA[…].sortableColumns),
@@ -192,29 +195,18 @@ AE.crystal({
         paint();
       },
       notContacted() {
-        const CONTACTED = 53; // Portal's ArrivalAttributeType.Contacted
-        const CHIP = 'ae-nc-chip', LIST = 'ae-nc-list', ON = 'ae-nc-on', MUTED = 'ae-nc-muted';
+        const CONTACTED = 53, ENDPOINT = 'getUpcomingArrivals'; // Portal's ArrivalAttributeType.Contacted; the list's query
+        const CHIP = 'ae-nc-chip', BADGE = 'ae-nc-badge', BUSY = 'ae-nc-busy', MUTED = 'ae-nc-muted';
         document.head.append(AE.h('style', null, `
-          #${CHIP} { position:relative; overflow:visible; }
-          #${CHIP} .ae-badge { position:absolute; top:-7px; left:-7px; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-            background:var(--aui-surface, #fff); color:var(--aui-primary, #8223d2); box-shadow:0 0 0 1px var(--aui-outline, #c6c6ca); line-height:0; pointer-events:none; }
+          #${BADGE} { position:fixed; z-index:20; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+            background:var(--aui-surface, #fff); color:var(--aui-primary, #8223d2); box-shadow:0 0 0 1px var(--aui-outline, #c6c6ca), 0 1px 3px rgba(12,14,17,.2); line-height:0; pointer-events:none; }
           .${MUTED} > [data-aui="icon"]:first-of-type { display:none !important; } /* Portal's ✓ on the chip we've taken over from */
-          .${ON} > :not(#${LIST}) { display:none !important; }
-          #${LIST} table { width:100%; border-collapse:collapse; font-size:14px; }
-          #${LIST} th { text-align:left; padding:10px 12px; font-size:12px; font-weight:700; color:var(--aui-on-surface-soft, #5d5e61); border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
-          #${LIST} td { padding:12px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); vertical-align:top; }
-          #${LIST} tbody tr { cursor:pointer; }
-          #${LIST} tbody tr:hover td { background:var(--aui-neutral-soft, #f1f0f4); }
-          #${LIST} .sub { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); margin-top:2px; }
-          #${LIST} .st { display:inline-block; padding:2px 8px; border-radius:10000rem; font-size:12px; font-weight:600; background:var(--aui-neutral-soft, #f1f0f4); }
-          #${LIST} .msg { padding:16px 12px; color:var(--aui-on-surface-soft, #5d5e61); }
-          #${LIST} .count { padding:0 12px 8px; font-size:13px; color:var(--aui-on-surface-soft, #5d5e61); }
+          .${BUSY} { opacity:.45; pointer-events:none; transition:opacity .15s; }
         `));
         // on: our page is showing. Like Portal's own chips it resets when you leave the page.
-        let on = false, rows = null, total = 0, loadErr = null, loading = null, loadedKey = null, loadedAt = 0, muted = null; // muted: { el, cls }
+        let on = false, rows = null, loading = null, loadedKey = null, loadedAt = 0, muted = null; // muted: { el, cls }
         const contacted = (a) => (a.arrivalAttributes || []).some((x) => Number(x.arrivalAttributeTypeId) === CONTACTED && x.value !== '' && x.value != null);
-        const go = (url) => { history.pushState(null, '', url); dispatchEvent(new PopStateEvent('popstate', { state: null })); };
-        const listArgs = () => { const r = AE.portal('query', { endpoint: 'getUpcomingArrivals', list: 'data', field: 'arrivalId' }); return r && r.args ? r.args : null; };
+        const shown = () => AE.portal('query', { endpoint: ENDPOINT, list: 'data', field: 'arrivalId' }) || {};
         const keyOf = (args) => JSON.stringify(args && Object.assign({}, args, { page: 0, pageSize: 0 }));
         const chipsBox = () => document.querySelector('[data-aui="chips.manual-selection"]');
         const portalChips = (box) => [...box.querySelectorAll('.chipElement')].filter((c) => c.id !== CHIP);
@@ -229,46 +221,22 @@ AE.crystal({
             const j = await AE.api('GET', '/api/arrivals/upcoming-arrivals?' + q);
             const data = (j && j.data) || [];
             all.push(...data);
-            total = (j && j.rowCount) || all.length;
-            if (!data.length || all.length >= total) break;
+            if (!data.length || all.length >= ((j && j.rowCount) || 0)) break;
           }
           return all;
         }
         // One load at a time; if Portal's day/filters changed meanwhile, paint() starts the next one.
         function refresh(args, key) {
-          loadErr = null;
           loading = loadAll(args || {})
             .then((all) => { rows = all.filter((a) => !contacted(a)); loadedKey = key; loadedAt = Date.now(); })
-            .catch((e) => { loadErr = e.message || String(e); loadedKey = key; loadedAt = Date.now(); })
+            .catch((e) => { AE.toast('Not contacted', "Couldn't load the arrivals: " + (e.message || e), 'err'); turnOff(); })
             .finally(() => { loading = null; paint(); });
         }
-
-        const when = (iso) => { const d = new Date(iso); if (isNaN(d)) return ['', ''];
-          return [d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), d.toDateString() === new Date().toDateString() ? 'Today' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })]; };
-        function drawList(list, fresh) {
-          const h = AE.h;
-          const sig = fresh ? [rows, loadErr] : ['loading'];
-          if (list._sig && list._sig[0] === sig[0] && list._sig[1] === sig[1]) return; // nothing new to show
-          list._sig = sig;
-          if (!fresh) return list.replaceChildren(h('div', { class: 'msg' }, 'Loading every arrival…'));
-          if (loadErr) return list.replaceChildren(h('div', { class: 'msg' }, "Couldn't load the arrivals: " + loadErr));
-          if (!rows.length) return list.replaceChildren(h('div', { class: 'msg' }, 'Every arrival here has been contacted.'));
-          const sorted = rows.slice().sort((a, b) => Date.parse(a.appointment) - Date.parse(b.appointment));
-          list.replaceChildren(
-            h('div', { class: 'count' }, sorted.length + ' not contacted, of ' + total),
-            h('table', null,
-              h('thead', null, h('tr', null, ['Customer', 'Device', 'Program type', 'Appointment', 'Arrival Status'].map((t) => h('th', null, t)))),
-              h('tbody', null, sorted.map((a) => {
-                const dev = a.customerDevice || {}, [t, d] = when(a.appointment);
-                const tr = h('tr', { title: 'Open this arrival' },
-                  h('td', null, AE.data.nameOf(a) || 'Customer'),
-                  h('td', null, dev.deviceName || '—', (a.deviceIssues || []).length ? h('div', { class: 'sub' }, a.deviceIssues.map((x) => x.name || x).join(', ')) : null),
-                  h('td', null, (a.program && a.program.name) || 'None'),
-                  h('td', null, t, h('div', { class: 'sub' }, d)),
-                  h('td', null, h('span', { class: 'st' }, (a.arrivalStatus && a.arrivalStatus.arrivalStatusName) || '')));
-                tr.addEventListener('click', () => go('/check-in/arrivals/' + a.arrivalId));
-                return tr;
-              }))));
+        // Portal's own table shows them: its loaded page becomes the not-contacted list (all of it, one page).
+        function showInPortal() {
+          const ids = rows.map((a) => a.arrivalId);
+          if ((shown().items || []).join() === ids.join()) return;
+          AE.portal('patch', { endpoint: ENDPOINT, patches: [{ op: 'replace', path: ['data'], value: rows }, { op: 'replace', path: ['rowCount'], value: Math.min(rows.length, 1) }] });
         }
 
         // Our chip, built from Portal's own: an unselected chip when off, the selected one when on.
@@ -281,11 +249,24 @@ AE.crystal({
           c.setAttribute('aria-checked', String(on));
           c.title = 'Arrivals nobody has contacted yet (no Contacted tag), from every page. Added by ' + AE_NAME + '.';
           (c.querySelector('.textElement') || c).textContent = 'Not contacted';
-          c.prepend(AE.h('span', { class: 'ae-badge', html: AE.icon('aetheryte', 14) }));
           c.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (!on) turnOn(box); });
           c.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !on) { e.preventDefault(); turnOn(box); } });
           return c;
         }
+        // The Aethernet mark on the chip's corner. Portal's chip row clips what sticks out,
+        // so it floats above the page, pinned to the chip, over whatever is above it.
+        function placeBadge() {
+          const chip = document.getElementById(CHIP);
+          let b = document.getElementById(BADGE);
+          const r = chip && chip.getBoundingClientRect();
+          if (!r || !r.width) { b?.remove(); return; }
+          if (!b) { b = AE.h('span', { id: BADGE, html: AE.icon('aetheryte', 14) }); document.body.append(b); }
+          b.style.left = Math.round(r.left - 7) + 'px';
+          b.style.top = Math.round(r.top - 7) + 'px';
+        }
+        addEventListener('scroll', () => requestAnimationFrame(placeBadge), true);
+        addEventListener('resize', () => requestAnimationFrame(placeBadge));
+
         function unmute() { if (muted) { if (muted.el.isConnected && muted.el.classList.contains(MUTED)) { muted.el.className = muted.cls; muted.el.setAttribute('aria-checked', 'true'); } muted = null; } }
         function turnOn(box) {
           const all = portalChips(box)[0]; // "All": our page is every arrival, not contacted
@@ -293,20 +274,24 @@ AE.crystal({
           on = true; AE.track('fixes:notContacted');
           paint();
         }
-        function turnOff() { on = false; unmute(); paint(); }
+        function turnOff() {
+          if (!on) return;
+          on = false; unmute();
+          AE.portal('refresh', { tags: ['Arrivals'] }); // Portal reloads its own page of arrivals
+          paint();
+        }
 
         function paint() {
           const box = chipsBox();
-          const listBoxes = [...document.querySelectorAll('[data-testid="arrivals-container"]')];
-          const arrivals = /^\/check-in\/arrivals(\/\d+)?\/?$/.test(location.pathname) && box && listBoxes.length;
+          const list = document.querySelector('[data-testid="arrivals-container"]');
+          const here = /^\/check-in\/arrivals(\/\d+)?\/?$/.test(location.pathname) && box && list;
           let chip = document.getElementById(CHIP);
-          if (!arrivals) {
-            chip?.remove(); document.querySelectorAll('#' + LIST).forEach((l) => l.remove());
-            listBoxes.forEach((b) => b.classList.remove(ON));
+          if (!here || !on) document.querySelectorAll('.' + BUSY).forEach((el) => el.classList.remove(BUSY));
+          if (!here) {
+            chip?.remove(); placeBadge();
             if (on) { on = false; unmute(); }
             return;
           }
-          // the chip, right after Portal's "Contacted"
           if (!chip || chip.dataset.on !== String(on) || chip.parentElement !== box) {
             chip?.remove();
             chip = makeChip(box);
@@ -315,11 +300,8 @@ AE.crystal({
               if (after) after.after(chip); else box.append(chip);
             }
           }
-          if (!on) {
-            document.querySelectorAll('#' + LIST).forEach((l) => l.remove());
-            listBoxes.forEach((b) => b.classList.remove(ON));
-            return;
-          }
+          placeBadge();
+          if (!on) return;
           // Portal's selected chip ("All") stays selected underneath; show it as unselected while ours is.
           const sel = portalChips(box).find((c) => c.getAttribute('aria-checked') === 'true');
           const plain = portalChips(box).find((c) => c.getAttribute('aria-checked') !== 'true');
@@ -329,15 +311,13 @@ AE.crystal({
             sel.className = plain.className + ' ' + MUTED;
             sel.setAttribute('aria-checked', 'false');
           }
-          const target = listBoxes[listBoxes.length - 1];
-          document.querySelectorAll('#' + LIST).forEach((l) => { if (l.parentElement !== target) l.remove(); }); // only ever one list
-          listBoxes.forEach((b) => b.classList.toggle(ON, b === target));
-          let list = document.getElementById(LIST);
-          if (!list) { list = AE.h('div', { id: LIST }); target.append(list); }
-          const args = listArgs(), key = keyOf(args);
-          const fresh = loadedKey === key;
+          const args = shown().args, key = keyOf(args);
+          const fresh = loadedKey === key && rows;
           if (!loading && (!fresh || Date.now() - loadedAt > 60000)) refresh(args, key); // new day/filters, or a minute old
-          drawList(list, fresh);
+          if (fresh) showInPortal();
+          list.classList.toggle(BUSY, !fresh); // Portal's unfiltered page, dimmed, until the full list is in
+          const label = chip && chip.querySelector('.textElement');
+          if (label) label.textContent = fresh ? 'Not contacted · ' + rows.length : 'Not contacted · …';
         }
         // Any of Portal's own chips hands the list back to Portal.
         document.addEventListener('click', (e) => {
@@ -346,7 +326,7 @@ AE.crystal({
         }, true);
         let queued = false;
         new MutationObserver((ms) => {
-          if (ms.every((m) => m.target.closest && m.target.closest('#' + LIST + ', #' + CHIP))) return; // our own redraws
+          if (ms.every((m) => m.target.closest && m.target.closest('#' + CHIP + ', #' + BADGE))) return; // our own redraws
           if (!queued) { queued = true; setTimeout(() => { queued = false; try { paint(); } catch (e) { AE.noteError('notContacted', e); } }, 150); }
         }).observe(document.body, { childList: true, subtree: true });
         setInterval(() => { if (on) paint(); }, 30000);
