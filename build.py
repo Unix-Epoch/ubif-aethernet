@@ -95,6 +95,7 @@ DEMO = {
     "status_file": "status-demo.json",
     # Only these crystals (and the files that hold them) go in.
     "crystals": ("cleaningRate", "autoClose", "glamour"),
+    "icons": ("dualcast",),  # extra icons its crystals use (Swiftcast's Dualcast)
     "files": ("00-core.js", "01b-login.js", "02-status.js", "05-settings.js", "10-cleaning-rate.js", "20-auto-close.js", "50-glamour.js"),
     "description": "Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out and page theming for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.",
 }
@@ -207,7 +208,7 @@ def action_icons(root: Path) -> str:
     icons = {
         f.stem: "data:image/jpeg;base64," + base64.b64encode(f.read_bytes()).decode()
         for f in sorted((root / "assets" / "icons").glob("*.jpg"))
-        if not demo or f.stem in DEMO["crystals"]
+        if not demo or f.stem in DEMO["crystals"] or f.stem in DEMO.get("icons", ())
     }
     # FFXIV UI pieces (e.g. the hotbar macro gear), keyed "ui/<name>"
     for f in ([] if demo else sorted((root / "assets" / "ui").glob("*.png"))):

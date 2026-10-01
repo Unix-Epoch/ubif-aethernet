@@ -31,6 +31,7 @@ const AE = (() => {
     crystals: AE_DEMO ? { cleaningRate: true, autoClose: true, glamour: true }
       : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, fixes: true },
     cleaningRate: { target: 75 },
+    autoClose: { dualcast: true }, // Swiftcast: offer Dualcast (all of a device's cleanings at once)
     glamour: { theme: 'portal', custom: [], // custom: [{ id, name, bg, fg, accent, custom: true }]
       login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
     ...(AE_DEMO ? {} : {

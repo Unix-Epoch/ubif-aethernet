@@ -54,6 +54,7 @@ AE.crystal({
       #${PANEL_ID} a:hover { text-decoration:underline; }
       #${PANEL_ID} .sg-soft a { font-weight:400; }
       #${PANEL_ID} .miss { color:var(--aui-status-error,#b91a24); font-weight:600; }
+      #${PANEL_ID} .sg-dual-row { display:inline-flex; align-items:center; gap:5px; height:26px; padding:0 9px; margin:4px 0 0 4px; font-size:12px; }
     `));
 
     async function compute() {
@@ -121,6 +122,14 @@ AE.crystal({
         label + ' · pending</a>' + mk + '</span>';
     }
 
+    // Dualcast: every pending cleaning of one order in one go.
+    const dualBtn = (matched, wo) => {
+      const waiting = matched.filter((c) => c.pending);
+      if (!AE.autoClose || !AE.autoClose.dualcastOn() || waiting.length < 2) return '';
+      return '<button type="button" class="sg-btn sg-dual-row" title="Dualcast: create all ' + waiting.length + ' pending cleanings for this order" data-dual="' +
+        esc(JSON.stringify(waiting.map((c) => ({ arrivalId: c.arrivalId, programId: c.programId })))) + '" data-name="' + esc(nameOf(wo)) + '">' +
+        AE.actionIcon('dualcast', 16) + 'Dualcast</button>';
+    };
     function renderPanel() {
       let p = document.getElementById(PANEL_ID);
       if (!p) { p = h('div', { id: PANEL_ID, class: 'sg sg-card' }); document.body.appendChild(p); }
@@ -137,7 +146,7 @@ AE.crystal({
         ? '<table>' + last.rows.map(({ p: wo, matched }) =>
           '<tr><td><div class="who">' + esc(nameOf(wo) || 'Unknown customer') + '</div>' +
           '<div class="sg-soft"><a href="/repair/workorder/' + wo.workorderId + '">' + wo.workorderId + '</a> · ' + fmtTime(new Date(wo.createdAt)) + '</div></td>' +
-          '<td style="text-align:right">' + (matched.length ? matched.map((c) => chip(c, wo)).join('') : '<span class="miss">No cleanings</span>') + '</td></tr>'
+          '<td style="text-align:right">' + (matched.length ? matched.map((c) => chip(c, wo)).join('') : '<span class="miss">No cleanings</span>') + dualBtn(matched, wo) + '</td></tr>'
         ).join('') + '</table>'
         : '<p class="sg-soft">No Asurion Mobility orders created today yet.</p>';
       const extra = last.unlinked.length
@@ -155,6 +164,13 @@ AE.crystal({
         '<p class="sg-soft" style="margin:10px 0 0"><a href="/reporting/metrics">Past days: Reports → Cleaning rate history</a></p>';
       p.scrollTop = scroll;
       p.querySelector('[data-refresh]').onclick = (e) => { e.stopPropagation(); refresh(); };
+      p.querySelectorAll('.sg-dual-row').forEach((btn) => {
+        btn.onclick = (e) => {
+          e.preventDefault(); e.stopPropagation();
+          p.remove();
+          AE.autoClose.dualcast({ items: JSON.parse(btn.dataset.dual), customerName: btn.dataset.name });
+        };
+      });
       p.querySelectorAll('.sg-mk').forEach((btn) => {
         btn.onclick = (e) => {
           e.preventDefault(); e.stopPropagation();

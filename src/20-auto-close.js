@@ -14,6 +14,13 @@
                 and the run finishes at $0 as before, with a warning.
     checkout    verify cart total is $0 → checkout/complete-order
 
+  Dualcast (Settings → Swiftcast, on by default): when a device has two or
+  more cleaning arrivals waiting (e.g. VZ Device Refresh + VZ Sanitization),
+  one button runs them all back to back — one confirmation, one progress
+  panel, stops at the first problem. Offered in the arrival drawer (next to
+  ⚡, when the same IMEI has another cleaning waiting), in Esuna's list and
+  in Divination's panel.
+
   Deliberately NOT replayed: PUT checkin/customers (re-saves the customer)
   and PUT customer-devices (would blank the shared device's nickname and
   passcode on the parent WO). A Stop button halts before the next call.
@@ -27,13 +34,20 @@ AE.crystal({
     const DEVICE_ISSUES = ['Cleaning'];
     const BIN = ''; // cleanings aren't physical — no bin
     const STEP_DELAY_MS = 400;
-    const BTN_ID = 'sg-autoclose-btn';
+    const BTN_ID = 'sg-autoclose-btn', DUAL_ID = 'sg-dualcast-btn';
+    document.head.append(h('style', null, `
+      .sg-dual { position:relative; padding:0; overflow:visible; background:#1a1c1e; }
+      .sg-dual img, .sg-dual .sg-aicon { border-radius:50%; display:block; margin:auto; }
+      .sg-dual .n { position:absolute; right:-4px; top:-4px; min-width:18px; height:18px; padding:0 4px; border-radius:10000rem; background:#d1344b; color:#fff;
+        font:700 11px/18px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; box-shadow:0 0 0 2px var(--aui-surface, #fff); }
+    `));
     const REFRESH_PROGRAM = 11759, REFRESH_LABOR_SKU = '10156'; // VZ Device Refresh → its labor SKU (commission)
     const LABOR_LINE = { '@odata.type': '#Microsoft.Dynamics.Commerce.Runtime.DataModel.AttributeTextValue', Name: 'LineType', TextValue: 'labor' };
     const cartOf = (r) => { const c = unwrap(r); return (c && (c.cartItems ? c : c.cart)) || c || {}; };
     const skuOf = (i) => String(i.sku || i.itemNumber || i.ItemId || '');
     let laborNote = null; // a warning to show when the run finishes
     let checkedArrivalId = null, isCleaning = false, running = false, stopRequested = false;
+    let siblings = [], thisArrival = null; // Dualcast: other cleaning arrivals waiting for the same device
 
     async function api(method, path, body) {
       const r = await AE.api(method, path, body, { shouldStop: () => stopRequested });
@@ -199,6 +213,40 @@ AE.crystal({
       return false;
     }
 
+    // Dualcast: several cleanings in one go, one after another, in one panel.
+    async function runMany(items, customerName) {
+      if (running || AE.status.blocked('autoClose')) return;
+      if (await storeClosed()) return;
+      AE.track('autoClose:dualcast');
+      running = true; stopRequested = false;
+      const panel = AE.progressPanel('Dualcast · ' + items.length + ' cleanings' + (customerName ? ' for ' + customerName : ''));
+      const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
+      panel.actions(stop);
+      const done = [], notes = [];
+      let woId = null;
+      try {
+        for (const [i, it] of items.entries()) {
+          panel.step((i + 1) + ' of ' + items.length + ': ' + (AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning'));
+          woId = null;
+          const id = await run(it.arrivalId, (t, wid) => { if (wid) woId = wid; panel.step(t); });
+          done.push(id);
+          if (laborNote) notes.push(laborNote);
+          AE.emit('cleaning-changed', { arrivalId: it.arrivalId, woId: id });
+        }
+        panel.finish('ok', 'Done — ' + done.map(woLink).join(' and ') + ' checked in, completed, and sold at $0.' + notes.map((n) => '<br><b>Note:</b> ' + AE.esc(n)).join(''));
+      } catch (e) {
+        const stopped = e instanceof AE.Stopped;
+        const left = woId ? ' ' + woLink(woId) + ' was left at the last step listed above.' : '';
+        panel.finish(stopped ? 'stop' : 'err', (stopped ? 'Stopped.' : AE.esc(e.message)) + left +
+          (done.length ? ' Already finished: ' + done.map(woLink).join(', ') + '.' : '') + ' The rest were not started.');
+      } finally {
+        panel.actions();
+        running = false;
+        AE.emit('cleaning-changed', {});
+        if (done.length) AE.refreshView();
+      }
+    }
+
     async function onClick(arrivalId, checked) {
       if (running || AE.status.blocked('autoClose')) return;
       if (!checked && await storeClosed()) return;
@@ -230,8 +278,25 @@ AE.crystal({
     // Also callable from the cleaning-rate list and the WO cleanings pill.
     // Those are one step removed from the arrival itself, so they always ask
     // first; the drawer button (you're looking at the arrival) doesn't.
+    const dualcastOn = () => !AE.settings.autoClose || AE.settings.autoClose.dualcast !== false;
     AE.autoClose = {
       isRunning: () => running,
+      dualcastOn,
+      // items: [{ arrivalId, programId }] — every cleaning waiting for one device.
+      async dualcast({ items, customerName }) {
+        if (!items || items.length < 2 || AE.status.blocked('autoClose')) return;
+        if (await storeClosed()) return;
+        if (running) { AE.confirm({ title: 'Already running', message: 'Another cleaning is being closed out — wait for it to finish.', confirmLabel: 'OK' }); return; }
+        const ok = await AE.confirm({
+          title: 'Create all ' + items.length + ' cleanings?',
+          message: '<b>' + AE.esc(customerName || 'Customer') + '</b><ul style="margin:6px 0 0;padding-left:20px">' +
+            items.map((it) => '<li>' + AE.esc(AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning') + ' <span class="sg-soft">· arrival ' + it.arrivalId + '</span></li>').join('') + '</ul>' +
+            '<div class="sg-soft" style="margin-top:6px">Each one is checked in, walked to Ready for pickup, and completed as a $0 sale, one after the other.</div>',
+          warning: "Are you sure you'd like to create these cleanings? Only use this if you are the one who repaired this device!",
+          confirmLabel: 'Yes, create ' + items.length + ' cleanings',
+        });
+        if (ok) await runMany(items, customerName);
+      },
       async confirmAndRun({ arrivalId, programId, customerName }) {
         if (AE.status.blocked('autoClose')) return;
         if (await storeClosed()) return; // before asking, so nobody confirms for nothing
@@ -252,13 +317,20 @@ AE.crystal({
     async function tick() {
       const m = location.pathname.match(/^\/check-in\/arrivals\/(\d+)$/);
       const existing = document.getElementById(BTN_ID);
-      if (!m) { existing?.remove(); checkedArrivalId = null; return; }
+      if (!m) { existing?.remove(); document.getElementById(DUAL_ID)?.remove(); checkedArrivalId = null; return; }
       const arrivalId = Number(m[1]);
       if (checkedArrivalId !== arrivalId) {
-        checkedArrivalId = arrivalId; isCleaning = false; existing?.remove();
+        checkedArrivalId = arrivalId; isCleaning = false; siblings = []; thisArrival = null;
+        existing?.remove(); document.getElementById(DUAL_ID)?.remove();
         try {
           const a = unwrap(await AE.api('GET', '/api/arrivals/' + arrivalId));
           isCleaning = !!AE.CLEANING_PROGRAMS[a && a.program && a.program.programId];
+          thisArrival = a;
+          if (isCleaning && dualcastOn()) {
+            const imei = AE.data.imeiOf(a);
+            siblings = imei ? (await AE.data.arrivals()).filter((x) => x.arrivalId !== arrivalId && x.program && AE.CLEANING_PROGRAMS[x.program.programId] && AE.data.imeiOf(x) === imei) : [];
+            if (siblings.length) document.getElementById(BTN_ID)?.remove(); // redraw with Dualcast beside it
+          }
         } catch (_) { checkedArrivalId = null; } // retry next tick
       }
       if (!isCleaning) return;
@@ -279,6 +351,19 @@ AE.crystal({
         onclick: () => onClick(arrivalId),
       });
       footer.insertBefore(b, footer.firstChild);
+      if (siblings.length && dualcastOn()) {
+        const items = [thisArrival, ...siblings].map((x) => ({ arrivalId: x.arrivalId, programId: x.program.programId }));
+        const names = items.map((it) => AE.CLEANING_PROGRAMS[it.programId]).join(' + ');
+        b.style.marginRight = '8px';
+        const d = h('button', {
+          id: DUAL_ID, type: 'button', class: 'sg-fab sg-dual', 'aria-label': 'Dualcast: all cleanings for this device',
+          title: 'Dualcast: create all ' + items.length + ' cleanings waiting for this device (' + names + ') in one go',
+          style: 'margin-right:auto;align-self:center;width:' + size + 'px;height:' + size + 'px',
+          html: AE.actionIcon('dualcast', size - 8) + '<span class="n">' + items.length + '</span>',
+          onclick: () => AE.autoClose.dualcast({ items, customerName: AE.data.nameOf(thisArrival) }),
+        });
+        b.after(d);
+      }
     }
     AE.every(1000, tick);
   },

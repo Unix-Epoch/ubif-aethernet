@@ -120,9 +120,20 @@ AE.crystal({
         return '<div class="row"><div><b>' + label + '</b><div class="sg-soft"><a href="/repair/workorder/' + c.workorderId + '">WO ' + c.workorderId + '</a> · ' +
           esc(c.workorderStatusName || '') + '</div></div><span style="color:var(--aui-status-success,#136d31);font-weight:700">✓</span></div>';
       }).join('');
+      const waiting = state.matched.filter((c) => c.pending);
+      const dual = AE.autoClose && AE.autoClose.dualcastOn() && waiting.length >= 2
+        ? '<button type="button" class="sg-btn sg-primary" data-dualcast style="width:100%;justify-content:center;margin:0 0 8px">' + AE.actionIcon('dualcast', 18) +
+          'Dualcast · create all ' + waiting.length + '</button>'
+        : '';
       pop.innerHTML = '<b style="font-size:16px">Cleanings for this device</b>' +
-        '<div class="sg-soft" style="margin:2px 0 8px">Matched to this WO by device IMEI</div>' +
+        '<div class="sg-soft" style="margin:2px 0 8px">Matched to this WO by device IMEI</div>' + dual +
         (rows || '<p class="sg-soft">No cleanings found for this device (open, recently closed, or waiting in Arrivals).</p>');
+      const db = pop.querySelector('[data-dualcast]');
+      if (db) db.onclick = (e) => {
+        e.stopPropagation();
+        pop.remove();
+        AE.autoClose.dualcast({ items: waiting.map((c) => ({ arrivalId: c.arrivalId, programId: c.programId })), customerName: AE.data.nameOf(state.matched[0]) });
+      };
       pop.querySelectorAll('button[data-arrival]').forEach((b) => {
         b.onclick = (e) => {
           e.stopPropagation();
