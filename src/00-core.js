@@ -556,8 +556,30 @@ const AE = (() => {
   // --------------------------------------------------- crystal registry
   const crystals = [];
   function crystal(def) { crystals.push(def); }
+  /*
+    "A text went to a customer from this WO": event text-sent { woId } for
+    any crystal (Recitation logs it, Auto-Waymark follows up), so each works
+    with the other switched off. Portal keeps its own fetch, so the send is
+    seen in the browser's network log (POST …/messages/v1/send), not by
+    wrapping fetch. Sends that failed (status 4xx/5xx, where the browser
+    reports it) are skipped; texts sent outside a WO page carry woId null.
+  */
+  const TEXT_SEND_RE = /\/messages\/v1\/send(?:[?#]|$)/;
+  function watchTexts() {
+    if (typeof PerformanceObserver === 'undefined') return;
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        if (!TEXT_SEND_RE.test(e.name) || (e.responseStatus && e.responseStatus >= 400)) continue;
+        const m = location.pathname.match(/^\/repair\/workorder\/(\d+)/);
+        emit('text-sent', { woId: m ? m[1] : null });
+        break;
+      }
+    }).observe({ type: 'resource', buffered: false });
+  }
+
   function start() {
     ensureCss();
+    if (AE_ON_PORTAL) watchTexts();
     // Which Aethernet builds are running on this page (the dev build warns if both are).
     const root = document.documentElement;
     root.dataset.aethernet = ((root.dataset.aethernet || '') + ' ' + (AE_DEV ? 'dev' : 'public')).trim();
