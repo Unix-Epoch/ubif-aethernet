@@ -35,7 +35,7 @@ const AE = (() => {
       login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
     ...(AE_DEMO ? {} : {
       printLabels: { delayMs: 900 },
-      fixes: { logoLink: true, scanNav: true }, // Master's Mend: one switch per fix (src/58-fixes.js)
+      fixes: { logoLink: true, scanNav: true, woSort: true }, // Master's Mend: one switch per fix (src/58-fixes.js)
       // Blank = use the logged-in user / current store automatically.
       galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
     }),
@@ -85,29 +85,34 @@ const AE = (() => {
   const unwrap = (j) => (j && j.data && !Array.isArray(j.data) ? j.data : j);
 
   /*
-    Refresh what's on screen without reloading the page, after a crystal
-    changes Portal data behind its back (a note, a nickname, a new WO).
-    Portal loads its data with Redux Toolkit Query: every query is cached
-    under tags ("Notes", "Workorder", "Arrivals"…), and invalidating a tag
-    refetches the queries on screen that use it, exactly as Portal does
-    after its own edits. A userscript can't reach React or Redux, so a small
-    script in the page finds each app's Redux store through React's fiber
-    tree (Portal is several apps, each with its own store) and dispatches
-    `<api>/invalidateTags` for the tags currently in use (or just `tags`).
-    Resolves to { stores, apis, tags } — stores: 0 means nothing was found.
+    Portal's state, from inside the page. Portal is several React apps
+    (single-spa), each with its own Redux store; a userscript can't reach
+    React or Redux, so a small script in the page finds the stores through
+    React's fiber trees (cached a few seconds) and answers AE.portal(op, args)
+    synchronously over DOM events (JSON in, JSON out):
+      - refresh { tags? }       → invalidate Portal's RTK Query tags in use
+                                  (or just `tags`): what's on screen refetches,
+                                  as after Portal's own edits. { stores, apis, tags }
+      - select { slice, key }   → state[slice][key] from the store that has it
+      - query { endpoint, list, field } → the newest loaded result of an RTK
+                                  Query endpoint: `field` of each item in data[list]
+      - dispatch { slice, action } → the action, to the stores that have `slice`
   */
-  const REFRESH_EVENT = 'aethernet:refresh-view';
-  function refreshHook() {
-    if (document.getElementById('ae-refresh-hook')) return;
+  const BRIDGE_EVENT = 'aethernet:portal';
+  function bridgeHook() {
+    if (document.getElementById('ae-portal-hook')) return;
     // A plain string: it runs in the page, outside Aethernet (see Glamour).
     const code = [
       '(function (evt) {',
       '  var key = function (n, p) { return Object.keys(n).find(function (k) { return k.indexOf(p) === 0; }); };',
+      '  var cache = null, cachedAt = 0;',
       '  function stores() {',
+      '    if (cache && Date.now() - cachedAt < 5000) return cache;',
       '    var found = [];',
       '    document.querySelectorAll("*").forEach(function (el) {',
       '      var k = key(el, "__reactContainer$"); if (!k) return;',
-      '      var stack = [el[k]], seen = 0;',
+      // The container keeps the root fiber from creation; the live tree hangs off its FiberRoot.current.
+      '      var root = el[k], stack = [root && root.stateNode && root.stateNode.current || root], seen = 0;',
       '      while (stack.length && seen++ < 20000) {',
       '        var f = stack.pop(); if (!f) continue;',
       '        var p = f.memoizedProps, s = p && (p.store || (p.value && p.value.store));',
@@ -116,12 +121,12 @@ const AE = (() => {
       '        if (f.child) stack.push(f.child);',
       '      }',
       '    });',
+      '    cache = found; cachedAt = Date.now();',
       '    return found;',
       '  }',
-      '  document.addEventListener(evt, function (e) {',
-      '    var want = null, out = { stores: 0, apis: 0, tags: [] };',
-      '    try { want = JSON.parse(e.detail || "{}").tags || null; } catch (_) {}',
-      '    try {',
+      '  var ops = {',
+      '    refresh: function (a) {',
+      '      var want = a.tags || null, out = { stores: 0, apis: 0, tags: [] };',
       '      stores().forEach(function (store) {',
       '        out.stores++;',
       '        var state = store.getState() || {};',
@@ -136,30 +141,68 @@ const AE = (() => {
       '          types.forEach(function (t) { if (out.tags.indexOf(t) < 0) out.tags.push(t); });',
       '        });',
       '      });',
-      '    } catch (err) { out.error = String(err && err.message || err); }',
+      '      return out;',
+      '    },',
+      '    select: function (a) {',
+      '      var st = stores().map(function (s) { return s.getState() || {}; }).find(function (st) { return st[a.slice]; });',
+      '      return { found: !!st, value: st ? st[a.slice][a.key] : null };',
+      '    },',
+      '    query: function (a) {',
+      // The newest loaded result of an RTK Query endpoint: one field from each item of a list in it.
+      '      var best = null;',
+      '      stores().forEach(function (s) {',
+      '        var st = s.getState() || {};',
+      '        Object.keys(st).forEach(function (k) {',
+      '          var q = st[k] && st[k].queries; if (!q || typeof q !== "object") return;',
+      '          Object.keys(q).forEach(function (id) {',
+      '            var e = q[id];',
+      '            if (e && e.endpointName === a.endpoint && e.status === "fulfilled" && e.data && (!best || e.fulfilledTimeStamp > best.fulfilledTimeStamp)) best = e;',
+      '          });',
+      '        });',
+      '      });',
+      '      var list = best && best.data && best.data[a.list];',
+      '      return { found: !!best, at: best ? best.fulfilledTimeStamp : 0, items: Array.isArray(list) ? list.map(function (x) { return x && x[a.field]; }) : null };',
+      '    },',
+      '    dispatch: function (a) {',
+      '      var n = 0;',
+      '      stores().forEach(function (s) { if ((s.getState() || {})[a.slice]) { s.dispatch(a.action); n++; } });',
+      '      return { stores: n };',
+      '    },',
+      '  };',
+      '  document.addEventListener(evt, function (e) {',
+      '    var out;',
+      '    try { var req = JSON.parse(e.detail); out = ops[req.op](req.args || {}); }',
+      '    catch (err) { out = { error: String(err && err.message || err) }; }',
       '    document.dispatchEvent(new CustomEvent(evt + ":done", { detail: JSON.stringify(out) }));',
       '  });',
-      '})(' + JSON.stringify(REFRESH_EVENT) + ');',
+      '})(' + JSON.stringify(BRIDGE_EVENT) + ');',
     ].join('\n');
     const s = document.createElement('script');
-    s.id = 'ae-refresh-hook';
+    s.id = 'ae-portal-hook';
     s.textContent = code;
     (document.head || document.documentElement).append(s);
   }
+  function portal(op, args) {
+    let result = { error: 'no answer' };
+    const done = (e) => { try { result = JSON.parse(e.detail); } catch (_) {} };
+    try {
+      bridgeHook();
+      document.addEventListener(BRIDGE_EVENT + ':done', done, { once: true });
+      document.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: JSON.stringify({ op, args }) })); // handled synchronously
+    } catch (e) { result = { error: e.message }; }
+    document.removeEventListener(BRIDGE_EVENT + ':done', done);
+    return result;
+  }
+
+  // Refresh what's on screen without reloading, after a crystal changes
+  // Portal data behind its back (a note, a nickname, a new WO).
   let refreshing = null;
   function refreshView(tags) {
     if (refreshing) return refreshing; // several changes in a row → one refresh
     refreshing = new Promise((resolve) => {
       setTimeout(() => {
         refreshing = null;
-        let result = { stores: 0, apis: 0, tags: [] };
-        const done = (e) => { try { result = JSON.parse(e.detail); } catch (_) {} };
-        try {
-          refreshHook();
-          document.addEventListener(REFRESH_EVENT + ':done', done, { once: true });
-          document.dispatchEvent(new CustomEvent(REFRESH_EVENT, { detail: JSON.stringify({ tags: tags || null }) })); // handled synchronously
-        } catch (e) { result.error = e.message; }
-        document.removeEventListener(REFRESH_EVENT + ':done', done);
+        const result = portal('refresh', { tags: tags || null });
         if (!result.stores || result.error) console.warn('[' + AE_NAME + '] in-place refresh found nothing to refresh', result);
         resolve(result);
       }, 250);
@@ -538,7 +581,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
-    api, unwrap, Stopped, refreshView, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, portal, refreshView, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,

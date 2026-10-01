@@ -259,7 +259,13 @@ AE.glamour = (() => {
     const fill = h('input', { type: 'checkbox', checked: !!L.fill, onchange: (e) => { L.fill = e.target.checked; paint(); repaint(); } });
     const mark = h('input', { type: 'checkbox', checked: L.mark !== false, onchange: (e) => { L.mark = e.target.checked; repaint(); } });
     const reset = h('button', { type: 'button', class: 'sg-btn', onclick: () => { L.image = ''; status.textContent = "Back to Portal's picture once you save."; paint(); repaint(); } }, "Portal's picture");
+    // Recommended sizes: Portal's own photo is a 768 × 871 cut-out PNG; the panel
+    // is the right 60% of the window, full height (about square: 1152 × 1080 on 1080p).
+    const tip = h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' });
     function paint() {
+      tip.textContent = L.fill
+        ? 'Best fit: about 1400 × 1300 px. The panel\'s shape changes with the window, so the edges may be trimmed; keep the subject in the middle.'
+        : 'Best fit: 768 × 871 px (portrait), a PNG with a transparent background, like Portal\'s own photo. It stands at the bottom of the purple panel.';
       thumb.style.backgroundImage = L.image ? 'url("' + L.image + '")' + (L.fill ? '' : ', linear-gradient(45deg, #8223d2, #ae4fd2)') : '';
       thumb.style.backgroundSize = L.image && !L.fill ? 'contain, cover' : 'cover';
       thumb.style.backgroundPosition = L.image && !L.fill ? 'center bottom, center' : 'center';
@@ -276,6 +282,7 @@ AE.glamour = (() => {
           h('div', { class: 'btns' }, h('button', { type: 'button', class: 'sg-btn', onclick: () => file.click() }, 'Choose picture…'), reset, file),
           status,
           h('label', { class: 'chk' }, fill, 'Fill the whole purple panel'),
+          tip,
           h('label', { class: 'chk' }, mark, 'Aethernet mark in the bottom-left corner'))));
   }
 
