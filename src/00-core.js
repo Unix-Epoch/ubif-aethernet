@@ -23,7 +23,9 @@ const AE_BUILD_TIME = '__BUILD_TIME__';       // ISO time of the build
 const AE_BUILD_COMMIT = '__BUILD_COMMIT__';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = '__INSTALL_URL__';
 const AE_READABLE_URL = '__READABLE_URL__'; // same build, unminified     // where installs update from
-const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
+// The Portal sandbox (sandbox/server.py: Portal's real app on fake data) — dev builds only.
+const AE_SANDBOX = AE_DEV && location.host === 'localhost:8790';
+const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net' || AE_SANDBOX;
 
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
@@ -639,7 +641,7 @@ const AE = (() => {
     root.dataset.aethernet = ((root.dataset.aethernet || '') + ' ' + (AE_DEV ? 'dev' : 'public')).trim();
     for (const t of crystals) {
       if (!settings.crystals[t.id]) continue;
-      if (t.sites && !t.sites.includes(location.hostname)) continue;
+      if (t.sites && !t.sites.includes(AE_SANDBOX ? 'portal.ubreakifix.net' : location.hostname)) continue;
       // Paused remotely by an Aethernet notice (status.json); last-known copy.
       if (AE.status && AE.status.paused(t.id)) { console.info('[' + AE_NAME + '] ' + t.name + ' is paused by an Aethernet notice'); continue; }
       try { t.run(); } catch (e) { noteError(t.name + ' start', e); console.error('[' + AE_NAME + '] ' + t.name + ' failed to start', e); }

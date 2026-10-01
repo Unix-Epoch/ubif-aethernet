@@ -56,7 +56,7 @@
     if (!t) { t = h('button', { id: 'sg-dev-tab', class: 'sg', type: 'button', onclick: open }); document.body.appendChild(t); }
     const s = shifted();
     t.classList.toggle('shifted', s);
-    t.textContent = s ? 'DEV · CLOCK' : 'DEV';
+    t.textContent = (AE_SANDBOX ? 'SANDBOX' : 'DEV') + (s ? ' · CLOCK' : '');
     t.title = AE_NAME + ' v' + AE_VERSION + ' — dev tools' + (s ? ' (clock shifted to ' + AE.nowDate().toLocaleString() + ')' : '');
   }
   AE.every(2000, renderTab);

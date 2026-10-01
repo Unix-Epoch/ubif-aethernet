@@ -247,7 +247,7 @@ AE.crystal({
     }
     // Make sure every day in [from, to) before today is known; the last two are always redone.
     async function loadHistory(from) {
-      if (!store) store = String((await AE.profile()).storeId || '');
+      if (!store) store = AE_SANDBOX ? 'sandbox' : String((await AE.profile()).storeId || ''); // sandbox numbers never mix with a real store's
       const today = dayStart(new Date());
       const cache = histCache(), need = [];
       for (let d = new Date(from); d < today; d = addDays(d, 1)) {

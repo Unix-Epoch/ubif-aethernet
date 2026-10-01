@@ -24,7 +24,7 @@ AE.feedback = (() => {
   const API = '__WAYMARK_API__';
   const KEY = '__WAYMARK_KEY__';
   const ADMIN_KEY_GM = 'ae_admin_key';
-  const configured = () => /^(https:\/\/|http:\/\/localhost[:/])/.test(API);
+  const configured = () => !AE_SANDBOX && /^(https:\/\/|http:\/\/localhost[:/])/.test(API); // off in the sandbox: fake data stays local
 
   async function call(method, path, body, adminKey) {
     if (!configured()) throw new Error('The Aethernet service isn\'t set up');

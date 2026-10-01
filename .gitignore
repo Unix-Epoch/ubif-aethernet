@@ -2,3 +2,6 @@
 brag-output*/
 dist-dev/
 dist-demo/
+sandbox/fixtures/
+sandbox/state.json
+sandbox/.cache/

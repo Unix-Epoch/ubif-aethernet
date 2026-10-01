@@ -132,7 +132,7 @@ def header(version: str) -> str:
 // @version      {version}
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
-// @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
+// @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*{chr(10) + "// @match        http://localhost:8790/*" if dev else ""}
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue

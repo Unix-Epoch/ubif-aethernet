@@ -63,7 +63,7 @@ AE.gate = (() => {
   AE.hooks.previewLockedOut = () => { GM_setValue(PREVIEW_KEY, true); location.reload(); };
 
   return async function gate() {
-    if (!AE_ON_PORTAL) return boot();
+    if (!AE_ON_PORTAL || AE_SANDBOX) return boot(); // the sandbox has no real store to check (and never calls the Worker)
     let p;
     try { p = await AE.profile(); } catch (_) { p = null; }
     if (!p || !p.storeId) { setTimeout(gate, 30000); return; } // signed out (login page): check again later

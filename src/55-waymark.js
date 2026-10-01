@@ -47,7 +47,7 @@ AE.waymark = (() => {
   const EDITOR_ROLES = ['Store Manager - Corp', 'Store Manager - Franchisee', 'District Manager', 'District Manager - Franchisee', 'Store Owner - Franchisee'];
   const COLORS = { purple: 'var(--aui-primary, #8223d2)', blue: '#4a68f9', teal: '#1592a8', green: '#2f9e5b', lime: '#6f9a12', yellow: '#b38f00', orange: '#d9670f', red: '#d1344b', grey: 'var(--aui-on-surface-soft, #5d5e61)' };
   const TTL = 60 * 1000;
-  const configured = () => /^(https:\/\/|http:\/\/localhost[:/])/.test(API); // localhost = a wrangler dev test build
+  const configured = () => !AE_SANDBOX && /^(https:\/\/|http:\/\/localhost[:/])/.test(API); // localhost = a wrangler dev test build; off in the Portal sandbox
 
   let cache = null, cacheAt = 0, inflight = null;
   let roleInfo = null;
