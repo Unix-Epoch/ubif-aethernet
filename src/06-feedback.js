@@ -125,6 +125,7 @@ AE.feedback = (() => {
     return {
       crystals: Object.entries(AE.settings.crystals).filter(([, on]) => on).map(([id]) => id),
       errors: AE.recentErrors.slice(-5),
+      pageErrors: AE.pageErrors.slice(-5), // Portal's own script errors
       screen: innerWidth + 'x' + innerHeight,
       theme: document.body.classList.contains('asurion-dark') ? 'dark' : 'light',
     };

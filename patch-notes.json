@@ -2,7 +2,8 @@
   {
     "version": "2.18.0",
     "notes": [
-      "**Divination**: a **Cleaning rate history** card on the Reports page shows your cleaning percentage over the last 7, 30 or 90 days, this month or last month: the overall rate, how many days hit the target, a bar for each day and a day-by-day table."
+      "**Divination**: a **Cleaning rate history** card on the Reports page shows your cleaning percentage over the last 7, 30 or 90 days, this month or last month: the overall rate, how many days hit the target, a bar for each day and a day-by-day table.",
+      "**Master's Mend**: if Portal's Reports page gets stuck loading (it never gives up on a failed request), Aethernet tries it again for you and notes what went wrong, so a bug report can include it."
     ],
     "updated": [
       "cleaningRate"

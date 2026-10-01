@@ -35,7 +35,7 @@ const AE = (() => {
       login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
     ...(AE_DEMO ? {} : {
       printLabels: { delayMs: 900 },
-      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all' }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
+      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all', reportsRetry: true }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
       // Blank = use the logged-in user / current store automatically.
       galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
     }),
@@ -101,6 +101,8 @@ const AE = (() => {
       - patch { endpoint, patches } → change the newest loaded result of an RTK
                                   Query endpoint in place (immer patches on its data),
                                   as Portal's own patchQueryData does; the screen follows
+      - status { endpoint }     → how the newest request of an endpoint went
+                                  (status, error, hasData), or found: false
       - dispatch { slice, action } → the action, to the stores that have `slice`
   */
   const BRIDGE_EVENT = 'aethernet:portal';
@@ -187,6 +189,23 @@ const AE = (() => {
       '      if (!best) return { ok: false };',
       '      best.s.dispatch({ type: best.k + "/queries/queryResultPatched", payload: { queryCacheKey: best.id, patches: a.patches } });',
       '      return { ok: true };',
+      '    },',
+      '    status: function (a) {',
+      // How the newest request of an endpoint went, whatever happened to it.
+      '      var best = null;',
+      '      stores().forEach(function (s) {',
+      '        var st = s.getState() || {};',
+      '        Object.keys(st).forEach(function (k) {',
+      '          var q = st[k] && st[k].queries; if (!q || typeof q !== "object") return;',
+      '          Object.keys(q).forEach(function (id) {',
+      '            var e = q[id];',
+      '            if (e && e.endpointName === a.endpoint && (!best || (e.startedTimeStamp || 0) > (best.startedTimeStamp || 0))) best = e;',
+      '          });',
+      '        });',
+      '      });',
+      '      if (!best) return { found: false, stores: stores().length };',
+      '      var err = best.error ? JSON.stringify(best.error).slice(0, 300) : null;',
+      '      return { found: true, status: best.status, error: err, hasData: best.data !== undefined, started: best.startedTimeStamp || null, done: best.fulfilledTimeStamp || null };',
       '    },',
       '    dispatch: function (a) {',
       '      var n = 0;',
@@ -551,6 +570,15 @@ const AE = (() => {
     recentErrors.push({ at: new Date().toISOString(), where, message: String((e && e.message) || e).slice(0, 300) });
     if (recentErrors.length > 10) recentErrors.shift();
   }
+  // Portal's own script errors (not Aethernet's), for bug reports: e.g. a page that
+  // never finishes loading usually threw one of these.
+  const pageErrors = [];
+  const notePageError = (message, where) => {
+    pageErrors.push({ at: new Date().toISOString(), where: String(where || '').slice(0, 160), message: String(message || '').slice(0, 300) });
+    if (pageErrors.length > 10) pageErrors.shift();
+  };
+  addEventListener('error', (e) => notePageError(e.message || (e.error && e.error.message), (e.filename || '').replace(/^https?:\/\/[^/]+/, '') + ':' + (e.lineno || '')));
+  addEventListener('unhandledrejection', (e) => notePageError('Unhandled: ' + ((e.reason && (e.reason.message || e.reason.status)) || e.reason), ''));
 
   /*
     Usage counts ("who uses what"): AE.track('autoClose:run') adds 1 to today's
@@ -630,7 +658,7 @@ const AE = (() => {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
     api, unwrap, Stopped, portal, refreshView, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
-    confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, USAGE_KEY, localDay,
+    confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close crystal when it's enabled
   };
