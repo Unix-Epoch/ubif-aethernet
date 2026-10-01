@@ -7,6 +7,11 @@
                 update-service-job-status → PUT checkin/workorder   (status 8)
     status walk PATCH status 9, then PUT workorder 10 → 11 → 12 → 13,
                 each followed by the same auto-note the UI posts
+    labor       VZ Device Refresh (program 11759) only: labor SKU 10156 into the
+                cart (Portal's own POST order/cart/item/add, LineType labor),
+                which earns the tech commission. If it ever leaves anything to
+                pay, it's taken back out before checkout (order/cart/item/remove)
+                and the run finishes at $0 as before, with a warning.
     checkout    verify cart total is $0 → checkout/complete-order
 
   Deliberately NOT replayed: PUT checkin/customers (re-saves the customer)
@@ -23,6 +28,11 @@ AE.crystal({
     const BIN = ''; // cleanings aren't physical — no bin
     const STEP_DELAY_MS = 400;
     const BTN_ID = 'sg-autoclose-btn';
+    const REFRESH_PROGRAM = 11759, REFRESH_LABOR_SKU = '10156'; // VZ Device Refresh → its labor SKU (commission)
+    const LABOR_LINE = { '@odata.type': '#Microsoft.Dynamics.Commerce.Runtime.DataModel.AttributeTextValue', Name: 'LineType', TextValue: 'labor' };
+    const cartOf = (r) => { const c = unwrap(r); return (c && (c.cartItems ? c : c.cart)) || c || {}; };
+    const skuOf = (i) => String(i.sku || i.itemNumber || i.ItemId || '');
+    let laborNote = null; // a warning to show when the run finishes
     let checkedArrivalId = null, isCleaning = false, running = false, stopRequested = false;
 
     async function api(method, path, body) {
@@ -80,6 +90,30 @@ AE.crystal({
       });
       log('Checked in');
 
+      // VZ Device Refresh: add the refresh labor SKU (commission). Never stops the run.
+      laborNote = null;
+      let laborAdded = false;
+      if (Number(programId) === REFRESH_PROGRAM) {
+        try {
+          const w = await getWoForCart(woId);
+          const cart = cartOf(await api('GET', '/api/get-cart/' + encodeURIComponent(w.csuCartId) + '?includePartStatus=true'));
+          if ((cart.cartItems || []).some((i) => skuOf(i) === REFRESH_LABOR_SKU)) log('Refresh labor ' + REFRESH_LABOR_SKU + ' already in the cart');
+          else {
+            await api('POST', '/api/order/cart/item/add', {
+              cartId: w.csuCartId, programId: REFRESH_PROGRAM, workorderId: woId, saveCartToSalesOrder: true,
+              cartLines: [{ ItemId: REFRESH_LABOR_SKU, Quantity: 1, AttributeValues: [LABOR_LINE] }],
+            });
+            laborAdded = true;
+            AE.track('autoClose:refreshLabor');
+            log('Added refresh labor ' + REFRESH_LABOR_SKU);
+          }
+        } catch (e) {
+          if (e instanceof AE.Stopped) throw e;
+          laborNote = "Couldn't add refresh labor " + REFRESH_LABOR_SKU + ' (' + (e.message || e) + '), so this cleaning was completed without it.';
+          log('Refresh labor not added');
+        }
+      }
+
       // 3. Status walk. Notes mirror the UI exactly (incl. its double space
       //    in "completed diagnostics" and which steps use the batch endpoint).
       const note = (noteTag, noteText, batch) => {
@@ -119,8 +153,20 @@ AE.crystal({
       // 4. Checkout — only if the cart really nets to $0.
       await api('GET', '/api/checkout/workorder/' + woId);
       const wo = await getWo();
-      const cart = unwrap(await api('GET', '/api/get-cart/' + encodeURIComponent(wo.csuCartId) + '?includePartStatus=true'));
-      const pay = (cart && (cart.payment || (cart.cart && cart.cart.payment))) || null;
+      const readCart = async () => unwrap(await api('GET', '/api/get-cart/' + encodeURIComponent(wo.csuCartId) + '?includePartStatus=true'));
+      const payOf = (c) => (c && (c.payment || (c.cart && c.cart.payment))) || null;
+      let cart = await readCart();
+      let pay = payOf(cart);
+      // The refresh labor is meant to be free to the customer; if it isn't, take it back out.
+      if (laborAdded && pay && Number(pay.total) !== 0) {
+        const line = (cartOf(cart).cartItems || []).find((i) => skuOf(i) === REFRESH_LABOR_SKU);
+        if (line) {
+          await api('POST', '/api/order/cart/item/remove', { cartId: wo.csuCartId, cartLines: [line.lineId], itemNumbers: [REFRESH_LABOR_SKU], workorderId: woId });
+          laborNote = 'Refresh labor ' + REFRESH_LABOR_SKU + ' would have charged $' + pay.total + ', so it was taken back out and the sale stayed $0.';
+          log('Refresh labor removed (it added a charge)');
+          cart = await readCart(); pay = payOf(cart);
+        }
+      }
       const total = pay ? Number(pay.total) : NaN;
       if (total !== 0) throw new Error('Cart total is ' + (pay ? '$' + pay.total : 'unknown') + ', not $0 — stopped before checkout. Finish at Ready for pickup by hand.');
       await api('POST', '/api/workorder/demographic/customer-data', { customerId, clientId });
@@ -129,6 +175,10 @@ AE.crystal({
       return woId;
     }
 
+    async function getWoForCart(woId) {
+      const r = await api('GET', '/api/workorder/' + woId);
+      return (r && r.workorder) || unwrap(r) || {};
+    }
     const woLink = (id) => '<a href="/repair/workorder/' + id + '">WO ' + id + '</a>';
 
     /*
@@ -163,7 +213,7 @@ AE.crystal({
       if (btn) btn.disabled = true;
       try {
         const id = await run(arrivalId, log);
-        panel.finish('ok', 'Done — ' + woLink(id) + ' checked in, completed, and sold at $0.');
+        panel.finish('ok', 'Done — ' + woLink(id) + ' checked in, completed, and sold at $0.' + (laborNote ? '<br><b>Note:</b> ' + AE.esc(laborNote) : ''));
       } catch (e) {
         const where = woId ? ' ' + woLink(woId) + ' was left at the last step listed above.' : ' No work order was created.';
         const stopped = e instanceof AE.Stopped;
