@@ -1,5 +1,14 @@
 [
   {
+    "version": "2.18.0",
+    "notes": [
+      "**Divination**: a **Cleaning rate history** card on the Reports page shows your cleaning percentage over the last 7, 30 or 90 days, this month or last month: the overall rate, how many days hit the target, a bar for each day and a day-by-day table."
+    ],
+    "updated": [
+      "cleaningRate"
+    ]
+  },
+  {
     "version": "2.17.1",
     "notes": [
       "Patch notes: thank-yous and credits now get their own highlight, so the people who help build Aethernet stand out."

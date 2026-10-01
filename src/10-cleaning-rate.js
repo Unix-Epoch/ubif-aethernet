@@ -11,6 +11,15 @@
   been checked in yet (still in Arrivals) shows as "pending" and counts. Its
   ⚡ runs the cleaning auto-close (after a confirmation) when that crystal is on.
   See AE.data in core for how WOs and arrivals are fetched and matched.
+
+  History (Reports page, /reporting/metrics): a "Cleaning rate history" card
+  under Portal's KPIs — last 7 / 30 / 90 days, this month, last month — with
+  the overall rate (all cleanings ÷ all AM orders in the range), days at
+  target, a bar per day and a table. Each past day is worked out the same
+  way as today (that day's AM orders, cleaning WOs created that day; pending
+  arrivals only count for today) from Portal's own work-order lists, and
+  cached in this browser per store (ae_rate_history): a finished day doesn't
+  change, so only missing days and the last two are ever reloaded.
 */
 AE.crystal({
   id: 'cleaningRate',
@@ -142,7 +151,8 @@ AE.crystal({
         '<div class="sg-soft" style="margin-top:4px">' + last.linked + ' cleanings' + (last.pending ? ' (' + last.pending + ' pending in Arrivals)' : '') +
         ' ÷ ' + last.parents + ' Asurion Mobility orders created today · target ' + TARGET +
         '%, ideally 100% · updated ' + fmtTime(last.at) + (lastError ? '<br><span class="miss">Last refresh failed: ' + esc(lastError) + '</span>' : '') + '</div>' +
-        table + extra;
+        table + extra +
+        '<p class="sg-soft" style="margin:10px 0 0"><a href="/reporting/metrics">Past days: Reports → Cleaning rate history</a></p>';
       p.scrollTop = scroll;
       p.querySelector('[data-refresh]').onclick = (e) => { e.stopPropagation(); refresh(); };
       p.querySelectorAll('.sg-mk').forEach((btn) => {
@@ -172,8 +182,170 @@ AE.crystal({
       finally {
         loading = false; renderBadge();
         if (document.getElementById(PANEL_ID)) renderPanel();
+        if (document.getElementById(HIST_ID) && !histBusy) showHistory();
       }
     }
+
+    // ------------------------------------------------------------ history (Reports page)
+    const HIST_KEY = 'ae_rate_history', HIST_ID = 'sg-rate-history', DAY = 86400000;
+    const dayStart = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+    const keyOf = (d) => { const x = new Date(d); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
+    const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+    const RANGES = [
+      ['7', 'Last 7 days', () => [addDays(dayStart(new Date()), -6), dayStart(new Date())]],
+      ['30', 'Last 30 days', () => [addDays(dayStart(new Date()), -29), dayStart(new Date())]],
+      ['month', 'This month', () => { const t = dayStart(new Date()); return [new Date(t.getFullYear(), t.getMonth(), 1), t]; }],
+      ['lastMonth', 'Last month', () => { const t = new Date(); return [new Date(t.getFullYear(), t.getMonth() - 1, 1), new Date(t.getFullYear(), t.getMonth(), 0)]; }],
+      ['90', 'Last 90 days', () => [addDays(dayStart(new Date()), -89), dayStart(new Date())]],
+    ];
+    let histRange = '7', histBusy = null, histErr = null, store = null;
+    const histLoadedAt = {}; // range → when its days were last brought up to date (redone every 10 minutes at most)
+
+    // One past day, exactly like compute() but without pending arrivals.
+    function tallyDays(wos, keys) {
+      const out = {};
+      for (const k of keys) {
+        const start = new Date(k + 'T00:00:00').getTime(), end = start + DAY;
+        const inDay = (r) => { const t = Date.parse(r.createdAt); return t >= start && t < end; };
+        const parents = wos.filter((r) => r.programId === AE.PARENT_PROGRAM_ID && inDay(r)).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+        const cleanings = AE.data.cleanings(wos, [], inDay);
+        const used = new Set();
+        let linked = 0;
+        for (const p of parents) {
+          const m = cleanings.filter((c) => !used.has(c.key) && AE.data.belongs(c, p));
+          m.forEach((c) => used.add(c.key));
+          linked += m.length;
+        }
+        out[k] = [parents.length, linked];
+      }
+      return out;
+    }
+    const histCache = () => { const all = GM_getValue(HIST_KEY, {}); return (store && all[store]) || {}; };
+    function saveHist(days) {
+      const all = GM_getValue(HIST_KEY, {});
+      const mine = Object.assign({}, all[store] || {}, days);
+      const cutoff = keyOf(addDays(new Date(), -400)); // a little over a year
+      for (const k of Object.keys(mine)) if (k < cutoff) delete mine[k];
+      all[store] = mine;
+      GM_setValue(HIST_KEY, all);
+    }
+    // Make sure every day in [from, to) before today is known; the last two are always redone.
+    async function loadHistory(from) {
+      if (!store) store = String((await AE.profile()).storeId || '');
+      const today = dayStart(new Date());
+      const cache = histCache(), need = [];
+      for (let d = new Date(from); d < today; d = addDays(d, 1)) {
+        const k = keyOf(d);
+        if (!cache[k] || d >= addDays(today, -2)) need.push(k);
+      }
+      if (!need.length) return;
+      const since = new Date(need[0] + 'T00:00:00').getTime();
+      const wos = await AE.data.workorders(since, 40); // closed lists newest first; stops past `since`
+      saveHist(tallyDays(wos, need));
+    }
+
+    const pctOf = (parents, linked) => (parents ? Math.round((linked / parents) * 100) : null);
+    const dayLabel = (k, opts) => new Date(k + 'T00:00:00').toLocaleDateString([], opts || { weekday: 'short', month: 'short', day: 'numeric' });
+    function historyCard() {
+      const [from, to] = RANGES.find((r) => r[0] === histRange)[2]();
+      const cache = histCache(), todayKey = keyOf(new Date());
+      const days = [];
+      for (let d = new Date(from); d <= to; d = addDays(d, 1)) {
+        const k = keyOf(d);
+        if (k === todayKey) days.push({ k, today: true, parents: last ? last.parents : null, linked: last ? last.linked : null });
+        else days.push({ k, parents: cache[k] ? cache[k][0] : null, linked: cache[k] ? cache[k][1] : null });
+      }
+      const known = days.filter((d) => d.parents != null);
+      const P = known.reduce((n, d) => n + d.parents, 0), L = known.reduce((n, d) => n + d.linked, 0);
+      const withOrders = known.filter((d) => d.parents);
+      const atTarget = withOrders.filter((d) => pctOf(d.parents, d.linked) >= TARGET).length;
+      const overall = pctOf(P, L);
+      const top = Math.max(150, ...withOrders.map((d) => pctOf(d.parents, d.linked)));
+      const bar = (d) => {
+        const pct = d.parents ? pctOf(d.parents, d.linked) : null;
+        const tip = dayLabel(d.k) + (d.today ? ' (so far)' : '') + ': ' + (d.parents == null ? 'loading' : d.parents ? d.linked + '/' + d.parents + ' · ' + pct + '%' : 'no AM orders');
+        return h('div', { class: 'col', title: tip },
+          h('div', { class: 'bar ' + (pct == null ? 'none' : level(pct)) + (d.today ? ' today' : ''), style: 'height:' + (pct == null ? 3 : Math.max(3, Math.min(100, (pct / top) * 100))) + '%' }));
+      };
+      const busy = !!histBusy;
+      return h('div', { id: HIST_ID, class: 'sg sg-card' },
+        h('div', { class: 'hd' }, h('span', { html: AE.actionIcon('cleaningRate', 28) }), h('b', null, 'Cleaning rate history'),
+          h('span', { class: 'sg-soft' }, 'Divination · ' + AE_NAME)),
+        h('div', { class: 'ranges' }, RANGES.map(([id, label]) => h('button', { type: 'button', class: 'sg-btn' + (id === histRange ? ' sg-primary' : ''), 'aria-pressed': String(id === histRange),
+          onclick: () => { histRange = id; AE.track('cleaningRate:history'); showHistory(); } }, label))),
+        histErr ? h('div', { class: 'miss', style: 'margin:8px 0' }, "Couldn't load the history: " + histErr) : null,
+        h('div', { class: 'sum' },
+          h('div', null, h('div', { class: 'big', style: 'color:' + levelColor(overall) }, overall == null ? '—' : overall + '%'), h('div', { class: 'sg-soft' }, 'overall')),
+          h('div', null, h('div', { class: 'big' }, L + ' / ' + P), h('div', { class: 'sg-soft' }, 'cleanings / AM orders')),
+          h('div', null, h('div', { class: 'big' }, atTarget + ' of ' + withOrders.length), h('div', { class: 'sg-soft' }, 'days at ' + TARGET + '%+')),
+          busy ? h('div', { class: 'sg-soft', style: 'align-self:center' }, h('span', { class: 'sg-spin', style: 'display:inline-block;vertical-align:-3px;margin-right:6px' }), 'Loading work orders…') : null),
+        h('div', { class: 'chart', style: '--target:' + Math.min(100, (TARGET / top) * 100) + '%;--full:' + Math.min(100, (100 / top) * 100) + '%' },
+          h('div', { class: 'line target', title: 'Target ' + TARGET + '%' }), h('div', { class: 'line full', title: '100%' }),
+          h('div', { class: 'cols' }, days.map(bar))),
+        h('div', { class: 'axis sg-soft' }, h('span', null, dayLabel(days[0].k, { month: 'short', day: 'numeric' })), h('span', null, dayLabel(days[days.length - 1].k, { month: 'short', day: 'numeric' }))),
+        h('details', { class: 'days' }, h('summary', null, 'Day by day'),
+          h('table', null, h('thead', null, h('tr', null, h('th', null, 'Day'), h('th', null, 'AM orders'), h('th', null, 'Cleanings'), h('th', null, 'Rate'))),
+            h('tbody', null, days.slice().reverse().map((d) => {
+              const pct = d.parents ? pctOf(d.parents, d.linked) : null;
+              return h('tr', null, h('td', null, dayLabel(d.k) + (d.today ? ' (so far)' : '')), h('td', null, d.parents == null ? '…' : d.parents),
+                h('td', null, d.linked == null ? '…' : d.linked), h('td', { style: 'font-weight:700;color:' + levelColor(pct) }, pct == null ? '—' : pct + '%'));
+            })))));
+    }
+    const HIST_CSS = `
+      #${HIST_ID} { margin:1.5rem 0 0; padding:16px 20px; font-size:14px; line-height:1.4; }
+      #${HIST_ID} .hd { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+      #${HIST_ID} .hd b { font-size:18px; }
+      #${HIST_ID} .hd .sg-soft { margin-left:auto; font-size:12px; }
+      #${HIST_ID} .ranges { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+      #${HIST_ID} .ranges .sg-btn { height:30px; font-size:13px; padding:0 12px; flex:none; }
+      #${HIST_ID} .sum { display:flex; flex-wrap:wrap; gap:28px; margin-bottom:14px; }
+      #${HIST_ID} .big { font-size:24px; font-weight:700; font-variant-numeric:tabular-nums; }
+      #${HIST_ID} .chart { position:relative; height:140px; border-bottom:1px solid var(--aui-outline, #c6c6ca); }
+      #${HIST_ID} .cols { position:absolute; inset:0; display:flex; align-items:flex-end; gap:2px; }
+      #${HIST_ID} .col { flex:1; height:100%; display:flex; align-items:flex-end; min-width:2px; }
+      #${HIST_ID} .bar { width:100%; border-radius:3px 3px 0 0; }
+      #${HIST_ID} .bar.good { background:var(--aui-status-success, #136d31); }
+      #${HIST_ID} .bar.ok { background:#d6a000; }
+      #${HIST_ID} .bar.bad { background:var(--aui-status-error, #b91a24); }
+      #${HIST_ID} .bar.none { background:var(--aui-outline, #c6c6ca); }
+      #${HIST_ID} .bar.today { opacity:.55; }
+      #${HIST_ID} .col:hover .bar { filter:brightness(1.15); }
+      #${HIST_ID} .line { position:absolute; left:0; right:0; border-top:1px dashed var(--aui-on-surface-soft, #5d5e61); pointer-events:none; }
+      #${HIST_ID} .line.target { bottom:var(--target); }
+      #${HIST_ID} .line.full { bottom:var(--full); border-top-style:dotted; opacity:.6; }
+      #${HIST_ID} .axis { display:flex; justify-content:space-between; font-size:12px; margin-top:4px; }
+      #${HIST_ID} .days { margin-top:12px; }
+      #${HIST_ID} .days summary { cursor:pointer; color:var(--aui-primary, #8223d2); font-weight:600; }
+      #${HIST_ID} .days table { width:100%; border-collapse:collapse; margin-top:8px; font-variant-numeric:tabular-nums; }
+      #${HIST_ID} .days th { text-align:left; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); padding:6px 8px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
+      #${HIST_ID} .days td { padding:6px 8px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
+      #${HIST_ID} .miss { color:var(--aui-status-error, #b91a24); font-weight:600; }
+    `;
+    function showHistory() {
+      const reports = document.querySelector('.reports-card');
+      const home = reports && reports.parentElement;
+      const old = document.getElementById(HIST_ID);
+      if (!home) { old?.remove(); return; }
+      if (!document.getElementById('sg-rate-history-css')) document.head.append(h('style', { id: 'sg-rate-history-css' }, HIST_CSS));
+      const open = old && old.querySelector('details.days') && old.querySelector('details.days').open;
+      const card = historyCard();
+      if (open) card.querySelector('details.days').open = true;
+      if (old && old.parentElement === home) old.replaceWith(card); else { old?.remove(); home.append(card); }
+      const [from] = RANGES.find((r) => r[0] === histRange)[2]();
+      if (!histBusy && !(Date.now() - (histLoadedAt[histRange] || 0) < 10 * 60000)) {
+        const range = histRange;
+        histBusy = loadHistory(from)
+          .then(() => { histErr = null; histLoadedAt[range] = Date.now(); }, (e) => { histErr = e.message || String(e); histLoadedAt[range] = Date.now(); })
+          .finally(() => { const changed = histBusy; histBusy = null; if (changed && document.getElementById(HIST_ID)) showHistory(); });
+      }
+    }
+    // Portal's Reports page renders late and re-renders; keep the card there.
+    let histShownFor = null;
+    AE.every(1000, () => {
+      if (!/^\/reporting\/metrics/.test(location.pathname)) { histShownFor = null; return; }
+      const reports = document.querySelector('.reports-card');
+      if (reports && (!document.getElementById(HIST_ID) || histShownFor !== reports)) { histShownFor = reports; showHistory(); }
+    });
 
     const onPortal = () => !/^\/login/.test(location.pathname);
     AE.every(1500, () => { if (onPortal()) renderBadge(); }); // SPA re-renders can drop the badge
