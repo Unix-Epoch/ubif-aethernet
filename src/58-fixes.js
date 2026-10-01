@@ -43,6 +43,18 @@
     own "Show more", data-testid "show-more-link", clicked until it's gone),
     so what's left is the full history of what people wrote, not just page 1.
 
+  - notContacted: a "Not contacted only" switch above the Arrivals list
+    (/check-in/arrivals). Contacted arrivals carry arrival attribute 53
+    (ArrivalAttributeType.Contacted, in Portal's ubif-types bundle) with a
+    value; that's what draws the Contacted tag. Portal's list is paged (10 a
+    page) and has no "not contacted" filter, so while the switch is on,
+    Aethernet loads every page itself (GET /api/arrivals/upcoming-arrivals
+    with the same day/filters Portal's list was loaded with: getUpcomingArrivals
+    query args via AE.portal) and shows its own list of the ones without
+    the attribute in place of Portal's table; a row opens the arrival as
+    Portal's would. It follows Portal's day and chip filters, and refreshes
+    every minute. Remembered in this browser.
+
   - woSort: sort the Work orders list by any column. Portal's table only
     offers ▲▼ on one or two columns per tab (repair.js FA[…].sortableColumns),
     though the server sorts by more. The list's sort is Redux state
@@ -66,6 +78,7 @@
 AE.fixesInfo = [
   ['logoLink', 'Logo link', 'The ubreakifix logo is a real link to the dashboard: middle-click or right-click it to open a new tab.'],
   ['autoNotes', 'Hide auto notes switch', 'A switch at the top of a work order\'s notes hides the automatic ones (status changes, check-in logs…) so only what people wrote shows. Flip it back any time; nothing is deleted.'],
+  ['notContacted', 'Not contacted only (Arrivals)', 'A switch above the Arrivals list shows only arrivals that haven\'t been contacted yet (no Contacted tag), across every page.'],
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
   ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Never on inventory, check-in or check-out pages, or while typing in a field.'],
 ];
@@ -172,6 +185,118 @@ AE.crystal({
         let queued = false;
         new MutationObserver(() => { if (!queued) { queued = true; setTimeout(() => { queued = false; try { paint(); } catch (e) { AE.noteError('autoNotes', e); } }, 150); } })
           .observe(document.body, { childList: true, subtree: true });
+        paint();
+      },
+      notContacted() {
+        const KEY = 'ae_arrivals_not_contacted', CONTACTED = 53; // Portal's ArrivalAttributeType.Contacted
+        const BAR = 'ae-nc-bar', LIST = 'ae-nc-list', ON = 'ae-nc-on';
+        document.head.append(AE.h('style', null, `
+          #${BAR} { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin:0 0 8px; font-size:13px; color:var(--aui-on-surface-soft, #5d5e61); }
+          #${BAR} label { display:inline-flex; align-items:center; gap:8px; padding:4px 10px 4px 6px; border-radius:10000rem; cursor:pointer; user-select:none;
+            border:1px solid var(--aui-outline, #c6c6ca); background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font-weight:600; }
+          #${BAR} label:hover { border-color:var(--aui-primary, #8223d2); }
+          #${BAR} input { position:absolute; opacity:0; pointer-events:none; }
+          #${BAR} .knob { position:relative; width:30px; height:18px; border-radius:10000rem; background:var(--aui-outline, #c6c6ca); transition:background .15s; flex:none; }
+          #${BAR} .knob::after { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; transition:left .15s; }
+          #${BAR} input:checked + .knob { background:var(--aui-primary, #8223d2); }
+          #${BAR} input:checked + .knob::after { left:14px; }
+          #${BAR} input:focus-visible + .knob { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; }
+          .${ON} > :not(#${LIST}) { display:none !important; }
+          #${LIST} table { width:100%; border-collapse:collapse; font-size:14px; }
+          #${LIST} th { text-align:left; padding:10px 12px; font-size:12px; font-weight:700; color:var(--aui-on-surface-soft, #5d5e61); border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
+          #${LIST} td { padding:12px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); vertical-align:top; }
+          #${LIST} tbody tr { cursor:pointer; }
+          #${LIST} tbody tr:hover td { background:var(--aui-neutral-soft, #f1f0f4); }
+          #${LIST} .sub { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); margin-top:2px; }
+          #${LIST} .st { display:inline-block; padding:2px 8px; border-radius:10000rem; font-size:12px; font-weight:600; background:var(--aui-neutral-soft, #f1f0f4); }
+          #${LIST} .msg { padding:16px 12px; color:var(--aui-on-surface-soft, #5d5e61); }
+        `));
+        let on = !!GM_getValue(KEY, false);
+        let shownFor = null, rows = null, total = 0, loadErr = null, loadingNow = false, loadedAt = 0;
+        const contacted = (a) => (a.arrivalAttributes || []).some((x) => Number(x.arrivalAttributeTypeId) === CONTACTED && x.value !== '' && x.value != null);
+        const go = (url) => { history.pushState(null, '', url); dispatchEvent(new PopStateEvent('popstate', { state: null })); };
+        const listArgs = () => { const r = AE.portal('query', { endpoint: 'getUpcomingArrivals', list: 'data', field: 'arrivalId' }); return r && r.args ? r.args : null; };
+
+        async function loadAll(args) {
+          const base = Object.assign({}, args); delete base.page; delete base.pageSize;
+          const all = [];
+          for (let page = 1; page <= 20; page++) {
+            const q = new URLSearchParams();
+            for (const [k, v] of Object.entries(Object.assign({}, base, { page, pageSize: 100 }))) if (v !== undefined && v !== null && v !== '') q.set(k, v);
+            const j = await AE.api('GET', '/api/arrivals/upcoming-arrivals?' + q);
+            const data = (j && j.data) || [];
+            all.push(...data);
+            total = (j && j.rowCount) || all.length;
+            if (!data.length || all.length >= total) break;
+          }
+          return all;
+        }
+        async function refresh(args, key) {
+          loadingNow = true; loadErr = null; paint();
+          try { const all = await loadAll(args || {}); if (shownFor === key) { rows = all.filter((a) => !contacted(a)); loadedAt = Date.now(); } }
+          catch (e) { loadErr = e.message || String(e); }
+          finally { loadingNow = false; paint(); }
+        }
+
+        const when = (iso) => { const d = new Date(iso); if (isNaN(d)) return ['', ''];
+          return [d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), d.toDateString() === new Date().toDateString() ? 'Today' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })]; };
+        function drawList(box) {
+          const h = AE.h;
+          const sig = [rows, loadErr];
+          if (box._sig && box._sig[0] === sig[0] && box._sig[1] === sig[1]) return; // nothing new to show
+          box._sig = sig;
+          if (loadErr) return box.replaceChildren(h('div', { class: 'msg' }, "Couldn't load the arrivals: " + loadErr));
+          if (!rows) return box.replaceChildren(h('div', { class: 'msg' }, 'Loading every arrival…'));
+          if (!rows.length) return box.replaceChildren(h('div', { class: 'msg' }, 'Every arrival here has been contacted.'));
+          const sorted = rows.slice().sort((a, b) => Date.parse(a.appointment) - Date.parse(b.appointment));
+          box.replaceChildren(h('table', null,
+            h('thead', null, h('tr', null, ['Customer', 'Device', 'Program type', 'Appointment', 'Arrival Status'].map((t) => h('th', null, t)))),
+            h('tbody', null, sorted.map((a) => {
+              const dev = a.customerDevice || {}, [t, d] = when(a.appointment);
+              const tr = h('tr', { title: 'Open this arrival' },
+                h('td', null, AE.data.nameOf(a) || 'Customer'),
+                h('td', null, dev.deviceName || '—', (a.deviceIssues || []).length ? h('div', { class: 'sub' }, a.deviceIssues.map((x) => x.name || x).join(', ')) : null),
+                h('td', null, (a.program && a.program.name) || 'None'),
+                h('td', null, t, h('div', { class: 'sub' }, d)),
+                h('td', null, h('span', { class: 'st' }, (a.arrivalStatus && a.arrivalStatus.arrivalStatusName) || '')));
+              tr.addEventListener('click', () => go('/check-in/arrivals/' + a.arrivalId));
+              return tr;
+            }))));
+        }
+
+        function paint() {
+          const box = document.querySelector('[data-testid="arrivals-container"]');
+          let bar = document.getElementById(BAR);
+          if (!box || !/^\/check-in\/arrivals(\/\d+)?\/?$/.test(location.pathname)) { bar?.remove(); return; }
+          if (!bar || bar.nextElementSibling !== box) {
+            bar?.remove();
+            const input = AE.h('input', { type: 'checkbox', checked: on, onchange: (e) => { on = e.target.checked; GM_setValue(KEY, on); shownFor = null; AE.track(on ? 'fixes:notContactedOn' : 'fixes:notContactedOff'); paint(); } });
+            bar = AE.h('div', { id: BAR }, AE.h('span', { class: 'n' }),
+              AE.h('label', { title: 'Show only arrivals without the Contacted tag, from every page' }, input, AE.h('span', { class: 'knob' }), 'Not contacted only'));
+            box.before(bar);
+          }
+          bar.querySelector('input').checked = on;
+          let list = document.getElementById(LIST);
+          if (!on) {
+            box.classList.remove(ON); list?.remove(); bar.querySelector('.n').textContent = '';
+            return;
+          }
+          const args = listArgs(), key = JSON.stringify(args && Object.assign({}, args, { page: 0, pageSize: 0 }));
+          if (key !== shownFor || (!loadingNow && Date.now() - loadedAt > 60000)) {  // Portal's day/filters changed, or a minute passed
+            if (key !== shownFor) { rows = null; shownFor = key; }
+            if (!loadingNow) refresh(args, key);
+          }
+          if (!list) { list = AE.h('div', { id: LIST }); box.append(list); }
+          box.classList.add(ON);
+          drawList(list);
+          bar.querySelector('.n').textContent = loadingNow && !rows ? 'Loading…' : rows ? rows.length + ' not contacted, of ' + total : '';
+        }
+        let queued = false;
+        new MutationObserver((ms) => {
+          if (ms.every((m) => m.target.closest && m.target.closest('#' + LIST + ', #' + BAR))) return; // our own redraws
+          if (!queued) { queued = true; setTimeout(() => { queued = false; try { paint(); } catch (e) { AE.noteError('notContacted', e); } }, 200); }
+        }).observe(document.body, { childList: true, subtree: true });
+        setInterval(() => { if (on) paint(); }, 30000);
         paint();
       },
       woSort() {

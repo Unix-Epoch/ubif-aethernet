@@ -35,7 +35,7 @@ const AE = (() => {
       login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
     ...(AE_DEMO ? {} : {
       printLabels: { delayMs: 900 },
-      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true }, // Master's Mend: one switch per fix (src/58-fixes.js)
+      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true, notContacted: true }, // Master's Mend: one switch per fix (src/58-fixes.js)
       // Blank = use the logged-in user / current store automatically.
       galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
     }),
@@ -96,7 +96,8 @@ const AE = (() => {
       - select { slice, key, pick? } → state[slice][key] from the store that has
                                   it (pick: for a list, just those fields of each item)
       - query { endpoint, list, field } → the newest loaded result of an RTK
-                                  Query endpoint: `field` of each item in data[list]
+                                  Query endpoint: `field` of each item in data[list],
+                                  plus the arguments it was loaded with (args)
       - dispatch { slice, action } → the action, to the stores that have `slice`
   */
   const BRIDGE_EVENT = 'aethernet:portal';
@@ -165,7 +166,7 @@ const AE = (() => {
       '        });',
       '      });',
       '      var list = best && best.data && best.data[a.list];',
-      '      return { found: !!best, at: best ? best.fulfilledTimeStamp : 0, items: Array.isArray(list) ? list.map(function (x) { return x && x[a.field]; }) : null };',
+      '      return { found: !!best, at: best ? best.fulfilledTimeStamp : 0, args: best ? best.originalArgs : null, items: Array.isArray(list) ? list.map(function (x) { return x && x[a.field]; }) : null };',
       '    },',
       '    dispatch: function (a) {',
       '      var n = 0;',
