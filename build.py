@@ -95,7 +95,7 @@ DEMO = {
     "status_file": "status-demo.json",
     # Only these crystals (and the files that hold them) go in.
     "crystals": ("cleaningRate", "autoClose", "glamour"),
-    "files": ("00-core.js", "02-status.js", "05-settings.js", "10-cleaning-rate.js", "20-auto-close.js", "50-glamour.js"),
+    "files": ("00-core.js", "01b-login.js", "02-status.js", "05-settings.js", "10-cleaning-rate.js", "20-auto-close.js", "50-glamour.js"),
     "description": "Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out and page theming for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.",
 }
 CHANNEL = "public"  # set to "dev" / "demo" by --dev / --demo before building
@@ -168,7 +168,7 @@ def git_commit(root: Path) -> str:
 
 
 # Files that run before the store-access check (the rest wait for it).
-PREBOOT = ("00-core.js", "01-access.js")
+PREBOOT = ("00-core.js", "01-access.js", "01b-login.js")
 
 NOTES_FILE = "patch-notes.json"
 

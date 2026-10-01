@@ -205,7 +205,79 @@ AE.glamour = (() => {
   .sg-glam-warn { margin-top:6px; font-size:12px; color:var(--aui-status-error, #b91a24); }
   .sg-glam-edit .sg-actions { margin-top:10px; justify-content:flex-start; }
   .sg-glam-edit .sg-actions .sg-btn { flex:none; }
+  .sg-glam-login { margin-top:14px; padding-top:10px; border-top:1px solid var(--aui-outline-soft, #eeedf1); }
+  .sg-glam-login .row { display:flex; gap:12px; align-items:center; margin-top:8px; }
+  .sg-glam-login .thumb { flex:none; width:72px; height:90px; border-radius:8px; border:1px solid var(--aui-outline, #c6c6ca);
+    background:linear-gradient(45deg, #8223d2, #ae4fd2) center / cover no-repeat; display:flex; align-items:flex-end; justify-content:center;
+    color:#fff; font-size:10px; padding-bottom:4px; text-align:center; }
+  .sg-glam-login .btns { display:flex; flex-wrap:wrap; gap:6px; }
+  .sg-glam-login .btns .sg-btn { flex:none; height:30px; font-size:13px; }
+  .sg-glam-login label.chk { display:flex; gap:8px; align-items:center; margin-top:8px; font-size:13px; cursor:pointer; }
   `;
+
+  /*
+    Login page picture: shrunk in the browser to at most 1400 px on the long
+    side and saved inside your settings as a data URL (WebP keeps
+    transparency, like Portal's cut-out photo; JPEG if WebP isn't available),
+    kept under ~1.2 MB.
+  */
+  function shrinkImage(file) {
+    return new Promise((resolve, reject) => {
+      if (!/^image\//.test(file.type)) return reject(new Error('That file isn\'t an image.'));
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Couldn\'t read that image.')); };
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, 1400 / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const webp = c.toDataURL('image/webp', 0.85).startsWith('data:image/webp');
+        for (const q of [0.85, 0.7, 0.55, 0.4]) {
+          const d = c.toDataURL(webp ? 'image/webp' : 'image/jpeg', q);
+          if (d.length < 1.2e6) return resolve(d);
+        }
+        reject(new Error('That image is too detailed to store; try a smaller one.'));
+      };
+      img.src = url;
+    });
+  }
+
+  function loginEditor(s, repaint) {
+    s.glamour.login = Object.assign({ image: '', fill: false, mark: true }, s.glamour.login);
+    const L = s.glamour.login;
+    const thumb = h('div', { class: 'thumb' });
+    const status = h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:4px' });
+    const file = h('input', { type: 'file', accept: 'image/*', style: 'display:none', onchange: async () => {
+      const f = file.files[0]; file.value = '';
+      if (!f) return;
+      status.textContent = 'Preparing…';
+      try { L.image = await shrinkImage(f); status.textContent = 'Picked. Save to use it.'; } catch (e) { status.textContent = e.message; }
+      paint(); repaint();
+    } });
+    const fill = h('input', { type: 'checkbox', checked: !!L.fill, onchange: (e) => { L.fill = e.target.checked; paint(); repaint(); } });
+    const mark = h('input', { type: 'checkbox', checked: L.mark !== false, onchange: (e) => { L.mark = e.target.checked; repaint(); } });
+    const reset = h('button', { type: 'button', class: 'sg-btn', onclick: () => { L.image = ''; status.textContent = "Back to Portal's picture once you save."; paint(); repaint(); } }, "Portal's picture");
+    function paint() {
+      thumb.style.backgroundImage = L.image ? 'url("' + L.image + '")' + (L.fill ? '' : ', linear-gradient(45deg, #8223d2, #ae4fd2)') : '';
+      thumb.style.backgroundSize = L.image && !L.fill ? 'contain, cover' : 'cover';
+      thumb.style.backgroundPosition = L.image && !L.fill ? 'center bottom, center' : 'center';
+      thumb.textContent = L.image ? '' : "Portal's";
+      reset.disabled = !L.image;
+      fill.disabled = !L.image;
+    }
+    paint();
+    return h('div', { class: 'sg-glam-login' },
+      h('b', null, 'Login page'),
+      h('div', { class: 'sg-soft', style: 'font-size:12px' }, 'Shown on Portal\'s sign-in page in this browser.'),
+      h('div', { class: 'row' }, thumb,
+        h('div', null,
+          h('div', { class: 'btns' }, h('button', { type: 'button', class: 'sg-btn', onclick: () => file.click() }, 'Choose picture…'), reset, file),
+          status,
+          h('label', { class: 'chk' }, fill, 'Fill the whole purple panel'),
+          h('label', { class: 'chk' }, mark, 'Aethernet mark under the ubreakifix logo'))));
+  }
 
   function editor(s, repaint) {
     if (!document.getElementById('sg-glamour-css')) document.head.append(h('style', { id: 'sg-glamour-css' }, EDITOR_CSS));
@@ -267,7 +339,7 @@ AE.glamour = (() => {
         ...(editingTheme ? [edit(editingTheme)] : []));
     }
     render();
-    return root;
+    return h('div', null, root, loginEditor(s, repaint));
   }
 
   const summary = (cfg) => (find(cfg, cfg.theme) || PRESETS[0]).name;
