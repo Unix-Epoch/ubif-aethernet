@@ -28,6 +28,7 @@
     ['waymark', 'Waymark', 'Work-order tags: tag WOs for the whole store and see them grouped on a board.'],
     ['countCheck', 'Lay of the Land', 'Inventory count check: on a count, shows which expected serials haven\'t been scanned yet, and any unexpected scans.'],
     ['rowColors', 'Rainbow Drip', 'WO list colors: colors each row of the work-order list by its status.'],
+    ['fixes', "Master's Mend", 'Small fixes to Portal, each with its own switch.'],
     ]),
   ];
 
@@ -341,6 +342,10 @@
           input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
           h('button', { class: 'sg-btn', style: 'margin:4px 0', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')],
         waymark: [() => AE.waymark.summary(), AE.waymark.editor()],
+        fixes: [() => AE.fixesInfo.filter(([id]) => s.fixes[id] !== false).length + ' of ' + AE.fixesInfo.length + ' on',
+          ...AE.fixesInfo.map(([id, name, desc]) => h('div', { class: 'sg-row', style: 'margin:8px 0' },
+            h('div', null, h('b', null, name), h('span', { class: 'sg-soft', style: 'display:block' }, desc)),
+            toggle(s.fixes[id] !== false, (v) => { s.fixes[id] = v; repaintSums(); })))],
         printLabels: [() => s.printLabels.delayMs + ' ms between labels',
           input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
       }),
