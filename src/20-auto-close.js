@@ -214,12 +214,14 @@ AE.crystal({
     }
 
     // Dualcast: several cleanings in one go, one after another, in one panel.
-    async function runMany(items, customerName) {
-      if (running || AE.status.blocked('autoClose')) return;
-      if (await storeClosed()) return;
-      AE.track('autoClose:dualcast');
+    // fake (dev tools only): the same confirmation and panel, with simulated steps and no API calls.
+    async function runMany(items, customerName, fake) {
+      if (running || (!fake && AE.status.blocked('autoClose'))) return;
+      if (!fake && await storeClosed()) return;
+      if (!fake) AE.track('autoClose:dualcast');
       running = true; stopRequested = false;
-      const panel = AE.progressPanel('Dualcast · ' + items.length + ' cleanings' + (customerName ? ' for ' + customerName : ''));
+      const runner = fake ? (it, log) => fakeRun(it, log, fake) : (it, log) => run(it.arrivalId, log);
+      const panel = AE.progressPanel('Dualcast · ' + items.length + ' cleanings' + (customerName ? ' for ' + customerName : '') + (fake ? ' (test)' : ''));
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       const done = [], notes = [];
@@ -228,10 +230,10 @@ AE.crystal({
         for (const [i, it] of items.entries()) {
           panel.step((i + 1) + ' of ' + items.length + ': ' + (AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning'));
           woId = null;
-          const id = await run(it.arrivalId, (t, wid) => { if (wid) woId = wid; panel.step(t); });
+          const id = await runner(it, (t, wid) => { if (wid) woId = wid; panel.step(t); });
           done.push(id);
           if (laborNote) notes.push(laborNote);
-          AE.emit('cleaning-changed', { arrivalId: it.arrivalId, woId: id });
+          if (!fake) AE.emit('cleaning-changed', { arrivalId: it.arrivalId, woId: id });
         }
         panel.finish('ok', 'Done — ' + done.map(woLink).join(' and ') + ' checked in, completed, and sold at $0.' + notes.map((n) => '<br><b>Note:</b> ' + AE.esc(n)).join(''));
       } catch (e) {
@@ -242,9 +244,24 @@ AE.crystal({
       } finally {
         panel.actions();
         running = false;
-        AE.emit('cleaning-changed', {});
-        if (done.length) AE.refreshView();
+        if (!fake) { AE.emit('cleaning-changed', {}); if (done.length) AE.refreshView(); }
       }
+    }
+    // Dev tools: Swiftcast's steps, timed like the real thing, nothing sent. fake.fail = fail the 2nd cleaning at QC.
+    let fakeWo = 599000000;
+    async function fakeRun(it, log, fake) {
+      laborNote = null;
+      const pause = async () => { await AE.sleep(450); if (stopRequested) throw new AE.Stopped(); };
+      const woId = ++fakeWo;
+      const steps = ['IMEI validated', ['Created WO ' + woId, woId], 'Checked in'];
+      if (Number(it.programId) === REFRESH_PROGRAM) steps.push('Added refresh labor ' + REFRESH_LABOR_SKU);
+      steps.push('Started work', 'Diagnostics done', 'Work done', 'QC done', 'Ready for pickup', 'Sale complete (SO-TEST)');
+      for (const st of steps) {
+        await pause();
+        if (fake.fail && fakeWo % 2 === 0 && st === 'QC done') throw new Error('PUT /api/workorder/' + woId + ' → HTTP 500 (test failure, nothing was sent)');
+        Array.isArray(st) ? log(st[0], st[1]) : log(st);
+      }
+      return woId;
     }
 
     async function onClick(arrivalId, checked) {
@@ -278,24 +295,42 @@ AE.crystal({
     // Also callable from the cleaning-rate list and the WO cleanings pill.
     // Those are one step removed from the arrival itself, so they always ask
     // first; the drawer button (you're looking at the arrival) doesn't.
+    // Dev tools: a fake Dualcast (confirmation + progress, no API calls), and the drawer's two buttons on a test card.
+    const FAKE_ITEMS = [{ arrivalId: 900001, programId: REFRESH_PROGRAM }, { arrivalId: 900002, programId: 9470 }];
+    AE.hooks.dualcastFake = (opts = {}) => AE.autoClose.dualcast({ items: FAKE_ITEMS, customerName: 'Jordan Reyes', fake: { fail: !!opts.fail } });
+    AE.hooks.dualcastButton = () => {
+      document.getElementById('sg-dual-test')?.remove();
+      const card = h('div', { id: 'sg-dual-test', class: 'sg sg-card', style: 'position:fixed;z-index:2147483645;right:24px;bottom:24px;width:380px;padding:14px 16px' },
+        h('div', { style: 'display:flex;align-items:center;margin-bottom:12px' }, h('b', { style: 'flex:1' }, 'Customer arrival (test)'),
+          h('button', { type: 'button', class: 'sg-x', onclick: () => card.remove() }, '✕')),
+        h('div', { class: 'sg-soft', style: 'font-size:13px;margin-bottom:12px' }, 'VZ Device Refresh for Jordan Reyes; a VZ Sanitization waits for the same device. Nothing here is sent to Portal.'));
+      const row = h('div', { style: 'display:flex;align-items:center;justify-content:flex-end;gap:8px' });
+      const bolt = h('button', { type: 'button', class: 'sg-fab', title: 'Auto-close cleaning (test: does nothing)', style: 'margin-right:8px;color:#fff;width:48px;height:48px', html: icon('bolt', 24) });
+      const dual = h('button', { type: 'button', class: 'sg-fab sg-dual', title: 'Dualcast (test run)', style: 'margin-right:auto;width:48px;height:48px',
+        html: AE.actionIcon('dualcast', 40) + '<span class="n">2</span>', onclick: () => { card.remove(); AE.hooks.dualcastFake(); } });
+      row.append(bolt, dual, h('button', { type: 'button', class: 'sg-btn', style: 'height:48px' }, 'Cancel'), h('button', { type: 'button', class: 'sg-btn sg-primary', style: 'height:48px' }, 'Check-in'));
+      card.append(row);
+      document.body.appendChild(card);
+    };
     const dualcastOn = () => !AE.settings.autoClose || AE.settings.autoClose.dualcast !== false;
     AE.autoClose = {
       isRunning: () => running,
       dualcastOn,
       // items: [{ arrivalId, programId }] — every cleaning waiting for one device.
-      async dualcast({ items, customerName }) {
-        if (!items || items.length < 2 || AE.status.blocked('autoClose')) return;
-        if (await storeClosed()) return;
+      async dualcast({ items, customerName, fake }) {
+        if (!items || items.length < 2 || (!fake && AE.status.blocked('autoClose'))) return;
+        if (!fake && await storeClosed()) return;
         if (running) { AE.confirm({ title: 'Already running', message: 'Another cleaning is being closed out — wait for it to finish.', confirmLabel: 'OK' }); return; }
         const ok = await AE.confirm({
           title: 'Create all ' + items.length + ' cleanings?',
           message: '<b>' + AE.esc(customerName || 'Customer') + '</b><ul style="margin:6px 0 0;padding-left:20px">' +
             items.map((it) => '<li>' + AE.esc(AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning') + ' <span class="sg-soft">· arrival ' + it.arrivalId + '</span></li>').join('') + '</ul>' +
-            '<div class="sg-soft" style="margin-top:6px">Each one is checked in, walked to Ready for pickup, and completed as a $0 sale, one after the other.</div>',
+            '<div class="sg-soft" style="margin-top:6px">Each one is checked in, walked to Ready for pickup, and completed as a $0 sale, one after the other.</div>' +
+            (fake ? '<div style="margin-top:6px;color:#e0761a;font-weight:600">Test run from the dev tools: nothing is sent to Portal.</div>' : ''),
           warning: "Are you sure you'd like to create these cleanings? Only use this if you are the one who repaired this device!",
           confirmLabel: 'Yes, create ' + items.length + ' cleanings',
         });
-        if (ok) await runMany(items, customerName);
+        if (ok) await runMany(items, customerName, fake);
       },
       async confirmAndRun({ arrivalId, programId, customerName }) {
         if (AE.status.blocked('autoClose')) return;

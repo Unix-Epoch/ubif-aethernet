@@ -175,6 +175,9 @@
         const r = await AE.refreshView();
         AE.toast('Refresh view', r.stores ? r.stores + ' store(s), ' + r.apis + ' API cache(s): ' + (r.tags.join(', ') || 'no tags in use') : 'Found no Portal data to refresh' + (r.error ? ': ' + r.error : '.'), r.stores ? 'ok' : 'err', 8000);
       }, { title: 'What Recitation, Waymark and Swiftcast do after a change: refetch what Portal shows, no page reload.' })),
+      row(btn('Dualcast button (test arrival)', () => { if (!AE.hooks.dualcastButton) throw new Error('Turn Swiftcast on first.'); AE.hooks.dualcastButton(); }, { close: true }),
+        btn('Fake Dualcast run', () => { if (!AE.hooks.dualcastFake) throw new Error('Turn Swiftcast on first.'); AE.hooks.dualcastFake(); }, { close: true, title: 'The real confirmation and progress panel, simulated steps: nothing is sent to Portal.' }),
+        btn('Fake Dualcast, 2nd fails', () => { if (!AE.hooks.dualcastFake) throw new Error('Turn Swiftcast on first.'); AE.hooks.dualcastFake({ fail: true }); }, { close: true })),
       row(btn('Swiftcast progress panel (fake)', demoProgress, { close: true }),
         btn('Toast: done', () => AE.toast('Waymark', 'Tag list saved for everyone at the store.', 'ok')),
         btn('Toast: error', () => AE.toast("Couldn't send", 'HTTP 503 — try again in a minute.', 'err')),
