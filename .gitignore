@@ -5,3 +5,4 @@ dist-demo/
 sandbox/fixtures/
 sandbox/state.json
 sandbox/.cache/
+__pycache__/
