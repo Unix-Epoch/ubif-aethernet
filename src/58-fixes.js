@@ -111,6 +111,9 @@
     in open shadow roots and in same-origin frames (Appcues draws some
     content in an about:blank iframe); one that can't be placed is left as
     it is.
+    Live Portal (Oct 2, 2026): Support Ticket is drawn in an
+    <appcues-experience-container id="appcues-container-<uuid>"> with
+    display:contents, so tucking also gives the box display:block.
 */
 AE.fixesInfo = [
   ['logoLink', 'Logo link', 'The ubreakifix logo is a real link to the dashboard: middle-click or right-click it to open a new tab.'],
@@ -148,7 +151,8 @@ AE.crystal({
         const TICKET = svg('<path d="M3.5 7.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v2a2.5 2.5 0 0 0 0 5v2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-2a2.5 2.5 0 0 0 0-5z"/><path d="M14.5 5.5v13" stroke-dasharray="1.6 2.2"/>');
         const BULB = svg('<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2h5c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>');
         document.head.append(AE.h('style', null, `
-          .${TUCK} { position:fixed !important; left:-10000px !important; top:0 !important; opacity:0 !important; pointer-events:none !important; }
+          /* display:block: Appcues' <appcues-experience-container> is display:contents (no box), which positioning can't move */
+          .${TUCK} { display:block !important; position:fixed !important; left:-10000px !important; top:0 !important; width:300px !important; opacity:0 !important; pointer-events:none !important; }
           #${NAV_ID} { cursor:pointer; }
           #${NAV_ID} .ae-ico { display:inline-flex; line-height:0; }
           #${IDEA_ID} { gap:6px; margin:0 8px 0 auto; } /* auto: sits by View all even in a space-between row */
