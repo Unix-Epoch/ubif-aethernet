@@ -2,10 +2,12 @@
   {
     "version": "2.19.0",
     "notes": [
-      "**Swiftcast**: the experimental commission option now adds the right item, the **Verizon Free Screen Protector (101516)**, the same way Portal's checkout does. Portal credits it back, so the sale stays $0. It's still off by default while it's being verified (Settings → Swiftcast)."
+      "**Swiftcast**: the experimental commission option now adds the right item, the **Verizon Free Screen Protector (101516)**, the same way Portal's checkout does. Portal credits it back, so the sale stays $0. It's still off by default while it's being verified (Settings → Swiftcast).",
+      "**Divination**: the Reports page now scrolls when the cleaning rate history makes it taller than the window, so the whole card (and the day-by-day table) can be reached."
     ],
     "updated": [
-      "autoClose"
+      "autoClose",
+      "cleaningRate"
     ]
   },
   {

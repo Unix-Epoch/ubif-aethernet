@@ -347,7 +347,24 @@ AE.crystal({
       #${HIST_ID} .days th { text-align:left; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); padding:6px 8px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
       #${HIST_ID} .days td { padding:6px 8px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
       #${HIST_ID} .miss { color:var(--aui-status-error, #b91a24); font-weight:600; }
+      .sg-reports-scroll { overflow-y:auto !important; }
     `;
+    /*
+      Portal's Reports page is short, so Portal never made it scroll: a
+      container above it clips anything taller than the window. With the
+      history card the page is taller, so the nearest clipping container is
+      made to scroll (only while on Reports; the class comes off elsewhere).
+    */
+    const SCROLL_CLASS = 'sg-reports-scroll';
+    function letReportsScroll(from) {
+      for (let x = from && from.parentElement; x; x = x.parentElement) {
+        const oy = getComputedStyle(x).overflowY;
+        const over = x.scrollHeight > x.clientHeight + 1;
+        if (over && (oy === 'auto' || oy === 'scroll')) return; // already scrolls
+        if (over && (oy === 'hidden' || oy === 'clip')) { x.classList.add(SCROLL_CLASS); return; }
+      }
+    }
+    const unscroll = () => document.querySelectorAll('.' + SCROLL_CLASS).forEach((x) => x.classList.remove(SCROLL_CLASS));
     function showHistory() {
       const reports = document.querySelector('.reports-card');
       const home = reports && reports.parentElement;
@@ -369,9 +386,11 @@ AE.crystal({
     // Portal's Reports page renders late and re-renders; keep the card there.
     let histShownFor = null;
     AE.every(1000, () => {
-      if (!/^\/reporting\/metrics/.test(location.pathname)) { histShownFor = null; return; }
+      if (!/^\/reporting\/metrics/.test(location.pathname)) { histShownFor = null; unscroll(); return; }
       const reports = document.querySelector('.reports-card');
       if (reports && (!document.getElementById(HIST_ID) || histShownFor !== reports)) { histShownFor = reports; showHistory(); }
+      const card = document.getElementById(HIST_ID);
+      if (card) letReportsScroll(card);
     });
 
     const onPortal = () => !/^\/login/.test(location.pathname);
