@@ -3,11 +3,13 @@
     "version": "2.19.0",
     "notes": [
       "**Swiftcast**: the experimental commission option now adds the right item, the **Verizon Free Screen Protector (101516)**, the same way Portal's checkout does. Portal credits it back, so the sale stays $0. It's still off by default while it's being verified (Settings → Swiftcast).",
-      "**Divination**: the Reports page now scrolls when the cleaning rate history makes it taller than the window, so the whole card (and the day-by-day table) can be reached."
+      "**Divination**: the Reports page now scrolls when the cleaning rate history makes it taller than the window, so the whole card (and the day-by-day table) can be reached.",
+      "**Master's Mend**: Portal's **Support Ticket** and **Enhancement Idea** buttons now fit in: Support Ticket is a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before (Settings → Master's Mend to turn it off)."
     ],
     "updated": [
       "autoClose",
-      "cleaningRate"
+      "cleaningRate",
+      "fixes"
     ]
   },
   {

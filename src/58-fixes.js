@@ -93,6 +93,24 @@
     are React's, and React re-renders assuming its own order, so the list's
     real order is read from Portal's loaded data (getAllWorkOrders) and the
     rows are put back in it whenever no page sort is on.
+
+  - appcuesButtons: Portal's "Support Ticket" (left menu) and "Enhancement
+    Idea" (dashboard) buttons aren't Portal's: they're Appcues content
+    (Portal loads fast.appcues.com; ids "button-<uuid>", Appcues' theme
+    variables), drawn in Appcues' own style and, for Enhancement Idea, pinned
+    over the dashboard where it covers the calendar. Appcues keeps placing
+    and re-placing its content, so it isn't moved or restyled: each original
+    is tucked away off-screen (still rendered, so Appcues is content) and a
+    stand-in made of Portal's own parts takes its place:
+      · Support Ticket: a left-menu item cloned from Portal's own (icon +
+        label), just above More;
+      · Enhancement Idea: a pill next to Metrics overview's View all.
+    A stand-in clicks the original, so whatever Appcues does on click still
+    happens, and only exists while Appcues shows the original (its
+    targeting still decides when). The originals are looked for in the page,
+    in open shadow roots and in same-origin frames (Appcues draws some
+    content in an about:blank iframe); one that can't be placed is left as
+    it is.
 */
 AE.fixesInfo = [
   ['logoLink', 'Logo link', 'The ubreakifix logo is a real link to the dashboard: middle-click or right-click it to open a new tab.'],
@@ -113,6 +131,7 @@ AE.fixesInfo = [
     }],
   ['reportsRetry', 'Reports page help', 'If Portal\'s Reports page is stuck loading, a warning explains the usual cause (an ad blocker like uBlock Origin) and how to fix it. The details are included if you send a bug report.'],
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
+  ['appcuesButtons', 'Support Ticket & Enhancement Idea buttons', 'Portal\'s Support Ticket and Enhancement Idea buttons are made to fit: Support Ticket becomes a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before.'],
   ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Never on inventory, check-in or check-out pages, or while typing in a field.'],
 ];
 
@@ -123,6 +142,105 @@ AE.crystal({
   run() {
     const on = AE.settings.fixes || {};
     const FIXES = {
+      appcuesButtons() {
+        const TUCK = 'ae-appcues-tucked', NAV_ID = 'ae-support-ticket', IDEA_ID = 'ae-enhancement-idea';
+        const svg = (d) => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+        const TICKET = svg('<path d="M3.5 7.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v2a2.5 2.5 0 0 0 0 5v2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-2a2.5 2.5 0 0 0 0-5z"/><path d="M14.5 5.5v13" stroke-dasharray="1.6 2.2"/>');
+        const BULB = svg('<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2h5c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>');
+        document.head.append(AE.h('style', null, `
+          .${TUCK} { position:fixed !important; left:-10000px !important; top:0 !important; opacity:0 !important; pointer-events:none !important; }
+          #${NAV_ID} { cursor:pointer; }
+          #${NAV_ID} .ae-ico { display:inline-flex; line-height:0; }
+          #${IDEA_ID} { gap:6px; margin:0 8px 0 auto; } /* auto: sits by View all even in a space-between row */
+          #${IDEA_ID} svg { width:18px; height:18px; }
+        `));
+        const label = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim();
+        // Every place Appcues can draw: the page, open shadow roots, same-origin frames.
+        function roots() {
+          const out = [document];
+          for (let i = 0; i < out.length; i++) {
+            for (const el of out[i].querySelectorAll('*')) {
+              if (el.shadowRoot) out.push(el.shadowRoot);
+              if (el.tagName === 'IFRAME') { try { const d = el.contentDocument; if (d && d.documentElement) out.push(d); } catch (_) { /* other origin */ } }
+            }
+          }
+          return out;
+        }
+        function find(text) {
+          for (const r of roots()) {
+            for (const el of r.querySelectorAll('button, a, [role="button"]')) {
+              if (el.closest('#' + NAV_ID + ', #' + IDEA_ID)) continue;
+              if (label(el) === text && (/^button-/.test(el.id || '') || el.hasAttribute('blocktype') || el.hasAttribute('data-field-id'))) return el;
+            }
+          }
+          return null;
+        }
+        // What to tuck away in the page: the frame or shadow host it's drawn in, and its Appcues wrapper.
+        function outerBox(el) {
+          let x = el;
+          for (;;) {
+            const root = x.getRootNode();
+            if (root instanceof ShadowRoot) { x = root.host; continue; }
+            if (root !== document) { const fe = root.defaultView && root.defaultView.frameElement; if (fe) { x = fe; continue; } }
+            break;
+          }
+          for (let y = x; y && y !== document.body; y = y.parentElement) {
+            if (/^appcues/i.test(y.tagName) || /appcues/i.test((y.id || '') + ' ' + (typeof y.className === 'string' ? y.className : ''))) x = y;
+          }
+          return x;
+        }
+        const tucked = new Set();
+        function tuck(el) { const box = outerBox(el); box.classList.add(TUCK); tucked.add(box); }
+        function untuckAll() { tucked.forEach((b) => b.classList.remove(TUCK)); tucked.clear(); }
+
+        function supportTicket(orig) {
+          const nav = document.querySelector('#single-spa-application\\:\\@ubif\\/main-layout nav') || document.querySelector('nav');
+          const links = nav ? [...nav.querySelectorAll('a[data-aui="link"]')] : [];
+          const more = links.find((a) => label(a) === 'More');
+          const model = links.find((a) => a !== more && a.querySelector('[data-aui="icon"]') && !a.classList.contains('active'));
+          if (!more || !model) return false;
+          let item = document.getElementById(NAV_ID);
+          if (!item) {
+            item = model.cloneNode(true);
+            item.id = NAV_ID;
+            item.removeAttribute('href');
+            item.setAttribute('role', 'button'); item.setAttribute('tabindex', '0');
+            const icoBox = item.querySelector('[data-aui="icon"]').parentElement;
+            icoBox.replaceChildren(AE.h('span', { class: 'ae-ico', html: TICKET }));
+            [...item.childNodes].filter((n) => n.nodeType === 3).forEach((n) => n.remove());
+            item.append('Support ticket');
+            const go = (e) => { e.preventDefault(); find('Support Ticket')?.click(); };
+            item.addEventListener('click', go);
+            item.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); });
+          }
+          if (item.nextElementSibling !== more) more.before(item);
+          return true;
+        }
+        function enhancementIdea(orig) {
+          const head = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,div')].find((e) => e.children.length === 0 && label(e) === 'Metrics overview');
+          let row = head, viewAll = null;
+          for (let i = 0; row && i < 4 && !viewAll; i++) { row = row.parentElement; viewAll = row && [...row.querySelectorAll('a, button')].find((e) => /^View all/.test(label(e))); }
+          if (!viewAll) return false;
+          let pill = document.getElementById(IDEA_ID);
+          if (!pill) {
+            pill = AE.h('button', { id: IDEA_ID, type: 'button', class: 'sg-btn', title: 'Suggest an improvement to Portal' });
+            pill.innerHTML = BULB;
+            pill.append('Enhancement idea');
+            pill.addEventListener('click', () => find('Enhancement Idea')?.click());
+          }
+          const h = viewAll.getBoundingClientRect().height;
+          if (h) pill.style.height = Math.round(h) + 'px';
+          if (pill.nextElementSibling !== viewAll) viewAll.before(pill);
+          return true;
+        }
+
+        AE.every(1500, () => {
+          untuckAll();
+          const st = find('Support Ticket'), idea = find('Enhancement Idea');
+          if (st && supportTicket(st)) tuck(st); else document.getElementById(NAV_ID)?.remove();
+          if (idea && enhancementIdea(idea)) tuck(idea); else document.getElementById(IDEA_ID)?.remove();
+        });
+      },
       logoLink() {
         const ID = 'ae-logo-link';
         document.head.append(AE.h('style', null, `
