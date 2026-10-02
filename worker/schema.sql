@@ -49,3 +49,10 @@ CREATE TABLE IF NOT EXISTS store_seen (    -- every store that has tried to load
   store INTEGER PRIMARY KEY, name TEXT, first_at TEXT NOT NULL, last_at TEXT NOT NULL,
   loads INTEGER NOT NULL DEFAULT 0, last_user TEXT
 );
+CREATE TABLE IF NOT EXISTS cleaning_links (  -- Divination: a phone's cleanings that day, linked to an order by hand
+  store INTEGER NOT NULL, day TEXT NOT NULL,  -- day: YYYY-MM-DD, store-local (the order's day)
+  device TEXT NOT NULL,                       -- the cleaning's IMEI (or Aethernet's key for one without)
+  parent INTEGER NOT NULL,                    -- the order (WO) they count for
+  by_name TEXT, by_id INTEGER, at TEXT NOT NULL,
+  PRIMARY KEY (store, day, device)
+);

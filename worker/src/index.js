@@ -18,6 +18,9 @@
     POST /v1/:store/wo/:wo/unmark       { by, byId }             remove a mark (stays removed)
     POST /v1/:store/feedback            { kind, text, version, page, browser, diag, by, byId, storeName }
     POST /v1/:store/usage               { day, counts: {feature: n}, by, byId, storeName }
+    GET  /v1/:store/links?since=YYYY-MM-DD                       Divination's manual cleaning links since that day
+    POST /v1/:store/links               { day, device, parent, by, byId }   link a phone's cleanings that day to WO `parent`
+    POST /v1/:store/links/remove        { day, device, by, byId }           undo
   Admin (x-aethernet-admin = the ADMIN_KEY secret; never shipped in the script):
     GET  /v1/admin/ping
     GET  /v1/admin/feedback?status=new|planned|fixed|wontfix|all
@@ -29,13 +32,16 @@
   Store access: GET /v1/:store/access?name=&user= answers { allowed } (and
   records the store as seen). Every other /v1/:store/… call is refused (403)
   for stores without access.
-  Daily cron: drop tags + history for WOs closed more than 7 days ago; usage older than 180 days.
+  Daily cron: drop tags + history for WOs closed more than 7 days ago; usage older than 180 days;
+  cleaning links older than 120 days.
 */
 const COLORS = ['purple', 'blue', 'teal', 'green', 'lime', 'yellow', 'orange', 'red', 'grey'];
 const MAX_TAGS_PER_WO = 12, MAX_LIST = 40, KEEP_DAYS = 7;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const KINDS = ['bug', 'idea'], STATUSES = ['new', 'planned', 'fixed', 'wontfix'];
 const FEATURE_RE = /^[a-zA-Z]{1,24}(:[a-zA-Z-]{1,24})?$/;
+const DEVICE_RE = /^[A-Za-z0-9:_-]{1,40}$/; // a cleaning's phone: its IMEI, or Aethernet's own key for one without
+const LINK_DAYS = 120;
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -129,7 +135,7 @@ async function allowed(env, store) {
 async function route(req, env) {
   const url = new URL(req.url);
   if (url.pathname.startsWith('/v1/admin/')) return admin(req, env, url);
-  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|auto|feedback|usage|access)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark))?$/);
+  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|auto|feedback|usage|access|links|links\/remove)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark))?$/);
   if (!m) return fail(404, 'not found');
   const store = Number(m[1]);
   const wo = m[3] ? Number(m[3]) : null;
@@ -154,6 +160,31 @@ async function route(req, env) {
     for (const r of tags.results) (byWo[r.wo] = byWo[r.wo] || []).push({ tag: r.tag, by: r.by, at: r.at });
     for (const r of marks.results) auto[r.wo] = { due: r.due, at: r.at };
     return json({ list: list.results, tags: byWo, auto });
+  }
+
+  // Divination: cleanings a person linked to an order by hand (a phone's cleanings that day count for `parent`).
+  if (req.method === 'GET' && what === 'links') {
+    const since = url.searchParams.get('since');
+    if (!DATE_RE.test(since || '')) return fail(400, 'since=YYYY-MM-DD required');
+    const r = await env.DB.prepare('SELECT day, device, parent, by_name AS by, at FROM cleaning_links WHERE store = ? AND day >= ? ORDER BY day, at').bind(store, since).all();
+    return json({ links: r.results });
+  }
+  if (req.method === 'POST' && (what === 'links' || what === 'links/remove')) {
+    const b = await body(req);
+    const day = String(b.day || ''), device = String(b.device || '');
+    if (!DATE_RE.test(day) || !DEVICE_RE.test(device)) return fail(400, 'day and device required');
+    const by = who(b); // who linked it (shown in Divination); not in Waymark's WO history
+    if (what === 'links') {
+      const parent = Number(b.parent);
+      if (!Number.isInteger(parent) || parent < 10000 || parent > 999999999999) return fail(400, 'parent WO required');
+      await env.DB.prepare('INSERT INTO cleaning_links (store, day, device, parent, by_name, by_id, at) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+        'ON CONFLICT (store, day, device) DO UPDATE SET parent = excluded.parent, by_name = excluded.by_name, by_id = excluded.by_id, at = excluded.at')
+        .bind(store, day, device, parent, by.name, by.id, now()).run();
+    } else {
+      await env.DB.prepare('DELETE FROM cleaning_links WHERE store = ? AND day = ? AND device = ?').bind(store, day, device).run();
+    }
+    const r = await env.DB.prepare('SELECT day, device, parent, by_name AS by, at FROM cleaning_links WHERE store = ? AND day = ? ORDER BY at').bind(store, day).all();
+    return json({ links: r.results });
   }
 
   if (req.method === 'GET' && what === 'history') {
@@ -281,6 +312,7 @@ async function cleanup(env) {
     env.DB.prepare('DELETE FROM usage WHERE day < ?').bind(new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10)),
     // List-change history: keep 90 days.
     env.DB.prepare('DELETE FROM history WHERE wo IS NULL AND at < ?').bind(new Date(Date.now() - 90 * 86400000).toISOString()),
+    env.DB.prepare('DELETE FROM cleaning_links WHERE day < ?').bind(new Date(Date.now() - LINK_DAYS * 86400000).toISOString().slice(0, 10)),
   ]);
 }
 

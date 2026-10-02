@@ -8,6 +8,13 @@
   different customer record), falling back to customer ID without an IMEI.
   Dual-SIM phones have two IMEIs: a different IMEI of the same model (first
   8 digits) for a customer of the same name links too (AE.data.sameDevice).
+  When the data still doesn't tie a cleaning to its order (e.g. AT&T set the
+  cleaning up on the customer's other phone), anyone can link it by hand:
+  "Link to…" next to each unlinked cleaning in the panel. A link says "this
+  phone's cleanings that day count for that order", is shared with the whole
+  store (Aethernet's Worker, like Waymark: /v1/:store/links) and can be undone;
+  manual links are applied before the automatic matching, today and in the
+  history.
 
   Pending cleanings count too: a cleaning arrival created today that hasn't
   been checked in yet (still in Arrivals) shows as "pending" and counts. Its
@@ -56,6 +63,13 @@ AE.crystal({
       #${PANEL_ID} a:hover { text-decoration:underline; }
       #${PANEL_ID} .sg-soft a { font-weight:400; }
       #${PANEL_ID} .miss { color:var(--aui-status-error,#b91a24); font-weight:600; }
+      #${PANEL_ID} .unl { margin-top:10px; }
+      #${PANEL_ID} .unl-row { display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid var(--aui-outline-soft,#eeedf1); }
+      #${PANEL_ID} .unl-row > div { flex:1; min-width:0; }
+      #${PANEL_ID} .unl-row select { flex:none; max-width:190px; height:30px; padding:0 8px; border-radius:8px; font:inherit; font-size:13px;
+        border:1px solid var(--aui-outline,#c6c6ca); background:var(--aui-surface,#fff); color:var(--aui-on-surface,#1a1c1e); }
+      #${PANEL_ID} .man { font-size:12px; color:var(--aui-on-surface-soft,#5d5e61); margin-top:2px; }
+      #${PANEL_ID} .man button { border:0; background:none; padding:0; font:inherit; color:var(--aui-primary,#8223d2); font-weight:600; cursor:pointer; }
       #${PANEL_ID} .sg-cast-group { display:inline-flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:0; margin:0 0 4px 4px; padding:4px 4px 0 4px;
         border:1.5px dashed var(--aui-primary, #8223d2); border-radius:14px; }
       #${PANEL_ID} .sg-cast-group .sg-chip { margin:0 0 4px 4px; }
@@ -65,26 +79,51 @@ AE.crystal({
       #${PANEL_ID} .sg-cast-go:hover { filter:brightness(1.1); }
     `));
 
+    // Manual links (shared, via the Worker): { day, device, parent, by, at }. device = the cleaning's IMEI, or its own key without one.
+    const linksOn = () => !!(AE.waymark && AE.waymark.configured());
+    const devKey = (c) => AE.data.imeiOf(c) || c.key;
+    async function fetchLinks(sinceKey) {
+      if (!linksOn()) return [];
+      const j = await AE.waymark.call('GET', '/links?since=' + sinceKey);
+      return j.links || [];
+    }
+    // Which order each cleaning counts for: manual links first, then the automatic matching (in order of creation).
+    function assign(parents, cleanings, links) {
+      const used = new Set(), mine = new Map(parents.map((p) => [String(p.workorderId), []]));
+      for (const l of links) {
+        const list = mine.get(String(l.parent));
+        if (!list) continue; // that order isn't one of the day's: the link doesn't apply
+        for (const c of cleanings) if (!used.has(c.key) && devKey(c) === l.device) { used.add(c.key); list.push(Object.assign({}, c, { manual: l })); }
+      }
+      const rows = parents.map((p) => {
+        const matched = mine.get(String(p.workorderId));
+        for (const c of cleanings) if (!used.has(c.key) && AE.data.belongs(c, p)) { used.add(c.key); matched.push(c); }
+        return { p, matched };
+      });
+      return { rows, unlinked: cleanings.filter((c) => !used.has(c.key)) };
+    }
+
+    let linksError = null;
     async function compute() {
       const start = new Date(); start.setHours(0, 0, 0, 0);
-      const startMs = start.getTime(), endMs = startMs + 86400000;
-      const [wos, arrs] = await Promise.all([AE.data.workorders(startMs), AE.data.arrivals()]);
+      const startMs = start.getTime(), endMs = startMs + 86400000, day = keyOf(start);
+      const [wos, arrs, links] = await Promise.all([AE.data.workorders(startMs), AE.data.arrivals(),
+        fetchLinks(day).then((l) => { linksError = null; return l; }, (e) => { linksError = e.message || String(e); return []; })]);
       const today = (r) => { const t = Date.parse(r.createdAt); return t >= startMs && t < endMs; };
       const parents = wos.filter((r) => r.programId === AE.PARENT_PROGRAM_ID && today(r)).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
       const cleanings = AE.data.cleanings(wos, arrs, today);
-      const used = new Set();
-      const rows = parents.map((p) => {
-        const matched = cleanings.filter((c) => !used.has(c.key) && AE.data.belongs(c, p));
-        matched.forEach((c) => used.add(c.key));
-        return { p, matched };
-      });
+      const { rows, unlinked } = assign(parents, cleanings, links.filter((l) => l.day === day));
       const linked = rows.reduce((n, r) => n + r.matched.length, 0);
       const pending = rows.reduce((n, r) => n + r.matched.filter((c) => c.pending).length, 0);
       return {
-        parents: parents.length, linked, pending, rows, at: new Date(),
-        unlinked: cleanings.filter((c) => !used.has(c.key)),
+        parents: parents.length, linked, pending, rows, at: new Date(), day, unlinked,
         pct: parents.length ? Math.round((linked / parents.length) * 100) : null,
       };
+    }
+    async function setLink(device, parent) {
+      AE.track(parent ? 'cleaningRate:link' : 'cleaningRate:unlink');
+      await AE.waymark.call('POST', parent ? '/links' : '/links/remove', { day: last.day, device, parent: parent ? Number(parent) : undefined });
+      await refresh();
     }
 
     const level = (pct) => (pct == null ? 'none' : pct >= 100 ? 'good' : pct >= TARGET ? 'ok' : 'bad');
@@ -159,13 +198,27 @@ AE.crystal({
         ? '<table>' + last.rows.map(({ p: wo, matched }) =>
           '<tr><td><div class="who">' + esc(nameOf(wo) || 'Unknown customer') + '</div>' +
           '<div class="sg-soft"><a href="/repair/workorder/' + wo.workorderId + '">' + wo.workorderId + '</a> · ' + fmtTime(new Date(wo.createdAt)) + '</div></td>' +
-          '<td style="text-align:right">' + (matched.length ? chips(matched, wo) : '<span class="miss">No cleanings</span>') + '</td></tr>'
+          '<td style="text-align:right">' + (matched.length ? chips(matched, wo) : '<span class="miss">No cleanings</span>') +
+          [...new Map(matched.filter((c) => c.manual).map((c) => [c.manual.device, c.manual])).values()].map((l) =>
+            '<div class="man">Linked by hand by ' + esc(l.by || 'someone') + ' · <button type="button" data-unlink="' + esc(l.device) + '">Undo</button></div>').join('') +
+          '</td></tr>'
         ).join('') + '</table>'
         : '<p class="sg-soft">No Asurion Mobility orders created today yet.</p>';
-      const extra = last.unlinked.length
-        ? '<p class="sg-soft" style="margin:10px 0 0">' + last.unlinked.length + " cleaning(s) today not linked to any of today's orders (not counted): " +
-          last.unlinked.map(linkTo).join(', ') + '</p>'
-        : '';
+      // Unlinked cleanings, one line per phone, each with "Link to…" (today's orders).
+      let extra = '';
+      if (last.unlinked.length) {
+        const phones = new Map();
+        for (const c of last.unlinked) { const k = devKey(c); if (!phones.has(k)) phones.set(k, []); phones.get(k).push(c); }
+        const opts = last.rows.map(({ p: wo }) => '<option value="' + wo.workorderId + '">' + esc((nameOf(wo) || 'Unknown') + ' · ' + wo.workorderId + ' · ' + fmtTime(new Date(wo.createdAt))) + '</option>').join('');
+        const canLink = linksOn() && last.rows.length;
+        extra = '<div class="unl"><div class="sg-soft">' + last.unlinked.length + " cleaning(s) today not linked to any of today's orders (not counted)" +
+          (canLink ? '. If one belongs to an order, link it:' : ':') + '</div>' +
+          [...phones].map(([k, cs]) => '<div class="unl-row"><div><b>' + esc(nameOf(cs[0]) || 'Unknown customer') + '</b> <span class="sg-soft">' +
+            cs.map((c) => esc(AE.CLEANING_PROGRAMS[c.programId]) + ' (' + linkTo(c) + ')').join(', ') + '</span></div>' +
+            (canLink ? '<select data-link="' + esc(k) + '" title="Count this phone\'s cleanings today for one of today\'s orders (for everyone at the store)"><option value="">Link to…</option>' + opts + '</select>' : '') +
+            '</div>').join('') +
+          (linksError ? '<div class="miss" style="font-size:12px">Manual links couldn\'t be loaded: ' + esc(linksError) + '</div>' : '') + '</div>';
+      }
       const scroll = p.scrollTop;
       p.innerHTML =
         '<div style="display:flex;align-items:center;gap:8px">' + AE.actionIcon('cleaningRate', 26) + '<b style="flex:1;font-size:16px">Today\'s cleaning rate: <span style="color:' + levelColor(last.pct) + '">' +
@@ -177,6 +230,14 @@ AE.crystal({
         '<p class="sg-soft" style="margin:10px 0 0"><a href="/reporting/metrics">Past days: Reports → Cleaning rate history</a></p>';
       p.scrollTop = scroll;
       p.querySelector('[data-refresh]').onclick = (e) => { e.stopPropagation(); refresh(); };
+      const linkFail = (e) => { lastError = 'Couldn\'t save the link: ' + (e.message || e); renderPanel(); };
+      p.querySelectorAll('select[data-link]').forEach((sel) => {
+        sel.onclick = (e) => e.stopPropagation();
+        sel.onchange = () => { if (!sel.value) return; sel.disabled = true; setLink(sel.dataset.link, sel.value).catch(linkFail); };
+      });
+      p.querySelectorAll('[data-unlink]').forEach((btn) => {
+        btn.onclick = (e) => { e.stopPropagation(); btn.disabled = true; setLink(btn.dataset.unlink, null).catch(linkFail); };
+      });
       p.querySelectorAll('.sg-cast-go').forEach((btn) => {
         btn.onclick = (e) => {
           e.preventDefault(); e.stopPropagation();
@@ -231,21 +292,14 @@ AE.crystal({
     const histLoadedAt = {}; // range → when its days were last brought up to date (redone every 10 minutes at most)
 
     // One past day, exactly like compute() but without pending arrivals.
-    function tallyDays(wos, keys) {
+    function tallyDays(wos, keys, links = []) {
       const out = {};
       for (const k of keys) {
         const start = new Date(k + 'T00:00:00').getTime(), end = start + DAY;
         const inDay = (r) => { const t = Date.parse(r.createdAt); return t >= start && t < end; };
         const parents = wos.filter((r) => r.programId === AE.PARENT_PROGRAM_ID && inDay(r)).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-        const cleanings = AE.data.cleanings(wos, [], inDay);
-        const used = new Set();
-        let linked = 0;
-        for (const p of parents) {
-          const m = cleanings.filter((c) => !used.has(c.key) && AE.data.belongs(c, p));
-          m.forEach((c) => used.add(c.key));
-          linked += m.length;
-        }
-        out[k] = [parents.length, linked];
+        const { rows } = assign(parents, AE.data.cleanings(wos, [], inDay), links.filter((l) => l.day === k));
+        out[k] = [parents.length, rows.reduce((n, r) => n + r.matched.length, 0)];
       }
       return out;
     }
@@ -269,8 +323,9 @@ AE.crystal({
       }
       if (!need.length) return;
       const since = new Date(need[0] + 'T00:00:00').getTime();
-      const wos = await AE.data.workorders(since, 40); // closed lists newest first; stops past `since`
-      saveHist(tallyDays(wos, need));
+      const [wos, links] = await Promise.all([AE.data.workorders(since, 40), // closed lists newest first; stops past `since`
+        fetchLinks(need[0]).catch(() => [])]);
+      saveHist(tallyDays(wos, need, links));
     }
 
     const pctOf = (parents, linked) => (parents ? Math.round((linked / parents) * 100) : null);

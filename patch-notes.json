@@ -1,5 +1,14 @@
 [
   {
+    "version": "2.20.0",
+    "notes": [
+      "**Divination**: link a cleaning to its order by hand. When a cleaning can't be matched automatically (for example, the carrier set it up on the customer's other phone), pick the order from **Link to…** next to it in the cleaning rate panel. The link counts for everyone at the store, in today's rate and the history, and shows who linked it, with **Undo**."
+    ],
+    "updated": [
+      "cleaningRate"
+    ]
+  },
+  {
     "version": "2.19.0",
     "notes": [
       "**Swiftcast**: the experimental commission option now adds the right item, the **Verizon Free Screen Protector (101516)**, the same way Portal's checkout does. Portal credits it back, so the sale stays $0. It's still off by default while it's being verified (Settings → Swiftcast).",
