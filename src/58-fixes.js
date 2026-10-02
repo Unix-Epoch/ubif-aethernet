@@ -74,6 +74,16 @@
     the browser sent the request, Portal's script errors) go where bug
     reports pick them up.
 
+  - appcuesBoxes: Appcues announcement boxes on work orders (e.g. "ACTION
+    REQUIRED: Apple iOS 27 and Repair Mode": <appcues data-pattern-type="shorty">
+    inside <appcues-container>'s about:blank iframe). Appcues' own × dismisses
+    one for good, which Garrett doesn't want, so it's hidden; the box gets
+    "– Collapse" (until brought back) and "Hide for today". Either leaves the
+    XIV Active Help icon (assets/icons/info.jpg) bottom left; clicking it
+    brings the box back. Remembered per box title (GM ae_appcues_boxes), so a
+    new announcement shows normally. A first-time speech bubble explains it
+    (GM ae_box_tip_seen).
+
   - woSort: sort the Work orders list by any column. Portal's table only
     offers ▲▼ on one or two columns per tab (repair.js FA[…].sortableColumns),
     though the server sorts by more. The list's sort is Redux state
@@ -134,8 +144,13 @@ AE.fixesInfo = [
     }],
   ['reportsRetry', 'Reports page help', 'If Portal\'s Reports page is stuck loading, a warning explains the usual cause (an ad blocker like uBlock Origin) and how to fix it. The details are included if you send a bug report.'],
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
+  ['appcuesBoxes', 'Collapse announcement boxes', 'Announcement boxes on work orders (like "Apple iOS 27 and Repair Mode") get – Collapse, to shrink them to an icon, and Hide for today. They never disappear for good: the icon at the bottom left brings them back.'],
   ['appcuesButtons', 'Support Ticket & Enhancement Idea buttons', 'Portal\'s Support Ticket and Enhancement Idea buttons are made to fit: Support Ticket becomes a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before.'],
-  ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Never on inventory, check-in or check-out pages, or while typing in a field.'],
+  ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Never on inventory, check-in or check-out pages, or while typing in a field.',
+    // Debugging: a live log of what the scanner sends and what happened.
+    (s, h) => h('label', { style: 'display:flex;align-items:center;gap:8px;margin:-2px 0 10px 14px;font-size:12px', class: 'sg-soft' },
+      h('input', { type: 'checkbox', checked: !!s.fixes.scanDebug, onchange: (e) => { s.fixes.scanDebug = e.target.checked; } }),
+      'Show scan debugging (a log of every scan, bottom right; to find out why a scan didn\'t work)')],
 ];
 
 AE.crystal({
@@ -144,32 +159,62 @@ AE.crystal({
   sites: ['portal.ubreakifix.net'],
   run() {
     const on = AE.settings.fixes || {};
+
+    // Appcues (fast.appcues.com) content, shared by appcuesButtons and appcuesBoxes.
+    const AC = (() => {
+      const TUCK = 'ae-appcues-tucked';
+      document.head.append(AE.h('style', null, `
+        /* display:block: Appcues' <appcues-experience-container> is display:contents (no box), which positioning can't move */
+        .${TUCK} { display:block !important; position:fixed !important; left:-10000px !important; top:0 !important; width:300px !important; opacity:0 !important; pointer-events:none !important; }
+      `));
+      // Every place Appcues can draw: the page, open shadow roots, same-origin frames.
+      function roots() {
+        const out = [document];
+        for (let i = 0; i < out.length; i++) {
+          for (const el of out[i].querySelectorAll('*')) {
+            if (el.shadowRoot) out.push(el.shadowRoot);
+            if (el.tagName === 'IFRAME') { try { const d = el.contentDocument; if (d && d.documentElement) out.push(d); } catch (_) { /* other origin */ } }
+          }
+        }
+        return out;
+      }
+      // What to tuck away in the page: the frame or shadow host it's drawn in, and its Appcues wrapper.
+      function outerBox(el) {
+        let x = el;
+        for (;;) {
+          const root = x.getRootNode();
+          if (root instanceof ShadowRoot) { x = root.host; continue; }
+          if (root !== document) { const fe = root.defaultView && root.defaultView.frameElement; if (fe) { x = fe; continue; } }
+          break;
+        }
+        for (let y = x; y && y !== document.body; y = y.parentElement) {
+          if (/^appcues/i.test(y.tagName) || /appcues/i.test((y.id || '') + ' ' + (typeof y.className === 'string' ? y.className : ''))) x = y;
+        }
+        return x;
+      }
+      // Where `el` is on the page (adds up the frames it's drawn in).
+      function pageRect(el) {
+        const r = el.getBoundingClientRect();
+        let x = r.left, y = r.top, win = el.ownerDocument.defaultView;
+        while (win && win !== window && win.frameElement) { const f = win.frameElement.getBoundingClientRect(); x += f.left; y += f.top; win = win.frameElement.ownerDocument.defaultView; }
+        return { left: x, top: y, width: r.width, height: r.height, right: x + r.width, bottom: y + r.height };
+      }
+      return { TUCK, roots, outerBox, pageRect };
+    })();
+
     const FIXES = {
       appcuesButtons() {
-        const TUCK = 'ae-appcues-tucked', NAV_ID = 'ae-support-ticket', IDEA_ID = 'ae-enhancement-idea';
+        const { TUCK, roots, outerBox } = AC, NAV_ID = 'ae-support-ticket', IDEA_ID = 'ae-enhancement-idea';
         const svg = (d) => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
         const TICKET = svg('<path d="M3.5 7.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v2a2.5 2.5 0 0 0 0 5v2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-2a2.5 2.5 0 0 0 0-5z"/><path d="M14.5 5.5v13" stroke-dasharray="1.6 2.2"/>');
         const BULB = svg('<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2h5c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>');
         document.head.append(AE.h('style', null, `
-          /* display:block: Appcues' <appcues-experience-container> is display:contents (no box), which positioning can't move */
-          .${TUCK} { display:block !important; position:fixed !important; left:-10000px !important; top:0 !important; width:300px !important; opacity:0 !important; pointer-events:none !important; }
           #${NAV_ID} { cursor:pointer; }
           #${NAV_ID} .ae-ico { display:inline-flex; line-height:0; }
           #${IDEA_ID} { gap:6px; margin:0 8px 0 auto; } /* auto: sits by View all even in a space-between row */
           #${IDEA_ID} svg { width:18px; height:18px; }
         `));
         const label = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim();
-        // Every place Appcues can draw: the page, open shadow roots, same-origin frames.
-        function roots() {
-          const out = [document];
-          for (let i = 0; i < out.length; i++) {
-            for (const el of out[i].querySelectorAll('*')) {
-              if (el.shadowRoot) out.push(el.shadowRoot);
-              if (el.tagName === 'IFRAME') { try { const d = el.contentDocument; if (d && d.documentElement) out.push(d); } catch (_) { /* other origin */ } }
-            }
-          }
-          return out;
-        }
         function find(text) {
           for (const r of roots()) {
             for (const el of r.querySelectorAll('button, a, [role="button"]')) {
@@ -178,20 +223,6 @@ AE.crystal({
             }
           }
           return null;
-        }
-        // What to tuck away in the page: the frame or shadow host it's drawn in, and its Appcues wrapper.
-        function outerBox(el) {
-          let x = el;
-          for (;;) {
-            const root = x.getRootNode();
-            if (root instanceof ShadowRoot) { x = root.host; continue; }
-            if (root !== document) { const fe = root.defaultView && root.defaultView.frameElement; if (fe) { x = fe; continue; } }
-            break;
-          }
-          for (let y = x; y && y !== document.body; y = y.parentElement) {
-            if (/^appcues/i.test(y.tagName) || /appcues/i.test((y.id || '') + ' ' + (typeof y.className === 'string' ? y.className : ''))) x = y;
-          }
-          return x;
         }
         const tucked = new Set();
         function tuck(el) { const box = outerBox(el); box.classList.add(TUCK); tucked.add(box); }
@@ -244,6 +275,105 @@ AE.crystal({
           if (st && supportTicket(st)) tuck(st); else document.getElementById(NAV_ID)?.remove();
           if (idea && enhancementIdea(idea)) tuck(idea); else document.getElementById(IDEA_ID)?.remove();
         });
+      },
+      appcuesBoxes() {
+        const KEY = 'ae_appcues_boxes', TIP_KEY = 'ae_box_tip_seen', ICONS = 'ae-box-icons', MARK = 'data-ae-box';
+        const PATTERNS = ['shorty', 'modal', 'slideout', 'fullscreen'];
+        const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+        const store = () => GM_getValue(KEY, {});
+        const put = (k, v) => { const all = store(); if (v) all[k] = v; else delete all[k]; GM_setValue(KEY, all); };
+        const onWo = () => /^\/repair\/workorder\/\d+/.test(location.pathname);
+        const titleOf = (box) => {
+          const hd = box.querySelector('h1, h2, h3, h4');
+          return ((hd ? hd.textContent : box.textContent) || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        };
+        // A box is known by its title, so a new announcement shows normally.
+        const keyOf = (t) => { let x = 0; for (let i = 0; i < t.length; i++) x = (x * 31 + t.charCodeAt(i)) | 0; return 'b' + (x >>> 0).toString(36); };
+        const away = (st) => !!st && (st.collapsed || st.hiddenDay === today());
+
+        document.head.append(AE.h('style', null, `
+          #${ICONS} { position:fixed; left:16px; bottom:16px; z-index:2147483645; display:flex; flex-direction:column-reverse; gap:10px; }
+          #${ICONS} button { position:relative; width:44px; height:44px; padding:0; border:0; border-radius:22%; cursor:pointer; line-height:0; overflow:visible;
+            box-shadow:0 0 0 2px #1a1a1f, 0 0 0 3.5px #c9a75a, 0 6px 18px rgba(12,14,17,.35); background:#1a1a1f; }
+          #${ICONS} button img { width:100%; height:100%; border-radius:22%; }
+          #${ICONS} button:hover { filter:brightness(1.15); }
+          #${ICONS} button .when { position:absolute; left:52px; top:50%; transform:translateY(-50%); white-space:nowrap; padding:3px 8px; border-radius:6px; font:600 12px Apercu, "Helvetica Neue", Arial, sans-serif;
+            background:rgba(12,12,18,.88); color:#fff; display:none; line-height:1.3; }
+          #${ICONS} button:hover .when, #${ICONS} button:focus-visible .when { display:block; }
+          .ae-box-tip { position:fixed; z-index:2147483646; width:280px; padding:12px 14px; font-size:13px; line-height:1.45; }
+          .ae-box-tip::after { content:''; position:absolute; top:-8px; left:var(--tail, 24px); width:16px; height:16px; transform:rotate(45deg);
+            background:var(--aui-surface, #fff); box-shadow:-2px -2px 3px rgba(12,14,17,.06); }
+          .ae-box-tip p { margin:0 0 8px; }
+        `));
+        // Controls in the box itself (it may be drawn in Appcues' frame, so its own document gets the style).
+        const BAR_CSS = '[' + MARK + '-bar]{display:flex;gap:6px;justify-content:flex-end;padding:6px 8px 0;position:relative;z-index:3}' +
+          '[' + MARK + '-bar] button{font:600 12px Apercu,"Helvetica Neue",Helvetica,Arial,sans-serif;height:26px;padding:0 10px;border-radius:10000rem;cursor:pointer;' +
+          'border:1px solid rgba(0,0,0,.25);background:rgba(255,255,255,.7);color:#1a1c1e}' +
+          '[' + MARK + '-bar] button:hover{border-color:#8223d2;color:#8223d2}' +
+          '[' + MARK + '] .appcues-skip{display:none !important}'; // Appcues' own × dismisses it for good
+        function controls(box, key, title) {
+          const doc = box.ownerDocument;
+          if (!doc.getElementById('ae-box-css')) { const st = doc.createElement('style'); st.id = 'ae-box-css'; st.textContent = BAR_CSS; (doc.head || doc.documentElement).append(st); }
+          if (box.querySelector('[' + MARK + '-bar]')) return;
+          box.setAttribute(MARK, key);
+          const bar = doc.createElement('div'); bar.setAttribute(MARK + '-bar', '');
+          const btn = (label, tip, fn) => { const b = doc.createElement('button'); b.type = 'button'; b.textContent = label; b.title = tip; b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(); }); return b; };
+          bar.append(
+            btn('– Collapse', 'Collapse to an icon (bottom left). Click the icon to bring it back.', () => { put(key, { title, collapsed: true }); AE.track('fixes:boxCollapse'); tick(); }),
+            btn('Hide for today', 'Hide until tomorrow. The icon (bottom left) brings it back today.', () => { put(key, { title, hiddenDay: today() }); AE.track('fixes:boxHideToday'); tick(); }));
+          (box.querySelector('modal-container') || box).prepend(bar);
+        }
+        function tip(box) {
+          if (GM_getValue(TIP_KEY, false) || document.querySelector('.ae-box-tip')) return;
+          const bar = box.querySelector('[' + MARK + '-bar]');
+          if (!bar) return;
+          const r = AC.pageRect(bar);
+          if (!r.width) return;
+          const el = AE.h('div', { class: 'sg sg-card ae-box-tip', role: 'note' },
+            AE.h('p', null, AE.h('b', null, 'New: '), 'collapse this box to an icon, or hide it for today. It never disappears for good: the icon at the bottom left brings it back.'),
+            AE.h('div', { class: 'sg-actions' }, AE.h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => { GM_setValue(TIP_KEY, true); el.remove(); } }, 'Got it')));
+          document.body.append(el);
+          const left = Math.max(8, Math.min(r.right - 280, innerWidth - 288));
+          el.style.left = left + 'px'; el.style.top = (r.bottom + 12) + 'px';
+          el.style.setProperty('--tail', Math.max(14, Math.min(250, r.right - 60 - left)) + 'px');
+        }
+
+        const tucked = new Set();
+        function tick() {
+          tucked.forEach((b) => b.classList.remove(AC.TUCK)); tucked.clear();
+          const boxes = [];
+          if (onWo()) {
+            for (const r of AC.roots()) {
+              for (const box of r.querySelectorAll('appcues[data-pattern-type]')) {
+                if (!PATTERNS.includes(box.getAttribute('data-pattern-type'))) continue;
+                const title = titleOf(box);
+                if (title) boxes.push({ box, title, key: keyOf(title) });
+              }
+            }
+          }
+          const all = store(), shown = [];
+          for (const b of boxes) {
+            controls(b.box, b.key, b.title);
+            if (away(all[b.key])) { const o = AC.outerBox(b.box); o.classList.add(AC.TUCK); tucked.add(o); shown.push(b); }
+            else tip(b.box);
+          }
+          // One icon per collapsed / hidden box; click it to bring the box back.
+          let wrap = document.getElementById(ICONS);
+          if (!shown.length) { wrap?.remove(); return; }
+          if (!wrap) { wrap = AE.h('div', { id: ICONS, class: 'sg' }); document.body.append(wrap); }
+          const sig = shown.map((b) => b.key + (all[b.key].collapsed ? 'c' : 'h')).join(',');
+          if (wrap.dataset.sig === sig) return;
+          wrap.dataset.sig = sig;
+          wrap.replaceChildren(...shown.map((b) => AE.h('button', { type: 'button', 'aria-label': 'Show: ' + b.title,
+            onclick: () => { put(b.key, null); AE.track('fixes:boxShow'); tick(); } },
+            AE.h('img', { src: AE.asset('info'), alt: '' }),
+            AE.h('span', { class: 'when' }, b.title, AE.h('br'), AE.h('span', { style: 'font-weight:400;opacity:.8' }, all[b.key].collapsed ? 'Collapsed · click to show' : 'Hidden for today · click to show')))));
+        }
+        AE.every(1000, tick);
+        // Old entries (boxes not seen for a while) are dropped: hidden-for-today ones once the day is over.
+        const all = store();
+        for (const [k, v] of Object.entries(all)) if (v.hiddenDay && v.hiddenDay !== today()) delete all[k];
+        GM_setValue(KEY, all);
       },
       logoLink() {
         const ID = 'ae-logo-link';
@@ -659,8 +789,16 @@ AE.crystal({
           const a = document.activeElement;
           return !!a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
         };
-        const dialogOpen = () => [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')]
-          .some((d) => d.offsetParent !== null && !d.closest('.sg')); // Aethernet's own cards don't count
+        // A dialog that blocks the page. Non-modal ones (aria-modal="false", e.g. Appcues announcement
+        // boxes) and Aethernet's own cards don't count.
+        // Really on screen: Portal keeps some dialogs in the page all the time, hidden with visibility:hidden inside a
+        // transparent wrapper (store-change-request modals, Employee login; seen Oct 2, 2026). They took up layout, so
+        // a layout-only check counted them as open and every scan was refused ("a dialog is open").
+        const seen = (d) => (d.checkVisibility ? d.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+          : d.offsetParent !== null && getComputedStyle(d).visibility !== 'hidden');
+        const openDialogs = () => [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')]
+          .filter((d) => seen(d) && !d.closest('.sg') && d.getAttribute('aria-modal') !== 'false');
+        const dialogOpen = () => openDialogs().length > 0;
         const scanPage = () => /^\/(boh|check-in|check-out)(\/|$)/.test(path());
         const itemPage = () => path() === '/' || /^\/repair\/workorders\/?$/.test(path()) || /^\/customer(s)?(\/|$)/.test(path()) ||
           /^\/boh\/inventory\/store-products(\/|$)/.test(path());
@@ -690,25 +828,83 @@ AE.crystal({
           return 'opened item ' + item[1];
         }
 
+        /*
+          Scan debugging (Settings → Master's Mend → Scan to open → Show scan debugging):
+          a log, bottom right, of every burst of keys (4+): what arrived, how fast
+          (slowest gap), what ended it, whether Portal saw a scan, and what
+          Aethernet did and why (focus, open dialogs, page).
+        */
+        const dbg = (() => {
+          if (!on.scanDebug) return null;
+          const ID = 'ae-scan-debug', rows = [];
+          document.head.append(AE.h('style', null, `
+            #${ID} { position:fixed; right:16px; bottom:16px; z-index:2147483645; width:440px; max-height:46vh; overflow:auto; padding:10px 12px; font:12px/1.4 ui-monospace, Menlo, monospace; }
+            #${ID} .hd { display:flex; align-items:center; gap:8px; font:700 13px Apercu, "Helvetica Neue", Arial, sans-serif; margin-bottom:6px; }
+            #${ID} .hd span { flex:1; }
+            #${ID} .r { border-top:1px solid var(--aui-outline-soft, #eeedf1); padding:5px 0; overflow-wrap:anywhere; }
+            #${ID} .ok { color:var(--aui-status-success, #136d31); font-weight:700; }
+            #${ID} .no { color:var(--aui-status-error, #b91a24); font-weight:700; }
+            #${ID} .soft { color:var(--aui-on-surface-soft, #5d5e61); }
+          `));
+          const box = AE.h('div', { id: ID, class: 'sg sg-card' });
+          const paint = () => {
+            if (!box.isConnected) document.body.append(box);
+            box.replaceChildren(AE.h('div', { class: 'hd' }, AE.h('span', null, 'Scan debugging'),
+              AE.h('button', { type: 'button', class: 'sg-btn', style: 'height:24px;font-size:12px', onclick: () => { rows.length = 0; paint(); } }, 'Clear'),
+              AE.h('button', { type: 'button', class: 'sg-btn', style: 'height:24px;font-size:12px', title: 'Copy the log (to paste in a bug report)',
+                onclick: () => navigator.clipboard.writeText(rows.map((r) => r.text).join('\n')).then(() => AE.toast('Scan debugging', 'Log copied.', 'ok')) }, 'Copy')),
+            ...(rows.length ? rows.map((r) => AE.h('div', { class: 'r', html: r.html })) : [AE.h('div', { class: 'soft' }, 'Scan something. Every burst of 4+ keys shows up here.')]));
+          };
+          const esc = AE.esc;
+          AE.every(1500, () => { if (!box.isConnected) paint(); });
+          return {
+            add(o) {
+              const focus = document.activeElement && document.activeElement !== document.body
+                ? document.activeElement.tagName.toLowerCase() + (document.activeElement.id ? '#' + document.activeElement.id : '') + (document.activeElement.name ? '[name=' + document.activeElement.name + ']' : '') : 'nothing';
+              const dl = openDialogs().map((d) => (d.getAttribute('aria-label') || d.getAttribute('data-testid') || d.className.toString().slice(0, 30) || d.tagName.toLowerCase()));
+              const page = o.page || location.pathname;
+              const text = new Date().toLocaleTimeString() + ' "' + o.chars + '" (' + o.chars.length + ' keys, slowest gap ' + o.gap + ' ms, ended by ' + o.end + ') · Portal saw a scan: ' +
+                (o.portal == null ? '—' : o.portal ? 'yes' : 'no') + ' · ' + (o.result || '') + ' · page ' + page + ' · focus: ' + focus + ' · dialogs: ' + (dl.join(', ') || 'none');
+              const good = /^opened/.test(o.result || '');
+              rows.unshift({ text, html: '<b>' + esc(new Date().toLocaleTimeString()) + '</b> "' + esc(o.chars) + '" <span class="soft">' + o.chars.length + ' keys · slowest gap ' + o.gap + ' ms · ended by ' + esc(o.end) +
+                '</span><br>Portal saw a scan: <b>' + (o.portal == null ? '—' : o.portal ? 'yes' : 'no') + '</b> · <span class="' + (good ? 'ok' : 'no') + '">' + esc(o.result || '') + '</span>' +
+                '<br><span class="soft">page ' + esc(page) + ' · focus: ' + esc(focus) + ' · dialogs: ' + esc(dl.join(', ') || 'none') + '</span>' });
+              rows.length = Math.min(rows.length, 30);
+              paint();
+            },
+          };
+        })();
+
         // Scanner = keys arriving faster than any person types, ending in Enter.
-        let buf = '', last = 0;
+        let buf = '', last = 0, slowest = 0, raw = '';
+        // Debugging: a burst that ended without Enter (a pause, Tab, …) is logged too, so a scanner set up differently shows.
+        const flushRaw = (end) => { if (dbg && raw.length >= 4) dbg.add({ chars: raw, gap: Math.round(slowest), end, result: 'not acted on (no Enter at the end)' }); raw = ''; slowest = 0; };
         window.addEventListener('keydown', (e) => {
           if (e.isComposing || /^(Shift|Control|Alt|Meta|CapsLock)$/.test(e.key)) return;
-          const t = e.timeStamp, quick = t - last <= GAP_MS;
+          const t = e.timeStamp, gap = t - last, quick = gap <= GAP_MS;
           last = t;
+          if (!quick && raw) flushRaw('a pause of ' + Math.round(gap) + ' ms');
+          else if (raw) slowest = Math.max(slowest, gap);
           if (e.key === 'Enter') {
             const scan = quick ? buf : '';
-            buf = '';
-            if (scan.length < 4) return;
-            const before = portalSaw;
+            const chars = raw, gapMax = Math.round(slowest);
+            buf = ''; raw = ''; slowest = 0;
+            if (scan.length < 4) { if (dbg && chars.length >= 4) dbg.add({ chars, gap: gapMax, end: 'Enter', result: 'too slow for a scanner (gaps over ' + GAP_MS + ' ms): ignored' }); return; }
+            const before = portalSaw, page = location.pathname;
             setTimeout(() => {  // Portal handles the Enter (keypress) after this keydown
-              if (portalSaw === before) { hook(); document.dispatchEvent(new CustomEvent(RESEND_EVENT, { detail: scan })); }
-              act(scan).then((r) => console.debug('[' + AE_NAME + '] scan "' + scan + '": ' + r));
+              const portal = portalSaw !== before;
+              if (!portal) { hook(); document.dispatchEvent(new CustomEvent(RESEND_EVENT, { detail: scan })); }
+              act(scan).then((r) => {
+                console.debug('[' + AE_NAME + '] scan "' + scan + '": ' + r);
+                if (dbg) dbg.add({ chars: scan, gap: gapMax, end: 'Enter', portal, result: r, page });
+              });
             }, 60);
             return;
           }
-          if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) { buf = ''; return; }
+          if (e.key === 'Tab' && raw) { flushRaw('Tab'); buf = ''; return; }
+          if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) { if (raw) flushRaw(e.key); buf = ''; return; }
           buf = quick ? buf + e.key : e.key;
+          raw = quick ? raw + e.key : e.key;
         }, true);
         AE.hooks.scan = (text) => act(String(text).trim(), 'dev tools', true); // dev tools: act on a pretend scan
       },

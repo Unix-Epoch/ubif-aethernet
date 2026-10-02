@@ -2,10 +2,13 @@
   {
     "version": "2.21.0",
     "notes": [
-      "**Swiftcast**: if Portal's server briefly fails a status change (like \"Error while fetching service bench details\"), Swiftcast now waits a moment and tries again, up to twice, instead of stopping. Status changes are safe to repeat, so nothing is done twice."
+      "**Swiftcast**: if Portal's server briefly fails a status change (like \"Error while fetching service bench details\"), Swiftcast now waits a moment and tries again, up to twice, instead of stopping. Status changes are safe to repeat, so nothing is done twice.",
+      "**Master's Mend**: announcement boxes on work orders (like \"Apple iOS 27 and Repair Mode\") get **– Collapse**, which shrinks one to an icon at the bottom left, and **Hide for today**. They never disappear for good: click the icon to bring one back. A new announcement always shows.",
+      "**Master's Mend**: scan to open works again. Portal now keeps some hidden dialogs on every page, and Aethernet mistook them for open ones, so it ignored every scan. If a scan still doesn't work, turn on **Show scan debugging** (Settings → Master's Mend → Scan to open) to see exactly what the scanner sent and why nothing happened."
     ],
     "updated": [
-      "autoClose"
+      "autoClose",
+      "fixes"
     ]
   },
   {
