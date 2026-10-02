@@ -30,6 +30,10 @@ Notices (status.json on the same Gist, read live by every install within
 ~15 minutes; no release needed):
 
   python3 build.py --status warning "Title" "Message" [--crystal ID]... [--pause ID]... [--tag "Badge text"]
+                    [--mention ID]... [--chip ID "Badge text"]... [--chip-below VERSION]
+      --crystal: "Known issue" badge on every install (all versions understand it)
+      --mention: icon + link to Settings in the title, no badge (2.22.0+)
+      --chip:    badge only on installs older than --chip-below (default: VERSION, i.e. the version being pushed)
   python3 build.py --status-update "New message"   same notice, new text (re-shows if dismissed)
   python3 build.py --status-fixed 2.10.1           installs at/after 2.10.1 stop showing it
   python3 build.py --status-clear                  remove the notice
@@ -382,11 +386,22 @@ def publish_dev_status(root: Path, status: dict) -> None:
     print("Published dev status.json: " + json.dumps(status, ensure_ascii=False))
 
 
+def apply_notice_extras(inc: dict, args) -> None:
+    """--mention / --chip (2.22.0+ installs). A chip shows only on installs older than
+    --chip-below, which defaults to VERSION (the version being pushed): the fixed
+    version never shows it. Older installs ignore both (they only know crystals/tag)."""
+    if args.mention:
+        inc["mentions"] = args.mention
+    if args.chip:
+        below = args.chip_below or VERSION
+        inc["chips"] = [{"id": cid, "text": text, "below": below} for cid, text in args.chip]
+
+
 def status_command(root: Path, args) -> None:
     status = load_status(root)
     inc = status.get("incident")
     known = crystal_ids(root)
-    for cid in (args.crystal or []) + (args.pause or []):
+    for cid in (args.crystal or []) + (args.pause or []) + (args.mention or []) + [c for c, _ in (args.chip or [])]:
         if cid not in known:
             sys.exit(f"Unknown crystal id {cid!r}. Known: {', '.join(sorted(known))}")
     if args.status_show:
@@ -405,6 +420,7 @@ def status_command(root: Path, args) -> None:
         }
         if args.tag:
             status["incident"]["tag"] = args.tag
+        apply_notice_extras(status["incident"], args)
     elif args.status_update is not None:
         if not inc:
             sys.exit("No notice is live to update.")
@@ -412,6 +428,7 @@ def status_command(root: Path, args) -> None:
         if args.crystal: inc["crystals"] = args.crystal
         if args.pause is not None: inc["pause"] = args.pause
         if args.tag: inc["tag"] = args.tag
+        apply_notice_extras(inc, args)
     elif args.status_fixed:
         if not inc:
             sys.exit("No notice is live to mark fixed.")
@@ -517,6 +534,9 @@ if __name__ == "__main__":
     ap.add_argument("--status-show", action="store_true")
     ap.add_argument("--crystal", action="append", metavar="ID", help="crystal the notice is about (repeatable)")
     ap.add_argument("--pause", action="append", metavar="ID", help="crystal to pause everywhere (repeatable)")
+    ap.add_argument("--mention", action="append", metavar="ID", help="crystal named in the notice: icon + link, no badge (2.22.0+)")
+    ap.add_argument("--chip", action="append", nargs=2, metavar=("ID", "TEXT"), help="badge on a crystal's Settings row, only on installs older than --chip-below (2.22.0+)")
+    ap.add_argument("--chip-below", metavar="VERSION", help="chips show on installs older than this (default: VERSION, the version being pushed)")
     ap.add_argument("--tag", metavar="TEXT", help='badge text on the crystals\' Settings rows (default "Known issue")')
     args = ap.parse_args()
     root = Path(__file__).resolve().parent

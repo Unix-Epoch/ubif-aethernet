@@ -10,7 +10,11 @@
         "id", "severity": "info|warning|error", "title", "message",
         "crystals": ["cleaningRate"],   // which crystals it's about (badges in Settings; a crystal's name in
                                         // the title becomes its icon + a link to its Settings)
-        "tag": "Fixed in future version", // the badge's text on those crystals' Settings rows (default "Known issue")
+        "tag": "…",                     // (2.21.0) the badge's text on those crystals' rows (default "Known issue")
+        "mentions": ["fixes"],          // (2.22.0+) named in the title (icon + link to Settings), no badge
+        "chips": [{ "id": "fixes", "text": "Fix in a newer version", "below": "2.22.0" }],
+                                        // (2.22.0+) badges on crystals' Settings rows; `below`: only on
+                                        // installs older than that version (the fixed one never shows it)
         "pause": ["autoClose"],         // kill switch: these crystals stop acting
         "fixedIn": "2.10.1",            // installs at/after this version stop showing it
         "posted", "updated"
@@ -54,6 +58,9 @@ AE.status = (() => {
         pause: ids(i.pause),
         fixedIn: VER_RE.test(i.fixedIn || '') ? i.fixedIn : null,
         tag: text(i.tag, 40),
+        mentions: ids(i.mentions),
+        chips: (Array.isArray(i.chips) ? i.chips : []).filter((c) => c && ids([c.id]).length).slice(0, 12)
+          .map((c) => ({ id: c.id, text: text(c.text, 40) || 'Known issue', below: VER_RE.test(c.below || '') ? c.below : null })),
         updated: text(i.updated || i.posted, 40),
       };
     }
@@ -68,6 +75,16 @@ AE.status = (() => {
     return i && !(i.fixedIn && !newer(i.fixedIn, AE_VERSION)) ? i : null;
   };
   const paused = (id) => !!incident() && incident().pause.includes(id);
+  // The badge for a crystal's Settings row, if any: paused, a (version-gated) chip, or "Known issue" for a crystal it's about.
+  function chipFor(id) {
+    const inc = incident();
+    if (!inc) return null;
+    if (inc.pause.includes(id)) return { text: 'Paused', kind: 'paused', title: inc.title };
+    const c = inc.chips.find((x) => x.id === id);
+    if (c) return !c.below || newer(c.below, AE_VERSION) ? { text: c.text, kind: inc.severity, title: inc.title } : null;
+    if (inc.crystals.includes(id)) return { text: inc.tag || 'Known issue', kind: inc.severity, title: inc.title };
+    return null;
+  }
   const crystalName = (id) => (AE.crystals.find((c) => c.id === id) || {}).name || id;
 
   // For a crystal's action: true (and says why) when it's paused remotely.
@@ -176,7 +193,7 @@ AE.status = (() => {
   function titleParts(inc) {
     let parts = [inc.title];
     const lead = [];
-    for (const id of inc.crystals) {
+    for (const id of [...new Set([...inc.crystals, ...inc.mentions])]) {
       const name = crystalName(id);
       let hit = false;
       parts = parts.flatMap((p) => {
@@ -186,7 +203,7 @@ AE.status = (() => {
         return [p.slice(0, i), h('a', { href: '#', class: 'crys', title: 'Open ' + name + ' in Settings', onclick: (e) => { e.preventDefault(); AE.openSettings(id); } },
           h('span', { html: AE.actionIcon(id, 18) }), name), p.slice(i + name.length)];
       });
-      if (!hit) lead.push(h('span', { title: name, html: AE.actionIcon(id, 18) }));
+      if (!hit && inc.crystals.includes(id)) lead.push(h('span', { title: name, html: AE.actionIcon(id, 18) }));
     }
     return [...lead, h('span', null, ...parts.filter((p) => p !== ''))];
   }
@@ -210,7 +227,7 @@ AE.status = (() => {
         inc.fixedIn ? h('div', { class: 'extra' }, 'Fixed in v' + inc.fixedIn + '. You have v' + AE_VERSION + '.') : null,
         h('div', { class: 'acts' },
           inc.fixedIn && upd ? h('button', { type: 'button', class: 'sg-btn', onclick: () => startUpdate(upd) }, 'Update now') : null,
-          inc.crystals.length ? h('button', { type: 'button', class: 'sg-btn', onclick: () => AE.openSettings(inc.crystals[0]) }, 'Open in Settings') : null)),
+          inc.crystals.length || inc.mentions.length ? h('button', { type: 'button', class: 'sg-btn', onclick: () => AE.openSettings(inc.crystals[0] || inc.mentions[0]) }, 'Open in Settings') : null)),
       h('button', { type: 'button', class: 'sg-x', title: 'Dismiss (it comes back if the notice is updated)', onclick: () => { GM_setValue(DISMISS_KEY, key); el.remove(); } }, '✕'));
     document.body.appendChild(el);
     placeBanner();
@@ -254,5 +271,5 @@ AE.status = (() => {
   // Dev tools: show a pretend status.json (not saved; the next real check replaces it).
   function simulate(raw) { state = clean(raw); GM_deleteValue(DISMISS_KEY); GM_deleteValue(UPDATE_DISMISS_KEY); render(); }
 
-  return { get: () => state, incident, paused, blocked, refresh, checkNow, startUpdate, updateAvailable, newer, simulate, url: STATUS_URL };
+  return { get: () => state, incident, paused, chipFor, blocked, refresh, checkNow, startUpdate, updateAvailable, newer, simulate, url: STATUS_URL };
 })();
