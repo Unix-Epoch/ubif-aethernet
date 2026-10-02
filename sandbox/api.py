@@ -357,15 +357,29 @@ def route(method, path, body):
         c = s['carts'].setdefault(body.get('cartId'), {'cartId': body.get('cartId'), 'items': [], 'salesOrder': None})
         for line in body.get('cartLines') or []:
             sku = str(line.get('ItemId'))
-            labor = any((a or {}).get('TextValue') == 'labor' for a in line.get('AttributeValues') or [])
-            price = float(s['settings']['laborPrice']) if sku == '10156' else float(line.get('Price') or 0)
-            c['items'].append({'lineId': 'L' + str(nxt('line')), 'sku': sku, 'itemNumber': sku, 'name': 'Refresh labor' if sku == '10156' else 'Item ' + sku,
-                               'quantity': int(line.get('Quantity') or 1), 'price': price, 'lineType': 'labor' if labor else 'item', 'isChild': False})
+            if sku == '101516':  # Verizon Free Screen Protector: $15 plus the partner credit Portal adds (laborPrice = what's left to pay)
+                lid = 'L' + str(nxt('line'))
+                c['items'].append({'lineId': lid, 'sku': sku, 'itemNumber': sku, 'name': 'Verizon Free Screen Protector', 'quantity': 1, 'price': 15.0, 'lineType': 'item', 'isChild': False})
+                credit = 15.0 - float(s['settings']['laborPrice'])
+                if credit:
+                    c['items'].append({'lineId': 'L' + str(nxt('line')), 'sku': 'PCEXEMPT', 'itemNumber': 'PCEXEMPT', 'name': 'Partner Credit Tax Exempt', 'quantity': -1,
+                                       'price': -credit, 'lineType': 'trade_credit', 'isChild': True, 'parentLineId': lid})
+                continue
+            if any((a or {}).get('TextValue') == 'labor' for a in line.get('AttributeValues') or []) or sku == '10156':
+                return 500, {'csuError': {'type': 'CommerceException', 'correlationId': 'sandbox'}}  # what live Portal answered for 10156
+            c['items'].append({'lineId': 'L' + str(nxt('line')), 'sku': sku, 'itemNumber': sku, 'name': 'Item ' + sku,
+                               'quantity': int(line.get('Quantity') or 1), 'price': float(line.get('Price') or 0), 'lineType': 'item', 'isChild': False})
         return 200, cart_view(c['cartId'])
     if p == 'order/cart/item/remove':
         c = s['carts'].get(body.get('cartId'))
         if c:
             c['items'] = [i for i in c['items'] if i['lineId'] not in (body.get('cartLines') or [])]
+        return 200, cart_view(body.get('cartId'))
+    if p == 'checkout/remove-accessory-item':  # Portal's checkout: remove by SKU (a removed item takes its credit with it)
+        c = s['carts'].get(body.get('cartId'))
+        if c:
+            gone = {i['lineId'] for i in c['items'] if i['sku'] in (body.get('skus') or [])}
+            c['items'] = [i for i in c['items'] if i['lineId'] not in gone and i.get('parentLineId') not in gone]
         return 200, cart_view(body.get('cartId'))
     m = re.fullmatch(r'checkout/workorder/(\d+)', p)
     if m:

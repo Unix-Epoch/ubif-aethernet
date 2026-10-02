@@ -7,13 +7,19 @@
                 update-service-job-status → PUT checkin/workorder   (status 8)
     status walk PATCH status 9, then PUT workorder 10 → 11 → 12 → 13,
                 each followed by the same auto-note the UI posts
-    labor       EXPERIMENTAL, off unless switched on (Settings → Swiftcast; default
-                AE_REFRESH_LABOR_DEFAULT). VZ Device Refresh (program 11759) only: labor SKU 10156 into the
-                cart (Portal's own POST order/cart/item/add, LineType labor),
-                which earns the tech commission. If it ever leaves anything to
-                pay, it's taken back out before checkout (order/cart/item/remove)
-                and the run finishes at $0 as before, with a warning.
-    checkout    verify cart total is $0 → checkout/complete-order
+    checkout    [screen protector] verify cart total is $0 → checkout/complete-order
+    screen protector
+                EXPERIMENTAL, off unless switched on (Settings → Swiftcast; default
+                AE_REFRESH_LABOR_DEFAULT). VZ Device Refresh (program 11759) only, at
+                checkout: the Verizon Free Screen Protector (SKU 101516, $15), which
+                earns the tech commission. Sent exactly as Portal's own checkout
+                button does (POST order/cart/item/add {cartId, workorderId,
+                programId, cartLines:[{ItemId, Quantity}]}); the server adds a
+                matching Partner Credit (PCEXEMPT, -$15) so the cart stays $0. If
+                it ever leaves anything to pay, it's taken back out the way Portal
+                does (checkout/remove-accessory-item) and the run finishes at $0
+                as before, with a warning. (Was "refresh labor 10156" until the
+                capture of Portal's own add showed the real SKU.)
 
   Dualcast (Settings → Swiftcast, on by default): when a device has two or
   more cleaning arrivals waiting (e.g. VZ Device Refresh + VZ Sanitization),
@@ -54,8 +60,7 @@ AE.crystal({
       #${INTRO_ID} p { margin:0 0 6px; }
       #${INTRO_ID} .sg-actions { margin-top:8px; justify-content:flex-end; }
     `));
-    const REFRESH_PROGRAM = 11759, REFRESH_LABOR_SKU = '10156'; // VZ Device Refresh → its labor SKU (commission)
-    const LABOR_LINE = { '@odata.type': '#Microsoft.Dynamics.Commerce.Runtime.DataModel.AttributeTextValue', Name: 'LineType', TextValue: 'labor' };
+    const REFRESH_PROGRAM = 11759, SP_SKU = '101516', SP_NAME = 'Verizon screen protector'; // VZ Device Refresh → free screen protector (commission)
     const cartOf = (r) => { const c = unwrap(r); return (c && (c.cartItems ? c : c.cart)) || c || {}; };
     const skuOf = (i) => String(i.sku || i.itemNumber || i.ItemId || '');
     let laborNote = null; // a warning to show when the run finishes
@@ -118,31 +123,6 @@ AE.crystal({
       });
       log('Checked in');
 
-      // VZ Device Refresh: add the refresh labor SKU (commission). Never stops the run.
-      laborNote = null;
-      let laborAdded = false;
-      const laborOn = !!((AE.settings.autoClose || {}).refreshLabor ?? AE_REFRESH_LABOR_DEFAULT); // EXPERIMENTAL, off by default
-      if (Number(programId) === REFRESH_PROGRAM && laborOn) {
-        try {
-          const w = await getWoForCart(woId);
-          const cart = cartOf(await api('GET', '/api/get-cart/' + encodeURIComponent(w.csuCartId) + '?includePartStatus=true'));
-          if ((cart.cartItems || []).some((i) => skuOf(i) === REFRESH_LABOR_SKU)) log('Refresh labor ' + REFRESH_LABOR_SKU + ' already in the cart');
-          else {
-            await api('POST', '/api/order/cart/item/add', {
-              cartId: w.csuCartId, programId: REFRESH_PROGRAM, workorderId: woId, saveCartToSalesOrder: true,
-              cartLines: [{ ItemId: REFRESH_LABOR_SKU, Quantity: 1, AttributeValues: [LABOR_LINE] }],
-            });
-            laborAdded = true;
-            AE.track('autoClose:refreshLabor');
-            log('Added refresh labor ' + REFRESH_LABOR_SKU);
-          }
-        } catch (e) {
-          if (e instanceof AE.Stopped) throw e;
-          laborNote = "Couldn't add refresh labor " + REFRESH_LABOR_SKU + ' (' + (e.message || e) + '), so this cleaning was completed without it.';
-          log('Refresh labor not added');
-        }
-      }
-
       // 3. Status walk. Notes mirror the UI exactly (incl. its double space
       //    in "completed diagnostics" and which steps use the batch endpoint).
       const note = (noteTag, noteText, batch) => {
@@ -185,16 +165,32 @@ AE.crystal({
       const readCart = async () => unwrap(await api('GET', '/api/get-cart/' + encodeURIComponent(wo.csuCartId) + '?includePartStatus=true'));
       const payOf = (c) => (c && (c.payment || (c.cart && c.cart.payment))) || null;
       let cart = await readCart();
-      let pay = payOf(cart);
-      // The refresh labor is meant to be free to the customer; if it isn't, take it back out.
-      if (laborAdded && pay && Number(pay.total) !== 0) {
-        const line = (cartOf(cart).cartItems || []).find((i) => skuOf(i) === REFRESH_LABOR_SKU);
-        if (line) {
-          await api('POST', '/api/order/cart/item/remove', { cartId: wo.csuCartId, cartLines: [line.lineId], itemNumbers: [REFRESH_LABOR_SKU], workorderId: woId });
-          laborNote = 'Refresh labor ' + REFRESH_LABOR_SKU + ' would have charged $' + pay.total + ', so it was taken back out and the sale stayed $0.';
-          log('Refresh labor removed (it added a charge)');
-          cart = await readCart(); pay = payOf(cart);
+      // VZ Device Refresh: the free screen protector (commission), as Portal's checkout adds it. Never stops the run.
+      laborNote = null;
+      let spAdded = false;
+      if (Number(programId) === REFRESH_PROGRAM && laborOnNow()) {
+        try {
+          if ((cartOf(cart).cartItems || []).some((i) => skuOf(i) === SP_SKU)) log(SP_NAME + ' already in the cart');
+          else {
+            await api('POST', '/api/order/cart/item/add', { cartId: wo.csuCartId, workorderId: woId, programId: REFRESH_PROGRAM, cartLines: [{ ItemId: SP_SKU, Quantity: 1 }] });
+            spAdded = true;
+            AE.track('autoClose:refreshLabor');
+            log('Added ' + SP_NAME + ' (' + SP_SKU + ')');
+            cart = await readCart();
+          }
+        } catch (e) {
+          if (e instanceof AE.Stopped) throw e;
+          laborNote = "Couldn't add the " + SP_NAME + ' (' + SP_SKU + ': ' + (e.message || e) + '), so this cleaning was completed without it.';
+          log(SP_NAME + ' not added');
         }
+      }
+      let pay = payOf(cart);
+      // It's meant to be free to the customer (Portal adds a partner credit); if it isn't, take it back out.
+      if (spAdded && pay && Number(pay.total) !== 0) {
+        await api('POST', '/api/checkout/remove-accessory-item', { workorderId: woId, cartId: wo.csuCartId, skus: [SP_SKU] });
+        laborNote = 'The ' + SP_NAME + ' would have charged $' + pay.total + ', so it was taken back out and the sale stayed $0.';
+        log(SP_NAME + ' removed (it added a charge)');
+        cart = await readCart(); pay = payOf(cart);
       }
       const total = pay ? Number(pay.total) : NaN;
       if (total !== 0) throw new Error('Cart total is ' + (pay ? '$' + pay.total : 'unknown') + ', not $0 — stopped before checkout. Finish at Ready for pickup by hand.');
@@ -204,10 +200,6 @@ AE.crystal({
       return woId;
     }
 
-    async function getWoForCart(woId) {
-      const r = await api('GET', '/api/workorder/' + woId);
-      return (r && r.workorder) || unwrap(r) || {};
-    }
     const woLink = (id) => '<a href="/repair/workorder/' + id + '">WO ' + id + '</a>';
 
     /*
@@ -276,8 +268,9 @@ AE.crystal({
       const pause = async () => { await AE.sleep(450); if (stopRequested) throw new AE.Stopped(); };
       const woId = ++fakeWo;
       const steps = ['IMEI validated', ['Created WO ' + woId, woId], 'Checked in'];
-      if (Number(it.programId) === REFRESH_PROGRAM && ((AE.settings.autoClose || {}).refreshLabor ?? AE_REFRESH_LABOR_DEFAULT)) steps.push('Added refresh labor ' + REFRESH_LABOR_SKU);
-      steps.push('Started work', 'Diagnostics done', 'Work done', 'QC done', 'Ready for pickup', 'Sale complete (SO-TEST)');
+      steps.push('Started work', 'Diagnostics done', 'Work done', 'QC done', 'Ready for pickup');
+      if (Number(it.programId) === REFRESH_PROGRAM && laborOnNow()) steps.push('Added ' + SP_NAME + ' (' + SP_SKU + ')');
+      steps.push('Sale complete (SO-TEST)');
       for (const st of steps) {
         await pause();
         if (fake.fail && fakeWo % 2 === 0 && st === 'QC done') throw new Error('PUT /api/workorder/' + woId + ' → HTTP 500 (test failure, nothing was sent)');

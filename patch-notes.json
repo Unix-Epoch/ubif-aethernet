@@ -1,5 +1,14 @@
 [
   {
+    "version": "2.19.0",
+    "notes": [
+      "**Swiftcast**: the experimental commission option now adds the right item, the **Verizon Free Screen Protector (101516)**, the same way Portal's checkout does. Portal credits it back, so the sale stays $0. It's still off by default while it's being verified (Settings → Swiftcast)."
+    ],
+    "updated": [
+      "autoClose"
+    ]
+  },
+  {
     "version": "2.18.0",
     "notes": [
       "**Divination**: a **Cleaning rate history** card on the Reports page shows your cleaning percentage over the last 7, 30 or 90 days, this month or last month: the overall rate, how many days hit the target, a bar for each day and a day-by-day table.",

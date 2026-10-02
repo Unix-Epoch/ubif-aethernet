@@ -37,8 +37,8 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><title>Portal sandbo
  </div>
  <div class="card"><h2>Sandbox settings</h2>
   <div class="chk"><label><input type="checkbox" id="open" onchange="settings()"> Store is open (Swiftcast refuses while it's closed)</label></div>
-  <label>Price of refresh labor 10156 <input type="number" id="labor" step="0.01" onchange="settings()"></label>
-  <div class="soft">Set above $0 to test Swiftcast taking the labor back out.</div>
+  <label>Left to pay on the Verizon screen protector 101516 after Portal's credit <input type="number" id="labor" step="0.01" onchange="settings()"></label>
+  <div class="soft">Portal credits the $15 back, so normally $0. Set above $0 to test Swiftcast taking it back out.</div>
   <div class="row" style="margin-top:12px"><button class="danger" onclick="reset()">Reset everything</button></div>
  </div>
 </div>

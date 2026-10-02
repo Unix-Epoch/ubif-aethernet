@@ -10,7 +10,7 @@
 
   Portal cart recorder: while on, Portal's own cart requests (add/remove
   items, repair-code lookups) are saved with their body and Portal's answer,
-  to copy exactly what Portal sends (e.g. for the VZ Refresh labor SKU).
+  to copy exactly what Portal sends (e.g. for the Verizon screen protector).
   Watches window.fetch from inside the page; records only, changes nothing.
 
   Simulations only change what this browser shows. Two exceptions write to

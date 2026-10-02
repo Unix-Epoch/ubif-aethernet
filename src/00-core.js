@@ -26,7 +26,7 @@ const AE_READABLE_URL = '__READABLE_URL__'; // same build, unminified     // whe
 // The Portal sandbox (sandbox/server.py: Portal's real app on fake data) — dev builds only.
 const AE_SANDBOX = AE_DEV && location.host === 'localhost:8790';
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net' || AE_SANDBOX;
-// Swiftcast's refresh labor (SKU 10156) is EXPERIMENTAL: off unless switched on. Flip to true
+// Swiftcast's Verizon screen protector (SKU 101516; setting key refreshLabor) is EXPERIMENTAL: off unless switched on. Flip to true
 // (with a notice) once it's verified; everyone who never chose follows it.
 const AE_REFRESH_LABOR_DEFAULT = false;
 
