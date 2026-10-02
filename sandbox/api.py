@@ -299,6 +299,9 @@ def route(method, path, body):
         if method == 'GET':
             return 200, wo_detail(w)
         if method == 'PUT':
+            if int(body.get('workorderStatusId') or 0) == 13 and s['settings'].get('failRfp', 0) > 0:  # Portal's flaky lookup (Oct 2, 2026)
+                s['settings']['failRfp'] -= 1
+                return 400, {'errorMessage': 'Error while fetching service bench details.'}
             if body.get('workorderStatusId'):
                 w['workorderStatusId'] = int(body['workorderStatusId'])
             w['updatedAt'] = now()

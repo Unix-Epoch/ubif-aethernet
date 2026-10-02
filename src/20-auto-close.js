@@ -73,6 +73,23 @@ AE.crystal({
       return r;
     }
     const unwrap = AE.unwrap;
+    // Portal's server sometimes fails a status change on a lookup of its own and
+    // takes the same change moments later (Oct 2, 2026, a Samsung VZ Refresh:
+    // PUT workorder → HTTP 400 "Error while fetching service bench details.").
+    // Status changes are safe to repeat, so they get two more tries (3 s, then 6 s).
+    async function retrying(fn, log, what) {
+      for (let i = 0; ; i++) {
+        try { return await fn(); }
+        catch (e) {
+          const msg = (e && e.message) || '';
+          if (e instanceof AE.Stopped || i >= 2 || !/→ HTTP (400|5\d\d)\b/.test(msg)) throw e;
+          console.warn('[' + AE_NAME + '] Swiftcast: ' + what + ' failed, trying again:', msg);
+          if (log && log.retry) log.retry(what);
+          await AE.sleep(3000 * (i + 1));
+          if (stopRequested) throw new AE.Stopped();
+        }
+      }
+    }
 
     async function run(arrivalId, log) {
       const arrival = unwrap(await api('GET', '/api/arrivals/' + arrivalId));
@@ -136,7 +153,7 @@ AE.crystal({
         return wo;
       };
 
-      await api('PATCH', '/api/workorder/' + woId + '/status', { workorderStatusId: 9 });
+      await retrying(() => api('PATCH', '/api/workorder/' + woId + '/status', { workorderStatusId: 9 }), log, 'Start work');
       await note('ready_for_work', tech + ' started work.');
       log('Started work');
 
@@ -154,7 +171,7 @@ AE.crystal({
             WorkorderAttribute: [{ workorderId: woId, workorderAttributeTypeId: 22, key: 'service_outcome', value: 'Completed' }],
           });
         }
-        await api('PUT', '/api/workorder/' + woId, Object.assign(wo, { workorderStatusId: s.to, markCurrentStepCompleted: true }, s.extra));
+        await retrying(() => api('PUT', '/api/workorder/' + woId, Object.assign({}, wo, { workorderStatusId: s.to, markCurrentStepCompleted: true }, s.extra)), log, s.label);
         await note(s.tag, s.text, s.batch);
         log(s.label);
       }

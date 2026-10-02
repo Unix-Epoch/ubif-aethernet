@@ -109,6 +109,8 @@ def handle(h, method, log):
         if path == '/sandbox/settings' and method == 'POST':
             s['settings']['storeOpen'] = bool(body.get('storeOpen'))
             s['settings']['laborPrice'] = float(body.get('laborPrice') or 0)
+            if 'failRfp' in body:  # fail the next N moves to Ready for pickup like Portal did (tests Swiftcast's retry)
+                s['settings']['failRfp'] = int(body.get('failRfp') or 0)
             api.save()
             return h.send(200, {'ok': True})
         if path == '/sandbox/reset' and method == 'POST':

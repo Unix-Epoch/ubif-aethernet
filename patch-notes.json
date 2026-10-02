@@ -1,5 +1,14 @@
 [
   {
+    "version": "2.21.0",
+    "notes": [
+      "**Swiftcast**: if Portal's server briefly fails a status change (like \"Error while fetching service bench details\"), Swiftcast now waits a moment and tries again, up to twice, instead of stopping. Status changes are safe to repeat, so nothing is done twice."
+    ],
+    "updated": [
+      "autoClose"
+    ]
+  },
+  {
     "version": "2.20.0",
     "notes": [
       "**Divination**: link a cleaning to its order by hand. When a cleaning can't be matched automatically (for example, the carrier set it up on the customer's other phone), pick the order from **Link to…** next to it in the cleaning rate panel. The link counts for everyone at the store, in today's rate and the history, and shows who linked it, with **Undo**."
