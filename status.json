@@ -3,5 +3,18 @@
     "version": "2.21.0",
     "date": "2026-10-02T22:35:44Z"
   },
-  "incident": null
+  "incident": {
+    "id": "2026-10-02-scan-to-navigate-master-s-mend-is-fixed-",
+    "severity": "info",
+    "title": "Scan to navigate (Master's Mend) is fixed, sort of.",
+    "message": "If you notice scans work/don't work on specific pages, please submit a bug report from that specific page. Thanks!",
+    "crystals": [
+      "fixes"
+    ],
+    "pause": [],
+    "fixedIn": null,
+    "posted": "2026-10-02T22:36:03Z",
+    "updated": "2026-10-02T22:36:03Z",
+    "tag": "Fixed in future version"
+  }
 }
