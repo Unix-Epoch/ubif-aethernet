@@ -188,6 +188,10 @@ AE.status = (() => {
     el.style.top = Math.round(top + 10) + 'px';
   }
 
+  // Does the notice point to a fix in a newer version than this install? (fixedIn ahead of us,
+  // or a version-gated chip that applies here.)
+  const needsNewer = (inc) => (inc.fixedIn && newer(inc.fixedIn, AE_VERSION)) || inc.chips.some((c) => c.below && newer(c.below, AE_VERSION));
+
   // The title, with each named crystal's name turned into its icon + a link to its Settings
   // (built as elements: the notice text stays plain text). Crystals not named get their icon up front.
   function titleParts(inc) {
@@ -226,7 +230,9 @@ AE.status = (() => {
         pausedNames.length ? h('div', { class: 'extra' }, 'Paused until it\'s fixed: ' + pausedNames.join(', ') + '.') : null,
         inc.fixedIn ? h('div', { class: 'extra' }, 'Fixed in v' + inc.fixedIn + '. You have v' + AE_VERSION + '.') : null,
         h('div', { class: 'acts' },
-          inc.fixedIn && upd ? h('button', { type: 'button', class: 'sg-btn', onclick: () => startUpdate(upd) }, 'Update now') : null,
+          // The notice says a fix is in a newer version than this one: offer to get it.
+          needsNewer(inc) ? (upd ? h('button', { type: 'button', class: 'sg-btn', onclick: () => startUpdate(upd) }, 'Update now')
+            : AE_DEMO ? null : h('button', { type: 'button', class: 'sg-btn', onclick: () => checkNow() }, 'Check for updates')) : null,
           inc.crystals.length || inc.mentions.length ? h('button', { type: 'button', class: 'sg-btn', onclick: () => AE.openSettings(inc.crystals[0] || inc.mentions[0]) }, 'Open in Settings') : null)),
       h('button', { type: 'button', class: 'sg-x', title: 'Dismiss (it comes back if the notice is updated)', onclick: () => { GM_setValue(DISMISS_KEY, key); el.remove(); } }, '✕'));
     document.body.appendChild(el);
