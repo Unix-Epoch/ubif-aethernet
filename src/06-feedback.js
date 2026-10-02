@@ -146,6 +146,7 @@ AE.feedback = (() => {
       pageErrors: AE.pageErrors.slice(-5), // Portal's own script errors
       screen: innerWidth + 'x' + innerHeight,
       theme: document.body.classList.contains('asurion-dark') ? 'dark' : 'light',
+      scans: (AE.scanLog || []).slice(-10), // Master's Mend scan to open: the last few scans and what happened
     };
   }
   function openFeedback() {

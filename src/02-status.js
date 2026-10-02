@@ -8,7 +8,9 @@
       "latest":   { "version": "2.11.0", "date": "…" },        // set by build.py --release
       "incident": {                                          // set by build.py --status …
         "id", "severity": "info|warning|error", "title", "message",
-        "crystals": ["cleaningRate"],   // which crystals it's about (badges in Settings)
+        "crystals": ["cleaningRate"],   // which crystals it's about (badges in Settings; a crystal's name in
+                                        // the title becomes its icon + a link to its Settings)
+        "tag": "Fixed in future version", // the badge's text on those crystals' Settings rows (default "Known issue")
         "pause": ["autoClose"],         // kill switch: these crystals stop acting
         "fixedIn": "2.10.1",            // installs at/after this version stop showing it
         "posted", "updated"
@@ -51,6 +53,7 @@ AE.status = (() => {
         crystals: ids(i.crystals),
         pause: ids(i.pause),
         fixedIn: VER_RE.test(i.fixedIn || '') ? i.fixedIn : null,
+        tag: text(i.tag, 40),
         updated: text(i.updated || i.posted, 40),
       };
     }
@@ -140,6 +143,8 @@ AE.status = (() => {
   #sg-status-banner .body { flex:1; min-width:0; }
   #sg-status-banner .title { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-weight:700; }
   #sg-status-banner .title .sg-aicon { width:18px; height:18px; }
+  #sg-status-banner .crys { display:inline-flex; align-items:center; gap:4px; color:inherit; text-decoration:underline; text-underline-offset:2px; vertical-align:-3px; }
+  #sg-status-banner .crys .sg-aicon { width:18px; height:18px; }
   #sg-status-banner .who { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; opacity:.75; }
   #sg-status-banner .msg { margin-top:2px; overflow-wrap:anywhere; }
   #sg-status-banner .extra { margin-top:6px; font-size:13px; font-weight:600; }
@@ -166,6 +171,26 @@ AE.status = (() => {
     el.style.top = Math.round(top + 10) + 'px';
   }
 
+  // The title, with each named crystal's name turned into its icon + a link to its Settings
+  // (built as elements: the notice text stays plain text). Crystals not named get their icon up front.
+  function titleParts(inc) {
+    let parts = [inc.title];
+    const lead = [];
+    for (const id of inc.crystals) {
+      const name = crystalName(id);
+      let hit = false;
+      parts = parts.flatMap((p) => {
+        if (typeof p !== 'string' || !name || !p.includes(name)) return [p];
+        hit = true;
+        const i = p.indexOf(name);
+        return [p.slice(0, i), h('a', { href: '#', class: 'crys', title: 'Open ' + name + ' in Settings', onclick: (e) => { e.preventDefault(); AE.openSettings(id); } },
+          h('span', { html: AE.actionIcon(id, 18) }), name), p.slice(i + name.length)];
+      });
+      if (!hit) lead.push(h('span', { title: name, html: AE.actionIcon(id, 18) }));
+    }
+    return [...lead, h('span', null, ...parts.filter((p) => p !== ''))];
+  }
+
   function renderBanner() {
     const inc = incident();
     const key = inc && inc.id + '|' + inc.updated;
@@ -179,8 +204,7 @@ AE.status = (() => {
     el = h('div', { id: 'sg-status-banner', class: 'sg ' + inc.severity, role: inc.severity === 'error' ? 'alert' : 'status', 'data-key': key },
       h('span', { class: 'mark', title: AE_NAME, html: icon('aetheryte', 26) }),
       h('div', { class: 'body' },
-        h('div', { class: 'title' }, h('span', { class: 'who' }, AE_NAME + ' notice'),
-          inc.crystals.map((id) => h('span', { title: crystalName(id), html: AE.actionIcon(id, 18) })), h('span', null, inc.title)),
+        h('div', { class: 'title' }, h('span', { class: 'who' }, AE_NAME + ' notice'), ...titleParts(inc)),
         inc.message ? h('div', { class: 'msg' }, inc.message) : null,
         pausedNames.length ? h('div', { class: 'extra' }, 'Paused until it\'s fixed: ' + pausedNames.join(', ') + '.') : null,
         inc.fixedIn ? h('div', { class: 'extra' }, 'Fixed in v' + inc.fixedIn + '. You have v' + AE_VERSION + '.') : null,

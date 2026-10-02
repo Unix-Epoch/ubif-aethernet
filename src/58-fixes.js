@@ -890,10 +890,20 @@ AE.crystal({
           };
         })();
 
+        // The last 10 scan attempts, always kept (in memory only) and sent with bug reports (06-feedback diagnostics):
+        // WO numbers and item labels, never customer details.
+        AE.scanLog = [];
+        const record = (o) => {
+          AE.scanLog.push({ at: new Date().toISOString(), scan: o.chars, keys: o.chars.length, slowestGapMs: o.gap, end: o.end, portalSaw: o.portal,
+            result: o.result, page: o.page || location.pathname, dialogs: openDialogs().length, typing: busyTyping() });
+          if (AE.scanLog.length > 10) AE.scanLog.shift();
+          if (dbg) dbg.add(o);
+        };
+
         // Scanner = keys arriving faster than any person types, ending in Enter.
         let buf = '', last = 0, slowest = 0, raw = '';
         // Debugging: a burst that ended without Enter (a pause, Tab, …) is logged too, so a scanner set up differently shows.
-        const flushRaw = (end) => { if (dbg && raw.length >= 4) dbg.add({ chars: raw, gap: Math.round(slowest), end, result: 'not acted on (no Enter at the end)' }); raw = ''; slowest = 0; };
+        const flushRaw = (end) => { if (raw.length >= 4) record({ chars: raw, gap: Math.round(slowest), end, result: 'not acted on (no Enter at the end)' }); raw = ''; slowest = 0; };
         window.addEventListener('keydown', (e) => {
           if (e.isComposing || /^(Shift|Control|Alt|Meta|CapsLock)$/.test(e.key)) return;
           const t = e.timeStamp, gap = t - last, quick = gap <= GAP_MS;
@@ -904,14 +914,14 @@ AE.crystal({
             const scan = quick ? buf : '';
             const chars = raw, gapMax = Math.round(slowest);
             buf = ''; raw = ''; slowest = 0;
-            if (scan.length < 4) { if (dbg && chars.length >= 4) dbg.add({ chars, gap: gapMax, end: 'Enter', result: 'too slow for a scanner (gaps over ' + GAP_MS + ' ms): ignored' }); return; }
+            if (scan.length < 4) { if (chars.length >= 4) record({ chars, gap: gapMax, end: 'Enter', result: 'too slow for a scanner (gaps over ' + GAP_MS + ' ms): ignored' }); return; }
             const before = portalSaw, page = location.pathname;
             setTimeout(() => {  // Portal handles the Enter (keypress) after this keydown
               const portal = portalSaw !== before;
               if (!portal) { hook(); document.dispatchEvent(new CustomEvent(RESEND_EVENT, { detail: scan })); }
               act(scan).then((r) => {
                 console.debug('[' + AE_NAME + '] scan "' + scan + '": ' + r);
-                if (dbg) dbg.add({ chars: scan, gap: gapMax, end: 'Enter', portal, result: r, page });
+                record({ chars: scan, gap: gapMax, end: 'Enter', portal, result: r, page });
               });
             }, 60);
             return;

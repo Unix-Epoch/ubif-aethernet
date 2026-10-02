@@ -29,7 +29,7 @@ Workflow (Garrett, Sep 30, 2026): new work goes to the `dev` git branch and
 Notices (status.json on the same Gist, read live by every install within
 ~15 minutes; no release needed):
 
-  python3 build.py --status warning "Title" "Message" [--crystal ID]... [--pause ID]...
+  python3 build.py --status warning "Title" "Message" [--crystal ID]... [--pause ID]... [--tag "Badge text"]
   python3 build.py --status-update "New message"   same notice, new text (re-shows if dismissed)
   python3 build.py --status-fixed 2.10.1           installs at/after 2.10.1 stop showing it
   python3 build.py --status-clear                  remove the notice
@@ -403,12 +403,15 @@ def status_command(root: Path, args) -> None:
             "message": " ".join(rest), "crystals": args.crystal or [], "pause": args.pause or [],
             "fixedIn": None, "posted": t, "updated": t,
         }
+        if args.tag:
+            status["incident"]["tag"] = args.tag
     elif args.status_update is not None:
         if not inc:
             sys.exit("No notice is live to update.")
         inc["message"], inc["updated"] = args.status_update, now_utc()
         if args.crystal: inc["crystals"] = args.crystal
         if args.pause is not None: inc["pause"] = args.pause
+        if args.tag: inc["tag"] = args.tag
     elif args.status_fixed:
         if not inc:
             sys.exit("No notice is live to mark fixed.")
@@ -514,6 +517,7 @@ if __name__ == "__main__":
     ap.add_argument("--status-show", action="store_true")
     ap.add_argument("--crystal", action="append", metavar="ID", help="crystal the notice is about (repeatable)")
     ap.add_argument("--pause", action="append", metavar="ID", help="crystal to pause everywhere (repeatable)")
+    ap.add_argument("--tag", metavar="TEXT", help='badge text on the crystals\' Settings rows (default "Known issue")')
     args = ap.parse_args()
     root = Path(__file__).resolve().parent
     if args.status or args.status_update is not None or args.status_fixed or args.status_clear or args.status_show:
