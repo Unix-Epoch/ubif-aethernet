@@ -441,7 +441,7 @@ AE.crystal({
           thisArrival = a;
           if (isCleaning && dualcastOn()) {
             const imei = AE.data.imeiOf(a);
-            siblings = imei ? (await AE.data.arrivals()).filter((x) => x.arrivalId !== arrivalId && x.program && AE.CLEANING_PROGRAMS[x.program.programId] && AE.data.imeiOf(x) === imei) : [];
+            siblings = imei ? (await AE.data.arrivals()).filter((x) => x.arrivalId !== arrivalId && x.program && AE.CLEANING_PROGRAMS[x.program.programId] && AE.data.sameDevice(x, a)) : [];
             if (siblings.length) document.getElementById(BTN_ID)?.remove(); // redraw with Dualcast beside it
           }
         } catch (_) { checkedArrivalId = null; } // retry next tick

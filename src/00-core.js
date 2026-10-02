@@ -705,16 +705,31 @@ const AE = (() => {
         .filter((a) => !(imeiOf(a) && doneKeys.has(imeiOf(a) + ':' + a.programId)));
       return [...woCleanings, ...pending];
     }
-    // Does cleaning `c` belong to parent WO `p`? Same IMEI (AT&T cleanings are
-    // often under a different customer record); customer ID only without one.
+    /*
+      Same phone? Same IMEI, or, since dual-SIM phones (recent iPhones,
+      Samsungs) have two IMEIs and a carrier may send the other one, the same
+      model (TAC: an IMEI's first 8 digits) for a customer of the same name
+      (first + last). Seen Oct 2, 2026: an iPhone 15 Pro Max on a WO with one
+      IMEI, its AT&T cleanings with the other, under AT&T's own customer record.
+    */
+    const nameKey = (r) => { const w = nameOf(r).toLowerCase().replace(/[^a-z'\s-]/g, ' ').split(/\s+/).filter(Boolean); return w.length >= 2 ? w[0] + ' ' + w[w.length - 1] : null; };
+    function sameDevice(a, b) {
+      const ai = imeiOf(a), bi = imeiOf(b);
+      if (!ai || !bi) return false;
+      if (ai === bi) return true;
+      const an = nameKey(a);
+      return ai.slice(0, 8) === bi.slice(0, 8) && !!an && an === nameKey(b);
+    }
+    // Does cleaning `c` belong to parent WO `p`? The same phone (AT&T cleanings
+    // are often under a different customer record); customer ID only without an IMEI.
     function belongs(c, p) {
       const pi = imeiOf(p), ci = imeiOf(c);
-      if (pi && ci) return pi === ci;
+      if (pi && ci) return sameDevice(c, p);
       const pc = custOf(p);
       return !!pc && custOf(c) === pc;
     }
 
-    return { workorders, arrivals, cleanings, belongs, imeiOf, custOf, nameOf };
+    return { workorders, arrivals, cleanings, belongs, sameDevice, imeiOf, custOf, nameOf };
   })();
 
   // --------------------------------------------------- dev hooks + clock

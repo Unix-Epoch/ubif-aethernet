@@ -53,11 +53,14 @@ AE.crystal({
         const wo = (j && j.workorder) || AE.unwrap(j);
         const created = Date.parse(wo.createdAt) || Date.now();
         const dev = wo.CustomerDevice || {};
-        // Shaped like a list row so AE.data.belongs() can compare it.
-        const self = { customerDevice: { imei: dev.imei, customerId: dev.customerId }, customer: { customerId: dev.customerId } };
+        // Shaped like a list row so AE.data.belongs() can compare it; the list's own
+        // row is used when it's there (it has the customer's name, for dual-IMEI phones).
+        let self = { customerDevice: { imei: dev.imei, customerId: dev.customerId }, customer: { customerId: dev.customerId } };
         let matched = [];
         if (!AE.CLEANING_PROGRAMS[wo.programId]) {
           const [wos, arrs] = await Promise.all([AE.data.workorders(created - WINDOW_MS, 5), AE.data.arrivals()]);
+          const row = wos.find((r) => String(r.workorderId) === String(woId));
+          if (row && AE.data.imeiOf(row)) self = row;
           const near = (r) => Math.abs(Date.parse(r.createdAt) - created) < WINDOW_MS;
           matched = AE.data.cleanings(wos, arrs, near).filter((c) => String(c.workorderId) !== String(woId) && AE.data.belongs(c, self));
         }

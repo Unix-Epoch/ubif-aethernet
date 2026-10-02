@@ -6,6 +6,8 @@
   own, so it can pass 100%. Raw percentage only: reason notes are ignored.
   Cleanings link to orders by device IMEI (AT&T cleanings are often under a
   different customer record), falling back to customer ID without an IMEI.
+  Dual-SIM phones have two IMEIs: a different IMEI of the same model (first
+  8 digits) for a customer of the same name links too (AE.data.sameDevice).
 
   Pending cleanings count too: a cleaning arrival created today that hasn't
   been checked in yet (still in Arrivals) shows as "pending" and counts. Its

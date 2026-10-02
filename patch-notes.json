@@ -4,12 +4,14 @@
     "notes": [
       "**Swiftcast**: the experimental commission option now adds the right item, the **Verizon Free Screen Protector (101516)**, the same way Portal's checkout does. Portal credits it back, so the sale stays $0. It's still off by default while it's being verified (Settings → Swiftcast).",
       "**Divination**: the Reports page now scrolls when the cleaning rate history makes it taller than the window, so the whole card (and the day-by-day table) can be reached.",
-      "**Master's Mend**: Portal's **Support Ticket** and **Enhancement Idea** buttons now fit in: Support Ticket is a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before (Settings → Master's Mend to turn it off)."
+      "**Master's Mend**: Portal's **Support Ticket** and **Enhancement Idea** buttons now fit in: Support Ticket is a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before (Settings → Master's Mend to turn it off).",
+      "**Divination**, **Esuna** and **Swiftcast**: cleanings now find their work order even when the carrier used the phone's *other* IMEI. Dual-SIM phones (most recent iPhones and Samsungs) have two; when the IMEIs differ, a cleaning still links if it's the same phone model for a customer with the same name."
     ],
     "updated": [
       "autoClose",
       "cleaningRate",
-      "fixes"
+      "fixes",
+      "woCleanings"
     ]
   },
   {
