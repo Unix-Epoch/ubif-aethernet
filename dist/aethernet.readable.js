@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.17.1
+// @version      2.18.0
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -35,16 +35,21 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.17.1';            // filled in by build.py
+const AE_VERSION = '2.18.0';            // filled in by build.py
 const AE_DEV = false;                      // true only in the dev channel ("Aethernet (dev)")
 // false (used bare, never declared): build.py swaps it for true in the demo
 // channel's build (build.py --demo: only a few crystals, nothing else) and
 // false everywhere else, so the other side's code is dropped by the minifier.
-const AE_BUILD_TIME = '2026-10-01T01:32:00-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = 'a26156e-dirty';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_BUILD_TIME = '2026-10-01T20:06:27-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = '48b7949-dirty';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';
 const AE_READABLE_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.readable.js'; // same build, unminified     // where installs update from
-const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net';
+// The Portal sandbox (sandbox/server.py: Portal's real app on fake data) — dev builds only.
+const AE_SANDBOX = AE_DEV && location.host === 'localhost:8790';
+const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net' || AE_SANDBOX;
+// Swiftcast's refresh labor (SKU 10156) is EXPERIMENTAL: off unless switched on. Flip to true
+// (with a notice) once it's verified; everyone who never chose follows it.
+const AE_REFRESH_LABOR_DEFAULT = false;
 
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
@@ -52,11 +57,14 @@ const AE = (() => {
     crystals: false ? { cleaningRate: true, autoClose: true, glamour: true }
       : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, fixes: true },
     cleaningRate: { target: 75 },
+    // Swiftcast: offer Dualcast (all of a device's cleanings at once); refreshLabor: null = follow
+    // AE.REFRESH_LABOR_DEFAULT (only a user's own choice is stored, so the default can change in a release).
+    autoClose: { dualcast: true, refreshLabor: null },
     glamour: { theme: 'portal', custom: [], // custom: [{ id, name, bg, fg, accent, custom: true }]
       login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
     ...(false ? {} : {
       printLabels: { delayMs: 900 },
-      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all' }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
+      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all', reportsRetry: true }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
       // Blank = use the logged-in user / current store automatically.
       galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
     }),
@@ -122,6 +130,8 @@ const AE = (() => {
       - patch { endpoint, patches } → change the newest loaded result of an RTK
                                   Query endpoint in place (immer patches on its data),
                                   as Portal's own patchQueryData does; the screen follows
+      - status { endpoint }     → how the newest request of an endpoint went
+                                  (status, error, hasData), or found: false
       - dispatch { slice, action } → the action, to the stores that have `slice`
   */
   const BRIDGE_EVENT = 'aethernet:portal';
@@ -208,6 +218,23 @@ const AE = (() => {
       '      if (!best) return { ok: false };',
       '      best.s.dispatch({ type: best.k + "/queries/queryResultPatched", payload: { queryCacheKey: best.id, patches: a.patches } });',
       '      return { ok: true };',
+      '    },',
+      '    status: function (a) {',
+      // How the newest request of an endpoint went, whatever happened to it.
+      '      var best = null;',
+      '      stores().forEach(function (s) {',
+      '        var st = s.getState() || {};',
+      '        Object.keys(st).forEach(function (k) {',
+      '          var q = st[k] && st[k].queries; if (!q || typeof q !== "object") return;',
+      '          Object.keys(q).forEach(function (id) {',
+      '            var e = q[id];',
+      '            if (e && e.endpointName === a.endpoint && (!best || (e.startedTimeStamp || 0) > (best.startedTimeStamp || 0))) best = e;',
+      '          });',
+      '        });',
+      '      });',
+      '      if (!best) return { found: false, stores: stores().length };',
+      '      var err = best.error ? JSON.stringify(best.error).slice(0, 300) : null;',
+      '      return { found: true, status: best.status, error: err, hasData: best.data !== undefined, started: best.startedTimeStamp || null, done: best.fulfilledTimeStamp || null };',
       '    },',
       '    dispatch: function (a) {',
       '      var n = 0;',
@@ -299,6 +326,38 @@ const AE = (() => {
   .sg-panel { position:fixed; right:20px; bottom:20px; z-index:2147483646; width:340px; padding:16px; font-size:14px; line-height:1.4; }
   .sg-panel-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
   .sg-panel-title { flex:1; font-size:16px; font-weight:700; }
+  /* FFXIV-style spell icon: action icon + cooldown sweep (grey clears clockwise) + "ready" glint */
+  .sg-spell { position:relative; flex:none; display:inline-block; border-radius:22%; overflow:hidden; line-height:0;
+    box-shadow:0 0 0 1px #2b2a2f, 0 0 0 2px #c9a75a55; --a:0deg; }
+  .sg-spell .img, .sg-spell .img > * { display:block; width:100%; height:100%; }
+  .sg-spell .img > svg { width:60%; height:60%; margin:20%; color:var(--aui-primary, #8223d2); }
+  .sg-spell .cd { position:absolute; inset:0; background:conic-gradient(transparent 0 var(--a), rgba(10,10,16,.66) var(--a) 360deg); pointer-events:none; }
+  .sg-spell .glint { position:absolute; inset:-40%; pointer-events:none; opacity:0;
+    background:linear-gradient(115deg, transparent 38%, rgba(255,255,255,.95) 50%, transparent 62%); }
+  .sg-spell.ready { animation:sg-ready 1.1s ease-out 2; }
+  .sg-spell.ready .glint { animation:sg-glint 1.1s ease-out 2; }
+  .sg-orb .sg-spell .mark { min-width:20px; height:20px; font-size:12px; line-height:20px; right:3px; bottom:3px; }
+  .sg-spell .mark { position:absolute; right:1px; bottom:1px; min-width:14px; height:14px; border-radius:50%; font:800 9px/14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    text-align:center; color:#fff; background:var(--aui-status-success, #136d31); box-shadow:0 0 0 1px #fff; }
+  .sg-spell.err .mark, .sg-spell.stop .mark { background:var(--aui-status-error, #b91a24); }
+  /* Finished OK: XIV's "marching ants", an orange dashed border crawling around the icon */
+  .sg-spell .ants { position:absolute; inset:0; pointer-events:none; overflow:visible; }
+  .sg-spell .ants rect { fill:none; }
+  .sg-spell .ants .under { stroke:rgba(40,16,0,.75); }
+  .sg-spell .ants .run { stroke:#ffa31a; stroke-dasharray:.55 .45; animation:sg-ants .6s linear infinite; filter:drop-shadow(0 0 2px rgba(255,170,40,.9)); }
+  @keyframes sg-ants { to { stroke-dashoffset:-1; } }
+  @keyframes sg-ready { 0% { filter:brightness(1); box-shadow:0 0 0 1px #2b2a2f, 0 0 0 2px #c9a75a55; }
+    25% { filter:brightness(1.9); box-shadow:0 0 0 2px #fff, 0 0 18px 4px rgba(255,226,140,.95); }
+    100% { filter:brightness(1); box-shadow:0 0 0 1px #2b2a2f, 0 0 0 2px #c9a75a55; } }
+  @keyframes sg-glint { 0% { opacity:0; transform:translateX(-60%); } 15% { opacity:1; } 70% { opacity:1; transform:translateX(60%); } 100% { opacity:0; transform:translateX(60%); } }
+  .sg-min { font-size:20px; font-weight:700; }
+  .sg-orb { position:fixed; bottom:20px; z-index:2147483646; width:56px; height:56px; cursor:pointer; border-radius:14px;
+    box-shadow:0 6px 20px rgba(12,14,17,.35); animation:sg-in .2s ease-out; }
+  .sg-orb .sg-spell { box-shadow:0 0 0 2px #1a1a1f, 0 0 0 3.5px #c9a75a; }
+  .sg-orb .dismiss { display:none; position:absolute; top:-8px; right:-8px; width:20px; height:20px; padding:0; border-radius:50%; border:0; cursor:pointer;
+    background:#1a1c1e; color:#fff; font-size:11px; line-height:20px; box-shadow:0 0 0 2px #fff; }
+  .sg-orb.done:hover .dismiss { display:block; }
+  @media (prefers-reduced-motion: reduce) { .sg-spell.ready, .sg-spell.ready .glint, .sg-spell .ants .run { animation:none; } }
   .sg-soft { color: var(--aui-on-surface-soft, #5d5e61); font-size:12px; }
   .sg-x { background:none; border:0; padding:4px; cursor:pointer; color:var(--aui-on-surface-soft, #5d5e61); font-size:18px; line-height:1; }
   .sg-steps { list-style:none; margin:0 0 12px; padding:0; max-height:240px; overflow:auto; }
@@ -326,6 +385,15 @@ const AE = (() => {
   .sg-aicon { display:inline-block; flex:none; border-radius:22%; vertical-align:middle; box-shadow:0 0 0 1px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.25); }
   @keyframes sg-spin { to { transform: rotate(360deg); } }
   @keyframes sg-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+  .sg-hold { display:flex; gap:6px; align-items:flex-start; margin:0 0 10px; padding:6px 9px; border-radius:8px; font-size:12px;
+    background:var(--aui-status-warning-soft, #fff4cc); color:var(--aui-status-on-warning-soft, #3d2e00); }
+  .sg-hold.nudge { animation:sg-nudge .45s ease-in-out 2; }
+  @keyframes sg-nudge { 0%,100% { transform:none; } 25% { transform:translateX(-4px); } 75% { transform:translateX(4px); } }
+  .sg-min-wrap { position:relative; display:inline-flex; }
+  .sg-collapse-tip { position:absolute; right:-12px; bottom:calc(100% + 12px); z-index:1; white-space:nowrap; padding:8px 12px; font-size:13px; font-weight:700;
+    cursor:pointer; animation:sg-in .25s ease-out; }
+  .sg-collapse-tip::after { content:''; position:absolute; bottom:-8px; right:20px; width:16px; height:16px; transform:rotate(45deg);
+    background:var(--aui-surface, #fff); box-shadow:2px 2px 3px rgba(12,14,17,.08); }
   @keyframes sg-flash { 0%,100% { box-shadow:0 8px 28px rgba(12,14,17,.18); } 50% { box-shadow:0 0 0 3px var(--aui-primary, #8223d2); } }
   `;
   function ensureCss() {
@@ -339,7 +407,7 @@ const AE = (() => {
   // Minimal element builder: h('div', {class:'x', onclick}, child, 'text')
   // Each crystal's FFXIV action icon, plus a few FFXIV UI pieces under "ui/<name>"
   // (embedded by build.py from assets/icons/ and assets/ui/).
-  const ACTION_ICONS = {"autoClose": "data:image/jpeg;base64,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", "buybacks": "data:image/jpeg;base64,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", "cleaningRate": "data:image/jpeg;base64,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", "countCheck": "data:image/jpeg;base64,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", "fixes": "data:image/jpeg;base64,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", "galaxy": "data:image/jpeg;base64,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", "glamour": "data:image/jpeg;base64,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", "printLabels": "data:image/jpeg;base64,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", "rowColors": "data:image/jpeg;base64,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", "textNotes": "data:image/jpeg;base64,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", "waymark": "data:image/jpeg;base64,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", "woCleanings": "data:image/jpeg;base64,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", "ui/macro-gear": "data:image/png;base64,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"};
+  const ACTION_ICONS = {"autoClose": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAMKADAAQAAAABAAAAMAAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAMAAwAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwQDAwMEBQQEBAQFBwUFBQUFBwgHBwcHBwcICAgICAgICAoKCgoKCgsLCwsLDQ0NDQ0NDQ0NDf/bAEMBAgICAwMDBgMDBg0JBwkNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDf/dAAQAA//aAAwDAQACEQMRAD8A/KL9pS9+OfxD8ez/ABQ+N4nl1LVYoZEZ4XtoUs2JMSWyPnEADEpjIwc5NfRH7PH7EPjv4zaWupXB/sLwdeYlgv7hN08oP3hBDwX/AN8kJnOCRiv2A8EfDbwh+2d8NPBXxE+Ititxc6RC+n4GCl/DbFWh8zOWCOAd654fdjAavEPjV+0Z4m03xBP8KPhPZPo+naWRZXOqQwgOdnyGO0XAWOOLGNw5OPlwOvl8NZrVx1GrVULqL0dt1ZXdrvZtxfnFn6PwZgp1MXPDYZRvOyTetk0079015b2PMfF37DX7MPwE8A3PizxUmq+Ib2ILBaR3l55AvL6XiKJUhVcBm5PJwoPNa3g79i/9l/43fDvT/GXhS31PQZr6HbOlteed9lu0AEkZSZWyFbpyMqQc16J8Z7X/AIWi/h+XURdT6X4autOt7RMlVvLyfy1luHzywyCq9+vrVX4Baofh1pF2bq1m07R9Uk1OCeIkskF9YzTQxyoeoWUpj249K5M9wWecS4DE5XwdiJ0Mww0oTjZLkqRu1UpyTTi/d96Cau5R5VpJmPE+TLAxpOpBcqupeTlbkt321XS+p+fHx9/Yi8T/AAotJdV0iUa34ctg0j3US7Z484x58fOB0+YErx1HSvjb4Y/Fr4hfs9fEiz+JXw0vRp2rWO5BuXfDPC5BeGZMjfG+0blyM4r9zPAvxw1HxTqi+A/G9o1zLqBe3gumjBWTfkeXOuMMG6bu/Q5618V/tQ/seaR4R1OfxBo92kFvqXmTR2Kgn7M0YzIhI4CjIxk98V97mUeJsDhnlPFMKft6TX72kvcqxVoxlb7El9qNkru6SW/wkcXGri5YCUPeSbTjdppav0ceq7a7H//Q9+/YVv8AVtA/Ys0yOWcx6nqV1epY72yN8spSGMHqodkKAjoXzXCXfhnxLJq63nhnXrTyrlxM0GpWkc8/lN83lq5wfruyQRwa4r9n74nWl/8Asg6VfaNsu5fDuvpYTCT5WR7hv3UgwThg0ylSTjIr1P4heJ79V07xFp6wCLU4ku42A2kNK7JcRHbjmG6SVD227SeteZhsqpTzn+zqcnCM07OO2t+zs093dPVn7Hw7k+F5G6E/ejJ295JtaWvo736ej+XX6z4c+MviGfw34fgtLFNKt9e0m5udTtSuXtYpon8pkHzK29T1A3AccdcKz0D48Q3OteHr/TNPsdBs9V1aS31e4CFZbZ7h2gjRGyWkBJJIUjs2Otet6H8UND8G6r4SvLkrdarqsUFnNP5zRWiW9xMqD5eGmcEnbn5R1weDWZ4/+Jll420zxdeoP7L1OymNnDcmV57S4t4HkVOASYCcclcqScnHWvv+AKGJwFWonQTjU5Ie1abfuyklLl5r395xbta6vyW1POzbH4mWLpxpwTVLnly2TUne2t77bq219rHx94qsPEOmP9u8T+K7O0SAlhDpEMcFzNjkBpEyUxwNwK/Sq/x/8dXnj/8AZ7T+wUMUiRRTSMWLyy/Z3MLl3I3MT1P514R4l8aSz3Dw3UkRbJGMBgfcMc5H0rd8ZeKdN0D4K266gYx9qtJlVQNuGmuGI4XHO1M/jX7dmHBuVYbD1qmIquc3Ft3eiVnt21eh8M3WzbEQnVhGlGElJqL9U7+6ujt9x//R/LL9mn4t6V4Vl1X4beMrmWLwn4zhFnqLhzttZl5troKO8UmCT12nPav16+HGhrq/w8uPCXiG8ha78OSxXdo5kXy72xvtsFy8LE4cb0t7lQCesnvn8KvjD8HfiJ+z58Q7z4efEWx/s3W9OKyjY2+GaJidk8L4G+J9p2tgZx0r6B+EHx+1/wAM+Hrfw5q07arp+10hUyFbi1DffEMpBKLzyhBXngAV2YDA1sRXTofEreTVu3n/AMD5/f8ABWYNVXh5vTv89v076vufen7Vviy78H6h4W1/QJP3ehWCTWgH3JWt2JcHHUNtx9K6f4ceNLvxJ8K/Ft7rUoae78iSEnCkSOXcx47fKMge9fKfxT8b+HPiJ8JvD9wmrxwNBc3cAbUI3QhSq4VjD5gJUnI7HPSu4bVvBHgv4Vabc6h4l8+DULuSWSLS4nd5mTaEAkmEYQAcZwcehr7Lh/OqTnTwU5r3amrbS0TcuvqtPI9bH5tTlP2FK3Klyptr4r7vXrbX1Z56nhi+8W+JI7e2HlWkZ8y/u8fJBADy7dtx5CjqzYFeQftG/FHSNYceG9CPlWOmbIYVVsgrGAqr6HAHJ7nJ710/xB+N9ldaMfD/AITiGkWMxLKI23SyyY4MsnG4n9OcYGQfmP4Y/CT4lftEfE22+HXw/sTqGu37O7CRtkUESECSad8Hy40LDc2DjPevqPEXPnKk6GE+Co/el3tqo+nV9/z+czqnRwFL2WHfNKdnJrpbaK8urb3dtNNf/9k=", "buybacks": "data:image/jpeg;base64,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", "cleaningRate": "data:image/jpeg;base64,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", "countCheck": "data:image/jpeg;base64,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", "dualcast": "data:image/jpeg;base64,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", "fixes": "data:image/jpeg;base64,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", "galaxy": "data:image/jpeg;base64,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", "glamour": "data:image/jpeg;base64,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", "printLabels": "data:image/jpeg;base64,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", "rowColors": "data:image/jpeg;base64,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", "textNotes": "data:image/jpeg;base64,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", "triplecast": "data:image/jpeg;base64,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", "waymark": "data:image/jpeg;base64,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", "woCleanings": "data:image/jpeg;base64,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", "ui/macro-gear": "data:image/png;base64,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"};
   const actionIcon = (id, size = 24, extra = '') => ACTION_ICONS[id]
     ? '<img class="sg-aicon" src="' + ACTION_ICONS[id] + '" width="' + size + '" height="' + size + '" alt="" draggable="false"' + (extra ? ' ' + extra : '') + '>'
     : '';
@@ -384,40 +452,154 @@ const AE = (() => {
     ticked step list, a result message, and whatever action buttons the crystal
     sets. Used by auto-close and print-all-labels.
   */
-  function progressPanel(title, { clock = true } = {}) {
+  /*
+    Progress box for a crystal's run (Swiftcast, Dualcast, Quick Synthesis…),
+    styled after FFXIV casting:
+      - the crystal's action icon in the header, with a cooldown sweep: a grey
+        infill that clears clockwise as each step completes (total known up
+        front: opts.total, panel.plan(n), or panel.progress(done, total));
+      - "–" collapses it into a floating spell icon with the same sweep; when the
+        run ends the icon flashes like a skill coming off cooldown, then shows marching ants (OK) or ✕/■.
+        Click the icon to expand the box; once finished, hover shows a ✕ to
+        dismiss. The box and icon live on <body>, outside Portal's own page, so
+        they stay put as Portal changes pages.
+  */
+  function spellIcon(iconId, size) {
+    const el = h('span', { class: 'sg-spell', style: 'width:' + size + 'px;height:' + size + 'px' },
+      h('span', { html: actionIcon(iconId, size) || icon('bolt', Math.round(size * 0.6)), class: 'img' }), h('span', { class: 'cd' }), h('span', { class: 'glint' }));
+    return el;
+  }
+  // A finished spell icon: flash like a skill coming off cooldown, then marching
+  // ants (OK) or a ✕/■ badge (failed/stopped).
+  function spellDone(sp, kind) {
+    sp.querySelector('.mark, .ants')?.remove();
+    sp.classList.remove('ready', 'ok', 'err', 'stop'); void sp.offsetWidth; sp.classList.add('ready', kind);
+    if (kind !== 'ok') return sp.append(h('span', { class: 'mark' }, kind === 'stop' ? '■' : '✕'));
+    const z = parseFloat(sp.style.width) || sp.offsetWidth || 56, w = Math.max(1.5, z / 22), i = w / 2 + 0.5, side = z - 2 * i;
+    const r = Math.max(0, z * 0.22 - i), per = 4 * (side - 2 * r) + 2 * Math.PI * r;
+    const n = Math.max(8, Math.round(per / Math.max(5, z / 8))); // whole dashes, so the loop has no seam
+    const rect = (cls) => '<rect class="' + cls + '" x="' + i + '" y="' + i + '" width="' + side + '" height="' + side + '" rx="' + r + '" pathLength="' + n + '" stroke-width="' + w + '"/>';
+    sp.append(h('span', { class: 'ants', html: '<svg width="' + z + '" height="' + z + '" viewBox="0 0 ' + z + ' ' + z + '">' + rect('under') + rect('run') + '</svg>' }));
+  }
+  /*
+    Holding the page while a run must not be cut off (Swiftcast & co.): F5 /
+    Ctrl+R / Cmd+R (with or without Shift) are swallowed and onBlocked() is
+    called; anything else that would unload the page (the browser's reload
+    button, closing the tab, a full navigation) gets the browser's own
+    "Leave site?" prompt. Browsers don't let a page refuse that outright, so
+    the run's box also says not to reload. Returns release().
+  */
+  const holds = new Set();
+  function onUnload(e) { if (!holds.size) return; e.preventDefault(); e.returnValue = ''; return ''; }
+  function onKey(e) {
+    if (!holds.size) return;
+    const k = (e.key || '').toLowerCase();
+    if (k === 'f5' || ((e.ctrlKey || e.metaKey) && k === 'r')) { e.preventDefault(); e.stopImmediatePropagation(); [...holds].forEach((x) => x.onBlocked && x.onBlocked()); }
+  }
+  function holdPage(onBlocked) {
+    const x = { onBlocked };
+    if (!holds.size) { window.addEventListener('beforeunload', onUnload, true); window.addEventListener('keydown', onKey, true); }
+    holds.add(x);
+    return () => {
+      if (!holds.delete(x) || holds.size) return;
+      window.removeEventListener('beforeunload', onUnload, true); window.removeEventListener('keydown', onKey, true);
+    };
+  }
+  const COLLAPSE_TIP_KEY = 'ae_collapse_tip_seen';
+
+  // hold: keep the page from being reloaded until finish() (see holdPage).
+  function progressPanel(title, { clock = true, icon: iconId = null, total = 0, hold = false } = {}) {
     ensureCss();
-    document.querySelectorAll('.sg-panel[data-sg-title="' + title + '"]').forEach((p) => p.remove());
-    const state = h('span', { class: 'sg-spin' });
+    document.querySelectorAll('.sg-panel[data-sg-title="' + title + '"]').forEach((p) => { p._orb?.remove(); p.remove(); });
+    const head = iconId ? spellIcon(iconId, 30) : h('span', { class: 'sg-spin' });
+    const titleEl = h('span', { class: 'sg-panel-title' }, title);
     const clk = clock ? h('span', { class: 'sg-clock' }, '0.0s') : null;
-    const close = h('button', { class: 'sg-x', title: 'Close', style: 'display:none', onclick: () => panel.remove() }, '✕');
+    const shrink = iconId ? h('button', { class: 'sg-x sg-min', title: 'Collapse to the spell icon', onclick: () => { tipSeen(); api.collapse(); } }, '–') : null;
+    // First collapsible box this user sees: a speech bubble over the – button.
+    let tip = null;
+    const tipSeen = () => { if (tip) { tip.remove(); tip = null; GM_setValue(COLLAPSE_TIP_KEY, true); } };
+    if (shrink && !GM_getValue(COLLAPSE_TIP_KEY, false) && !document.querySelector('.sg-collapse-tip')) {
+      tip = h('div', { class: 'sg-card sg-collapse-tip', role: 'note', title: 'Click to dismiss', onclick: tipSeen }, 'This is now collapsible!');
+    }
+    const holdNote = hold ? h('div', { class: 'sg-hold' }, h('span', null, '🔒'),
+      h('span', null, h('b', null, 'Don\'t reload or close this tab'), ' until this finishes, or work orders can be left half-done. Reloading is blocked here; your browser will ask before leaving.')) : null;
+    const close = h('button', { class: 'sg-x', title: 'Close', style: 'display:none', onclick: () => { orb?.remove(); panel.remove(); } }, '✕');
     const steps = h('ul', { class: 'sg-steps' });
     const body = h('div');
     const msg = h('div', { class: 'sg-msg', style: 'display:none' });
     const actions = h('div', { class: 'sg-actions' });
-    const panel = h('div', { class: 'sg sg-card sg-panel', 'data-sg-title': title },
-      h('div', { class: 'sg-panel-head' }, state, h('span', { class: 'sg-panel-title' }, title), clk, close),
-      body, steps, msg, actions);
+    const panel = h('div', { class: 'sg sg-card sg-panel' + (iconId ? ' sg-spellbox' : ''), 'data-sg-title': title },
+      h('div', { class: 'sg-panel-head' }, head, titleEl, clk, shrink && (tip ? h('span', { class: 'sg-min-wrap' }, shrink, tip) : shrink), close),
+      holdNote, body, steps, msg, actions);
     document.body.appendChild(panel);
+    const release = hold ? holdPage(() => {
+      api.flash();
+      holdNote.classList.remove('nudge'); void holdNote.offsetWidth; holdNote.classList.add('nudge');
+    }) : () => {};
+
+    let done = 0, planned = total, shown = 0, target = 0, anim = null, finished = null, orb = null;
+    const icons = () => [head, orb && orb.querySelector('.sg-spell')].filter((x) => x && x.classList && x.classList.contains('sg-spell'));
+    const paintSweep = () => icons().forEach((el) => el.style.setProperty('--a', Math.round(shown * 360) + 'deg'));
+    function setTarget(p) {
+      target = Math.max(0, Math.min(1, p));
+      if (anim) return;
+      const tick = () => { shown += (target - shown) * 0.18; if (Math.abs(target - shown) < 0.002) shown = target; paintSweep(); anim = shown === target ? null : requestAnimationFrame(tick); };
+      anim = requestAnimationFrame(tick);
+    }
+    // Steps beyond the plan (rare extras) never complete the circle early; finishing does.
+    const fromSteps = () => (planned ? Math.min(done / planned, 0.97) : 0);
+    const ready = spellDone;
+    paintSweep();
 
     const t0 = performance.now();
     const fmt = (ms) => { const s = ms / 1000; return s < 60 ? s.toFixed(1) + 's' : Math.floor(s / 60) + 'm ' + String(Math.floor(s % 60)).padStart(2, '0') + 's'; };
     const timer = clk ? setInterval(() => { clk.textContent = fmt(performance.now() - t0); }, 100) : null;
 
-    return {
+    function makeOrb() {
+      const others = document.querySelectorAll('.sg-orb').length;
+      const o = h('div', { class: 'sg sg-orb', role: 'button', tabindex: '0', title: titleEl.textContent + ' — click to expand', style: 'right:' + (20 + others * 72) + 'px' },
+        spellIcon(iconId, 56), h('span', { class: 'badge' }),
+        h('button', { type: 'button', class: 'dismiss', title: 'Dismiss', onclick: (e) => { e.stopPropagation(); o.remove(); panel.remove(); } }, '✕'));
+      o.addEventListener('click', () => api.expand());
+      o.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); api.expand(); } });
+      return o;
+    }
+    const api = {
       el: panel,
       body,
-      step(text) { steps.append(h('li', null, text)); steps.scrollTop = steps.scrollHeight; },
+      title(t) { titleEl.textContent = t; if (orb) orb.title = t + ' — click to expand'; },
+      plan(n) { planned = n; setTarget(fromSteps()); },
+      progress(n, of) { if (of) planned = of; done = n; setTarget(fromSteps()); },
+      step(text) { steps.append(h('li', null, text)); steps.scrollTop = steps.scrollHeight; done++; setTarget(fromSteps()); },
       actions(...btns) { actions.replaceChildren(...btns); },
+      collapse() {
+        if (!iconId) return;
+        if (!orb) { orb = makeOrb(); panel._orb = orb; }
+        if (finished) { orb.classList.add('done', finished); const sp = orb.querySelector('.sg-spell'); if (!sp.querySelector('.mark, .ants')) spellDone(sp, finished); }
+        document.body.appendChild(orb);
+        panel.style.display = 'none';
+        paintSweep();
+      },
+      expand() { if (orb) orb.remove(); panel.style.display = ''; },
       finish(kind, html) { // kind: 'ok' | 'err' | 'stop'
+        finished = kind;
+        release(); holdNote?.remove(); tipSeen();
         if (timer) { clearInterval(timer); clk.textContent = fmt(performance.now() - t0); }
-        const done = h('span', { class: 'sg-icon-state' }, kind === 'ok' ? '✓' : kind === 'stop' ? '■' : '✕');
-        done.style.color = kind === 'ok' ? 'var(--aui-status-success, #136d31)' : 'var(--aui-status-error, #b91a24)';
-        state.replaceWith(done);
+        if (iconId) {
+          if (kind === 'ok') setTarget(1);
+          ready(head, kind);
+          if (orb) { orb.classList.add('done', kind); ready(orb.querySelector('.sg-spell'), kind); }
+        } else {
+          const st = h('span', { class: 'sg-icon-state' }, kind === 'ok' ? '✓' : kind === 'stop' ? '■' : '✕');
+          st.style.color = kind === 'ok' ? 'var(--aui-status-success, #136d31)' : 'var(--aui-status-error, #b91a24)';
+          head.replaceWith(st);
+        }
         if (html) { msg.className = 'sg-msg ' + (kind === 'ok' ? 'ok' : 'err'); msg.innerHTML = html; msg.style.display = 'block'; }
         close.style.display = '';
       },
-      flash() { panel.style.animation = 'sg-flash .8s'; setTimeout(() => { panel.style.animation = ''; }, 800); },
+      flash() { if (orb && orb.isConnected) { api.expand(); } panel.style.animation = 'sg-flash .8s'; setTimeout(() => { panel.style.animation = ''; }, 800); },
     };
+    return api;
   }
 
   /*
@@ -572,6 +754,15 @@ const AE = (() => {
     recentErrors.push({ at: new Date().toISOString(), where, message: String((e && e.message) || e).slice(0, 300) });
     if (recentErrors.length > 10) recentErrors.shift();
   }
+  // Portal's own script errors (not Aethernet's), for bug reports: e.g. a page that
+  // never finishes loading usually threw one of these.
+  const pageErrors = [];
+  const notePageError = (message, where) => {
+    pageErrors.push({ at: new Date().toISOString(), where: String(where || '').slice(0, 160), message: String(message || '').slice(0, 300) });
+    if (pageErrors.length > 10) pageErrors.shift();
+  };
+  addEventListener('error', (e) => notePageError(e.message || (e.error && e.error.message), (e.filename || '').replace(/^https?:\/\/[^/]+/, '') + ':' + (e.lineno || '')));
+  addEventListener('unhandledrejection', (e) => notePageError('Unhandled: ' + ((e.reason && (e.reason.message || e.reason.status)) || e.reason), ''));
 
   /*
     Usage counts ("who uses what"): AE.track('autoClose:run') adds 1 to today's
@@ -631,7 +822,7 @@ const AE = (() => {
     root.dataset.aethernet = ((root.dataset.aethernet || '') + ' ' + (AE_DEV ? 'dev' : 'public')).trim();
     for (const t of crystals) {
       if (!settings.crystals[t.id]) continue;
-      if (t.sites && !t.sites.includes(location.hostname)) continue;
+      if (t.sites && !t.sites.includes(AE_SANDBOX ? 'portal.ubreakifix.net' : location.hostname)) continue;
       // Paused remotely by an Aethernet notice (status.json); last-known copy.
       if (AE.status && AE.status.paused(t.id)) { console.info('[' + AE_NAME + '] ' + t.name + ' is paused by an Aethernet notice'); continue; }
       try { t.run(); } catch (e) { noteError(t.name + ' start', e); console.error('[' + AE_NAME + '] ' + t.name + ' failed to start', e); }
@@ -649,9 +840,9 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
-    api, unwrap, Stopped, portal, refreshView, profile, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
-    confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, USAGE_KEY, localDay,
+    confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close crystal when it's enabled
   };
@@ -723,7 +914,7 @@ AE.gate = (() => {
   AE.hooks.previewLockedOut = () => { GM_setValue(PREVIEW_KEY, true); location.reload(); };
 
   return async function gate() {
-    if (!AE_ON_PORTAL) return boot();
+    if (!AE_ON_PORTAL || AE_SANDBOX) return boot(); // the sandbox has no real store to check (and never calls the Worker)
     let p;
     try { p = await AE.profile(); } catch (_) { p = null; }
     if (!p || !p.storeId) { setTimeout(gate, 30000); return; } // signed out (login page): check again later
@@ -1279,6 +1470,8 @@ AE.status = (() => {
     background-size:250% 100%; box-shadow:inset 0 0 0 1px rgba(130,35,210,.45); animation:sg-sheen 2.6s ease-in-out infinite; }
   .sg-crystal.sg-upd + .sg-crystal { border-top-color:transparent; }
   .sg-new-tag.upd { background:#8223d2; color:#fff; }
+  .sg-exp-tag { display:inline-block; padding:1px 7px; border-radius:10000rem; font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
+    background:repeating-linear-gradient(135deg, #fff0c0 0 6px, #ffe28a 6px 12px); color:#5a4300; border:1px solid #d6a000; }
   /* "Aethernet has updated!" pill */
   .sg-update-pill { position:fixed; z-index:2147483645; left:50%; bottom:20px; transform:translateX(-50%);
     display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 14px; border:0; border-radius:10000rem; cursor:pointer;
@@ -1370,7 +1563,7 @@ AE.status = (() => {
   // Patch notes — its own modal, above Settings. Every release is a panel,
   // newest first. `since` (the version you updated from) expands everything
   // newer than it; otherwise just the latest is open.
-  const PATCH_NOTES = [{"version": "2.17.1", "notes": ["Patch notes: thank-yous and credits now get their own highlight, so the people who help build Aethernet stand out."], "date": "2026-10-01T05:32:00Z"}, {"version": "2.17.0", "notes": ["New crystal: **Rainbow Drip**. Work-order lists color each row by its status: red for Ready for work; blue for Diagnostics, Work in progress and Quality check; green for Ready for pickup; purple for Need to order, Ready for diag and Repair summary; yellow for Awaiting callback, Awaiting item and Awaiting device. It replaces the **UBIF Status Row Classes** script: if that's still running, you'll see how to turn it off.", "New crystal: **Master's Mend**, small fixes to Portal, each with its own switch in Settings. First fix: the ubreakifix logo in the top left is now a real link to the dashboard, so you can middle-click or right-click it to open a new tab.", "No more reloading to see changes: a text logged by **Recitation** shows in the WO notes right away, and so do Auto-Waymark nickname changes and cleanings closed out by **Swiftcast**. The page refreshes its data in place.", "**Master's Mend**: scan to open. Scan a WO label to open that work order, or an item label to open the item, from the dashboard, the work-order list or a customer. On a WO, scanned items are still added to it, and scanning does nothing on inventory, check-in or check-out pages or while you're typing in a field. Scanners that were a little too slow for Portal's own scan features now work with them too.", "**Glamour**: make the login page yours. In Glamour's settings, under **Login page**, choose a picture to replace Portal's photo (best fit: 768 \u00d7 871 px, shown in the setting), or fill the whole purple panel with it, and show the Aethernet mark in the bottom-left corner.", "**Master's Mend**: sort the Work orders list by any column. Click the arrows beside a column name. Most columns sort across every page; Customer, Device/Issue, Location, Service Outcome, Completed and Created/Cancelled By sort the page you're on (their arrows are underlined).", "**Auto-Waymark**: texting the customer from a work order at Ready for pickup restarts its follow-up: the Auto-Waymark (and nickname) moves to 3 days from that day. It only ever moves later, and works whether or not Recitation is on.", "**Waymark**: managers can clear a tag straight from the board with the \u00d7 on it. Everyone else removes tags from the work order as before.", "**Master's Mend**: a **Hide auto notes** switch at the top of a work order's notes hides the automatic notes (status changes, check-in logs and the like), and loads every note on the work order, so you see the whole history of what people wrote, not just the first page. Flip it back any time; nothing is deleted.", "**Master's Mend**: a **Not contacted** chip on the Arrivals page, next to Portal's own (look for the Aethernet mark on its corner), lists every arrival that hasn't been contacted yet, from every page at once. Click an arrival to open it as usual; any other chip goes back to Portal's list. In Settings (Master's Mend), choose whether it lists all statuses or only arrivals that are still Not confirmed.", "Crystals that changed in an update now get a purple **Updated** sheen in Settings, like the yellow one on new crystals.", "Settings: **Save & reload** glows while you have changes to save. The **Aethernet has updated!** pill now goes away by itself after 10 seconds (the ring around its \u2715 counts down; hovering pauses it)."], "updated": ["textNotes", "autoClose", "glamour", "waymark"], "date": "2026-10-01T05:28:46Z", "thanks": ["**B.Young** at Lexington, for letting us crystallize **Rainbow Drip** from their script!"]}, {"version": "2.16.0", "notes": ["New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates as each item is scanned, without losing your place in the list.", "**Divination**: its icon now shows in its panel.", "Aethernet is now available store by store. If your store doesn't have access yet, you'll see a notice instead, and nothing else loads until it's added.", "**Swiftcast** won't create cleanings while the store is closed (after **Close store** in Portal). Open the store first.", "**Bountiful Yield** now works on RMA orders too: **Add all RMA parts** in the Add RMA parts popout. It stops if the RMA's line limit is reached."], "date": "2026-09-30T22:37:40Z"}, {"version": "2.15.0", "notes": ["New: **Send feedback**. Report a bug or suggest something straight from Portal: avatar menu \u2192 **Send Aethernet feedback**, or the link at the bottom of Settings. Bug reports can include technical details to help track the problem down (never customer details).", "Suggestions that get built are credited here in the patch notes."], "date": "2026-09-30T05:45:13Z"}, {"version": "2.14.1", "notes": ["Auto-Waymark: if a work order's nickname already has a date in it (like \"PS5 SLIM (10/01)\"), that date becomes its Auto-Waymark date. Otherwise it's 3 days after it reached Ready for pickup, as before.", "Fixed: work orders already at Ready for pickup when 2.14.0 arrived were dated from their last update instead of the date in their nickname. Their Auto-Waymarks have been corrected."], "date": "2026-09-30T00:47:16Z"}, {"version": "2.14.0", "notes": ["New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.", "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.", "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **\u00d7** removes it for good.", "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.", "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."], "date": "2026-09-30T00:37:49Z"}, {"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
+  const PATCH_NOTES = [{"version": "2.18.0", "notes": ["**Divination**: a **Cleaning rate history** card on the Reports page shows your cleaning percentage over the last 7, 30 or 90 days, this month or last month: the overall rate, how many days hit the target, a bar for each day and a day-by-day table.", "**Master's Mend**: if Portal's Reports page is stuck loading, a warning explains the usual cause: an ad blocker like uBlock Origin blocks Portal's reports. Turn it off for Portal and reload.", "**Swiftcast**: new **experimental** option to add the refresh labor SKU (10156) to Verizon Device Refresh cleanings, for commission. It's still being tested, so it's off by default (Settings \u2192 Swiftcast \u2192 Refresh labor). If the labor can't be added, the cleaning is still completed at $0.", "**Swiftcast**: the old lightning bolt button has been replaced by one button named for what's waiting. With one cleaning it's **Swiftcast** (now with its real icon); with two it becomes **Dualcast** and creates both, one after the other; with three or more, **Triplecast**. Right-click Dualcast or Triplecast to close only this cleaning. A short explainer shows the first time. Dualcast is also in Esuna's list and Divination's panel, and can be turned off in Settings under Swiftcast.", "**Swiftcast**, **Quick Synthesis** and **Macrocosmos**: some visual changes to enhance the feel of these crystals.", "**Swiftcast**, **Dualcast** and **Triplecast** now keep you from reloading the page mid-cast, so no work order gets left half-done: F5 / Ctrl+R / Cmd+R do nothing until the cast ends, and closing the tab or using the browser's reload button asks first. The box reminds you while it runs."], "thanks": ["**C.Boyd** at Lexington, for the idea for **Divination**'s cleaning rate history!", "**C.Pritchard** at Lynnhaven, for the idea for **Swiftcast**'s refresh labor option!"], "updated": ["cleaningRate", "autoClose", "woCleanings", "printLabels", "galaxy", "fixes"], "date": "2026-10-02T00:06:27Z"}, {"version": "2.17.1", "notes": ["Patch notes: thank-yous and credits now get their own highlight, so the people who help build Aethernet stand out."], "date": "2026-10-01T05:32:00Z"}, {"version": "2.17.0", "notes": ["New crystal: **Rainbow Drip**. Work-order lists color each row by its status: red for Ready for work; blue for Diagnostics, Work in progress and Quality check; green for Ready for pickup; purple for Need to order, Ready for diag and Repair summary; yellow for Awaiting callback, Awaiting item and Awaiting device. It replaces the **UBIF Status Row Classes** script: if that's still running, you'll see how to turn it off.", "New crystal: **Master's Mend**, small fixes to Portal, each with its own switch in Settings. First fix: the ubreakifix logo in the top left is now a real link to the dashboard, so you can middle-click or right-click it to open a new tab.", "No more reloading to see changes: a text logged by **Recitation** shows in the WO notes right away, and so do Auto-Waymark nickname changes and cleanings closed out by **Swiftcast**. The page refreshes its data in place.", "**Master's Mend**: scan to open. Scan a WO label to open that work order, or an item label to open the item, from the dashboard, the work-order list or a customer. On a WO, scanned items are still added to it, and scanning does nothing on inventory, check-in or check-out pages or while you're typing in a field. Scanners that were a little too slow for Portal's own scan features now work with them too.", "**Glamour**: make the login page yours. In Glamour's settings, under **Login page**, choose a picture to replace Portal's photo (best fit: 768 \u00d7 871 px, shown in the setting), or fill the whole purple panel with it, and show the Aethernet mark in the bottom-left corner.", "**Master's Mend**: sort the Work orders list by any column. Click the arrows beside a column name. Most columns sort across every page; Customer, Device/Issue, Location, Service Outcome, Completed and Created/Cancelled By sort the page you're on (their arrows are underlined).", "**Auto-Waymark**: texting the customer from a work order at Ready for pickup restarts its follow-up: the Auto-Waymark (and nickname) moves to 3 days from that day. It only ever moves later, and works whether or not Recitation is on.", "**Waymark**: managers can clear a tag straight from the board with the \u00d7 on it. Everyone else removes tags from the work order as before.", "**Master's Mend**: a **Hide auto notes** switch at the top of a work order's notes hides the automatic notes (status changes, check-in logs and the like), and loads every note on the work order, so you see the whole history of what people wrote, not just the first page. Flip it back any time; nothing is deleted.", "**Master's Mend**: a **Not contacted** chip on the Arrivals page, next to Portal's own (look for the Aethernet mark on its corner), lists every arrival that hasn't been contacted yet, from every page at once. Click an arrival to open it as usual; any other chip goes back to Portal's list. In Settings (Master's Mend), choose whether it lists all statuses or only arrivals that are still Not confirmed.", "Crystals that changed in an update now get a purple **Updated** sheen in Settings, like the yellow one on new crystals.", "Settings: **Save & reload** glows while you have changes to save. The **Aethernet has updated!** pill now goes away by itself after 10 seconds (the ring around its \u2715 counts down; hovering pauses it)."], "updated": ["textNotes", "autoClose", "glamour", "waymark"], "date": "2026-10-01T05:28:46Z", "thanks": ["**B.Young** at Lexington, for letting us crystallize **Rainbow Drip** from their script!"]}, {"version": "2.16.0", "notes": ["New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates as each item is scanned, without losing your place in the list.", "**Divination**: its icon now shows in its panel.", "Aethernet is now available store by store. If your store doesn't have access yet, you'll see a notice instead, and nothing else loads until it's added.", "**Swiftcast** won't create cleanings while the store is closed (after **Close store** in Portal). Open the store first.", "**Bountiful Yield** now works on RMA orders too: **Add all RMA parts** in the Add RMA parts popout. It stops if the RMA's line limit is reached."], "date": "2026-09-30T22:37:40Z"}, {"version": "2.15.0", "notes": ["New: **Send feedback**. Report a bug or suggest something straight from Portal: avatar menu \u2192 **Send Aethernet feedback**, or the link at the bottom of Settings. Bug reports can include technical details to help track the problem down (never customer details).", "Suggestions that get built are credited here in the patch notes."], "date": "2026-09-30T05:45:13Z"}, {"version": "2.14.1", "notes": ["Auto-Waymark: if a work order's nickname already has a date in it (like \"PS5 SLIM (10/01)\"), that date becomes its Auto-Waymark date. Otherwise it's 3 days after it reached Ready for pickup, as before.", "Fixed: work orders already at Ready for pickup when 2.14.0 arrived were dated from their last update instead of the date in their nickname. Their Auto-Waymarks have been corrected."], "date": "2026-09-30T00:47:16Z"}, {"version": "2.14.0", "notes": ["New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.", "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.", "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **\u00d7** removes it for good.", "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.", "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."], "date": "2026-09-30T00:37:49Z"}, {"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
   const verTuple = (v) => String(v || '0').split('.').map(Number);
   const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
@@ -1463,6 +1656,16 @@ AE.status = (() => {
       cleaningRate: [() => 'Target ' + s.cleaningRate.target + '%',
         input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; repaintSums(); }, 'number')],
       glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
+      autoClose: [() => (s.autoClose.dualcast !== false ? 'Dualcast on' : 'Dualcast off') + ((s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT) ? ' · refresh labor on' : ''),
+        h('div', { class: 'sg-row', style: 'margin:8px 0' },
+          h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, h('span', { html: AE.actionIcon('dualcast', 20), style: 'line-height:0' }), 'Dualcast'),
+            h('span', { class: 'sg-soft', style: 'display:block' }, 'When a device has two or more cleanings waiting, one button creates them all, one after the other. Shown in the arrival' +
+              (false ? ' and in Divination\'s panel.' : ', in Esuna\'s list and in Divination\'s panel.'))),
+          toggle(s.autoClose.dualcast !== false, (v) => { s.autoClose.dualcast = v; repaintSums(); })),
+        h('div', { class: 'sg-row', style: 'margin:8px 0' },
+          h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, 'Refresh labor (10156)', h('span', { class: 'sg-exp-tag' }, 'Experimental')),
+            h('span', { class: 'sg-soft', style: 'display:block' }, 'Adds the refresh labor SKU 10156 to VZ Device Refresh cleanings, for commission. Still being tested and may not work yet: if it can\'t be added, the cleaning is completed without it. Off until it\'s verified.')),
+          toggle(!!(s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT), (v) => { s.autoClose.refreshLabor = v; repaintSums(); }))],
       ...(false ? {} : { // not in the demo build
         galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
           h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Leave blank to use your login. Only fill in to override.'),
@@ -1660,7 +1863,7 @@ AE.feedback = (() => {
   const API = 'https://aethernet-waymark.ubifaethernet.workers.dev';
   const KEY = 'ae_QFa2DKDy0DrlBd_A3bfZL3BtgM51idh6';
   const ADMIN_KEY_GM = 'ae_admin_key';
-  const configured = () => /^(https:\/\/|http:\/\/localhost[:/])/.test(API);
+  const configured = () => !AE_SANDBOX && /^(https:\/\/|http:\/\/localhost[:/])/.test(API); // off in the sandbox: fake data stays local
 
   async function call(method, path, body, adminKey) {
     if (!configured()) throw new Error('The Aethernet service isn\'t set up');
@@ -1761,6 +1964,7 @@ AE.feedback = (() => {
     return {
       crystals: Object.entries(AE.settings.crystals).filter(([, on]) => on).map(([id]) => id),
       errors: AE.recentErrors.slice(-5),
+      pageErrors: AE.pageErrors.slice(-5), // Portal's own script errors
       screen: innerWidth + 'x' + innerHeight,
       theme: document.body.classList.contains('asurion-dark') ? 'dark' : 'light',
     };
@@ -2026,6 +2230,15 @@ AE.feedback = (() => {
   been checked in yet (still in Arrivals) shows as "pending" and counts. Its
   ⚡ runs the cleaning auto-close (after a confirmation) when that crystal is on.
   See AE.data in core for how WOs and arrivals are fetched and matched.
+
+  History (Reports page, /reporting/metrics): a "Cleaning rate history" card
+  under Portal's KPIs — last 7 / 30 / 90 days, this month, last month — with
+  the overall rate (all cleanings ÷ all AM orders in the range), days at
+  target, a bar per day and a table. Each past day is worked out the same
+  way as today (that day's AM orders, cleaning WOs created that day; pending
+  arrivals only count for today) from Portal's own work-order lists, and
+  cached in this browser per store (ae_rate_history): a finished day doesn't
+  change, so only missing days and the last two are ever reloaded.
 */
 AE.crystal({
   id: 'cleaningRate',
@@ -2060,6 +2273,13 @@ AE.crystal({
       #${PANEL_ID} a:hover { text-decoration:underline; }
       #${PANEL_ID} .sg-soft a { font-weight:400; }
       #${PANEL_ID} .miss { color:var(--aui-status-error,#b91a24); font-weight:600; }
+      #${PANEL_ID} .sg-cast-group { display:inline-flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:0; margin:0 0 4px 4px; padding:4px 4px 0 4px;
+        border:1.5px dashed var(--aui-primary, #8223d2); border-radius:14px; }
+      #${PANEL_ID} .sg-cast-group .sg-chip { margin:0 0 4px 4px; }
+      #${PANEL_ID} .sg-cast-go { display:inline-flex; align-items:center; gap:5px; height:22px; margin:0 auto 4px 0; padding:0 9px 0 3px; border:0; border-radius:10000rem; cursor:pointer;
+        background:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); font:700 12px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+      #${PANEL_ID} .sg-cast-go .b { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; background:rgba(255,255,255,.22); }
+      #${PANEL_ID} .sg-cast-go:hover { filter:brightness(1.1); }
     `));
 
     async function compute() {
@@ -2127,6 +2347,19 @@ AE.crystal({
         label + ' · pending</a>' + mk + '</span>';
     }
 
+    // An order's cleanings. With 2+ pending (and Dualcast on), the pending chips sit in one
+    // dashed purple outline, led by a ⚡ that runs them all (Dualcast, or Triplecast for 3+);
+    // each chip keeps its own ⚡ for just that one.
+    const chips = (matched, wo) => {
+      const waiting = matched.filter((c) => c.pending);
+      if (!AE.autoClose || !AE.autoClose.dualcastOn() || waiting.length < 2) return matched.map((c) => chip(c, wo)).join('');
+      const name = waiting.length >= 3 ? 'Triplecast' : 'Dualcast';
+      const go = '<button type="button" class="sg-cast-go" title="' + name + ': create all ' + waiting.length + ' pending cleanings for this order, one after the other" data-dual="' +
+        esc(JSON.stringify(waiting.map((c) => ({ arrivalId: c.arrivalId, programId: c.programId })))) + '" data-name="' + esc(nameOf(wo)) + '">' +
+        '<span class="b">' + AE.icon('bolt', 12) + '</span>' + name + '</button>';
+      return matched.filter((c) => !c.pending).map((c) => chip(c, wo)).join('') +
+        '<span class="sg-cast-group">' + go + waiting.map((c) => chip(c, wo)).join('') + '</span>';
+    };
     function renderPanel() {
       let p = document.getElementById(PANEL_ID);
       if (!p) { p = h('div', { id: PANEL_ID, class: 'sg sg-card' }); document.body.appendChild(p); }
@@ -2143,7 +2376,7 @@ AE.crystal({
         ? '<table>' + last.rows.map(({ p: wo, matched }) =>
           '<tr><td><div class="who">' + esc(nameOf(wo) || 'Unknown customer') + '</div>' +
           '<div class="sg-soft"><a href="/repair/workorder/' + wo.workorderId + '">' + wo.workorderId + '</a> · ' + fmtTime(new Date(wo.createdAt)) + '</div></td>' +
-          '<td style="text-align:right">' + (matched.length ? matched.map((c) => chip(c, wo)).join('') : '<span class="miss">No cleanings</span>') + '</td></tr>'
+          '<td style="text-align:right">' + (matched.length ? chips(matched, wo) : '<span class="miss">No cleanings</span>') + '</td></tr>'
         ).join('') + '</table>'
         : '<p class="sg-soft">No Asurion Mobility orders created today yet.</p>';
       const extra = last.unlinked.length
@@ -2157,9 +2390,17 @@ AE.crystal({
         '<div class="sg-soft" style="margin-top:4px">' + last.linked + ' cleanings' + (last.pending ? ' (' + last.pending + ' pending in Arrivals)' : '') +
         ' ÷ ' + last.parents + ' Asurion Mobility orders created today · target ' + TARGET +
         '%, ideally 100% · updated ' + fmtTime(last.at) + (lastError ? '<br><span class="miss">Last refresh failed: ' + esc(lastError) + '</span>' : '') + '</div>' +
-        table + extra;
+        table + extra +
+        '<p class="sg-soft" style="margin:10px 0 0"><a href="/reporting/metrics">Past days: Reports → Cleaning rate history</a></p>';
       p.scrollTop = scroll;
       p.querySelector('[data-refresh]').onclick = (e) => { e.stopPropagation(); refresh(); };
+      p.querySelectorAll('.sg-cast-go').forEach((btn) => {
+        btn.onclick = (e) => {
+          e.preventDefault(); e.stopPropagation();
+          p.remove();
+          AE.autoClose.dualcast({ items: JSON.parse(btn.dataset.dual), customerName: btn.dataset.name });
+        };
+      });
       p.querySelectorAll('.sg-mk').forEach((btn) => {
         btn.onclick = (e) => {
           e.preventDefault(); e.stopPropagation();
@@ -2187,8 +2428,170 @@ AE.crystal({
       finally {
         loading = false; renderBadge();
         if (document.getElementById(PANEL_ID)) renderPanel();
+        if (document.getElementById(HIST_ID) && !histBusy) showHistory();
       }
     }
+
+    // ------------------------------------------------------------ history (Reports page)
+    const HIST_KEY = 'ae_rate_history', HIST_ID = 'sg-rate-history', DAY = 86400000;
+    const dayStart = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+    const keyOf = (d) => { const x = new Date(d); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
+    const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+    const RANGES = [
+      ['7', 'Last 7 days', () => [addDays(dayStart(new Date()), -6), dayStart(new Date())]],
+      ['30', 'Last 30 days', () => [addDays(dayStart(new Date()), -29), dayStart(new Date())]],
+      ['month', 'This month', () => { const t = dayStart(new Date()); return [new Date(t.getFullYear(), t.getMonth(), 1), t]; }],
+      ['lastMonth', 'Last month', () => { const t = new Date(); return [new Date(t.getFullYear(), t.getMonth() - 1, 1), new Date(t.getFullYear(), t.getMonth(), 0)]; }],
+      ['90', 'Last 90 days', () => [addDays(dayStart(new Date()), -89), dayStart(new Date())]],
+    ];
+    let histRange = '7', histBusy = null, histErr = null, store = null;
+    const histLoadedAt = {}; // range → when its days were last brought up to date (redone every 10 minutes at most)
+
+    // One past day, exactly like compute() but without pending arrivals.
+    function tallyDays(wos, keys) {
+      const out = {};
+      for (const k of keys) {
+        const start = new Date(k + 'T00:00:00').getTime(), end = start + DAY;
+        const inDay = (r) => { const t = Date.parse(r.createdAt); return t >= start && t < end; };
+        const parents = wos.filter((r) => r.programId === AE.PARENT_PROGRAM_ID && inDay(r)).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+        const cleanings = AE.data.cleanings(wos, [], inDay);
+        const used = new Set();
+        let linked = 0;
+        for (const p of parents) {
+          const m = cleanings.filter((c) => !used.has(c.key) && AE.data.belongs(c, p));
+          m.forEach((c) => used.add(c.key));
+          linked += m.length;
+        }
+        out[k] = [parents.length, linked];
+      }
+      return out;
+    }
+    const histCache = () => { const all = GM_getValue(HIST_KEY, {}); return (store && all[store]) || {}; };
+    function saveHist(days) {
+      const all = GM_getValue(HIST_KEY, {});
+      const mine = Object.assign({}, all[store] || {}, days);
+      const cutoff = keyOf(addDays(new Date(), -400)); // a little over a year
+      for (const k of Object.keys(mine)) if (k < cutoff) delete mine[k];
+      all[store] = mine;
+      GM_setValue(HIST_KEY, all);
+    }
+    // Make sure every day in [from, to) before today is known; the last two are always redone.
+    async function loadHistory(from) {
+      if (!store) store = AE_SANDBOX ? 'sandbox' : String((await AE.profile()).storeId || ''); // sandbox numbers never mix with a real store's
+      const today = dayStart(new Date());
+      const cache = histCache(), need = [];
+      for (let d = new Date(from); d < today; d = addDays(d, 1)) {
+        const k = keyOf(d);
+        if (!cache[k] || d >= addDays(today, -2)) need.push(k);
+      }
+      if (!need.length) return;
+      const since = new Date(need[0] + 'T00:00:00').getTime();
+      const wos = await AE.data.workorders(since, 40); // closed lists newest first; stops past `since`
+      saveHist(tallyDays(wos, need));
+    }
+
+    const pctOf = (parents, linked) => (parents ? Math.round((linked / parents) * 100) : null);
+    const dayLabel = (k, opts) => new Date(k + 'T00:00:00').toLocaleDateString([], opts || { weekday: 'short', month: 'short', day: 'numeric' });
+    function historyCard() {
+      const [from, to] = RANGES.find((r) => r[0] === histRange)[2]();
+      const cache = histCache(), todayKey = keyOf(new Date());
+      const days = [];
+      for (let d = new Date(from); d <= to; d = addDays(d, 1)) {
+        const k = keyOf(d);
+        if (k === todayKey) days.push({ k, today: true, parents: last ? last.parents : null, linked: last ? last.linked : null });
+        else days.push({ k, parents: cache[k] ? cache[k][0] : null, linked: cache[k] ? cache[k][1] : null });
+      }
+      const known = days.filter((d) => d.parents != null);
+      const P = known.reduce((n, d) => n + d.parents, 0), L = known.reduce((n, d) => n + d.linked, 0);
+      const withOrders = known.filter((d) => d.parents);
+      const atTarget = withOrders.filter((d) => pctOf(d.parents, d.linked) >= TARGET).length;
+      const overall = pctOf(P, L);
+      const top = Math.max(150, ...withOrders.map((d) => pctOf(d.parents, d.linked)));
+      const bar = (d) => {
+        const pct = d.parents ? pctOf(d.parents, d.linked) : null;
+        const tip = dayLabel(d.k) + (d.today ? ' (so far)' : '') + ': ' + (d.parents == null ? 'loading' : d.parents ? d.linked + '/' + d.parents + ' · ' + pct + '%' : 'no AM orders');
+        return h('div', { class: 'col', title: tip },
+          h('div', { class: 'bar ' + (pct == null ? 'none' : level(pct)) + (d.today ? ' today' : ''), style: 'height:' + (pct == null ? 3 : Math.max(3, Math.min(100, (pct / top) * 100))) + '%' }));
+      };
+      const busy = !!histBusy;
+      return h('div', { id: HIST_ID, class: 'sg sg-card' },
+        h('div', { class: 'hd' }, h('span', { html: AE.actionIcon('cleaningRate', 28) }), h('b', null, 'Cleaning rate history'),
+          h('span', { class: 'sg-soft' }, 'Divination · ' + AE_NAME)),
+        h('div', { class: 'ranges' }, RANGES.map(([id, label]) => h('button', { type: 'button', class: 'sg-btn' + (id === histRange ? ' sg-primary' : ''), 'aria-pressed': String(id === histRange),
+          onclick: () => { histRange = id; AE.track('cleaningRate:history'); showHistory(); } }, label))),
+        histErr ? h('div', { class: 'miss', style: 'margin:8px 0' }, "Couldn't load the history: " + histErr) : null,
+        h('div', { class: 'sum' },
+          h('div', null, h('div', { class: 'big', style: 'color:' + levelColor(overall) }, overall == null ? '—' : overall + '%'), h('div', { class: 'sg-soft' }, 'overall')),
+          h('div', null, h('div', { class: 'big' }, L + ' / ' + P), h('div', { class: 'sg-soft' }, 'cleanings / AM orders')),
+          h('div', null, h('div', { class: 'big' }, atTarget + ' of ' + withOrders.length), h('div', { class: 'sg-soft' }, 'days at ' + TARGET + '%+')),
+          busy ? h('div', { class: 'sg-soft', style: 'align-self:center' }, h('span', { class: 'sg-spin', style: 'display:inline-block;vertical-align:-3px;margin-right:6px' }), 'Loading work orders…') : null),
+        h('div', { class: 'chart', style: '--target:' + Math.min(100, (TARGET / top) * 100) + '%;--full:' + Math.min(100, (100 / top) * 100) + '%' },
+          h('div', { class: 'line target', title: 'Target ' + TARGET + '%' }), h('div', { class: 'line full', title: '100%' }),
+          h('div', { class: 'cols' }, days.map(bar))),
+        h('div', { class: 'axis sg-soft' }, h('span', null, dayLabel(days[0].k, { month: 'short', day: 'numeric' })), h('span', null, dayLabel(days[days.length - 1].k, { month: 'short', day: 'numeric' }))),
+        h('details', { class: 'days' }, h('summary', null, 'Day by day'),
+          h('table', null, h('thead', null, h('tr', null, h('th', null, 'Day'), h('th', null, 'AM orders'), h('th', null, 'Cleanings'), h('th', null, 'Rate'))),
+            h('tbody', null, days.slice().reverse().map((d) => {
+              const pct = d.parents ? pctOf(d.parents, d.linked) : null;
+              return h('tr', null, h('td', null, dayLabel(d.k) + (d.today ? ' (so far)' : '')), h('td', null, d.parents == null ? '…' : d.parents),
+                h('td', null, d.linked == null ? '…' : d.linked), h('td', { style: 'font-weight:700;color:' + levelColor(pct) }, pct == null ? '—' : pct + '%'));
+            })))));
+    }
+    const HIST_CSS = `
+      #${HIST_ID} { margin:1.5rem 0 0; padding:16px 20px; font-size:14px; line-height:1.4; }
+      #${HIST_ID} .hd { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+      #${HIST_ID} .hd b { font-size:18px; }
+      #${HIST_ID} .hd .sg-soft { margin-left:auto; font-size:12px; }
+      #${HIST_ID} .ranges { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+      #${HIST_ID} .ranges .sg-btn { height:30px; font-size:13px; padding:0 12px; flex:none; }
+      #${HIST_ID} .sum { display:flex; flex-wrap:wrap; gap:28px; margin-bottom:14px; }
+      #${HIST_ID} .big { font-size:24px; font-weight:700; font-variant-numeric:tabular-nums; }
+      #${HIST_ID} .chart { position:relative; height:140px; border-bottom:1px solid var(--aui-outline, #c6c6ca); }
+      #${HIST_ID} .cols { position:absolute; inset:0; display:flex; align-items:flex-end; gap:2px; }
+      #${HIST_ID} .col { flex:1; height:100%; display:flex; align-items:flex-end; min-width:2px; }
+      #${HIST_ID} .bar { width:100%; border-radius:3px 3px 0 0; }
+      #${HIST_ID} .bar.good { background:var(--aui-status-success, #136d31); }
+      #${HIST_ID} .bar.ok { background:#d6a000; }
+      #${HIST_ID} .bar.bad { background:var(--aui-status-error, #b91a24); }
+      #${HIST_ID} .bar.none { background:var(--aui-outline, #c6c6ca); }
+      #${HIST_ID} .bar.today { opacity:.55; }
+      #${HIST_ID} .col:hover .bar { filter:brightness(1.15); }
+      #${HIST_ID} .line { position:absolute; left:0; right:0; border-top:1px dashed var(--aui-on-surface-soft, #5d5e61); pointer-events:none; }
+      #${HIST_ID} .line.target { bottom:var(--target); }
+      #${HIST_ID} .line.full { bottom:var(--full); border-top-style:dotted; opacity:.6; }
+      #${HIST_ID} .axis { display:flex; justify-content:space-between; font-size:12px; margin-top:4px; }
+      #${HIST_ID} .days { margin-top:12px; }
+      #${HIST_ID} .days summary { cursor:pointer; color:var(--aui-primary, #8223d2); font-weight:600; }
+      #${HIST_ID} .days table { width:100%; border-collapse:collapse; margin-top:8px; font-variant-numeric:tabular-nums; }
+      #${HIST_ID} .days th { text-align:left; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); padding:6px 8px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
+      #${HIST_ID} .days td { padding:6px 8px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
+      #${HIST_ID} .miss { color:var(--aui-status-error, #b91a24); font-weight:600; }
+    `;
+    function showHistory() {
+      const reports = document.querySelector('.reports-card');
+      const home = reports && reports.parentElement;
+      const old = document.getElementById(HIST_ID);
+      if (!home) { old?.remove(); return; }
+      if (!document.getElementById('sg-rate-history-css')) document.head.append(h('style', { id: 'sg-rate-history-css' }, HIST_CSS));
+      const open = old && old.querySelector('details.days') && old.querySelector('details.days').open;
+      const card = historyCard();
+      if (open) card.querySelector('details.days').open = true;
+      if (old && old.parentElement === home) old.replaceWith(card); else { old?.remove(); home.append(card); }
+      const [from] = RANGES.find((r) => r[0] === histRange)[2]();
+      if (!histBusy && !(Date.now() - (histLoadedAt[histRange] || 0) < 10 * 60000)) {
+        const range = histRange;
+        histBusy = loadHistory(from)
+          .then(() => { histErr = null; histLoadedAt[range] = Date.now(); }, (e) => { histErr = e.message || String(e); histLoadedAt[range] = Date.now(); })
+          .finally(() => { const changed = histBusy; histBusy = null; if (changed && document.getElementById(HIST_ID)) showHistory(); });
+      }
+    }
+    // Portal's Reports page renders late and re-renders; keep the card there.
+    let histShownFor = null;
+    AE.every(1000, () => {
+      if (!/^\/reporting\/metrics/.test(location.pathname)) { histShownFor = null; return; }
+      const reports = document.querySelector('.reports-card');
+      if (reports && (!document.getElementById(HIST_ID) || histShownFor !== reports)) { histShownFor = reports; showHistory(); }
+    });
 
     const onPortal = () => !/^\/login/.test(location.pathname);
     AE.every(1500, () => { if (onPortal()) renderBadge(); }); // SPA re-renders can drop the badge
@@ -2324,9 +2727,20 @@ AE.crystal({
         return '<div class="row"><div><b>' + label + '</b><div class="sg-soft"><a href="/repair/workorder/' + c.workorderId + '">WO ' + c.workorderId + '</a> · ' +
           esc(c.workorderStatusName || '') + '</div></div><span style="color:var(--aui-status-success,#136d31);font-weight:700">✓</span></div>';
       }).join('');
+      const waiting = state.matched.filter((c) => c.pending);
+      const dual = AE.autoClose && AE.autoClose.dualcastOn() && waiting.length >= 2
+        ? '<button type="button" class="sg-btn sg-primary" data-dualcast style="width:100%;justify-content:center;margin:0 0 8px">' + AE.actionIcon('dualcast', 18) +
+          'Dualcast · create all ' + waiting.length + '</button>'
+        : '';
       pop.innerHTML = '<b style="font-size:16px">Cleanings for this device</b>' +
-        '<div class="sg-soft" style="margin:2px 0 8px">Matched to this WO by device IMEI</div>' +
+        '<div class="sg-soft" style="margin:2px 0 8px">Matched to this WO by device IMEI</div>' + dual +
         (rows || '<p class="sg-soft">No cleanings found for this device (open, recently closed, or waiting in Arrivals).</p>');
+      const db = pop.querySelector('[data-dualcast]');
+      if (db) db.onclick = (e) => {
+        e.stopPropagation();
+        pop.remove();
+        AE.autoClose.dualcast({ items: waiting.map((c) => ({ arrivalId: c.arrivalId, programId: c.programId })), customerName: AE.data.nameOf(state.matched[0]) });
+      };
       pop.querySelectorAll('button[data-arrival]').forEach((b) => {
         b.onclick = (e) => {
           e.stopPropagation();
@@ -2473,7 +2887,20 @@ AE.crystal({
                 update-service-job-status → PUT checkin/workorder   (status 8)
     status walk PATCH status 9, then PUT workorder 10 → 11 → 12 → 13,
                 each followed by the same auto-note the UI posts
+    labor       EXPERIMENTAL, off unless switched on (Settings → Swiftcast; default
+                AE_REFRESH_LABOR_DEFAULT). VZ Device Refresh (program 11759) only: labor SKU 10156 into the
+                cart (Portal's own POST order/cart/item/add, LineType labor),
+                which earns the tech commission. If it ever leaves anything to
+                pay, it's taken back out before checkout (order/cart/item/remove)
+                and the run finishes at $0 as before, with a warning.
     checkout    verify cart total is $0 → checkout/complete-order
+
+  Dualcast (Settings → Swiftcast, on by default): when a device has two or
+  more cleaning arrivals waiting (e.g. VZ Device Refresh + VZ Sanitization),
+  one button runs them all back to back — one confirmation, one progress
+  panel, stops at the first problem. Offered in the arrival drawer (next to
+  ⚡, when the same IMEI has another cleaning waiting), in Esuna's list and
+  in Divination's panel.
 
   Deliberately NOT replayed: PUT checkin/customers (re-saves the customer)
   and PUT customer-devices (would blank the shared device's nickname and
@@ -2488,8 +2915,32 @@ AE.crystal({
     const DEVICE_ISSUES = ['Cleaning'];
     const BIN = ''; // cleanings aren't physical — no bin
     const STEP_DELAY_MS = 400;
-    const BTN_ID = 'sg-autoclose-btn';
+    const BTN_ID = 'sg-autoclose-btn', MENU_ID = 'sg-cast-menu', INTRO_ID = 'sg-cast-intro';
+    document.head.append(h('style', null, `
+      .sg-cast { position:relative; padding:0; overflow:visible; background:#1a1c1e; }
+      .sg-cast .sg-aicon { border-radius:50%; display:block; width:100%; height:100%; }
+      .sg-cast .n { position:absolute; right:-4px; top:-4px; min-width:18px; height:18px; padding:0 4px; border-radius:10000rem; background:#d1344b; color:#fff;
+        font:700 11px/18px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; box-shadow:0 0 0 2px var(--aui-surface, #fff); }
+      #${MENU_ID} { position:fixed; z-index:2147483646; width:280px; padding:6px; }
+      #${MENU_ID} .opt { display:flex; flex-direction:column; align-items:flex-start; gap:1px; width:100%; padding:8px 10px; border:0; border-radius:8px; background:none; cursor:pointer;
+        text-align:left; font:inherit; color:inherit; }
+      #${MENU_ID} .opt:hover { background:var(--aui-neutral-soft, #f1f0f4); }
+      #${MENU_ID} .opt .sg-soft { font-size:12px; }
+      #${INTRO_ID} { position:fixed; z-index:2147483646; width:300px; padding:12px 14px; font-size:13px; line-height:1.45; }
+      #${INTRO_ID}::after { content:''; position:absolute; bottom:-8px; left:var(--tail, 20px); width:16px; height:16px; transform:rotate(45deg);
+        background:var(--aui-surface, #fff); box-shadow:2px 2px 3px rgba(12,14,17,.08); }
+      #${INTRO_ID} .hd { display:flex; align-items:center; gap:8px; font-size:15px; margin-bottom:6px; }
+      #${INTRO_ID} .hd .sg-aicon { border-radius:6px; }
+      #${INTRO_ID} p { margin:0 0 6px; }
+      #${INTRO_ID} .sg-actions { margin-top:8px; justify-content:flex-end; }
+    `));
+    const REFRESH_PROGRAM = 11759, REFRESH_LABOR_SKU = '10156'; // VZ Device Refresh → its labor SKU (commission)
+    const LABOR_LINE = { '@odata.type': '#Microsoft.Dynamics.Commerce.Runtime.DataModel.AttributeTextValue', Name: 'LineType', TextValue: 'labor' };
+    const cartOf = (r) => { const c = unwrap(r); return (c && (c.cartItems ? c : c.cart)) || c || {}; };
+    const skuOf = (i) => String(i.sku || i.itemNumber || i.ItemId || '');
+    let laborNote = null; // a warning to show when the run finishes
     let checkedArrivalId = null, isCleaning = false, running = false, stopRequested = false;
+    let siblings = [], thisArrival = null; // Dualcast: other cleaning arrivals waiting for the same device
 
     async function api(method, path, body) {
       const r = await AE.api(method, path, body, { shouldStop: () => stopRequested });
@@ -2501,6 +2952,7 @@ AE.crystal({
     async function run(arrivalId, log) {
       const arrival = unwrap(await api('GET', '/api/arrivals/' + arrivalId));
       const programId = arrival.program && arrival.program.programId;
+      if (log.plan) log.plan(stepsFor(programId)); // the spell icon's cooldown sweep
       if (!AE.CLEANING_PROGRAMS[programId]) throw new Error('Not a cleaning program (' + programId + ') — refusing.');
       const dev = arrival.customerDevice || {};
       const customerId = String(arrival.customer.customerId);
@@ -2546,6 +2998,31 @@ AE.crystal({
       });
       log('Checked in');
 
+      // VZ Device Refresh: add the refresh labor SKU (commission). Never stops the run.
+      laborNote = null;
+      let laborAdded = false;
+      const laborOn = !!((AE.settings.autoClose || {}).refreshLabor ?? AE_REFRESH_LABOR_DEFAULT); // EXPERIMENTAL, off by default
+      if (Number(programId) === REFRESH_PROGRAM && laborOn) {
+        try {
+          const w = await getWoForCart(woId);
+          const cart = cartOf(await api('GET', '/api/get-cart/' + encodeURIComponent(w.csuCartId) + '?includePartStatus=true'));
+          if ((cart.cartItems || []).some((i) => skuOf(i) === REFRESH_LABOR_SKU)) log('Refresh labor ' + REFRESH_LABOR_SKU + ' already in the cart');
+          else {
+            await api('POST', '/api/order/cart/item/add', {
+              cartId: w.csuCartId, programId: REFRESH_PROGRAM, workorderId: woId, saveCartToSalesOrder: true,
+              cartLines: [{ ItemId: REFRESH_LABOR_SKU, Quantity: 1, AttributeValues: [LABOR_LINE] }],
+            });
+            laborAdded = true;
+            AE.track('autoClose:refreshLabor');
+            log('Added refresh labor ' + REFRESH_LABOR_SKU);
+          }
+        } catch (e) {
+          if (e instanceof AE.Stopped) throw e;
+          laborNote = "Couldn't add refresh labor " + REFRESH_LABOR_SKU + ' (' + (e.message || e) + '), so this cleaning was completed without it.';
+          log('Refresh labor not added');
+        }
+      }
+
       // 3. Status walk. Notes mirror the UI exactly (incl. its double space
       //    in "completed diagnostics" and which steps use the batch endpoint).
       const note = (noteTag, noteText, batch) => {
@@ -2585,8 +3062,20 @@ AE.crystal({
       // 4. Checkout — only if the cart really nets to $0.
       await api('GET', '/api/checkout/workorder/' + woId);
       const wo = await getWo();
-      const cart = unwrap(await api('GET', '/api/get-cart/' + encodeURIComponent(wo.csuCartId) + '?includePartStatus=true'));
-      const pay = (cart && (cart.payment || (cart.cart && cart.cart.payment))) || null;
+      const readCart = async () => unwrap(await api('GET', '/api/get-cart/' + encodeURIComponent(wo.csuCartId) + '?includePartStatus=true'));
+      const payOf = (c) => (c && (c.payment || (c.cart && c.cart.payment))) || null;
+      let cart = await readCart();
+      let pay = payOf(cart);
+      // The refresh labor is meant to be free to the customer; if it isn't, take it back out.
+      if (laborAdded && pay && Number(pay.total) !== 0) {
+        const line = (cartOf(cart).cartItems || []).find((i) => skuOf(i) === REFRESH_LABOR_SKU);
+        if (line) {
+          await api('POST', '/api/order/cart/item/remove', { cartId: wo.csuCartId, cartLines: [line.lineId], itemNumbers: [REFRESH_LABOR_SKU], workorderId: woId });
+          laborNote = 'Refresh labor ' + REFRESH_LABOR_SKU + ' would have charged $' + pay.total + ', so it was taken back out and the sale stayed $0.';
+          log('Refresh labor removed (it added a charge)');
+          cart = await readCart(); pay = payOf(cart);
+        }
+      }
       const total = pay ? Number(pay.total) : NaN;
       if (total !== 0) throw new Error('Cart total is ' + (pay ? '$' + pay.total : 'unknown') + ', not $0 — stopped before checkout. Finish at Ready for pickup by hand.');
       await api('POST', '/api/workorder/demographic/customer-data', { customerId, clientId });
@@ -2595,6 +3084,10 @@ AE.crystal({
       return woId;
     }
 
+    async function getWoForCart(woId) {
+      const r = await api('GET', '/api/workorder/' + woId);
+      return (r && r.workorder) || unwrap(r) || {};
+    }
     const woLink = (id) => '<a href="/repair/workorder/' + id + '">WO ' + id + '</a>';
 
     /*
@@ -2615,21 +3108,80 @@ AE.crystal({
       return false;
     }
 
+    // Dualcast: several cleanings in one go, one after another, in one panel.
+    // The progress panel's heading: Swiftcasting… / Dualcasting… / Triplecasting… (n).
+    // Steps a run logs (IMEI, created, checked in, started, diagnostics, work, QC, RFP, sale = 9,
+    // + the labor line when it applies): the spell icon's cooldown sweep fills one step at a time.
+    const laborOnNow = () => !!((AE.settings.autoClose || {}).refreshLabor ?? AE_REFRESH_LABOR_DEFAULT);
+    const stepsFor = (programId) => 9 + (Number(programId) === REFRESH_PROGRAM && laborOnNow() ? 1 : 0);
+    const castingTitle = (n) => (n >= 3 ? 'Triplecasting… (' + n + ')' : n === 2 ? 'Dualcasting…' : 'Swiftcasting…');
+    // fake (dev tools only): the same confirmation and panel, with simulated steps and no API calls.
+    async function runMany(items, customerName, fake) {
+      if (running || (!fake && AE.status.blocked('autoClose'))) return;
+      if (!fake && await storeClosed()) return;
+      if (!fake) AE.track('autoClose:dualcast');
+      running = true; stopRequested = false;
+      const runner = fake ? (it, log) => fakeRun(it, log, fake) : (it, log) => run(it.arrivalId, log);
+      const panel = AE.progressPanel(castingTitle(items.length) + (fake ? ' (test)' : ''),
+        { icon: castOf(items.length)[0], total: items.reduce((n, it) => n + stepsFor(it.programId) + 1, 0), hold: true }); // +1: each cleaning's "1 of 2" line
+      const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
+      panel.actions(stop);
+      const done = [], notes = [];
+      let woId = null;
+      try {
+        for (const [i, it] of items.entries()) {
+          panel.step((i + 1) + ' of ' + items.length + ': ' + (AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning'));
+          woId = null;
+          const id = await runner(it, (t, wid) => { if (wid) woId = wid; panel.step(t); });
+          done.push(id);
+          if (laborNote) notes.push(laborNote);
+          if (!fake) AE.emit('cleaning-changed', { arrivalId: it.arrivalId, woId: id });
+        }
+        panel.finish('ok', 'Done — ' + done.map(woLink).join(' and ') + ' checked in, completed, and sold at $0.' + notes.map((n) => '<br><b>Note:</b> ' + AE.esc(n)).join(''));
+      } catch (e) {
+        const stopped = e instanceof AE.Stopped;
+        const left = woId ? ' ' + woLink(woId) + ' was left at the last step listed above.' : '';
+        panel.finish(stopped ? 'stop' : 'err', (stopped ? 'Stopped.' : AE.esc(e.message)) + left +
+          (done.length ? ' Already finished: ' + done.map(woLink).join(', ') + '.' : '') + ' The rest were not started.');
+      } finally {
+        panel.actions();
+        running = false;
+        if (!fake) { AE.emit('cleaning-changed', {}); if (done.length) AE.refreshView(); }
+      }
+    }
+    // Dev tools: Swiftcast's steps, timed like the real thing, nothing sent. fake.fail = fail the 2nd cleaning at QC.
+    let fakeWo = 599000000;
+    async function fakeRun(it, log, fake) {
+      laborNote = null;
+      const pause = async () => { await AE.sleep(450); if (stopRequested) throw new AE.Stopped(); };
+      const woId = ++fakeWo;
+      const steps = ['IMEI validated', ['Created WO ' + woId, woId], 'Checked in'];
+      if (Number(it.programId) === REFRESH_PROGRAM && ((AE.settings.autoClose || {}).refreshLabor ?? AE_REFRESH_LABOR_DEFAULT)) steps.push('Added refresh labor ' + REFRESH_LABOR_SKU);
+      steps.push('Started work', 'Diagnostics done', 'Work done', 'QC done', 'Ready for pickup', 'Sale complete (SO-TEST)');
+      for (const st of steps) {
+        await pause();
+        if (fake.fail && fakeWo % 2 === 0 && st === 'QC done') throw new Error('PUT /api/workorder/' + woId + ' → HTTP 500 (test failure, nothing was sent)');
+        Array.isArray(st) ? log(st[0], st[1]) : log(st);
+      }
+      return woId;
+    }
+
     async function onClick(arrivalId, checked) {
       if (running || AE.status.blocked('autoClose')) return;
       if (!checked && await storeClosed()) return;
       AE.track('autoClose:run');
       running = true; stopRequested = false;
-      const panel = AE.progressPanel('Swiftcast · cleaning auto-close');
+      const panel = AE.progressPanel(castingTitle(1), { icon: 'autoClose', total: 9, hold: true });
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       let woId = null;
       const log = (t, id) => { if (id) woId = id; panel.step(t); };
+      log.plan = (n) => panel.plan(n);
       const btn = document.getElementById(BTN_ID);
       if (btn) btn.disabled = true;
       try {
         const id = await run(arrivalId, log);
-        panel.finish('ok', 'Done — ' + woLink(id) + ' checked in, completed, and sold at $0.');
+        panel.finish('ok', 'Done — ' + woLink(id) + ' checked in, completed, and sold at $0.' + (laborNote ? '<br><b>Note:</b> ' + AE.esc(laborNote) : ''));
       } catch (e) {
         const where = woId ? ' ' + woLink(woId) + ' was left at the last step listed above.' : ' No work order was created.';
         const stopped = e instanceof AE.Stopped;
@@ -2646,8 +3198,105 @@ AE.crystal({
     // Also callable from the cleaning-rate list and the WO cleanings pill.
     // Those are one step removed from the arrival itself, so they always ask
     // first; the drawer button (you're looking at the arrival) doesn't.
+    /*
+      One round button, named for how many cleanings are waiting for the device:
+      1 → Swiftcast (this cleaning), 2 → Dualcast, 3+ → Triplecast (all of them,
+      after one confirmation). Right-click Dualcast/Triplecast: close only this cleaning.
+      The first time a Dualcast/Triplecast shows, a speech bubble explains it.
+    */
+    const castOf = (n) => (n >= 3 ? ['triplecast', 'Triplecast'] : n === 2 ? ['dualcast', 'Dualcast'] : ['autoClose', 'Swiftcast']);
+    function castButton({ size, items, customerName, single, fake }) {
+      const n = items.length, [iconId, name] = castOf(n);
+      const names = items.map((it) => AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning');
+      const b = h('button', {
+        type: 'button', class: 'sg-fab sg-cast' + (n > 1 ? ' multi' : ''), 'aria-label': name,
+        title: n > 1
+          ? name + ': create all ' + n + ' cleanings waiting for this device (' + names.join(' + ') + '), one after the other. Right-click to close only this one.'
+          : 'Swiftcast: check in, walk to Ready for pickup, and complete the $0 sale',
+        style: 'align-self:center;width:' + size + 'px;height:' + size + 'px',
+        html: AE.actionIcon(iconId, size) + (n > 1 ? '<span class="n">' + n + '</span>' : ''),
+        onclick: () => (n > 1 ? AE.autoClose.dualcast({ items, customerName, fake }) : single()),
+      });
+      if (n > 1) b.addEventListener('contextmenu', (e) => { e.preventDefault(); castMenu(e.clientX, e.clientY, items, single, () => AE.autoClose.dualcast({ items, customerName, fake })); });
+      return b;
+    }
+    function castMenu(x, y, items, single, all) {
+      document.getElementById(MENU_ID)?.remove();
+      const [, name] = castOf(items.length);
+      const opt = (label, sub, fn) => h('button', { type: 'button', class: 'opt', role: 'menuitem', onclick: () => { menu.remove(); fn(); } }, h('b', null, label), h('span', { class: 'sg-soft' }, sub));
+      const menu = h('div', { id: MENU_ID, class: 'sg sg-card', role: 'menu', style: 'left:' + Math.min(x, innerWidth - 300) + 'px;top:' + Math.max(8, y - 120) + 'px' },
+        opt('Close only this cleaning', AE.CLEANING_PROGRAMS[items[0].programId] || 'This arrival', single),
+        opt(name + ': close all ' + items.length, items.map((it) => AE.CLEANING_PROGRAMS[it.programId]).join(' + '), all));
+      document.body.appendChild(menu);
+      const off = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', off, true); } };
+      setTimeout(() => document.addEventListener('mousedown', off, true), 0);
+      return menu;
+    }
+    const INTRO_KEY = 'ae_dualcast_intro_seen';
+    function castIntro(btn, items, force) {
+      if (!force && GM_getValue(INTRO_KEY, false)) return;
+      document.getElementById(INTRO_ID)?.remove();
+      const [iconId, name] = castOf(items.length);
+      const names = items.map((it) => AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning');
+      const bubble = h('div', { id: INTRO_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': name },
+        h('div', { class: 'hd' }, h('span', { html: AE.actionIcon(iconId, 28), style: 'line-height:0' }), h('b', null, name)),
+        h('p', null, 'This device has ' + items.length + ' cleanings waiting (' + names.join(' + ') + '). Click to create them all, one after the other, after one confirmation.'),
+        h('p', null, h('b', null, 'Right-click'), ' to close ', h('b', null, 'only this cleaning'), ' instead.'),
+        h('p', { class: 'sg-soft' }, 'With one cleaning waiting, this button is Swiftcast; with three or more, Triplecast.'),
+        h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => { GM_setValue(INTRO_KEY, true); bubble.remove(); } }, 'Got it')));
+      document.body.appendChild(bubble);
+      const place = () => {
+        if (!btn.isConnected || !bubble.isConnected) { bubble.remove(); return; }
+        const r = btn.getBoundingClientRect();
+        bubble.style.left = Math.max(8, Math.min(r.left - 14, innerWidth - bubble.offsetWidth - 8)) + 'px';
+        bubble.style.top = Math.max(8, r.top - bubble.offsetHeight - 14) + 'px';
+        bubble.style.setProperty('--tail', Math.max(14, r.left - parseFloat(bubble.style.left) + r.width / 2 - 8) + 'px');
+        requestAnimationFrame(place);
+      };
+      place();
+    }
+
+    // Dev tools: a fake Dualcast (confirmation + progress, no API calls), and the drawer's two buttons on a test card.
+    const FAKE_ITEMS = [{ arrivalId: 900001, programId: REFRESH_PROGRAM }, { arrivalId: 900002, programId: 9470 }];
+    AE.hooks.dualcastFake = (opts = {}) => AE.autoClose.dualcast({ items: FAKE_ITEMS, customerName: 'Jordan Reyes', fake: { fail: !!opts.fail } });
+    // n: how many cleanings the test device has waiting (1 Swiftcast, 2 Dualcast, 3 Triplecast); the explainer always shows.
+    AE.hooks.dualcastButton = (n = 2) => {
+      document.getElementById('sg-dual-test')?.remove();
+      const items = [{ arrivalId: 900001, programId: REFRESH_PROGRAM }, { arrivalId: 900002, programId: 9470 }, { arrivalId: 900003, programId: 11009 }].slice(0, n);
+      const card = h('div', { id: 'sg-dual-test', class: 'sg sg-card', style: 'position:fixed;z-index:2147483645;right:24px;bottom:24px;width:380px;padding:14px 16px' },
+        h('div', { style: 'display:flex;align-items:center;margin-bottom:12px' }, h('b', { style: 'flex:1' }, 'Customer arrival (test)'),
+          h('button', { type: 'button', class: 'sg-x', onclick: () => { card.remove(); document.getElementById(INTRO_ID)?.remove(); } }, '✕')),
+        h('div', { class: 'sg-soft', style: 'font-size:13px;margin-bottom:12px' }, n + ' cleaning' + (n > 1 ? 's' : '') + ' waiting for Jordan Reyes\'s device. Nothing here is sent to Portal.'));
+      const fake = { fail: false };
+      const btn = castButton({ size: 48, items, customerName: 'Jordan Reyes', fake,
+        single: () => runMany(items.slice(0, 1), 'Jordan Reyes', fake) });
+      btn.style.marginRight = 'auto';
+      const row = h('div', { style: 'display:flex;align-items:center;justify-content:flex-end;gap:8px' }, btn,
+        h('button', { type: 'button', class: 'sg-btn', style: 'height:48px' }, 'Cancel'), h('button', { type: 'button', class: 'sg-btn sg-primary', style: 'height:48px' }, 'Check-in'));
+      card.append(row);
+      document.body.appendChild(card);
+      if (n > 1) castIntro(btn, items, true);
+    };
+    const dualcastOn = () => !AE.settings.autoClose || AE.settings.autoClose.dualcast !== false;
     AE.autoClose = {
       isRunning: () => running,
+      dualcastOn,
+      // items: [{ arrivalId, programId }] — every cleaning waiting for one device.
+      async dualcast({ items, customerName, fake }) {
+        if (!items || items.length < 2 || (!fake && AE.status.blocked('autoClose'))) return;
+        if (!fake && await storeClosed()) return;
+        if (running) { AE.confirm({ title: 'Already running', message: 'Another cleaning is being closed out — wait for it to finish.', confirmLabel: 'OK' }); return; }
+        const ok = await AE.confirm({
+          title: 'Create all ' + items.length + ' cleanings?',
+          message: '<b>' + AE.esc(customerName || 'Customer') + '</b><ul style="margin:6px 0 0;padding-left:20px">' +
+            items.map((it) => '<li>' + AE.esc(AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning') + ' <span class="sg-soft">· arrival ' + it.arrivalId + '</span></li>').join('') + '</ul>' +
+            '<div class="sg-soft" style="margin-top:6px">Each one is checked in, walked to Ready for pickup, and completed as a $0 sale, one after the other.</div>' +
+            (fake ? '<div style="margin-top:6px;color:#e0761a;font-weight:600">Test run from the dev tools: nothing is sent to Portal.</div>' : ''),
+          warning: "Are you sure you'd like to create these cleanings? Only use this if you are the one who repaired this device!",
+          confirmLabel: 'Yes, create ' + items.length + ' cleanings',
+        });
+        if (ok) await runMany(items, customerName, fake);
+      },
       async confirmAndRun({ arrivalId, programId, customerName }) {
         if (AE.status.blocked('autoClose')) return;
         if (await storeClosed()) return; // before asking, so nobody confirms for nothing
@@ -2668,13 +3317,20 @@ AE.crystal({
     async function tick() {
       const m = location.pathname.match(/^\/check-in\/arrivals\/(\d+)$/);
       const existing = document.getElementById(BTN_ID);
-      if (!m) { existing?.remove(); checkedArrivalId = null; return; }
+      if (!m) { existing?.remove(); document.getElementById(INTRO_ID)?.remove(); checkedArrivalId = null; return; }
       const arrivalId = Number(m[1]);
       if (checkedArrivalId !== arrivalId) {
-        checkedArrivalId = arrivalId; isCleaning = false; existing?.remove();
+        checkedArrivalId = arrivalId; isCleaning = false; siblings = []; thisArrival = null;
+        existing?.remove();
         try {
           const a = unwrap(await AE.api('GET', '/api/arrivals/' + arrivalId));
           isCleaning = !!AE.CLEANING_PROGRAMS[a && a.program && a.program.programId];
+          thisArrival = a;
+          if (isCleaning && dualcastOn()) {
+            const imei = AE.data.imeiOf(a);
+            siblings = imei ? (await AE.data.arrivals()).filter((x) => x.arrivalId !== arrivalId && x.program && AE.CLEANING_PROGRAMS[x.program.programId] && AE.data.imeiOf(x) === imei) : [];
+            if (siblings.length) document.getElementById(BTN_ID)?.remove(); // redraw with Dualcast beside it
+          }
         } catch (_) { checkedArrivalId = null; } // retry next tick
       }
       if (!isCleaning) return;
@@ -2687,14 +3343,12 @@ AE.crystal({
         if (getComputedStyle(el).justifyContent === 'flex-end') { footer = el; break; }
       }
       const size = checkin.offsetHeight || 48;
-      const b = h('button', {
-        id: BTN_ID, type: 'button', class: 'sg-fab', 'aria-label': 'Auto-close cleaning',
-        title: 'Auto-close cleaning: check in, walk to Ready for pickup, and complete the $0 sale',
-        style: 'margin-right:auto;align-self:center;color:#fff;width:' + size + 'px;height:' + size + 'px',
-        html: icon('bolt', Math.round(size * 0.5)),
-        onclick: () => onClick(arrivalId),
-      });
+      const items = [thisArrival, ...(dualcastOn() ? siblings : [])].map((x) => ({ arrivalId: x.arrivalId, programId: x.program.programId }));
+      const b = castButton({ size, items, customerName: AE.data.nameOf(thisArrival), single: () => onClick(arrivalId) });
+      b.id = BTN_ID;
+      b.style.marginRight = 'auto';
       footer.insertBefore(b, footer.firstChild);
+      if (items.length > 1) castIntro(b, items);
     }
     AE.every(1000, tick);
   },
@@ -2711,7 +3365,12 @@ AE.crystal({
      email and store from the logged-in user (overridable in settings),
      and opens the Sprinklr form in a new tab.
   B. Sprinklr form: picks up that handoff and fills every field, including
-     the Issue → Exception → Reason cascade. It does NOT submit.
+     the Issue → Exception → Reason cascade. It does NOT submit. No status
+     card: the Macrocosmos macro icon (gear and all) sits where the button was
+     on Portal (gde_btn_pos), its cooldown sweep filling field by field; done →
+     it flashes like a skill coming off cooldown, then fades away with a
+     drop downwards (no wipe). If fields couldn't be
+     filled, it stays with a ✕ and a note listing them; click to dismiss.
 
   Filling needs real interactions: element.click() for the custom
   dropdowns, and the native value setter + input event for text fields
@@ -3003,16 +3662,69 @@ AE.crystal({
         return oldest;
       }
 
+      // The macro icon, cast-style, where the Portal button was.
+      const CAST_CSS = `
+        #sg-galaxy-cast { position:fixed; z-index:2147483646; width:56px; height:56px; border-radius:14px; cursor:default; box-shadow:0 6px 20px rgba(12,14,17,.35);
+          animation:sg-in .2s ease-out; }
+        #sg-galaxy-cast .sg-spell { box-shadow:0 0 0 2px #1a1a1f, 0 0 0 3.5px #c9a75a; }
+        #sg-galaxy-cast .sg-spell .mark { min-width:20px; height:20px; font-size:12px; line-height:20px; right:3px; bottom:3px; }
+        #sg-galaxy-cast .gear { position:absolute; left:-4px; top:-4px; width:16px; height:16px; pointer-events:none; z-index:2; }
+        #sg-galaxy-cast .mname { position:absolute; left:50%; bottom:calc(100% + 8px); transform:translateX(-50%); white-space:nowrap; padding:2px 7px; border-radius:6px;
+          background:rgba(12,12,18,.85); color:#fff; font:600 12px "Myriad Pro", Myriad, Meiryo, "Helvetica Neue", Arial, sans-serif; }
+        #sg-galaxy-cast.leave { animation:sg-cast-leave .7s ease-in forwards; }
+        #sg-galaxy-cast.failed { cursor:pointer; }
+        @keyframes sg-cast-leave { from { opacity:1; transform:none; } to { opacity:0; transform:translateY(24px); } }
+        @media (prefers-reduced-motion: reduce) { #sg-galaxy-cast.leave { animation:sg-fade-out .3s forwards; } @keyframes sg-fade-out { to { opacity:0; } } }
+      `;
+      function castIcon(total) {
+        AE.ensureCss();
+        if (!document.getElementById('sg-galaxy-cast-css')) document.head.append(h('style', { id: 'sg-galaxy-cast-css' }, CAST_CSS));
+        document.getElementById('sg-galaxy-cast')?.remove();
+        const pos = GM_getValue('gde_btn_pos', { right: 16, bottom: 16 });
+        const spell = AE.spellIcon('galaxy', 56);
+        const el = h('div', { id: 'sg-galaxy-cast', class: 'sg', title: 'GD Exception: filling the form…',
+          style: 'right:' + Math.min(pos.right, Math.max(0, innerWidth - 60)) + 'px;bottom:' + Math.min(pos.bottom, Math.max(0, innerHeight - 60)) + 'px' },
+          spell, h('img', { class: 'gear', src: AE.asset('ui/macro-gear'), alt: '' }), h('span', { class: 'mname' }, 'GD Exception'));
+        document.body.appendChild(el);
+        let done = 0, shown = 0, target = 0, anim = null;
+        const paint = () => spell.style.setProperty('--a', Math.round(shown * 360) + 'deg');
+        const to = (p) => {
+          target = Math.min(1, p);
+          if (anim) return;
+          const tick = () => { shown += (target - shown) * 0.2; if (Math.abs(target - shown) < 0.002) shown = target; paint(); anim = shown === target ? null : requestAnimationFrame(tick); };
+          anim = requestAnimationFrame(tick);
+        };
+        paint();
+        return {
+          step() { done++; to(Math.min(done / total, 0.97)); },
+          finish(ok, note) {
+            to(1);
+            AE.spellDone(spell, ok ? 'ok' : 'err');
+            if (ok) {
+              el.title = 'GD Exception: filled — check it over, then hit Submit yourself.';
+              setTimeout(() => { el.classList.add('leave'); setTimeout(() => el.remove(), 750); }, 2400); // after the flash
+            } else {
+              el.classList.add('failed');
+              el.title = note + ' Click to dismiss.';
+              toast(note, 'err');
+              el.onclick = () => { el.remove(); document.getElementById('sg-galaxy-toast')?.remove(); };
+            }
+          },
+        };
+      }
+
       async function fill() {
         const data = takeHandoff();
         if (!data) return; // not opened from the WO button, or stale
-        toast('Auto-filling from WO ' + data.woId + '…', 'busy');
+        const total = 13 + (data.storeEmail ? 1 : 0); // email + the 12 fields below (+ store email)
+        const cast = castIcon(total);
         const email = await waitForField('Your email address', 8000);
-        if (!email) { toast('Form did not load in time — fill it in by hand.', 'err'); return; }
+        if (!email) { cast.finish(false, 'Form did not load in time — fill it in by hand.'); return; }
 
         const failed = [];
-        const step = async (label, ok) => { if (!(await ok)) failed.push(label); };
+        const step = async (label, ok) => { if (!(await ok)) failed.push(label); cast.step(); };
         setNativeValue(email, data.email);
+        cast.step();
         if (!data.email) failed.push('Your email (none found)');
         await step('UBIF Location', selectOption('UBIF Location', data.location, data.locationSearch));
         await step('Repair Location Type', selectOption('Repair Location Type', FIXED.REPAIR_LOCATION_TYPE));
@@ -3033,8 +3745,8 @@ AE.crystal({
         if (!data.imei) failed.push('IMEI (none on the WO)');
         if (!data.deviceName) failed.push('Device Full SKU (none on the WO)');
 
-        if (failed.length) toast('WO ' + data.woId + ': could NOT fill ' + failed.join(', ') + ' — fill those in by hand before submitting.', 'err');
-        else toast('Filled from WO ' + data.woId + ' — check it over, then hit Submit yourself.', 'ok');
+        if (failed.length) cast.finish(false, 'WO ' + data.woId + ': could NOT fill ' + failed.join(', ') + ' — fill those in by hand before submitting.');
+        else cast.finish(true);
       }
       setTimeout(fill, 800); // the form renders client-side
     }
@@ -3124,9 +3836,11 @@ AE.crystal({
       const count = h('div', null);
       const bar = h('div', { class: 'sg-bar' }, h('i'));
       ui.panel.body.replaceChildren(count, bar);
+      ui.panel.title('Synthesizing… (' + total + ')');
       const paint = () => {
         count.textContent = done + ' / ' + total + ' sent' + (missed.length ? ' · ' + missed.length + ' missed' : '');
         bar.firstChild.style.width = Math.round(((done + missed.length) / total) * 100) + '%';
+        ui.panel.progress(done + missed.length, total); // the spell icon's cooldown sweep
       };
       paint();
       const stop = btn('■ Stop', 'sg-danger', () => { ui.stop = true; stop.disabled = true; stop.textContent = 'Stopping…'; });
@@ -3151,7 +3865,7 @@ AE.crystal({
       } else ui.panel.actions(close);
     }
 
-    function newUi() { return { panel: AE.progressPanel('Quick Synthesis · print all labels', { clock: false }), running: false, stop: false }; }
+    function newUi() { return { panel: AE.progressPanel('Quick Synthesis', { clock: false, icon: 'printLabels' }), running: false, stop: false }; }
 
     async function onClickPrintAll() {
       if (AE.status.blocked('printLabels')) return;
@@ -3168,6 +3882,7 @@ AE.crystal({
         ui.panel.actions(btn('Close', '', () => { ui.panel.el.remove(); active = null; }));
         return;
       }
+      ui.panel.title('Quick Synthesis · ' + rows.length + ' labels');
       ui.panel.body.innerHTML = 'Ready to print <b>' + rows.length + '</b> labels, one every ' + DELAY_MS + ' ms (~' +
         Math.ceil((rows.length * (DELAY_MS + 150)) / 1000) + ' s).<div class="sg-soft" style="margin:6px 0 12px">Make sure the DYMO label printer is on and loaded.</div>';
       ui.panel.actions(
@@ -3899,7 +4614,7 @@ AE.waymark = (() => {
   const EDITOR_ROLES = ['Store Manager - Corp', 'Store Manager - Franchisee', 'District Manager', 'District Manager - Franchisee', 'Store Owner - Franchisee'];
   const COLORS = { purple: 'var(--aui-primary, #8223d2)', blue: '#4a68f9', teal: '#1592a8', green: '#2f9e5b', lime: '#6f9a12', yellow: '#b38f00', orange: '#d9670f', red: '#d1344b', grey: 'var(--aui-on-surface-soft, #5d5e61)' };
   const TTL = 60 * 1000;
-  const configured = () => /^(https:\/\/|http:\/\/localhost[:/])/.test(API); // localhost = a wrangler dev test build
+  const configured = () => !AE_SANDBOX && /^(https:\/\/|http:\/\/localhost[:/])/.test(API); // localhost = a wrangler dev test build; off in the Portal sandbox
 
   let cache = null, cacheAt = 0, inflight = null;
   let roleInfo = null;
@@ -4814,6 +5529,17 @@ AE.crystal({
     Portal's own list. Like Portal's chips, it isn't remembered once you
     leave the page.
 
+  - reportsRetry: Portal's Reports page (/reporting/metrics) shows its spinner
+    until GET /api/reporting/metrics (RTK getMetricsConfig) has data, and has
+    no error state, so one blocked request spins forever. Cause confirmed by
+    Garrett (Oct 2026, Firefox): uBlock Origin blocks it (Firefox reports
+    "NetworkError when attempting to fetch resource"); turning it off for the
+    page brings Reports back. Retrying can't beat a blocker, so after 8 s
+    without the Reports card a warning says to turn off the ad blocker for
+    portal.ubreakifix.net and reload; the details (RTK status/error, whether
+    the browser sent the request, Portal's script errors) go where bug
+    reports pick them up.
+
   - woSort: sort the Work orders list by any column. Portal's table only
     offers ▲▼ on one or two columns per tab (repair.js FA[…].sortableColumns),
     though the server sorts by more. The list's sort is Redux state
@@ -4851,6 +5577,7 @@ AE.fixesInfo = [
       paint();
       return box;
     }],
+  ['reportsRetry', 'Reports page help', 'If Portal\'s Reports page is stuck loading, a warning explains the usual cause (an ad blocker like uBlock Origin) and how to fix it. The details are included if you send a bug report.'],
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
   ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Never on inventory, check-in or check-out pages, or while typing in a field.'],
 ];
@@ -5100,6 +5827,54 @@ AE.crystal({
         }).observe(document.body, { childList: true, subtree: true });
         setInterval(() => { if (on) paint(); }, 30000);
         paint();
+      },
+      reportsRetry() {
+        const PATH = /^\/reporting\/metrics\/?$/, WAIT = 8000, CARD = 'ae-reports-warn';
+        let timer = null, lastPath = '';
+        const loaded = () => !!document.querySelector('.reports-card');
+        function diagnose() {
+          const st = AE.portal('status', { endpoint: 'getMetricsConfig' }) || {};
+          const seen = performance.getEntriesByType('resource').filter((e) => /\/api\/reporting\/metrics(\?|$)/.test(e.name));
+          const net = seen.length ? seen[seen.length - 1] : null;
+          const blocked = !!(st.error && /FETCH_ERROR|NetworkError|Failed to fetch/i.test(st.error));
+          const detail = { rtk: st, blocked, browserSawRequest: !!net,
+            request: net ? { status: net.responseStatus || null, ms: Math.round(net.duration), bytes: net.transferSize } : null,
+            pageErrors: AE.pageErrors.slice(-3), ua: navigator.userAgent.slice(0, 160) };
+          AE.noteError('Reports page stuck', JSON.stringify(detail));
+          console.warn('[' + AE_NAME + '] Reports page stuck:', detail);
+          return { blocked, st };
+        }
+        // A warning card on the page (stays until dismissed or the page loads).
+        function warn() {
+          const { blocked, st } = diagnose();
+          document.getElementById(CARD)?.remove();
+          const close = () => card.remove();
+          const card = AE.h('div', { id: CARD, class: 'sg sg-card', role: 'alert', style:
+            'position:fixed;z-index:2147483645;left:16px;bottom:16px;max-width:460px;padding:12px 14px;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.45;border-left:4px solid #d6a000' },
+            AE.h('span', { style: 'line-height:0;flex:none;color:#d6a000', html: AE.icon('aetheryte', 26) }),
+            AE.h('div', { style: 'flex:1' },
+              AE.h('b', { style: 'display:block;margin-bottom:2px' }, 'Reports isn\'t loading? Turn off your ad blocker on this page'),
+              AE.h('div', { class: 'sg-soft', style: 'font-size:13px' },
+                (blocked ? 'Your browser stopped Portal\'s reports request before it went out. ' : '') +
+                'Ad blockers like uBlock Origin block Portal\'s reports. Turn yours off for portal.ubreakifix.net (click its icon in the toolbar and switch it off for this site), then reload.'),
+              !blocked && st && st.status ? AE.h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:4px' }, 'Still stuck without one? Use Send feedback → Bug; the details are included.') : null,
+              AE.h('div', { style: 'display:flex;gap:8px;margin-top:10px' },
+                AE.h('button', { type: 'button', class: 'sg-btn sg-primary', style: 'height:30px;font-size:13px', onclick: () => location.reload() }, 'Reload page'))),
+            AE.h('button', { type: 'button', class: 'sg-x', title: 'Dismiss', onclick: close }, '✕'));
+          document.body.appendChild(card);
+          AE.track('fixes:reportsWarn');
+        }
+        AE.every(500, () => {
+          const p = location.pathname;
+          if (loaded()) document.getElementById(CARD)?.remove();
+          if (p === lastPath) return;
+          lastPath = p;
+          clearTimeout(timer);
+          if (!PATH.test(p)) { document.getElementById(CARD)?.remove(); return; }
+          timer = setTimeout(() => { if (PATH.test(location.pathname) && !loaded()) warn(); }, WAIT);
+        });
+        AE.hooks.reportsDiagnose = diagnose; // dev tools
+        AE.hooks.reportsWarn = warn;
       },
       woSort() {
         // Header text → Portal's column id (repair.js WA), and whether the server sorts it.

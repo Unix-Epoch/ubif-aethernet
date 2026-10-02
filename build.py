@@ -56,8 +56,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "2.17.1"   # the public version (bump when bundling a public release)
-DEV_BASE = "2.18.0"  # the next public version, being built on dev
+VERSION = "2.18.0"   # the public version (bump when bundling a public release)
+DEV_BASE = "2.19.0"  # the next public version, being built on dev
 
 # Secret Gist that hosts the published script (account: Unix-Epoch).
 # The raw URL has no commit hash, so it always serves the latest revision.
