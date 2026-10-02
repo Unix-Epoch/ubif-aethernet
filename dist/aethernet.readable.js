@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.18.0
+// @version      2.19.0
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -35,19 +35,19 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.18.0';            // filled in by build.py
+const AE_VERSION = '2.19.0';            // filled in by build.py
 const AE_DEV = false;                      // true only in the dev channel ("Aethernet (dev)")
 // false (used bare, never declared): build.py swaps it for true in the demo
 // channel's build (build.py --demo: only a few crystals, nothing else) and
 // false everywhere else, so the other side's code is dropped by the minifier.
-const AE_BUILD_TIME = '2026-10-01T20:06:27-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = '48b7949-dirty';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_BUILD_TIME = '2026-10-02T12:27:41-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = '9c6bbb1-dirty';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';
 const AE_READABLE_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.readable.js'; // same build, unminified     // where installs update from
 // The Portal sandbox (sandbox/server.py: Portal's real app on fake data) — dev builds only.
 const AE_SANDBOX = AE_DEV && location.host === 'localhost:8790';
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net' || AE_SANDBOX;
-// Swiftcast's refresh labor (SKU 10156) is EXPERIMENTAL: off unless switched on. Flip to true
+// Swiftcast's Verizon screen protector (SKU 101516; setting key refreshLabor) is EXPERIMENTAL: off unless switched on. Flip to true
 // (with a notice) once it's verified; everyone who never chose follows it.
 const AE_REFRESH_LABOR_DEFAULT = false;
 
@@ -64,7 +64,7 @@ const AE = (() => {
       login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
     ...(false ? {} : {
       printLabels: { delayMs: 900 },
-      fixes: { logoLink: true, scanNav: true, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all', reportsRetry: true }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
+      fixes: { logoLink: true, appcuesButtons: true, scanNav: true, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all', reportsRetry: true }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
       // Blank = use the logged-in user / current store automatically.
       galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
     }),
@@ -726,16 +726,31 @@ const AE = (() => {
         .filter((a) => !(imeiOf(a) && doneKeys.has(imeiOf(a) + ':' + a.programId)));
       return [...woCleanings, ...pending];
     }
-    // Does cleaning `c` belong to parent WO `p`? Same IMEI (AT&T cleanings are
-    // often under a different customer record); customer ID only without one.
+    /*
+      Same phone? Same IMEI, or, since dual-SIM phones (recent iPhones,
+      Samsungs) have two IMEIs and a carrier may send the other one, the same
+      model (TAC: an IMEI's first 8 digits) for a customer of the same name
+      (first + last). Seen Oct 2, 2026: an iPhone 15 Pro Max on a WO with one
+      IMEI, its AT&T cleanings with the other, under AT&T's own customer record.
+    */
+    const nameKey = (r) => { const w = nameOf(r).toLowerCase().replace(/[^a-z'\s-]/g, ' ').split(/\s+/).filter(Boolean); return w.length >= 2 ? w[0] + ' ' + w[w.length - 1] : null; };
+    function sameDevice(a, b) {
+      const ai = imeiOf(a), bi = imeiOf(b);
+      if (!ai || !bi) return false;
+      if (ai === bi) return true;
+      const an = nameKey(a);
+      return ai.slice(0, 8) === bi.slice(0, 8) && !!an && an === nameKey(b);
+    }
+    // Does cleaning `c` belong to parent WO `p`? The same phone (AT&T cleanings
+    // are often under a different customer record); customer ID only without an IMEI.
     function belongs(c, p) {
       const pi = imeiOf(p), ci = imeiOf(c);
-      if (pi && ci) return pi === ci;
+      if (pi && ci) return sameDevice(c, p);
       const pc = custOf(p);
       return !!pc && custOf(c) === pc;
     }
 
-    return { workorders, arrivals, cleanings, belongs, imeiOf, custOf, nameOf };
+    return { workorders, arrivals, cleanings, belongs, sameDevice, imeiOf, custOf, nameOf };
   })();
 
   // --------------------------------------------------- dev hooks + clock
@@ -1563,7 +1578,7 @@ AE.status = (() => {
   // Patch notes — its own modal, above Settings. Every release is a panel,
   // newest first. `since` (the version you updated from) expands everything
   // newer than it; otherwise just the latest is open.
-  const PATCH_NOTES = [{"version": "2.18.0", "notes": ["**Divination**: a **Cleaning rate history** card on the Reports page shows your cleaning percentage over the last 7, 30 or 90 days, this month or last month: the overall rate, how many days hit the target, a bar for each day and a day-by-day table.", "**Master's Mend**: if Portal's Reports page is stuck loading, a warning explains the usual cause: an ad blocker like uBlock Origin blocks Portal's reports. Turn it off for Portal and reload.", "**Swiftcast**: new **experimental** option to add the refresh labor SKU (10156) to Verizon Device Refresh cleanings, for commission. It's still being tested, so it's off by default (Settings \u2192 Swiftcast \u2192 Refresh labor). If the labor can't be added, the cleaning is still completed at $0.", "**Swiftcast**: the old lightning bolt button has been replaced by one button named for what's waiting. With one cleaning it's **Swiftcast** (now with its real icon); with two it becomes **Dualcast** and creates both, one after the other; with three or more, **Triplecast**. Right-click Dualcast or Triplecast to close only this cleaning. A short explainer shows the first time. Dualcast is also in Esuna's list and Divination's panel, and can be turned off in Settings under Swiftcast.", "**Swiftcast**, **Quick Synthesis** and **Macrocosmos**: some visual changes to enhance the feel of these crystals.", "**Swiftcast**, **Dualcast** and **Triplecast** now keep you from reloading the page mid-cast, so no work order gets left half-done: F5 / Ctrl+R / Cmd+R do nothing until the cast ends, and closing the tab or using the browser's reload button asks first. The box reminds you while it runs."], "thanks": ["**C.Boyd** at Lexington, for the idea for **Divination**'s cleaning rate history!", "**C.Pritchard** at Lynnhaven, for the idea for **Swiftcast**'s refresh labor option!"], "updated": ["cleaningRate", "autoClose", "woCleanings", "printLabels", "galaxy", "fixes"], "date": "2026-10-02T00:06:27Z"}, {"version": "2.17.1", "notes": ["Patch notes: thank-yous and credits now get their own highlight, so the people who help build Aethernet stand out."], "date": "2026-10-01T05:32:00Z"}, {"version": "2.17.0", "notes": ["New crystal: **Rainbow Drip**. Work-order lists color each row by its status: red for Ready for work; blue for Diagnostics, Work in progress and Quality check; green for Ready for pickup; purple for Need to order, Ready for diag and Repair summary; yellow for Awaiting callback, Awaiting item and Awaiting device. It replaces the **UBIF Status Row Classes** script: if that's still running, you'll see how to turn it off.", "New crystal: **Master's Mend**, small fixes to Portal, each with its own switch in Settings. First fix: the ubreakifix logo in the top left is now a real link to the dashboard, so you can middle-click or right-click it to open a new tab.", "No more reloading to see changes: a text logged by **Recitation** shows in the WO notes right away, and so do Auto-Waymark nickname changes and cleanings closed out by **Swiftcast**. The page refreshes its data in place.", "**Master's Mend**: scan to open. Scan a WO label to open that work order, or an item label to open the item, from the dashboard, the work-order list or a customer. On a WO, scanned items are still added to it, and scanning does nothing on inventory, check-in or check-out pages or while you're typing in a field. Scanners that were a little too slow for Portal's own scan features now work with them too.", "**Glamour**: make the login page yours. In Glamour's settings, under **Login page**, choose a picture to replace Portal's photo (best fit: 768 \u00d7 871 px, shown in the setting), or fill the whole purple panel with it, and show the Aethernet mark in the bottom-left corner.", "**Master's Mend**: sort the Work orders list by any column. Click the arrows beside a column name. Most columns sort across every page; Customer, Device/Issue, Location, Service Outcome, Completed and Created/Cancelled By sort the page you're on (their arrows are underlined).", "**Auto-Waymark**: texting the customer from a work order at Ready for pickup restarts its follow-up: the Auto-Waymark (and nickname) moves to 3 days from that day. It only ever moves later, and works whether or not Recitation is on.", "**Waymark**: managers can clear a tag straight from the board with the \u00d7 on it. Everyone else removes tags from the work order as before.", "**Master's Mend**: a **Hide auto notes** switch at the top of a work order's notes hides the automatic notes (status changes, check-in logs and the like), and loads every note on the work order, so you see the whole history of what people wrote, not just the first page. Flip it back any time; nothing is deleted.", "**Master's Mend**: a **Not contacted** chip on the Arrivals page, next to Portal's own (look for the Aethernet mark on its corner), lists every arrival that hasn't been contacted yet, from every page at once. Click an arrival to open it as usual; any other chip goes back to Portal's list. In Settings (Master's Mend), choose whether it lists all statuses or only arrivals that are still Not confirmed.", "Crystals that changed in an update now get a purple **Updated** sheen in Settings, like the yellow one on new crystals.", "Settings: **Save & reload** glows while you have changes to save. The **Aethernet has updated!** pill now goes away by itself after 10 seconds (the ring around its \u2715 counts down; hovering pauses it)."], "updated": ["textNotes", "autoClose", "glamour", "waymark"], "date": "2026-10-01T05:28:46Z", "thanks": ["**B.Young** at Lexington, for letting us crystallize **Rainbow Drip** from their script!"]}, {"version": "2.16.0", "notes": ["New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates as each item is scanned, without losing your place in the list.", "**Divination**: its icon now shows in its panel.", "Aethernet is now available store by store. If your store doesn't have access yet, you'll see a notice instead, and nothing else loads until it's added.", "**Swiftcast** won't create cleanings while the store is closed (after **Close store** in Portal). Open the store first.", "**Bountiful Yield** now works on RMA orders too: **Add all RMA parts** in the Add RMA parts popout. It stops if the RMA's line limit is reached."], "date": "2026-09-30T22:37:40Z"}, {"version": "2.15.0", "notes": ["New: **Send feedback**. Report a bug or suggest something straight from Portal: avatar menu \u2192 **Send Aethernet feedback**, or the link at the bottom of Settings. Bug reports can include technical details to help track the problem down (never customer details).", "Suggestions that get built are credited here in the patch notes."], "date": "2026-09-30T05:45:13Z"}, {"version": "2.14.1", "notes": ["Auto-Waymark: if a work order's nickname already has a date in it (like \"PS5 SLIM (10/01)\"), that date becomes its Auto-Waymark date. Otherwise it's 3 days after it reached Ready for pickup, as before.", "Fixed: work orders already at Ready for pickup when 2.14.0 arrived were dated from their last update instead of the date in their nickname. Their Auto-Waymarks have been corrected."], "date": "2026-09-30T00:47:16Z"}, {"version": "2.14.0", "notes": ["New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.", "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.", "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **\u00d7** removes it for good.", "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.", "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."], "date": "2026-09-30T00:37:49Z"}, {"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
+  const PATCH_NOTES = [{"version": "2.19.0", "notes": ["**Swiftcast**: the experimental commission option now adds the right item, the **Verizon Free Screen Protector (101516)**, the same way Portal's checkout does. Portal credits it back, so the sale stays $0. It's still off by default while it's being verified (Settings \u2192 Swiftcast).", "**Divination**: the Reports page now scrolls when the cleaning rate history makes it taller than the window, so the whole card (and the day-by-day table) can be reached.", "**Master's Mend**: Portal's **Support Ticket** and **Enhancement Idea** buttons now fit in: Support Ticket is a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before (Settings \u2192 Master's Mend to turn it off).", "**Divination**, **Esuna** and **Swiftcast**: cleanings now find their work order even when the carrier used the phone's *other* IMEI. Dual-SIM phones (most recent iPhones and Samsungs) have two; when the IMEIs differ, a cleaning still links if it's the same phone model for a customer with the same name."], "updated": ["autoClose", "cleaningRate", "fixes", "woCleanings"], "date": "2026-10-02T16:27:41Z"}, {"version": "2.18.0", "notes": ["**Divination**: a **Cleaning rate history** card on the Reports page shows your cleaning percentage over the last 7, 30 or 90 days, this month or last month: the overall rate, how many days hit the target, a bar for each day and a day-by-day table.", "**Master's Mend**: if Portal's Reports page is stuck loading, a warning explains the usual cause: an ad blocker like uBlock Origin blocks Portal's reports. Turn it off for Portal and reload.", "**Swiftcast**: new **experimental** option to add the refresh labor SKU (10156) to Verizon Device Refresh cleanings, for commission. It's still being tested, so it's off by default (Settings \u2192 Swiftcast \u2192 Refresh labor). If the labor can't be added, the cleaning is still completed at $0.", "**Swiftcast**: the old lightning bolt button has been replaced by one button named for what's waiting. With one cleaning it's **Swiftcast** (now with its real icon); with two it becomes **Dualcast** and creates both, one after the other; with three or more, **Triplecast**. Right-click Dualcast or Triplecast to close only this cleaning. A short explainer shows the first time. Dualcast is also in Esuna's list and Divination's panel, and can be turned off in Settings under Swiftcast.", "**Swiftcast**, **Quick Synthesis** and **Macrocosmos**: some visual changes to enhance the feel of these crystals.", "**Swiftcast**, **Dualcast** and **Triplecast** now keep you from reloading the page mid-cast, so no work order gets left half-done: F5 / Ctrl+R / Cmd+R do nothing until the cast ends, and closing the tab or using the browser's reload button asks first. The box reminds you while it runs."], "thanks": ["**C.Boyd** at Lexington, for the idea for **Divination**'s cleaning rate history!", "**C.Pritchard** at Lynnhaven, for the idea for **Swiftcast**'s refresh labor option!"], "updated": ["cleaningRate", "autoClose", "woCleanings", "printLabels", "galaxy", "fixes"], "date": "2026-10-02T00:06:27Z"}, {"version": "2.17.1", "notes": ["Patch notes: thank-yous and credits now get their own highlight, so the people who help build Aethernet stand out."], "date": "2026-10-01T05:32:00Z"}, {"version": "2.17.0", "notes": ["New crystal: **Rainbow Drip**. Work-order lists color each row by its status: red for Ready for work; blue for Diagnostics, Work in progress and Quality check; green for Ready for pickup; purple for Need to order, Ready for diag and Repair summary; yellow for Awaiting callback, Awaiting item and Awaiting device. It replaces the **UBIF Status Row Classes** script: if that's still running, you'll see how to turn it off.", "New crystal: **Master's Mend**, small fixes to Portal, each with its own switch in Settings. First fix: the ubreakifix logo in the top left is now a real link to the dashboard, so you can middle-click or right-click it to open a new tab.", "No more reloading to see changes: a text logged by **Recitation** shows in the WO notes right away, and so do Auto-Waymark nickname changes and cleanings closed out by **Swiftcast**. The page refreshes its data in place.", "**Master's Mend**: scan to open. Scan a WO label to open that work order, or an item label to open the item, from the dashboard, the work-order list or a customer. On a WO, scanned items are still added to it, and scanning does nothing on inventory, check-in or check-out pages or while you're typing in a field. Scanners that were a little too slow for Portal's own scan features now work with them too.", "**Glamour**: make the login page yours. In Glamour's settings, under **Login page**, choose a picture to replace Portal's photo (best fit: 768 \u00d7 871 px, shown in the setting), or fill the whole purple panel with it, and show the Aethernet mark in the bottom-left corner.", "**Master's Mend**: sort the Work orders list by any column. Click the arrows beside a column name. Most columns sort across every page; Customer, Device/Issue, Location, Service Outcome, Completed and Created/Cancelled By sort the page you're on (their arrows are underlined).", "**Auto-Waymark**: texting the customer from a work order at Ready for pickup restarts its follow-up: the Auto-Waymark (and nickname) moves to 3 days from that day. It only ever moves later, and works whether or not Recitation is on.", "**Waymark**: managers can clear a tag straight from the board with the \u00d7 on it. Everyone else removes tags from the work order as before.", "**Master's Mend**: a **Hide auto notes** switch at the top of a work order's notes hides the automatic notes (status changes, check-in logs and the like), and loads every note on the work order, so you see the whole history of what people wrote, not just the first page. Flip it back any time; nothing is deleted.", "**Master's Mend**: a **Not contacted** chip on the Arrivals page, next to Portal's own (look for the Aethernet mark on its corner), lists every arrival that hasn't been contacted yet, from every page at once. Click an arrival to open it as usual; any other chip goes back to Portal's list. In Settings (Master's Mend), choose whether it lists all statuses or only arrivals that are still Not confirmed.", "Crystals that changed in an update now get a purple **Updated** sheen in Settings, like the yellow one on new crystals.", "Settings: **Save & reload** glows while you have changes to save. The **Aethernet has updated!** pill now goes away by itself after 10 seconds (the ring around its \u2715 counts down; hovering pauses it)."], "updated": ["textNotes", "autoClose", "glamour", "waymark"], "date": "2026-10-01T05:28:46Z", "thanks": ["**B.Young** at Lexington, for letting us crystallize **Rainbow Drip** from their script!"]}, {"version": "2.16.0", "notes": ["New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates as each item is scanned, without losing your place in the list.", "**Divination**: its icon now shows in its panel.", "Aethernet is now available store by store. If your store doesn't have access yet, you'll see a notice instead, and nothing else loads until it's added.", "**Swiftcast** won't create cleanings while the store is closed (after **Close store** in Portal). Open the store first.", "**Bountiful Yield** now works on RMA orders too: **Add all RMA parts** in the Add RMA parts popout. It stops if the RMA's line limit is reached."], "date": "2026-09-30T22:37:40Z"}, {"version": "2.15.0", "notes": ["New: **Send feedback**. Report a bug or suggest something straight from Portal: avatar menu \u2192 **Send Aethernet feedback**, or the link at the bottom of Settings. Bug reports can include technical details to help track the problem down (never customer details).", "Suggestions that get built are credited here in the patch notes."], "date": "2026-09-30T05:45:13Z"}, {"version": "2.14.1", "notes": ["Auto-Waymark: if a work order's nickname already has a date in it (like \"PS5 SLIM (10/01)\"), that date becomes its Auto-Waymark date. Otherwise it's 3 days after it reached Ready for pickup, as before.", "Fixed: work orders already at Ready for pickup when 2.14.0 arrived were dated from their last update instead of the date in their nickname. Their Auto-Waymarks have been corrected."], "date": "2026-09-30T00:47:16Z"}, {"version": "2.14.0", "notes": ["New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.", "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.", "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **\u00d7** removes it for good.", "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.", "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."], "date": "2026-09-30T00:37:49Z"}, {"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
   const verTuple = (v) => String(v || '0').split('.').map(Number);
   const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
@@ -1656,15 +1671,15 @@ AE.status = (() => {
       cleaningRate: [() => 'Target ' + s.cleaningRate.target + '%',
         input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; repaintSums(); }, 'number')],
       glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
-      autoClose: [() => (s.autoClose.dualcast !== false ? 'Dualcast on' : 'Dualcast off') + ((s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT) ? ' · refresh labor on' : ''),
+      autoClose: [() => (s.autoClose.dualcast !== false ? 'Dualcast on' : 'Dualcast off') + ((s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT) ? ' · screen protector on' : ''),
         h('div', { class: 'sg-row', style: 'margin:8px 0' },
           h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, h('span', { html: AE.actionIcon('dualcast', 20), style: 'line-height:0' }), 'Dualcast'),
             h('span', { class: 'sg-soft', style: 'display:block' }, 'When a device has two or more cleanings waiting, one button creates them all, one after the other. Shown in the arrival' +
               (false ? ' and in Divination\'s panel.' : ', in Esuna\'s list and in Divination\'s panel.'))),
           toggle(s.autoClose.dualcast !== false, (v) => { s.autoClose.dualcast = v; repaintSums(); })),
         h('div', { class: 'sg-row', style: 'margin:8px 0' },
-          h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, 'Refresh labor (10156)', h('span', { class: 'sg-exp-tag' }, 'Experimental')),
-            h('span', { class: 'sg-soft', style: 'display:block' }, 'Adds the refresh labor SKU 10156 to VZ Device Refresh cleanings, for commission. Still being tested and may not work yet: if it can\'t be added, the cleaning is completed without it. Off until it\'s verified.')),
+          h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, 'Verizon screen protector (101516)', h('span', { class: 'sg-exp-tag' }, 'Experimental')),
+            h('span', { class: 'sg-soft', style: 'display:block' }, 'Adds the Verizon Free Screen Protector (101516) to VZ Device Refresh cleanings at checkout, the same way Portal\'s checkout does, for commission. Portal credits it back, so the sale stays $0. Still being tested: if it can\'t be added, the cleaning is completed without it.')),
           toggle(!!(s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT), (v) => { s.autoClose.refreshLabor = v; repaintSums(); }))],
       ...(false ? {} : { // not in the demo build
         galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
@@ -2225,6 +2240,8 @@ AE.feedback = (() => {
   own, so it can pass 100%. Raw percentage only: reason notes are ignored.
   Cleanings link to orders by device IMEI (AT&T cleanings are often under a
   different customer record), falling back to customer ID without an IMEI.
+  Dual-SIM phones have two IMEIs: a different IMEI of the same model (first
+  8 digits) for a customer of the same name links too (AE.data.sameDevice).
 
   Pending cleanings count too: a cleaning arrival created today that hasn't
   been checked in yet (still in Arrivals) shows as "pending" and counts. Its
@@ -2566,7 +2583,24 @@ AE.crystal({
       #${HIST_ID} .days th { text-align:left; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); padding:6px 8px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
       #${HIST_ID} .days td { padding:6px 8px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); }
       #${HIST_ID} .miss { color:var(--aui-status-error, #b91a24); font-weight:600; }
+      .sg-reports-scroll { overflow-y:auto !important; }
     `;
+    /*
+      Portal's Reports page is short, so Portal never made it scroll: a
+      container above it clips anything taller than the window. With the
+      history card the page is taller, so the nearest clipping container is
+      made to scroll (only while on Reports; the class comes off elsewhere).
+    */
+    const SCROLL_CLASS = 'sg-reports-scroll';
+    function letReportsScroll(from) {
+      for (let x = from && from.parentElement; x; x = x.parentElement) {
+        const oy = getComputedStyle(x).overflowY;
+        const over = x.scrollHeight > x.clientHeight + 1;
+        if (over && (oy === 'auto' || oy === 'scroll')) return; // already scrolls
+        if (over && (oy === 'hidden' || oy === 'clip')) { x.classList.add(SCROLL_CLASS); return; }
+      }
+    }
+    const unscroll = () => document.querySelectorAll('.' + SCROLL_CLASS).forEach((x) => x.classList.remove(SCROLL_CLASS));
     function showHistory() {
       const reports = document.querySelector('.reports-card');
       const home = reports && reports.parentElement;
@@ -2588,9 +2622,11 @@ AE.crystal({
     // Portal's Reports page renders late and re-renders; keep the card there.
     let histShownFor = null;
     AE.every(1000, () => {
-      if (!/^\/reporting\/metrics/.test(location.pathname)) { histShownFor = null; return; }
+      if (!/^\/reporting\/metrics/.test(location.pathname)) { histShownFor = null; unscroll(); return; }
       const reports = document.querySelector('.reports-card');
       if (reports && (!document.getElementById(HIST_ID) || histShownFor !== reports)) { histShownFor = reports; showHistory(); }
+      const card = document.getElementById(HIST_ID);
+      if (card) letReportsScroll(card);
     });
 
     const onPortal = () => !/^\/login/.test(location.pathname);
@@ -2660,11 +2696,14 @@ AE.crystal({
         const wo = (j && j.workorder) || AE.unwrap(j);
         const created = Date.parse(wo.createdAt) || Date.now();
         const dev = wo.CustomerDevice || {};
-        // Shaped like a list row so AE.data.belongs() can compare it.
-        const self = { customerDevice: { imei: dev.imei, customerId: dev.customerId }, customer: { customerId: dev.customerId } };
+        // Shaped like a list row so AE.data.belongs() can compare it; the list's own
+        // row is used when it's there (it has the customer's name, for dual-IMEI phones).
+        let self = { customerDevice: { imei: dev.imei, customerId: dev.customerId }, customer: { customerId: dev.customerId } };
         let matched = [];
         if (!AE.CLEANING_PROGRAMS[wo.programId]) {
           const [wos, arrs] = await Promise.all([AE.data.workorders(created - WINDOW_MS, 5), AE.data.arrivals()]);
+          const row = wos.find((r) => String(r.workorderId) === String(woId));
+          if (row && AE.data.imeiOf(row)) self = row;
           const near = (r) => Math.abs(Date.parse(r.createdAt) - created) < WINDOW_MS;
           matched = AE.data.cleanings(wos, arrs, near).filter((c) => String(c.workorderId) !== String(woId) && AE.data.belongs(c, self));
         }
@@ -2887,13 +2926,19 @@ AE.crystal({
                 update-service-job-status → PUT checkin/workorder   (status 8)
     status walk PATCH status 9, then PUT workorder 10 → 11 → 12 → 13,
                 each followed by the same auto-note the UI posts
-    labor       EXPERIMENTAL, off unless switched on (Settings → Swiftcast; default
-                AE_REFRESH_LABOR_DEFAULT). VZ Device Refresh (program 11759) only: labor SKU 10156 into the
-                cart (Portal's own POST order/cart/item/add, LineType labor),
-                which earns the tech commission. If it ever leaves anything to
-                pay, it's taken back out before checkout (order/cart/item/remove)
-                and the run finishes at $0 as before, with a warning.
-    checkout    verify cart total is $0 → checkout/complete-order
+    checkout    [screen protector] verify cart total is $0 → checkout/complete-order
+    screen protector
+                EXPERIMENTAL, off unless switched on (Settings → Swiftcast; default
+                AE_REFRESH_LABOR_DEFAULT). VZ Device Refresh (program 11759) only, at
+                checkout: the Verizon Free Screen Protector (SKU 101516, $15), which
+                earns the tech commission. Sent exactly as Portal's own checkout
+                button does (POST order/cart/item/add {cartId, workorderId,
+                programId, cartLines:[{ItemId, Quantity}]}); the server adds a
+                matching Partner Credit (PCEXEMPT, -$15) so the cart stays $0. If
+                it ever leaves anything to pay, it's taken back out the way Portal
+                does (checkout/remove-accessory-item) and the run finishes at $0
+                as before, with a warning. (Was "refresh labor 10156" until the
+                capture of Portal's own add showed the real SKU.)
 
   Dualcast (Settings → Swiftcast, on by default): when a device has two or
   more cleaning arrivals waiting (e.g. VZ Device Refresh + VZ Sanitization),
@@ -2934,8 +2979,7 @@ AE.crystal({
       #${INTRO_ID} p { margin:0 0 6px; }
       #${INTRO_ID} .sg-actions { margin-top:8px; justify-content:flex-end; }
     `));
-    const REFRESH_PROGRAM = 11759, REFRESH_LABOR_SKU = '10156'; // VZ Device Refresh → its labor SKU (commission)
-    const LABOR_LINE = { '@odata.type': '#Microsoft.Dynamics.Commerce.Runtime.DataModel.AttributeTextValue', Name: 'LineType', TextValue: 'labor' };
+    const REFRESH_PROGRAM = 11759, SP_SKU = '101516', SP_NAME = 'Verizon screen protector'; // VZ Device Refresh → free screen protector (commission)
     const cartOf = (r) => { const c = unwrap(r); return (c && (c.cartItems ? c : c.cart)) || c || {}; };
     const skuOf = (i) => String(i.sku || i.itemNumber || i.ItemId || '');
     let laborNote = null; // a warning to show when the run finishes
@@ -2998,31 +3042,6 @@ AE.crystal({
       });
       log('Checked in');
 
-      // VZ Device Refresh: add the refresh labor SKU (commission). Never stops the run.
-      laborNote = null;
-      let laborAdded = false;
-      const laborOn = !!((AE.settings.autoClose || {}).refreshLabor ?? AE_REFRESH_LABOR_DEFAULT); // EXPERIMENTAL, off by default
-      if (Number(programId) === REFRESH_PROGRAM && laborOn) {
-        try {
-          const w = await getWoForCart(woId);
-          const cart = cartOf(await api('GET', '/api/get-cart/' + encodeURIComponent(w.csuCartId) + '?includePartStatus=true'));
-          if ((cart.cartItems || []).some((i) => skuOf(i) === REFRESH_LABOR_SKU)) log('Refresh labor ' + REFRESH_LABOR_SKU + ' already in the cart');
-          else {
-            await api('POST', '/api/order/cart/item/add', {
-              cartId: w.csuCartId, programId: REFRESH_PROGRAM, workorderId: woId, saveCartToSalesOrder: true,
-              cartLines: [{ ItemId: REFRESH_LABOR_SKU, Quantity: 1, AttributeValues: [LABOR_LINE] }],
-            });
-            laborAdded = true;
-            AE.track('autoClose:refreshLabor');
-            log('Added refresh labor ' + REFRESH_LABOR_SKU);
-          }
-        } catch (e) {
-          if (e instanceof AE.Stopped) throw e;
-          laborNote = "Couldn't add refresh labor " + REFRESH_LABOR_SKU + ' (' + (e.message || e) + '), so this cleaning was completed without it.';
-          log('Refresh labor not added');
-        }
-      }
-
       // 3. Status walk. Notes mirror the UI exactly (incl. its double space
       //    in "completed diagnostics" and which steps use the batch endpoint).
       const note = (noteTag, noteText, batch) => {
@@ -3065,16 +3084,32 @@ AE.crystal({
       const readCart = async () => unwrap(await api('GET', '/api/get-cart/' + encodeURIComponent(wo.csuCartId) + '?includePartStatus=true'));
       const payOf = (c) => (c && (c.payment || (c.cart && c.cart.payment))) || null;
       let cart = await readCart();
-      let pay = payOf(cart);
-      // The refresh labor is meant to be free to the customer; if it isn't, take it back out.
-      if (laborAdded && pay && Number(pay.total) !== 0) {
-        const line = (cartOf(cart).cartItems || []).find((i) => skuOf(i) === REFRESH_LABOR_SKU);
-        if (line) {
-          await api('POST', '/api/order/cart/item/remove', { cartId: wo.csuCartId, cartLines: [line.lineId], itemNumbers: [REFRESH_LABOR_SKU], workorderId: woId });
-          laborNote = 'Refresh labor ' + REFRESH_LABOR_SKU + ' would have charged $' + pay.total + ', so it was taken back out and the sale stayed $0.';
-          log('Refresh labor removed (it added a charge)');
-          cart = await readCart(); pay = payOf(cart);
+      // VZ Device Refresh: the free screen protector (commission), as Portal's checkout adds it. Never stops the run.
+      laborNote = null;
+      let spAdded = false;
+      if (Number(programId) === REFRESH_PROGRAM && laborOnNow()) {
+        try {
+          if ((cartOf(cart).cartItems || []).some((i) => skuOf(i) === SP_SKU)) log(SP_NAME + ' already in the cart');
+          else {
+            await api('POST', '/api/order/cart/item/add', { cartId: wo.csuCartId, workorderId: woId, programId: REFRESH_PROGRAM, cartLines: [{ ItemId: SP_SKU, Quantity: 1 }] });
+            spAdded = true;
+            AE.track('autoClose:refreshLabor');
+            log('Added ' + SP_NAME + ' (' + SP_SKU + ')');
+            cart = await readCart();
+          }
+        } catch (e) {
+          if (e instanceof AE.Stopped) throw e;
+          laborNote = "Couldn't add the " + SP_NAME + ' (' + SP_SKU + ': ' + (e.message || e) + '), so this cleaning was completed without it.';
+          log(SP_NAME + ' not added');
         }
+      }
+      let pay = payOf(cart);
+      // It's meant to be free to the customer (Portal adds a partner credit); if it isn't, take it back out.
+      if (spAdded && pay && Number(pay.total) !== 0) {
+        await api('POST', '/api/checkout/remove-accessory-item', { workorderId: woId, cartId: wo.csuCartId, skus: [SP_SKU] });
+        laborNote = 'The ' + SP_NAME + ' would have charged $' + pay.total + ', so it was taken back out and the sale stayed $0.';
+        log(SP_NAME + ' removed (it added a charge)');
+        cart = await readCart(); pay = payOf(cart);
       }
       const total = pay ? Number(pay.total) : NaN;
       if (total !== 0) throw new Error('Cart total is ' + (pay ? '$' + pay.total : 'unknown') + ', not $0 — stopped before checkout. Finish at Ready for pickup by hand.');
@@ -3084,10 +3119,6 @@ AE.crystal({
       return woId;
     }
 
-    async function getWoForCart(woId) {
-      const r = await api('GET', '/api/workorder/' + woId);
-      return (r && r.workorder) || unwrap(r) || {};
-    }
     const woLink = (id) => '<a href="/repair/workorder/' + id + '">WO ' + id + '</a>';
 
     /*
@@ -3156,8 +3187,9 @@ AE.crystal({
       const pause = async () => { await AE.sleep(450); if (stopRequested) throw new AE.Stopped(); };
       const woId = ++fakeWo;
       const steps = ['IMEI validated', ['Created WO ' + woId, woId], 'Checked in'];
-      if (Number(it.programId) === REFRESH_PROGRAM && ((AE.settings.autoClose || {}).refreshLabor ?? AE_REFRESH_LABOR_DEFAULT)) steps.push('Added refresh labor ' + REFRESH_LABOR_SKU);
-      steps.push('Started work', 'Diagnostics done', 'Work done', 'QC done', 'Ready for pickup', 'Sale complete (SO-TEST)');
+      steps.push('Started work', 'Diagnostics done', 'Work done', 'QC done', 'Ready for pickup');
+      if (Number(it.programId) === REFRESH_PROGRAM && laborOnNow()) steps.push('Added ' + SP_NAME + ' (' + SP_SKU + ')');
+      steps.push('Sale complete (SO-TEST)');
       for (const st of steps) {
         await pause();
         if (fake.fail && fakeWo % 2 === 0 && st === 'QC done') throw new Error('PUT /api/workorder/' + woId + ' → HTTP 500 (test failure, nothing was sent)');
@@ -3328,7 +3360,7 @@ AE.crystal({
           thisArrival = a;
           if (isCleaning && dualcastOn()) {
             const imei = AE.data.imeiOf(a);
-            siblings = imei ? (await AE.data.arrivals()).filter((x) => x.arrivalId !== arrivalId && x.program && AE.CLEANING_PROGRAMS[x.program.programId] && AE.data.imeiOf(x) === imei) : [];
+            siblings = imei ? (await AE.data.arrivals()).filter((x) => x.arrivalId !== arrivalId && x.program && AE.CLEANING_PROGRAMS[x.program.programId] && AE.data.sameDevice(x, a)) : [];
             if (siblings.length) document.getElementById(BTN_ID)?.remove(); // redraw with Dualcast beside it
           }
         } catch (_) { checkedArrivalId = null; } // retry next tick
@@ -5559,6 +5591,27 @@ AE.crystal({
     are React's, and React re-renders assuming its own order, so the list's
     real order is read from Portal's loaded data (getAllWorkOrders) and the
     rows are put back in it whenever no page sort is on.
+
+  - appcuesButtons: Portal's "Support Ticket" (left menu) and "Enhancement
+    Idea" (dashboard) buttons aren't Portal's: they're Appcues content
+    (Portal loads fast.appcues.com; ids "button-<uuid>", Appcues' theme
+    variables), drawn in Appcues' own style and, for Enhancement Idea, pinned
+    over the dashboard where it covers the calendar. Appcues keeps placing
+    and re-placing its content, so it isn't moved or restyled: each original
+    is tucked away off-screen (still rendered, so Appcues is content) and a
+    stand-in made of Portal's own parts takes its place:
+      · Support Ticket: a left-menu item cloned from Portal's own (icon +
+        label), just above More;
+      · Enhancement Idea: a pill next to Metrics overview's View all.
+    A stand-in clicks the original, so whatever Appcues does on click still
+    happens, and only exists while Appcues shows the original (its
+    targeting still decides when). The originals are looked for in the page,
+    in open shadow roots and in same-origin frames (Appcues draws some
+    content in an about:blank iframe); one that can't be placed is left as
+    it is.
+    Live Portal (Oct 2, 2026): Support Ticket is drawn in an
+    <appcues-experience-container id="appcues-container-<uuid>"> with
+    display:contents, so tucking also gives the box display:block.
 */
 AE.fixesInfo = [
   ['logoLink', 'Logo link', 'The ubreakifix logo is a real link to the dashboard: middle-click or right-click it to open a new tab.'],
@@ -5579,6 +5632,7 @@ AE.fixesInfo = [
     }],
   ['reportsRetry', 'Reports page help', 'If Portal\'s Reports page is stuck loading, a warning explains the usual cause (an ad blocker like uBlock Origin) and how to fix it. The details are included if you send a bug report.'],
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
+  ['appcuesButtons', 'Support Ticket & Enhancement Idea buttons', 'Portal\'s Support Ticket and Enhancement Idea buttons are made to fit: Support Ticket becomes a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before.'],
   ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Never on inventory, check-in or check-out pages, or while typing in a field.'],
 ];
 
@@ -5589,6 +5643,106 @@ AE.crystal({
   run() {
     const on = AE.settings.fixes || {};
     const FIXES = {
+      appcuesButtons() {
+        const TUCK = 'ae-appcues-tucked', NAV_ID = 'ae-support-ticket', IDEA_ID = 'ae-enhancement-idea';
+        const svg = (d) => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+        const TICKET = svg('<path d="M3.5 7.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v2a2.5 2.5 0 0 0 0 5v2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-2a2.5 2.5 0 0 0 0-5z"/><path d="M14.5 5.5v13" stroke-dasharray="1.6 2.2"/>');
+        const BULB = svg('<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2h5c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>');
+        document.head.append(AE.h('style', null, `
+          /* display:block: Appcues' <appcues-experience-container> is display:contents (no box), which positioning can't move */
+          .${TUCK} { display:block !important; position:fixed !important; left:-10000px !important; top:0 !important; width:300px !important; opacity:0 !important; pointer-events:none !important; }
+          #${NAV_ID} { cursor:pointer; }
+          #${NAV_ID} .ae-ico { display:inline-flex; line-height:0; }
+          #${IDEA_ID} { gap:6px; margin:0 8px 0 auto; } /* auto: sits by View all even in a space-between row */
+          #${IDEA_ID} svg { width:18px; height:18px; }
+        `));
+        const label = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim();
+        // Every place Appcues can draw: the page, open shadow roots, same-origin frames.
+        function roots() {
+          const out = [document];
+          for (let i = 0; i < out.length; i++) {
+            for (const el of out[i].querySelectorAll('*')) {
+              if (el.shadowRoot) out.push(el.shadowRoot);
+              if (el.tagName === 'IFRAME') { try { const d = el.contentDocument; if (d && d.documentElement) out.push(d); } catch (_) { /* other origin */ } }
+            }
+          }
+          return out;
+        }
+        function find(text) {
+          for (const r of roots()) {
+            for (const el of r.querySelectorAll('button, a, [role="button"]')) {
+              if (el.closest('#' + NAV_ID + ', #' + IDEA_ID)) continue;
+              if (label(el) === text && (/^button-/.test(el.id || '') || el.hasAttribute('blocktype') || el.hasAttribute('data-field-id'))) return el;
+            }
+          }
+          return null;
+        }
+        // What to tuck away in the page: the frame or shadow host it's drawn in, and its Appcues wrapper.
+        function outerBox(el) {
+          let x = el;
+          for (;;) {
+            const root = x.getRootNode();
+            if (root instanceof ShadowRoot) { x = root.host; continue; }
+            if (root !== document) { const fe = root.defaultView && root.defaultView.frameElement; if (fe) { x = fe; continue; } }
+            break;
+          }
+          for (let y = x; y && y !== document.body; y = y.parentElement) {
+            if (/^appcues/i.test(y.tagName) || /appcues/i.test((y.id || '') + ' ' + (typeof y.className === 'string' ? y.className : ''))) x = y;
+          }
+          return x;
+        }
+        const tucked = new Set();
+        function tuck(el) { const box = outerBox(el); box.classList.add(TUCK); tucked.add(box); }
+        function untuckAll() { tucked.forEach((b) => b.classList.remove(TUCK)); tucked.clear(); }
+
+        function supportTicket(orig) {
+          const nav = document.querySelector('#single-spa-application\\:\\@ubif\\/main-layout nav') || document.querySelector('nav');
+          const links = nav ? [...nav.querySelectorAll('a[data-aui="link"]')] : [];
+          const more = links.find((a) => label(a) === 'More');
+          const model = links.find((a) => a !== more && a.querySelector('[data-aui="icon"]') && !a.classList.contains('active'));
+          if (!more || !model) return false;
+          let item = document.getElementById(NAV_ID);
+          if (!item) {
+            item = model.cloneNode(true);
+            item.id = NAV_ID;
+            item.removeAttribute('href');
+            item.setAttribute('role', 'button'); item.setAttribute('tabindex', '0');
+            const icoBox = item.querySelector('[data-aui="icon"]').parentElement;
+            icoBox.replaceChildren(AE.h('span', { class: 'ae-ico', html: TICKET }));
+            [...item.childNodes].filter((n) => n.nodeType === 3).forEach((n) => n.remove());
+            item.append('Support ticket');
+            const go = (e) => { e.preventDefault(); find('Support Ticket')?.click(); };
+            item.addEventListener('click', go);
+            item.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); });
+          }
+          if (item.nextElementSibling !== more) more.before(item);
+          return true;
+        }
+        function enhancementIdea(orig) {
+          const head = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,div')].find((e) => e.children.length === 0 && label(e) === 'Metrics overview');
+          let row = head, viewAll = null;
+          for (let i = 0; row && i < 4 && !viewAll; i++) { row = row.parentElement; viewAll = row && [...row.querySelectorAll('a, button')].find((e) => /^View all/.test(label(e))); }
+          if (!viewAll) return false;
+          let pill = document.getElementById(IDEA_ID);
+          if (!pill) {
+            pill = AE.h('button', { id: IDEA_ID, type: 'button', class: 'sg-btn', title: 'Suggest an improvement to Portal' });
+            pill.innerHTML = BULB;
+            pill.append('Enhancement idea');
+            pill.addEventListener('click', () => find('Enhancement Idea')?.click());
+          }
+          const h = viewAll.getBoundingClientRect().height;
+          if (h) pill.style.height = Math.round(h) + 'px';
+          if (pill.nextElementSibling !== viewAll) viewAll.before(pill);
+          return true;
+        }
+
+        AE.every(1500, () => {
+          untuckAll();
+          const st = find('Support Ticket'), idea = find('Enhancement Idea');
+          if (st && supportTicket(st)) tuck(st); else document.getElementById(NAV_ID)?.remove();
+          if (idea && enhancementIdea(idea)) tuck(idea); else document.getElementById(IDEA_ID)?.remove();
+        });
+      },
       logoLink() {
         const ID = 'ae-logo-link';
         document.head.append(AE.h('style', null, `
