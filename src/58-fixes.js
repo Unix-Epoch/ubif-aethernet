@@ -23,12 +23,12 @@
         (a PO, receiving, a PO's projection, editing/reviewing a count, an
         RMA or buyback order, store transfers, purchase requests, local
         pricing). Arrivals and inventory's list pages (home, POs, counts,
-        RMA/buyback, store products) are allowed (LIST_PAGES; anything else
-        under /boh, /check-in or /check-out is blocked). Checked against
+        RMA/buyback, store products) and Sales (/check-out/sales) are allowed
+        (LIST_PAGES; anything else under /boh, /check-in or /check-out is blocked). Checked against
         Portal first.
       · item label (<item number>-<10+ digit serial>) → opens the item's
-        page, from the dashboard, WO list, customers, Arrivals and those
-        inventory list pages. On a WO, Portal adds it to the WO instead.
+        page, from the dashboard, WO list, customers, Arrivals, Sales and
+        those inventory list pages. On a WO, Portal adds it to the WO instead.
       · never while you're typing in a field or a dialog/drawer is open
         (the scan is meant for that field), and never acts on scans
         Portal's own pages consume.
@@ -152,7 +152,7 @@ AE.fixesInfo = [
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
   ['appcuesBoxes', 'Collapse announcement boxes', 'Announcement boxes on work orders (like "Apple iOS 27 and Repair Mode") get – Collapse, to shrink them to an icon, and Hide for today. They never disappear for good: the icon at the bottom left brings them back.'],
   ['appcuesButtons', 'Support Ticket & Enhancement Idea buttons', 'Portal\'s Support Ticket and Enhancement Idea buttons are made to fit: Support Ticket becomes a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before.'],
-  ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Works on Arrivals and inventory\'s lists, but never while checking in or out, on a PO, receiving, or doing a count, or while typing in a field.',
+  ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Works on Arrivals, Sales and inventory\'s lists, but never while checking in or out, on a PO, receiving, or doing a count, or while typing in a field.',
     // Debugging: a live log of what the scanner sends and what happened.
     (s, h) => h('label', { style: 'display:flex;align-items:center;gap:8px;margin:-2px 0 10px 14px;font-size:12px', class: 'sg-soft' },
       h('input', { type: 'checkbox', checked: !!s.fixes.scanDebug, onchange: (e) => { s.fixes.scanDebug = e.target.checked; } }),
@@ -859,6 +859,7 @@ AE.crystal({
           /^\/boh\/inventory\/?$/,                                   // Inventory home
           /^\/boh\/inventory\/(purchase-orders|counts|rma-buyback)\/?$/, // lists (not a PO, receiving, or a count)
           /^\/boh\/inventory\/store-products(\/[^/]+)?\/?$/,          // store products and a product's page
+          /^\/check-out\/sales\/?$/,                                 // Sales (the list; not the cart, a checkout or a refund)
         ];
         const listPage = () => LIST_PAGES.some((re) => re.test(path()));
         const scanPage = () => /^\/(boh|check-in|check-out)(\/|$)/.test(path()) && !listPage();
