@@ -1,5 +1,14 @@
 [
   {
+    "version": "2.22.0",
+    "notes": [
+      "**Master's Mend**: Collapse and Hide for today now work on more kinds of announcement boxes, and new kinds can be added without updating Aethernet. If a box doesn't get the buttons, send a bug report from that page: it now says which boxes are on the page."
+    ],
+    "updated": [
+      "fixes"
+    ]
+  },
+  {
     "version": "2.21.0",
     "notes": [
       "**Swiftcast**: if Portal's server briefly fails a status change (like \"Error while fetching service bench details\"), Swiftcast now waits a moment and tries again, up to twice, instead of stopping. Status changes are safe to repeat, so nothing is done twice.",

@@ -205,7 +205,25 @@ AE.crystal({
         while (win && win !== window && win.frameElement) { const f = win.frameElement.getBoundingClientRect(); x += f.left; y += f.top; win = win.frameElement.ownerDocument.defaultView; }
         return { left: x, top: y, width: r.width, height: r.height, right: x + r.width, bottom: y + r.height };
       }
-      return { TUCK, roots, outerBox, pageRect };
+      // What Appcues has on the page (for bug reports: enough to write a bulletin rule). Appcues content
+      // is Asurion's announcements, not customer data; titles only.
+      function summary() {
+        const out = [];
+        for (const r of roots()) {
+          for (const el of r.querySelectorAll('*')) {
+            const tag = el.tagName.toLowerCase();
+            if (!/^appcues/.test(tag) && !/^appcues-container-/.test(el.id || '')) continue;
+            const scope = el.shadowRoot || el;
+            const hd = scope.querySelector && scope.querySelector('h1, h2, h3, h4, [role="dialog"]');
+            out.push({ tag, id: (el.id || '').slice(0, 60), pattern: el.getAttribute('data-pattern-type'), position: el.getAttribute('data-position'),
+              shadow: !!el.shadowRoot, frame: el.ownerDocument !== document, title: hd ? (hd.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80) : null });
+            if (out.length >= 12) return out;
+          }
+        }
+        return out;
+      }
+      AE.appcuesSummary = summary;
+      return { TUCK, roots, outerBox, pageRect, summary };
     })();
 
     const FIXES = {
@@ -284,14 +302,32 @@ AE.crystal({
       },
       appcuesBoxes() {
         const KEY = 'ae_appcues_boxes', TIP_KEY = 'ae_box_tip_seen', ICONS = 'ae-box-icons', MARK = 'data-ae-box';
-        const PATTERNS = ['shorty', 'modal', 'slideout', 'fullscreen'];
+        /*
+          Which boxes are bulletins: built in, plus rules from status.json ("bulletins", 2.22.0+;
+          build.py --bulletin-…), so a new kind of bulletin can be covered without an update.
+          pages replaces the built-in list; patterns, selectors and closers add to it.
+        */
+        const BUILT_IN = { pages: ['^/repair/workorder/\\d+'], patterns: ['shorty', 'modal', 'slideout', 'fullscreen'], selectors: [], closers: ['.appcues-skip', '[data-step="skip"]'] };
+        const rules = () => {
+          const r = (AE.status && AE.status.get().bulletins) || {};
+          const uniq = (a) => [...new Set(a)];
+          return { pages: (r.pages && r.pages.length ? r.pages : BUILT_IN.pages), patterns: uniq([...BUILT_IN.patterns, ...(r.patterns || [])]),
+            selectors: uniq([...BUILT_IN.selectors, ...(r.selectors || [])]), closers: uniq([...BUILT_IN.closers, ...(r.closers || [])]) };
+        };
+        const reCache = new Map();
+        const re = (src) => { if (!reCache.has(src)) { let x = null; try { x = new RegExp(src); } catch (_) { /* bad rule: skipped */ } reCache.set(src, x); } return reCache.get(src); };
+        const qsa = (root, sel) => { try { return [...root.querySelectorAll(sel)]; } catch (_) { return []; } };
+        const scopeOf = (box) => box.shadowRoot || box;
+        // Appcues' newer containers (<appcues-experience-container>, shadow DOM) also hold buttons like Support
+        // Ticket; only ones with a heading or a dialog are bulletins.
+        const isBulletin = (box) => { const sc = scopeOf(box); return !!sc.querySelector('h1, h2, h3, h4, [role="dialog"]') && !box.closest('.sg'); };
         const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
         const store = () => GM_getValue(KEY, {});
         const put = (k, v) => { const all = store(); if (v) all[k] = v; else delete all[k]; GM_setValue(KEY, all); };
-        const onWo = () => /^\/repair\/workorder\/\d+/.test(location.pathname);
+        const onPage = (R) => R.pages.some((src) => { const x = re(src); return x && x.test(location.pathname); });
         const titleOf = (box) => {
-          const hd = box.querySelector('h1, h2, h3, h4');
-          return ((hd ? hd.textContent : box.textContent) || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+          const sc = scopeOf(box), hd = sc.querySelector('h1, h2, h3, h4');
+          return ((hd ? hd.textContent : sc.textContent) || '').replace(/\s+/g, ' ').trim().slice(0, 120);
         };
         // A box is known by its title, so a new announcement shows normally.
         const keyOf = (t) => { let x = 0; for (let i = 0; i < t.length; i++) x = (x * 31 + t.charCodeAt(i)) | 0; return 'b' + (x >>> 0).toString(36); };
@@ -315,23 +351,28 @@ AE.crystal({
         const BAR_CSS = '[' + MARK + '-bar]{display:flex;gap:6px;justify-content:flex-end;padding:6px 8px 0;position:relative;z-index:3}' +
           '[' + MARK + '-bar] button{font:600 12px Apercu,"Helvetica Neue",Helvetica,Arial,sans-serif;height:26px;padding:0 10px;border-radius:10000rem;cursor:pointer;' +
           'border:1px solid rgba(0,0,0,.25);background:rgba(255,255,255,.7);color:#1a1c1e}' +
-          '[' + MARK + '-bar] button:hover{border-color:#8223d2;color:#8223d2}' +
-          '[' + MARK + '] .appcues-skip{display:none !important}'; // Appcues' own × dismisses it for good
-        function controls(box, key, title) {
-          const doc = box.ownerDocument;
-          if (!doc.getElementById('ae-box-css')) { const st = doc.createElement('style'); st.id = 'ae-box-css'; st.textContent = BAR_CSS; (doc.head || doc.documentElement).append(st); }
-          if (box.querySelector('[' + MARK + '-bar]')) return;
+          '[' + MARK + '-bar] button:hover{border-color:#8223d2;color:#8223d2}';
+        // Appcues' own close buttons dismiss a bulletin for good: hidden (inside the bulletin only).
+        const closerCss = (R, inShadow) => R.closers.map((c) => (inShadow ? '' : '[' + MARK + '] ') + c).join(',') + '{display:none !important}';
+        function controls(box, key, title, R) {
+          const doc = box.ownerDocument, sc = scopeOf(box), inShadow = !!box.shadowRoot;
+          const styleHome = inShadow ? sc : (doc.head || doc.documentElement);
+          let st = (inShadow ? sc : doc).querySelector('#ae-box-css');
+          if (!st) { st = doc.createElement('style'); st.id = 'ae-box-css'; styleHome.append(st); }
+          const css = BAR_CSS + closerCss(R, inShadow);
+          if (st.textContent !== css) st.textContent = css;
+          if (sc.querySelector('[' + MARK + '-bar]')) return;
           box.setAttribute(MARK, key);
           const bar = doc.createElement('div'); bar.setAttribute(MARK + '-bar', '');
           const btn = (label, tip, fn) => { const b = doc.createElement('button'); b.type = 'button'; b.textContent = label; b.title = tip; b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(); }); return b; };
           bar.append(
             btn('– Collapse', 'Collapse to an icon (bottom left). Click the icon to bring it back.', () => { put(key, { title, collapsed: true }); AE.track('fixes:boxCollapse'); tick(); }),
             btn('Hide for today', 'Hide until tomorrow. The icon (bottom left) brings it back today.', () => { put(key, { title, hiddenDay: today() }); AE.track('fixes:boxHideToday'); tick(); }));
-          (box.querySelector('modal-container') || box).prepend(bar);
+          (sc.querySelector('modal-container') || (inShadow ? (sc.firstElementChild || sc) : box)).prepend(bar);
         }
         function tip(box) {
           if (GM_getValue(TIP_KEY, false) || document.querySelector('.ae-box-tip')) return;
-          const bar = box.querySelector('[' + MARK + '-bar]');
+          const bar = scopeOf(box).querySelector('[' + MARK + '-bar]');
           if (!bar) return;
           const r = AC.pageRect(bar);
           if (!r.width) return;
@@ -347,19 +388,24 @@ AE.crystal({
         const tucked = new Set();
         function tick() {
           tucked.forEach((b) => b.classList.remove(AC.TUCK)); tucked.clear();
-          const boxes = [];
-          if (onWo()) {
+          const boxes = [], R = rules();
+          if (onPage(R)) {
+            const seen = new Set();
+            const take = (box) => {
+              if (seen.has(box)) return;
+              seen.add(box);
+              const title = titleOf(box);
+              if (title) boxes.push({ box, title, key: keyOf(title) });
+            };
             for (const r of AC.roots()) {
-              for (const box of r.querySelectorAll('appcues[data-pattern-type]')) {
-                if (!PATTERNS.includes(box.getAttribute('data-pattern-type'))) continue;
-                const title = titleOf(box);
-                if (title) boxes.push({ box, title, key: keyOf(title) });
-              }
+              for (const box of r.querySelectorAll('appcues[data-pattern-type]')) if (R.patterns.includes(box.getAttribute('data-pattern-type'))) take(box);
+              for (const box of qsa(r, 'appcues-experience-container')) if (isBulletin(box)) take(box);
+              for (const sel of R.selectors) for (const box of qsa(r, sel)) if (isBulletin(box)) take(box);
             }
           }
           const all = store(), shown = [];
           for (const b of boxes) {
-            controls(b.box, b.key, b.title);
+            controls(b.box, b.key, b.title, R);
             if (away(all[b.key])) { const o = AC.outerBox(b.box); o.classList.add(AC.TUCK); tucked.add(o); shown.push(b); }
             else tip(b.box);
           }

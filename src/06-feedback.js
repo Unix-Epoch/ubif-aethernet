@@ -147,6 +147,7 @@ AE.feedback = (() => {
       screen: innerWidth + 'x' + innerHeight,
       theme: document.body.classList.contains('asurion-dark') ? 'dark' : 'light',
       scans: (AE.scanLog || []).slice(-10), // Master's Mend scan to open: the last few scans and what happened
+      appcues: AE.appcuesSummary ? AE.appcuesSummary() : [], // Appcues boxes on the page (titles only): to write bulletin rules
     };
   }
   function openFeedback() {

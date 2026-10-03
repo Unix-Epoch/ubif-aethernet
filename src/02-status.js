@@ -6,6 +6,12 @@
 
     {
       "latest":   { "version": "2.11.0", "date": "…" },        // set by build.py --release
+      "bulletins": {                                         // (2.22.0+) Master's Mend bulletin rules, set by build.py --bulletin-…
+        "pages":     ["^/repair/workorder/\\d+"],           // where bulletins get Collapse / Hide for today (replaces the built-in list)
+        "patterns":  ["shorty", "modal"],                   // extra Appcues pattern types that count as bulletins
+        "selectors": ["appcues-experience-container"],      // extra CSS selectors for a bulletin's box (page, shadow roots, frames)
+        "closers":   [".appcues-skip"]                      // extra close buttons to hide (they dismiss a bulletin for good)
+      },
       "incident": {                                          // set by build.py --status …
         "id", "severity": "info|warning|error", "title", "message",
         "crystals": ["cleaningRate"],   // which crystals it's about (badges in Settings; a crystal's name in
@@ -43,10 +49,17 @@ AE.status = (() => {
   const ids = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && /^[A-Za-z]{1,30}$/.test(x)).slice(0, 12) : []);
 
   function clean(raw) {
-    const out = { latest: null, incident: null };
+    const out = { latest: null, incident: null, bulletins: null };
     if (!raw || typeof raw !== 'object') return out;
     const l = raw.latest;
     if (l && VER_RE.test(l.version || '')) out.latest = { version: l.version, date: text(l.date, 40) };
+    // Bulletin rules: plain strings, length- and count-capped; used as regexes / CSS selectors
+    // (each one tried on its own, so a bad one is just skipped). Data only: nothing here runs.
+    const strs = (a, n, re) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && x.length && x.length <= 200 && (!re || re.test(x))).slice(0, n) : []);
+    const b = raw.bulletins;
+    if (b && typeof b === 'object') {
+      out.bulletins = { pages: strs(b.pages, 20), patterns: strs(b.patterns, 12, /^[a-z-]{1,24}$/), selectors: strs(b.selectors, 20), closers: strs(b.closers, 20) };
+    }
     const i = raw.incident;
     if (i && typeof i === 'object' && text(i.title, 140)) {
       out.incident = {

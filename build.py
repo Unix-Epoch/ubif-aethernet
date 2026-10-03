@@ -34,6 +34,10 @@ Notices (status.json on the same Gist, read live by every install within
       --crystal: "Known issue" badge on every install (all versions understand it)
       --mention: icon + link to Settings in the title, no badge (2.22.0+)
       --chip:    badge only on installs older than --chip-below (default: VERSION, i.e. the version being pushed)
+  Master's Mend bulletin rules (2.22.0+ installs, live in ~15 min, no update):
+  python3 build.py --bulletins-show | --bulletins-reset
+                   --bulletin-page REGEX | --bulletin-unpage REGEX
+                   --bulletin-pattern TYPE | --bulletin-selector CSS | --bulletin-unselector CSS | --bulletin-closer CSS
   python3 build.py --status-update "New message"   same notice, new text (re-shows if dismissed)
   python3 build.py --status-fixed 2.10.1           installs at/after 2.10.1 stop showing it
   python3 build.py --status-clear                  remove the notice
@@ -341,6 +345,7 @@ def publish_status(root: Path, status: dict) -> None:
     if DEV["gist_id"]:
         dev = load_dev_status(root)
         dev["incident"] = status.get("incident")
+        dev["bulletins"] = status.get("bulletins")
         publish_dev_status(root, dev)
     # Demo installs only hear about notices that concern their own crystals.
     if DEMO["gist_id"]:
@@ -384,6 +389,33 @@ def publish_dev_status(root: Path, status: dict) -> None:
     f.write_text(json.dumps(status, indent=2, ensure_ascii=False) + "\n")
     gist_put(f, gist_files(DEV["gist_id"]), DEV["gist_id"], as_name=STATUS_FILE)
     print("Published dev status.json: " + json.dumps(status, ensure_ascii=False))
+
+
+def bulletins_command(root: Path, args) -> None:
+    """Master's Mend bulletin rules (status.json "bulletins", 2.22.0+): no update needed."""
+    status = load_status(root)
+    b = status.get("bulletins") or {}
+    if args.bulletins_show:
+        print(json.dumps(b, indent=2, ensure_ascii=False))
+        return
+    if args.bulletins_reset:
+        status["bulletins"] = None
+    else:
+        for key, vals in (("pages", args.bulletin_page), ("patterns", args.bulletin_pattern), ("selectors", args.bulletin_selector), ("closers", args.bulletin_closer)):
+            for v in vals or []:
+                if key == "pages":
+                    re.compile(v)  # refuse a broken regex here rather than ship it
+                if key == "patterns" and not re.fullmatch(r"[a-z-]{1,24}", v):
+                    sys.exit(f"Pattern types are lowercase words (e.g. shorty, modal), not {v!r}")
+                b.setdefault(key, [])
+                if v not in b[key]:
+                    b[key].append(v)
+        for key, vals in (("pages", args.bulletin_unpage), ("selectors", args.bulletin_unselector)):
+            for v in vals or []:
+                if v in b.get(key, []):
+                    b[key].remove(v)
+        status["bulletins"] = {k: v for k, v in b.items() if v} or None
+    publish_status(root, status)
 
 
 def apply_notice_extras(inc: dict, args) -> None:
@@ -534,12 +566,24 @@ if __name__ == "__main__":
     ap.add_argument("--status-show", action="store_true")
     ap.add_argument("--crystal", action="append", metavar="ID", help="crystal the notice is about (repeatable)")
     ap.add_argument("--pause", action="append", metavar="ID", help="crystal to pause everywhere (repeatable)")
+    ap.add_argument("--bulletins-show", action="store_true", help="print the live bulletin rules")
+    ap.add_argument("--bulletins-reset", action="store_true", help="remove all bulletin rules (built-in ones stay)")
+    ap.add_argument("--bulletin-page", action="append", metavar="REGEX", help="a page (path regex) where bulletins get controls; replaces the built-in WO-only list")
+    ap.add_argument("--bulletin-unpage", action="append", metavar="REGEX", help="remove a page rule")
+    ap.add_argument("--bulletin-pattern", action="append", metavar="TYPE", help="an Appcues data-pattern-type that counts as a bulletin")
+    ap.add_argument("--bulletin-selector", action="append", metavar="CSS", help="a CSS selector for a bulletin's box")
+    ap.add_argument("--bulletin-unselector", action="append", metavar="CSS", help="remove a selector rule")
+    ap.add_argument("--bulletin-closer", action="append", metavar="CSS", help="a close button to hide inside bulletins")
     ap.add_argument("--mention", action="append", metavar="ID", help="crystal named in the notice: icon + link, no badge (2.22.0+)")
     ap.add_argument("--chip", action="append", nargs=2, metavar=("ID", "TEXT"), help="badge on a crystal's Settings row, only on installs older than --chip-below (2.22.0+)")
     ap.add_argument("--chip-below", metavar="VERSION", help="chips show on installs older than this (default: VERSION, the version being pushed)")
     ap.add_argument("--tag", metavar="TEXT", help='badge text on the crystals\' Settings rows (default "Known issue")')
     args = ap.parse_args()
     root = Path(__file__).resolve().parent
+    if (args.bulletins_show or args.bulletins_reset or args.bulletin_page or args.bulletin_unpage or args.bulletin_pattern
+            or args.bulletin_selector or args.bulletin_unselector or args.bulletin_closer):
+        bulletins_command(root, args)
+        sys.exit(0)
     if args.status or args.status_update is not None or args.status_fixed or args.status_clear or args.status_show:
         if args.status and len(args.status) < 2:
             ap.error("--status needs at least SEVERITY and TITLE")
