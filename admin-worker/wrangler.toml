@@ -13,5 +13,5 @@ database_id = "59394e23-6903-4b1b-bb41-43abf19f3915"
 [vars]
 # Cloudflare Access (Zero Trust). Until both are set, every request is refused.
 # TEAM_DOMAIN: "<team>.cloudflareaccess.com"; POLICY_AUD: the Access application's Audience (AUD) tag.
-TEAM_DOMAIN = ""
-POLICY_AUD = ""
+TEAM_DOMAIN = "ancient-river-3aec.cloudflareaccess.com"
+POLICY_AUD = "051b24b27e2ddebd6df2b54471ea5fbecfe972925d33421f0c2b632ef74e6115"
