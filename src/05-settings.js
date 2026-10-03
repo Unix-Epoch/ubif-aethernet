@@ -415,7 +415,15 @@
           input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
           input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
           h('button', { class: 'sg-btn', style: 'margin:4px 0', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')],
-        waymark: [() => AE.waymark.summary(), AE.waymark.editor()],
+        waymark: [() => AE.waymark.summary(),
+          // The Work orders list: one chip + N per order (55-waymark.js "Work orders list").
+          ...[['chips', 'Tags on the Work orders list', 'One tag per order beside the customer\'s name, plus +N for the rest. Rows don\'t get taller.'],
+            ['edit', 'Add and remove tags from the list', 'Hover a row for + Tag and ×. Off: the chips just show.'],
+            ['filter', 'Tag filter on the Work orders list', 'A Waymark button next to Portal\'s filters, to show only work orders with one tag (on the page shown).']]
+            .map(([k, name, desc]) => h('div', { class: 'sg-row', style: 'margin:8px 0' },
+              h('div', null, h('b', null, name), h('span', { class: 'sg-soft', style: 'display:block' }, desc)),
+              toggle(!!(s.waymarkList || {})[k], (v) => { s.waymarkList = Object.assign({}, s.waymarkList, { [k]: v }); }))),
+          AE.waymark.editor()],
         fixes: [() => AE.fixesInfo.filter(([id]) => s.fixes[id] !== false).length + ' of ' + AE.fixesInfo.length + ' on',
           ...AE.fixesInfo.flatMap(([id, name, desc, extra]) => [h('div', { class: 'sg-row', style: 'margin:8px 0' },
             h('div', null, h('b', null, name), h('span', { class: 'sg-soft', style: 'display:block' }, desc)),

@@ -209,7 +209,9 @@ def route(method, path, body):
     if p == 'auth/user':
         st = fixture('store', {}) or {}
         st.update({'storeId': STORE_ID, 'storeName': 'Sandbox Store', 'address_1': '1 Sandbox Way', 'city': 'Testville', 'phone': '5555550100', 'email': 'sandbox@example.invalid'})
-        return 200, {'isAuthenticated': True, 'user': USER, 'currentStore': st, 'isStoreOpen': s['settings']['storeOpen'], 'abilities': fixture('abilities', [])}
+        # userAttributes: the Work orders list reads its page size from it (blank page without it)
+        return 200, {'isAuthenticated': True, 'user': USER, 'currentStore': st, 'isStoreOpen': s['settings']['storeOpen'], 'abilities': fixture('abilities', []),
+                     'userAttributes': {'PageCount': 25}}
     if p == 'auth/user/stores':
         return 200, fixture('user-stores', [])
     if p == 'auth/store-options':
@@ -288,7 +290,8 @@ def route(method, path, body):
         rows.sort(key=lambda w: w[key], reverse=direction != 'ASC')
         page, size = int(body.get('page') or 1), int(body.get('pageSize') or 10)
         return 200, {'workOrders': [wo_row(w) for w in rows[(page - 1) * size: page * size]], 'rowCount': len(rows),
-                     'repairNotStartedCount': 0, 'repairStartedCount': 0, 'repairWaitingCount': 0, 'readyForPickupCount': 0, 'needToOrderCount': 0}
+                     'repairNotStartedCount': 0, 'repairStartedCount': 0, 'repairWaitingCount': 0, 'readyForPickupCount': 0, 'needToOrderCount': 0,
+                     'allWorkordersCount': len(rows), 'repairNeedToOrderCount': 0}
     if p == 'recent-workorders':
         return 200, [wo_row(w) for w in sorted(s['wos'].values(), key=lambda w: w['updatedAt'], reverse=True)[:5]]
     m = re.fullmatch(r'workorder/(\d+)', p)

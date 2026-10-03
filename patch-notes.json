@@ -6,11 +6,13 @@
       "**Master's Mend**: Collapse and Hide for today now work on more kinds of announcement boxes, and new kinds can be added without updating Aethernet. If a box doesn't get the buttons, send a bug report from that page: it now says which boxes are on the page.",
       "**Master's Mend**: scan to open now also works on the **Sales** page (not during a checkout or refund).",
       "Patch notes now quote the bug reports each version fixes, with a thank-you to whoever sent them. Keep them coming: **Send Aethernet feedback** in the avatar menu.",
-      "Announcements about a fix in a newer version now have a **Check for updates** button (or **Update now** once it's out)."
+      "Announcements about a fix in a newer version now have a **Check for updates** button (or **Update now** once it's out).",
+      "**Waymark**: tags now show on Portal's **Work orders list**: one tag beside each customer's name, plus **+N** for the rest, without making rows any taller. Hover a row to add or remove tags right from the list. Optional: a Waymark tag filter next to Portal's filters (off by default). All three are switches in Settings → Waymark."
     ],
     "updated": [
       "fixes",
-      "autoClose"
+      "autoClose",
+      "waymark"
     ],
     "reports": [
       {

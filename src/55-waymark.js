@@ -47,7 +47,9 @@ AE.waymark = (() => {
   const EDITOR_ROLES = ['Store Manager - Corp', 'Store Manager - Franchisee', 'District Manager', 'District Manager - Franchisee', 'Store Owner - Franchisee'];
   const COLORS = { purple: 'var(--aui-primary, #8223d2)', blue: '#4a68f9', teal: '#1592a8', green: '#2f9e5b', lime: '#6f9a12', yellow: '#b38f00', orange: '#d9670f', red: '#d1344b', grey: 'var(--aui-on-surface-soft, #5d5e61)' };
   const TTL = 60 * 1000;
-  const configured = () => !AE_SANDBOX && /^(https:\/\/|http:\/\/localhost[:/])/.test(API); // localhost = a wrangler dev test build; off in the Portal sandbox
+  // localhost = a wrangler dev test build (a local Worker + database). The Portal sandbox may use one of those,
+  // but never a real Worker.
+  const configured = () => (AE_SANDBOX ? /^http:\/\/localhost[:/]/.test(API) : /^(https:\/\/|http:\/\/localhost[:/])/.test(API));
 
   let cache = null, cacheAt = 0, inflight = null;
   let roleInfo = null;
@@ -75,7 +77,7 @@ AE.waymark = (() => {
   function load(force) {
     if (!force && cache && Date.now() - cacheAt < TTL) return Promise.resolve(cache);
     if (inflight) return inflight;
-    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {}, auto: j.auto || {} }; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
+    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {}, auto: j.auto || {} }; load.cache = cache; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
       .finally(() => { inflight = null; });
     return inflight;
   }
@@ -523,16 +525,18 @@ AE.crystal({
 
     async function toggle(woId, tag, on) {
       try { await W.setTag(woId, tag, on); } catch (e) { W.fail("couldn't update tags", e); }
-      renderRow();
+      renderRow(); renderList();
       if (document.getElementById(POP_ID)) renderPop(woId);
     }
 
-    function togglePop(woId) {
+    let popAnchor = null; // the + Tag that opened the popover (WO page, or a row of the WO list)
+    function togglePop(woId, anchor) {
       if (document.getElementById(POP_ID)) { document.getElementById(POP_ID).remove(); return; }
-      renderPop(woId);
+      renderPop(woId, anchor);
     }
-    function renderPop(woId) {
-      const btn = document.querySelector('#' + ROW_ID + ' .add');
+    function renderPop(woId, anchor) {
+      if (anchor) popAnchor = anchor;
+      const btn = (popAnchor && popAnchor.isConnected ? popAnchor : null) || document.querySelector('#' + ROW_ID + ' .add');
       let pop = document.getElementById(POP_ID);
       if (!pop) { pop = h('div', { id: POP_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': 'Tags for this work order' }); document.body.appendChild(pop); }
       const on = new Set(W.tagsOf(woId).map((t) => t.tag));
@@ -569,8 +573,152 @@ AE.crystal({
     document.addEventListener('click', (e) => {
       // composedPath: the clicked chip may already be redrawn (detached) by now.
       const pop = document.getElementById(POP_ID), path = e.composedPath();
-      if (pop && !path.includes(pop) && !path.includes(document.getElementById(ROW_ID)) && !path.some((n) => n.id === 'sg-wm-push')) pop.remove();
+      if (pop && !path.includes(pop) && !path.includes(document.getElementById(ROW_ID)) && !path.some((n) => n.id === 'sg-wm-push' || (n.classList && (n.classList.contains('sg-wm-li') || n.classList.contains('sg-wm-all'))))) pop.remove();
     });
+
+    /*
+      ---------------------------------------------------- Work orders list
+      Each order's tags on Portal's Work orders list (/repair/workorders),
+      Settings → Waymark (settings.waymarkList): one compact chip beside the
+      customer's name, on the line the name already uses (rows don't get taller),
+      plus "+N" for the rest. Which chip: an Auto-Waymark due today or overdue,
+      else the first tag in the store's list order (one-offs after), else an
+      upcoming Auto-Waymark. edit: hovering a row shows × and "+ Tag"; "+N"
+      lists them all. filter (off by default): a Waymark dropdown next to
+      Portal's filters hides rows without that tag (on the page shown).
+      Portal's row opens the WO on click, so our clicks stop there.
+      Portal's Customer cell: td > div > a[href=/repair/workorder/<id>] > div (name).
+    */
+    const LI = 'sg-wm-li', ALL_ID = 'sg-wm-all', FILTER_ID = 'sg-wm-filter';
+    const LS = () => Object.assign({ chips: true, edit: true, filter: false }, AE.settings.waymarkList || {});
+    const onList = () => /^\/repair\/workorders\/?$/.test(location.pathname);
+    document.head.append(h('style', null, `
+      .sg-wm-li-wrap { display:flex !important; align-items:center; gap:6px; min-width:0; flex-wrap:nowrap; }
+      .sg-wm-li-wrap > a { min-width:0; overflow:hidden; }
+      .sg-wm-li-wrap > a > div { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .${LI} { display:inline-flex; align-items:center; gap:4px; flex:none; white-space:nowrap; line-height:1; }
+      .${LI} .sg-tag, .sg-wm-all .sg-tag { height:18px; padding:0 7px; font-size:11px; max-width:140px; }
+      .${LI} .sg-auto, .sg-wm-all .sg-auto { height:18px; padding:0 5px; font-size:11px; border-radius:5px; }
+      .${LI} .sg-auto svg { width:11px; height:11px; }
+      .${LI} .more { height:18px; padding:0 6px; border-radius:10000rem; border:0; cursor:pointer; font:700 11px/1 Apercu, "Helvetica Neue", Arial, sans-serif;
+        background:color-mix(in srgb, var(--aui-on-surface, #1a1c1e) 12%, transparent); color:var(--aui-on-surface, #1a1c1e); }
+      /* + Tag and × keep their space and only appear on hover, so hovering a row never widens the column (no reflow) */
+      .${LI} .add { display:inline-flex; align-items:center; visibility:hidden; height:18px; padding:0 7px; border-radius:10000rem; border:1px dashed var(--aui-primary, #8223d2); background:transparent; cursor:pointer;
+        color:var(--aui-primary, #8223d2); font:700 11px/1 Apercu, "Helvetica Neue", Arial, sans-serif; }
+      .${LI}:not(.edit) .sg-tag button, .${LI}:not(.edit) .sg-auto button { display:none; }
+      .${LI}.edit .sg-tag button, .${LI}.edit .sg-auto button { visibility:hidden; }
+      tr:hover .${LI}.edit .add, tr:hover .${LI}.edit .sg-tag button, tr:hover .${LI}.edit .sg-auto button,
+      .${LI}.edit:focus-within .add, .${LI}.edit:focus-within button { visibility:visible; }
+      #${ALL_ID} { position:fixed; z-index:2147483646; width:260px; padding:10px 12px; font-size:13px; }
+      #${ALL_ID} h4 { margin:0 0 8px; font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+      #${ALL_ID} .r { margin:6px 0; display:flex; }
+      #${ALL_ID} .add { height:22px; padding:0 9px; border-radius:10000rem; border:1px dashed var(--aui-primary, #8223d2); background:transparent; cursor:pointer;
+        color:var(--aui-primary, #8223d2); font:700 12px/1 Apercu, "Helvetica Neue", Arial, sans-serif; }
+      tr.sg-wm-hidden { display:none !important; }
+      #${FILTER_ID} { position:relative; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px 0 14px; margin-left:8px; border-radius:8px; cursor:pointer;
+        border:1px solid var(--aui-primary, #8223d2); background:transparent; color:var(--aui-primary, #8223d2); font:400 15px Apercu, "Helvetica Neue", Arial, sans-serif; }
+      #${FILTER_ID} .ae { position:absolute; left:-8px; top:-9px; width:18px; height:18px; border-radius:50%; background:var(--aui-primary, #8223d2); color:#fff;
+        font:700 8px/18px Apercu, Arial, sans-serif; text-align:center; box-shadow:0 0 0 2px var(--aui-surface, #fff); }
+      #${FILTER_ID}.on { background:var(--aui-primary, #8223d2); color:#fff; }
+    `));
+    const listOrder = (c) => new Map((c ? c.list : []).map((l, i) => [l.name, i]));
+    // Everything on an order, most important first.
+    function itemsOf(woId) {
+      const auto = W.autoOf(woId), st = auto && W.dueState(auto.due), ord = listOrder(W.load.cache || null);
+      const tags = W.tagsOf(woId).slice().sort((a, b) => (ord.has(a.tag) ? ord.get(a.tag) : 999) - (ord.has(b.tag) ? ord.get(b.tag) : 999));
+      const urgent = auto && (st === 'today' || st === 'overdue');
+      return [...(urgent ? [{ auto }] : []), ...tags.map((t) => ({ t })), ...(auto && !urgent ? [{ auto }] : [])];
+    }
+    const chipFor = (woId, it, edit) => {
+      if (it.auto) {
+        const el = W.autoChip(woId, it.auto, () => { renderList(); renderRow(); });
+        if (!edit) el.querySelector('button')?.remove();
+        return el;
+      }
+      return W.chip(it.t.tag, { title: it.t.tag + ' · added by ' + (it.t.by || 'someone') + ', ' + W.when(it.t.at), onRemove: edit ? () => toggle(woId, it.t.tag, false) : null });
+    };
+    const stop = (e) => { e.stopPropagation(); };
+    function custIndex(table) {
+      const head = table && table.querySelector('thead tr');
+      return head ? [...head.children].findIndex((c) => c.textContent.trim().toLowerCase() === 'customer') : -1;
+    }
+    let listFilter = '';
+    function renderList() {
+      const S = LS();
+      if (!onList() || !S.chips) { document.querySelectorAll('.' + LI).forEach((x) => x.remove()); document.querySelectorAll('tr.sg-wm-hidden').forEach((r) => r.classList.remove('sg-wm-hidden')); renderFilter(); return; }
+      const idx = new Map();
+      for (const row of document.querySelectorAll('tbody tr')) {
+        const a = row.querySelector('a[href*="/repair/workorder/"]');
+        const m = a && a.getAttribute('href').match(/\/repair\/workorder\/(\d+)/);
+        if (!m) continue;
+        const woId = m[1], table = row.closest('table');
+        if (!idx.has(table)) idx.set(table, custIndex(table));
+        const cell = row.children[idx.get(table)];
+        const link = cell && cell.querySelector('a[href*="/repair/workorder/"]');
+        const wrap = link && link.parentElement;
+        if (!wrap) continue;
+        const items = itemsOf(woId);
+        // Tag filter: hide rows without the chosen tag.
+        row.classList.toggle('sg-wm-hidden', !!(S.filter && listFilter && !items.some((it) => (it.t && it.t.tag === listFilter) || (listFilter === '@auto' && it.auto))));
+        const key = woId + '|' + JSON.stringify(items) + '|' + S.edit;
+        let li = wrap.querySelector('.' + LI);
+        if (li && li.dataset.key === key) continue;
+        li?.remove();
+        if (!items.length && !S.edit) continue;
+        wrap.classList.add('sg-wm-li-wrap');
+        li = h('span', { class: LI + (S.edit ? ' edit' : ''), 'data-key': key, onclick: stop, onmousedown: stop });
+        if (items[0]) li.append(chipFor(woId, items[0], S.edit));
+        if (items.length > 1) li.append(h('button', { type: 'button', class: 'more', title: 'All ' + items.length + ' tags', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openAll(woId, e.currentTarget); } }, '+' + (items.length - 1)));
+        if (S.edit) li.append(h('button', { type: 'button', class: 'add', title: 'Tag this work order', onclick: (e) => { e.preventDefault(); e.stopPropagation(); togglePop(woId, e.currentTarget); } }, '+ Tag'));
+        if (!li.childNodes.length) continue;
+        wrap.append(li);
+      }
+      renderFilter();
+    }
+    // "+N": every tag on the order (removable when editing), and + Tag.
+    function openAll(woId, anchor) {
+      document.getElementById(ALL_ID)?.remove();
+      const S = LS(), items = itemsOf(woId);
+      const name = (anchor.closest('.sg-wm-li-wrap')?.querySelector('a')?.textContent || '').trim();
+      const box = h('div', { id: ALL_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': 'Tags', onclick: stop, onmousedown: stop },
+        h('h4', null, (name ? name + ' · ' : '') + items.length + ' tags'),
+        ...items.map((it) => h('div', { class: 'r' }, chipFor(woId, it, S.edit))),
+        S.edit ? h('div', { class: 'r' }, h('button', { type: 'button', class: 'add', onclick: (e) => { e.stopPropagation(); box.remove(); togglePop(woId, anchor); } }, '+ Tag')) : null);
+      document.body.append(box);
+      const r = anchor.getBoundingClientRect();
+      box.style.top = Math.min(r.bottom + 6, innerHeight - box.offsetHeight - 8) + 'px';
+      box.style.left = Math.max(8, Math.min(r.left - 10, innerWidth - box.offsetWidth - 8)) + 'px';
+    }
+    document.addEventListener('click', (e) => { const b = document.getElementById(ALL_ID); if (b && !e.composedPath().includes(b)) b.remove(); });
+    // Tag filter (off by default): next to Portal's filters (Needs Attention, Program, Device type).
+    function renderFilter() {
+      let f = document.getElementById(FILTER_ID);
+      const S = LS();
+      const anchor = onList() && S.chips && S.filter && [...document.querySelectorAll('button, [role="button"]')].find((b) => b.offsetParent && b.textContent.trim() === 'Device type');
+      if (!anchor) { f?.remove(); if (listFilter) { listFilter = ''; } return; }
+      const label = !listFilter ? 'Waymark' : listFilter === '@auto' ? 'Waymark: Auto-Waymark' : 'Waymark: ' + listFilter;
+      if (!f) {
+        f = h('button', { type: 'button', id: FILTER_ID, class: 'sg', title: 'Show only work orders with a Waymark tag (on this page)', onclick: (e) => { e.stopPropagation(); filterMenu(f); } });
+      }
+      if (f.dataset.label !== label) { f.dataset.label = label; f.replaceChildren(h('span', { class: 'ae' }, 'Ae'), label + ' ▾'); f.classList.toggle('on', !!listFilter); }
+      const host = anchor.closest('div') || anchor;
+      if (f.previousElementSibling !== host) host.after(f);
+    }
+    function filterMenu(f) {
+      document.getElementById('sg-wm-fmenu')?.remove();
+      const pick = (v) => { listFilter = v; menu.remove(); renderList(); };
+      const c = W.load.cache || { list: [] };
+      const menu = h('div', { id: 'sg-wm-fmenu', class: 'sg sg-card', style: 'position:fixed;z-index:2147483646;padding:6px;min-width:200px', onclick: stop },
+        h('button', { type: 'button', class: 'sg-btn', style: 'width:100%;justify-content:flex-start;border:0', onclick: () => pick('') }, 'All work orders'),
+        h('button', { type: 'button', class: 'sg-btn', style: 'width:100%;justify-content:flex-start;border:0', onclick: () => pick('@auto') }, 'Auto-Waymark'),
+        ...c.list.map((l) => h('button', { type: 'button', class: 'sg-btn', style: 'width:100%;justify-content:flex-start;border:0', onclick: () => pick(l.name) }, W.chip(l.name))));
+      document.body.append(menu);
+      const r = f.getBoundingClientRect();
+      menu.style.top = (r.bottom + 6) + 'px'; menu.style.left = Math.min(r.left, innerWidth - menu.offsetWidth - 8) + 'px';
+      setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }));
+    }
+    AE.every(1000, () => { if (onList() && LS().chips) W.load().catch(() => {}); renderList(); });
+    AE.on('waymark-changed', () => renderList());
 
     // ---------------------------------------------------- header button + board
     function renderButton() {
