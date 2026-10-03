@@ -596,17 +596,21 @@ AE.crystal({
       .sg-wm-li-wrap { display:flex !important; align-items:center; gap:6px; min-width:0; flex-wrap:nowrap; }
       .sg-wm-li-wrap > a { min-width:0; overflow:hidden; }
       .sg-wm-li-wrap > a > div { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .${LI} { display:inline-flex; align-items:center; gap:4px; flex:none; white-space:nowrap; line-height:1; }
+      .${LI} { position:relative; display:inline-flex; align-items:center; gap:4px; flex:none; white-space:nowrap; line-height:1; }
       .${LI} .sg-tag, .sg-wm-all .sg-tag { height:18px; padding:0 7px; font-size:11px; max-width:140px; }
       .${LI} .sg-auto, .sg-wm-all .sg-auto { height:18px; padding:0 5px; font-size:11px; border-radius:5px; }
       .${LI} .sg-auto svg { width:11px; height:11px; }
       .${LI} .more { height:18px; padding:0 6px; border-radius:10000rem; border:0; cursor:pointer; font:700 11px/1 Apercu, "Helvetica Neue", Arial, sans-serif;
         background:color-mix(in srgb, var(--aui-on-surface, #1a1c1e) 12%, transparent); color:var(--aui-on-surface, #1a1c1e); }
-      /* + Tag and × keep their space and only appear on hover, so hovering a row never widens the column (no reflow) */
-      .${LI} .add { display:inline-flex; align-items:center; visibility:hidden; height:18px; padding:0 7px; border-radius:10000rem; border:1px dashed var(--aui-primary, #8223d2); background:transparent; cursor:pointer;
+      /* + Tag and × float over the row on hover (no space reserved, so no gap after the tags, and hovering never reflows) */
+      .${LI} .add { position:absolute; left:calc(100% + 4px); top:50%; transform:translateY(-50%); display:inline-flex; align-items:center; visibility:hidden; height:18px; padding:0 7px; border-radius:10000rem; border:1px dashed var(--aui-primary, #8223d2); background:transparent; cursor:pointer;
         color:var(--aui-primary, #8223d2); font:700 11px/1 Apercu, "Helvetica Neue", Arial, sans-serif; }
       .${LI}:not(.edit) .sg-tag button, .${LI}:not(.edit) .sg-auto button { display:none; }
-      .${LI}.edit .sg-tag button, .${LI}.edit .sg-auto button { visibility:hidden; }
+      /* × as a small badge on the chip's top-right corner (hover), so the chip's text stays readable */
+      .${LI} .sg-tag, .${LI} .sg-auto { position:relative; overflow:visible; max-width:none; }
+      .${LI}.edit .sg-tag button, .${LI}.edit .sg-auto button { visibility:hidden; position:absolute; right:-6px; top:-7px; width:14px; height:14px; padding:0;
+        display:inline-flex; align-items:center; justify-content:center; border-radius:50%; opacity:1; font-size:11px; line-height:1;
+        background:var(--aui-on-surface, #1a1c1e); color:var(--aui-surface, #fff); box-shadow:0 0 0 1.5px var(--aui-surface, #fff); }
       tr:hover .${LI}.edit .add, tr:hover .${LI}.edit .sg-tag button, tr:hover .${LI}.edit .sg-auto button,
       .${LI}.edit:focus-within .add, .${LI}.edit:focus-within button { visibility:visible; }
       #${ALL_ID} { position:fixed; z-index:2147483646; width:260px; padding:10px 12px; font-size:13px; }
