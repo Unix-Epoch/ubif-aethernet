@@ -9,7 +9,7 @@
                 each followed by the same auto-note the UI posts
     checkout    [screen protector] verify cart total is $0 → checkout/complete-order
     screen protector
-                EXPERIMENTAL, off unless switched on (Settings → Swiftcast; default
+                On by default since 2.22.0 (Settings → Swiftcast; default
                 AE_REFRESH_LABOR_DEFAULT). VZ Device Refresh (program 11759) only, at
                 checkout: the Verizon Free Screen Protector (SKU 101516, $15), which
                 earns the tech commission. Sent exactly as Portal's own checkout

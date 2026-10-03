@@ -2,12 +2,15 @@
   {
     "version": "2.22.0",
     "notes": [
+      "**Swiftcast**: VZ Device Refresh cleanings now get the **Verizon Free Screen Protector (101516)** added automatically at checkout, for your commission. Portal credits it back, so the sale stays $0. It's on for everyone; switch it off in Settings → Swiftcast if you'd rather not.",
       "**Master's Mend**: Collapse and Hide for today now work on more kinds of announcement boxes, and new kinds can be added without updating Aethernet. If a box doesn't get the buttons, send a bug report from that page: it now says which boxes are on the page.",
       "**Master's Mend**: scan to open now also works on the **Sales** page (not during a checkout or refund).",
-      "Patch notes now quote the bug reports each version fixes, with a thank-you to whoever sent them. Keep them coming: **Send Aethernet feedback** in the avatar menu."
+      "Patch notes now quote the bug reports each version fixes, with a thank-you to whoever sent them. Keep them coming: **Send Aethernet feedback** in the avatar menu.",
+      "Announcements about a fix in a newer version now have a **Check for updates** button (or **Update now** once it's out)."
     ],
     "updated": [
-      "fixes"
+      "fixes",
+      "autoClose"
     ],
     "reports": [
       {

@@ -26,9 +26,10 @@ const AE_READABLE_URL = '__READABLE_URL__'; // same build, unminified     // whe
 // The Portal sandbox (sandbox/server.py: Portal's real app on fake data) — dev builds only.
 const AE_SANDBOX = AE_DEV && location.host === 'localhost:8790';
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net' || AE_SANDBOX;
-// Swiftcast's Verizon screen protector (SKU 101516; setting key refreshLabor) is EXPERIMENTAL: off unless switched on. Flip to true
-// (with a notice) once it's verified; everyone who never chose follows it.
-const AE_REFRESH_LABOR_DEFAULT = false;
+// Swiftcast's Verizon screen protector (SKU 101516; setting key refreshLabor): on by default since 2.22.0
+// (verified on live VZ Refreshes, Oct 3, 2026). Everyone who never chose follows this; anyone who switched it
+// off in Settings keeps it off.
+const AE_REFRESH_LABOR_DEFAULT = true;
 
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';

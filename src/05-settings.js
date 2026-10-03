@@ -402,8 +402,8 @@
               (AE_DEMO ? ' and in Divination\'s panel.' : ', in Esuna\'s list and in Divination\'s panel.'))),
           toggle(s.autoClose.dualcast !== false, (v) => { s.autoClose.dualcast = v; repaintSums(); })),
         h('div', { class: 'sg-row', style: 'margin:8px 0' },
-          h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, 'Verizon screen protector (101516)', h('span', { class: 'sg-exp-tag' }, 'Experimental')),
-            h('span', { class: 'sg-soft', style: 'display:block' }, 'Adds the Verizon Free Screen Protector (101516) to VZ Device Refresh cleanings at checkout, the same way Portal\'s checkout does, for commission. Portal credits it back, so the sale stays $0. Still being tested: if it can\'t be added, the cleaning is completed without it.')),
+          h('div', null, h('b', null, 'Verizon screen protector (101516)'),
+            h('span', { class: 'sg-soft', style: 'display:block' }, 'Adds the Verizon Free Screen Protector (101516) to VZ Device Refresh cleanings at checkout, the same way Portal\'s checkout does, for commission. Portal credits it back, so the sale stays $0. If it can\'t be added, the cleaning is completed without it.')),
           toggle(!!(s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT), (v) => { s.autoClose.refreshLabor = v; repaintSums(); }))],
       ...(AE_DEMO ? {} : { // not in the demo build
         galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
