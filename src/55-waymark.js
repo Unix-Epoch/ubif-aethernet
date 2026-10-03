@@ -86,7 +86,7 @@ AE.waymark = (() => {
   function load(force) {
     if (!force && cache && Date.now() - cacheAt < TTL) return Promise.resolve(cache);
     if (inflight) return inflight;
-    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {}, auto: j.auto || {}, rules: j.rules || {}, removed: j.removed || [] }; load.cache = cache; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
+    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {}, auto: j.auto || {}, rules: j.rules || {}, removed: j.removed || [], closed: j.closed || [] }; load.cache = cache; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
       .finally(() => { inflight = null; });
     return inflight;
   }
@@ -126,6 +126,7 @@ AE.waymark = (() => {
 
   // ------------------------------------------------------------ Auto-Waymark
   const AUTO_DAYS = 3, RFP_STATUS = 13; // 13 = Ready for pickup
+  const CLOSED_STATUSES = [14, 15, 25];   // Sale complete, (closed), Cancelled
   // The Auto-Waymark rules: which status, how many days, and whether marks wait for end of day.
   const RULES = {
     rfp: { status: 13, days: 3, eod: true, name: 'Ready for pickup', push: [3, 1, 7] },
@@ -351,11 +352,27 @@ AE.waymark = (() => {
         try { await syncNickname(r.wo, r.due); } catch (e) { console.warn('[' + AE_NAME + '] Waymark nickname sync, WO ' + r.wo + ':', e.message || e); }
       }
     }
+    /*
+      Closed WOs (their tags and marks are cleared 7 days later). Missing from the active list
+      isn't enough: a short or failed list once reported 14 open WOs closed at once (Sep 30 and
+      Oct 3, 2026). So each one is checked in Portal first, and only Sale complete / Cancelled
+      (or gone) counts. And WOs recorded as closed that are in the active list are reopened.
+    */
     const open = new Set(rows.map((r) => Number(r.workorderId)));
+    const reopen = (c.closed || []).map(Number).filter((id) => open.has(id));
+    if (reopen.length) await call('POST', '/open', { wos: reopen });
+    const recorded = new Set((c.closed || []).map(Number));
     const known = [...new Set([...Object.keys(c.tags), ...Object.keys(c.auto)].map(Number))];
-    const closed = known.filter((id) => !open.has(id));
+    const missing = rows.length ? known.filter((id) => !open.has(id) && !recorded.has(id)).slice(0, 25) : [];
+    const closed = [];
+    for (const id of missing) {
+      try {
+        const wo = await woDetail(id);
+        if (wo && CLOSED_STATUSES.includes(Number(wo.workorderStatusId))) closed.push(id); // only a clear "closed" from Portal counts
+      } catch (e) { if (/HTTP 404/.test(e.message || '')) closed.push(id); }
+    }
     if (closed.length) await call('POST', '/closed', { wos: closed });
-    return plan;
+    return Object.assign(plan, { reopened: reopen, closed });
   }
 
 

@@ -12,7 +12,8 @@
     POST /v1/:store/wo/:wo/tag          { tag, by, byId }        add
     POST /v1/:store/wo/:wo/untag        { tag, by, byId }        remove
     PUT  /v1/:store/list                { list: [{name,color}], by, byId }
-    POST /v1/:store/closed              { wos: [id…] }           seen closed
+    POST /v1/:store/closed              { wos: [id…] }           seen closed (confirmed in Portal by the client)
+    POST /v1/:store/open                { wos: [id…] }           seen open again: no longer counted as closed (undoes a wrong closed report)
     POST /v1/:store/auto                { marks: [{wo, due, kind}] }   Auto-Waymark WOs (kind: rfp | callback; existing/removed ignored)
     POST /v1/:store/wo/:wo/end          { by, byId, reason }     the WO left its mark's status: the mark is deleted (not
                                         "removed"), so it comes back fresh if the WO returns to Ready for pickup / Awaiting callback
@@ -197,7 +198,7 @@ async function route(req, env) {
     const r = await env.DB.prepare("SELECT id, kind, quote, credit, store_name AS store FROM feedback WHERE fixed_in = ? AND quote IS NOT NULL AND quote <> '' ORDER BY id").bind(v).all();
     return json({ version: v, reports: r.results });
   }
-  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|auto|feedback|usage|access|links|links\/remove)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark|end))?$/);
+  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|open|auto|feedback|usage|access|links|links\/remove)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark|end))?$/);
   if (!m) return fail(404, 'not found');
   const store = Number(m[1]);
   const wo = m[3] ? Number(m[3]) : null;
@@ -213,19 +214,21 @@ async function route(req, env) {
   if (!(await allowed(env, store))) return fail(403, 'this store does not have access to Aethernet');
 
   if (req.method === 'GET' && what === 'all') {
-    const [list, tags, marks, rules, gone] = await env.DB.batch([
+    const [list, tags, marks, rules, gone, closedRows] = await env.DB.batch([
       env.DB.prepare('SELECT name, color FROM list WHERE store = ? ORDER BY pos').bind(store),
       env.DB.prepare('SELECT wo, tag, by_name AS by, at FROM wo_tags WHERE store = ? ORDER BY at').bind(store),
       env.DB.prepare('SELECT wo, due, kind, created_at AS at FROM auto_marks WHERE store = ? AND removed_at IS NULL').bind(store),
       env.DB.prepare('SELECT rule, state, staged_at, live_at FROM auto_rules'),
       env.DB.prepare('SELECT wo, kind FROM auto_marks WHERE store = ? AND removed_at IS NOT NULL').bind(store),
+      env.DB.prepare('SELECT wo FROM wo_closed WHERE store = ?').bind(store),
     ]);
     const byWo = {}, auto = {}, ruleMap = {};
     for (const r of tags.results) (byWo[r.wo] = byWo[r.wo] || []).push({ tag: r.tag, by: r.by, at: r.at });
     for (const r of marks.results) auto[r.wo] = { due: r.due, at: r.at, kind: r.kind || 'rfp' };
     for (const r of rules.results) ruleMap[r.rule] = { state: r.state, stagedAt: r.staged_at, liveAt: r.live_at };
     // removed: marks removed with × (they stay removed while the WO stays in that status)
-    return json({ list: list.results, tags: byWo, auto, rules: ruleMap, removed: gone.results.map((r) => ({ wo: r.wo, kind: r.kind || 'rfp' })) });
+    return json({ list: list.results, tags: byWo, auto, rules: ruleMap, removed: gone.results.map((r) => ({ wo: r.wo, kind: r.kind || 'rfp' })),
+      closed: closedRows.results.map((r) => r.wo) });
   }
 
   // Divination: cleanings a person linked to an order by hand (a phone's cleanings that day count for `parent`).
@@ -364,6 +367,12 @@ async function route(req, env) {
     return json({ list });
   }
 
+  if (req.method === 'POST' && what === 'open') {
+    const b = await body(req);
+    const wos = (Array.isArray(b.wos) ? b.wos : []).filter((w) => Number.isInteger(w) && w > 0).slice(0, 500);
+    if (wos.length) await env.DB.batch(wos.map((w) => env.DB.prepare('DELETE FROM wo_closed WHERE store = ? AND wo = ?').bind(store, w)));
+    return json({ ok: true, reopened: wos.length });
+  }
   if (req.method === 'POST' && what === 'closed') {
     const b = await body(req);
     const wos = (Array.isArray(b.wos) ? b.wos : []).filter((w) => Number.isInteger(w) && w > 0).slice(0, 500);

@@ -651,16 +651,20 @@ const AE = (() => {
         workOrderStatusIds: primaryFilter === 'Active' ? OPEN_STATUS_IDS : [],
         order: primaryFilter === 'Active' ? 'nextUpdate,DESC' : 'createdAt,DESC',
       });
-      return (j && j.workOrders) || [];
+      const rows = (j && j.workOrders) || [];
+      rows.count = j && Number.isInteger(j.rowCount) ? j.rowCount : null; // Portal's total for this filter
+      return rows;
     }
     // All open WOs, plus closed WOs created since `sinceMs` (newest first,
     // so paging stops once past it). maxClosedPages bounds old lookbacks.
     async function workorders(sinceMs, maxClosedPages = PAGE_CAP) {
       const byId = new Map();
+      // Page by Portal's own total (rowCount), not by a short page: a server that sends fewer rows
+      // per page than asked would otherwise end the list early (and open WOs would look closed).
       for (let p = 1; p <= PAGE_CAP; p++) {
         const rows = await listPage('Active', p);
         rows.forEach((r) => byId.set(r.workorderId, r));
-        if (rows.length < PAGE_SIZE) break;
+        if (!rows.length || (rows.count != null ? byId.size >= rows.count : rows.length < PAGE_SIZE)) break;
       }
       for (let p = 1; p <= maxClosedPages; p++) {
         const rows = await listPage('Closed', p);
