@@ -272,7 +272,9 @@ AE.feedback = (() => {
         try { diag = r.diag ? JSON.parse(r.diag) : null; } catch (_) {}
         // Quote it in a version's patch notes (marks it fixed). The next public version by default.
         const nextVersion = AE_VERSION.split('.').slice(0, 3).join('.');
-        const shortName = (n) => { const w = String(n || '').trim().split(/\s+/); return w.length > 1 ? w[0][0].toUpperCase() + '.' + w[w.length - 1] : w[0] || ''; };
+        // "G.Green"; names Portal stores in ALL CAPS come out in normal case.
+        const title = (x) => (x === x.toUpperCase() ? x.toLowerCase().replace(/(^|[\s'-])\S/g, (m) => m.toUpperCase()) : x);
+        const shortName = (n) => { const w = title(String(n || '').trim()).split(/\s+/); return w.length > 1 ? w[0][0].toUpperCase() + '.' + w[w.length - 1] : w[0] || ''; };
         const qText = h('textarea', { rows: 2, maxlength: 400, placeholder: 'The quote, as it should read in the patch notes' }, r.quote || String(r.text || '').trim().slice(0, 300));
         const qCredit = h('input', { type: 'text', maxlength: 60, value: r.credit || shortName(r.user_name), placeholder: 'Credit (e.g. G.Green)' });
         const qVer = h('input', { type: 'text', maxlength: 12, value: r.fixed_in || nextVersion, placeholder: '2.22.0', style: 'width:80px' });

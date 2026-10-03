@@ -8,6 +8,14 @@
     ],
     "updated": [
       "fixes"
+    ],
+    "reports": [
+      {
+        "id": 6,
+        "quote": "Sales page scans not working",
+        "credit": "J.FARKASOVSKY",
+        "store": "Erie PA"
+      }
     ]
   },
   {
