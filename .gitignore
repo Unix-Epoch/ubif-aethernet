@@ -6,3 +6,4 @@ sandbox/fixtures/
 sandbox/state.json
 sandbox/.cache/
 __pycache__/
+worker/.dev.vars

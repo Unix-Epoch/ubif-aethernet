@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS feedback (    -- bug reports and suggestions from the
   version TEXT, page TEXT, browser TEXT, diag TEXT,  -- diag: JSON (enabled crystals, recent Aethernet errors)
   status TEXT NOT NULL DEFAULT 'new',    -- new | planned | fixed | wontfix (admin only)
   note TEXT,                             -- admin's own note
+  fixed_in TEXT, quote TEXT, credit TEXT,  -- quoted as fixed in that version's patch notes (credit: e.g. "G.Green")
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS feedback_by_status ON feedback (status, id);

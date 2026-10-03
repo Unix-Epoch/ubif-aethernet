@@ -105,6 +105,15 @@ AE.feedback = (() => {
   .sg-adm .row .track i { display:block; height:100%; background:var(--aui-primary, #8223d2); border-radius:4px; }
   .sg-adm .row .n { font-variant-numeric:tabular-nums; color:var(--aui-on-surface-soft, #5d5e61); min-width:36px; text-align:right; }
   .sg-adm .sub { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-adm .qwrap { margin-top:6px; font-size:13px; }
+  .sg-adm .qwrap .innotes { color:var(--aui-status-success, #136d31); font-weight:700; font-size:12px; margin-right:8px; }
+  .sg-adm .quote-box summary { cursor:pointer; color:var(--aui-primary, #8223d2); font-weight:600; font-size:12px; display:inline; }
+  .sg-adm .qform { margin-top:6px; display:flex; flex-direction:column; gap:6px; }
+  .sg-adm .qform textarea { width:100%; box-sizing:border-box; padding:6px 8px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; font:inherit; font-size:13px;
+    background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); resize:vertical; }
+  .sg-adm .qrow { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .sg-adm .qrow input { height:30px; padding:0 8px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); }
+  .sg-adm .qrow .sg-btn { height:30px; font-size:13px; }
   .sg-adm .row.pick, .sg-adm .pick { cursor:pointer; }
   .sg-adm .row.pick:hover .name { color:var(--aui-primary, #8223d2); text-decoration:underline; }
   .sg-adm .card.wide { grid-column:1 / -1; }
@@ -261,6 +270,27 @@ AE.feedback = (() => {
         } }, 'Save');
         let diag = null;
         try { diag = r.diag ? JSON.parse(r.diag) : null; } catch (_) {}
+        // Quote it in a version's patch notes (marks it fixed). The next public version by default.
+        const nextVersion = AE_VERSION.split('.').slice(0, 3).join('.');
+        const shortName = (n) => { const w = String(n || '').trim().split(/\s+/); return w.length > 1 ? w[0][0].toUpperCase() + '.' + w[w.length - 1] : w[0] || ''; };
+        const qText = h('textarea', { rows: 2, maxlength: 400, placeholder: 'The quote, as it should read in the patch notes' }, r.quote || String(r.text || '').trim().slice(0, 300));
+        const qCredit = h('input', { type: 'text', maxlength: 60, value: r.credit || shortName(r.user_name), placeholder: 'Credit (e.g. G.Green)' });
+        const qVer = h('input', { type: 'text', maxlength: 12, value: r.fixed_in || nextVersion, placeholder: '2.22.0', style: 'width:80px' });
+        const inNotes = h('span', { class: 'innotes' }, r.fixed_in ? '✓ In v' + r.fixed_in + ' patch notes' : '');
+        const quoteSave = async (out) => {
+          try {
+            const j2 = await call('POST', '/v1/admin/feedback/' + r.id, out ? { fixedIn: '' } : { fixedIn: qVer.value.trim(), quote: qText.value, credit: qCredit.value }, key());
+            r.fixed_in = j2.fixedIn; r.status = j2.status; st.value = j2.status;
+            inNotes.textContent = j2.fixedIn ? '✓ In v' + j2.fixedIn + ' patch notes' : '';
+            AE.toast(out ? 'Taken out of the patch notes' : 'Quoted in v' + j2.fixedIn + ' patch notes', out ? '' : 'Marked fixed. It shows up in the notes with the next build.', 'ok');
+          } catch (e) { AE.toast("Couldn't save", e.message || String(e), 'err'); }
+        };
+        const quoteBox = h('details', { class: 'quote-box' + (r.fixed_in ? ' on' : '') },
+          h('summary', null, r.fixed_in ? 'Quoted in the patch notes' : 'Quote in patch notes…'),
+          h('div', { class: 'qform' }, qText,
+            h('div', { class: 'qrow' }, h('span', { class: 'sub' }, '—'), qCredit, h('span', { class: 'sub' }, 'at ' + (r.store_name || 'Store') + ' · fixed in v'), qVer,
+              h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => quoteSave(false) }, 'Quote & mark fixed'),
+              h('button', { type: 'button', class: 'sg-btn', onclick: () => quoteSave(true) }, 'Take out'))));
         return h('div', { class: 'rep' },
           h('div', { class: 'top' }, h('span', { class: 'kind ' + r.kind }, r.kind === 'bug' ? 'Bug' : 'Idea'),
             h('span', { class: 'who' }, r.user_name || 'Someone'), h('span', { class: 'sub' }, (r.store_name || 'Store') + ' #' + r.store),
@@ -268,7 +298,7 @@ AE.feedback = (() => {
           h('div', { class: 'txt' }, r.text),
           diag ? h('details', { class: 'sub' }, h('summary', null, 'Technical details' + (diag.errors && diag.errors.length ? ' · ' + diag.errors.length + ' recent error' + (diag.errors.length === 1 ? '' : 's') : '')),
             h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(diag, null, 1))) : null,
-          h('div', { class: 'ctl' }, st, note, save));
+          h('div', { class: 'ctl' }, st, note, save), r.kind === 'bug' ? h('div', { class: 'qwrap' }, inNotes, quoteBox) : null);
       };
       body.replaceChildren(h('div', { class: 'bar' }, sel, h('span', { class: 'sub' }, 'Reporters don\'t see statuses or notes. Credit suggestions that ship in the patch notes.')),
         ...(j.feedback.length ? j.feedback.map(rep) : [h('div', { class: 'sub', style: 'padding:12px 0' }, 'Nothing here.')]));

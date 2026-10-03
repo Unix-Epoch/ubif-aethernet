@@ -105,6 +105,14 @@
   .sg-flair .ic { flex:none; width:18px; height:18px; margin-top:1px; color:#d6a000; line-height:0; }
   .sg-flair b { color:var(--aui-primary, #8223d2); }
   @keyframes sg-flair { 0%, 100% { background-position:0 0, 100% 0; } 50% { background-position:0 0, 0% 0; } }
+  .sg-fixed { margin:10px 0 2px; }
+  .sg-fixed .hd { font-size:12px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); margin-bottom:6px; }
+  .sg-fixed figure { position:relative; margin:0 0 8px; padding:10px 12px 10px 14px; border-radius:12px; border-left:4px solid var(--aui-status-success, #136d31);
+    background:var(--aui-neutral-soft, #f1f0f4); }
+  .sg-fixed blockquote { margin:0 70px 4px 0; font-style:italic; overflow-wrap:anywhere; }
+  .sg-fixed figcaption { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-fixed .ok { position:absolute; top:8px; right:10px; padding:1px 8px; border-radius:10000rem; font-size:11px; font-weight:700;
+    background:var(--aui-status-success-soft, #c5ffc8); color:var(--aui-status-on-success-soft, #062011); }
   .sg-patch .tag.thanks { background:linear-gradient(105deg, #ffcc00, #b36cf0); color:#2b0a47; }
   @media (prefers-reduced-motion: reduce) { .sg-flair { animation:none; } }
   .sg-about-scrim { position:fixed; inset:0; z-index:2147483647; background:var(--aui-scrim-overlay, #0c0e1180);
@@ -309,12 +317,17 @@
         h('summary', null, h('span', { html: CHEV_SVG }), h('span', { class: 'ver' }, 'v' + n.version),
           n.version === AE_VERSION ? h('span', { class: 'tag' }, 'Installed') : null,
           isNew ? h('span', { class: 'tag new' }, 'New') : null,
-          (n.thanks || []).length || (n.credits || []).length ? h('span', { class: 'tag thanks', title: 'This version thanks someone' }, '♥ Thanks') : null,
+          (n.thanks || []).length || (n.credits || []).length || (n.reports || []).length ? h('span', { class: 'tag thanks', title: 'This version thanks someone' }, '♥ Thanks') : null,
           h('span', { class: 'when' }, when)),
         h('ul', null, n.notes.map((t) => h('li', { html: noteHtml(t) }))),
         // Attributions get a flair: "thanks" (free text, **bold** works) and "credits" (who suggested what shipped).
         (n.thanks || []).map((t) => flair('Thank you to ' + t)),
-        n.credits && n.credits.length ? flair('Suggested by ' + n.credits.map((c) => '**' + c + '**').join(', ') + '. Thank you!') : null);
+        n.credits && n.credits.length ? flair('Suggested by ' + n.credits.map((c) => '**' + c + '**').join(', ') + '. Thank you!') : null,
+        // Bug reports fixed in this version, quoted (pulled in by build.py from the reports marked fixed in it).
+        (n.reports || []).length ? h('div', { class: 'sg-fixed' }, h('div', { class: 'hd' }, 'Bug reports fixed'),
+          ...n.reports.map((r) => h('figure', null, h('span', { class: 'ok', title: 'Fixed in v' + n.version }, '✓ Fixed'),
+            h('blockquote', null, '“' + r.quote + '”'),
+            h('figcaption', { html: '— ' + noteHtml('**' + (r.credit || 'Someone') + '**' + (r.store ? ' at ' + r.store : '')) + ', thank you for reporting it!' })))) : null);
       panel.open = since ? isNew : i === 0;
       return panel;
     });

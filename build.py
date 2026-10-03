@@ -62,6 +62,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 VERSION = "2.21.0"   # the public version (bump when bundling a public release)
@@ -185,6 +186,7 @@ NOTES_FILE = "patch-notes.json"
 def load_notes(root: Path) -> list:
     # Newest first: [{version, date (UTC ISO, stamped at release), notes: [...],
     # credits?: [names whose suggestion shipped], thanks?: ["**Name** at Store, for …"] (both shown with a flair),
+    # reports?: [{id, quote, credit, store}] (bug reports fixed in it; pulled from the Worker by pull_reports),
     # updated?: [ids of existing crystals it changed → "Updated" sheen]}]
     notes = json.loads((root / NOTES_FILE).read_text())
     known = crystal_ids(root)
@@ -193,6 +195,30 @@ def load_notes(root: Path) -> list:
         if bad:
             sys.exit(f"{NOTES_FILE}: {n['version']} lists unknown crystal ids in \"updated\": {bad}")
     return notes
+
+
+def pull_reports(root: Path, version: str, api: str) -> None:
+    """Bug reports marked fixed in `version` (admin panel → Quote in patch notes) go into that
+    version's patch notes as "reports": [{id, quote, credit, store}]. Saved in patch-notes.json so
+    the release has them; if the Worker can't be reached, what's already there stays."""
+    try:
+        req = urllib.request.Request(f"{api}/v1/fixed?version={version}", headers={"x-aethernet-key": waymark_key(root), "user-agent": "aethernet-build"})
+        rows = json.loads(urllib.request.urlopen(req, timeout=15).read()).get("reports", [])
+    except Exception as e:
+        print(f"warning: couldn't pull fixed bug reports for {version} ({e}); keeping what's in {NOTES_FILE}")
+        return
+    notes = json.loads((root / NOTES_FILE).read_text())
+    entry = next((n for n in notes if n["version"] == version), None)
+    reports = [{k: r.get(k) for k in ("id", "quote", "credit", "store") if r.get(k) is not None} for r in rows if r.get("quote")]
+    if not entry:
+        if reports:
+            print(f"warning: {len(reports)} fixed bug report(s) are marked for {version}, but {NOTES_FILE} has no {version} entry yet")
+        return
+    if (entry.get("reports") or []) != reports:
+        if reports: entry["reports"] = reports
+        else: entry.pop("reports", None)
+        (root / NOTES_FILE).write_text(json.dumps(notes, indent=2, ensure_ascii=False) + "\n")
+        print(f"Patch notes {version}: {len(reports)} fixed bug report(s) quoted")
 
 
 def stamp_release_date(root: Path) -> None:
@@ -514,6 +540,7 @@ def dev_release(root: Path) -> None:
         sys.exit("No dev Gist yet: set DEV['gist_id'] in build.py.")
     CHANNEL = "dev"
     version = dev_version(root, bump=True)
+    pull_reports(root, DEV_BASE, DEV["waymark_api"])
     out = build(root, version)
     files = gist_files(DEV["gist_id"])
     for name in (FILENAME, META_FILENAME, READABLE_FILENAME):
@@ -566,6 +593,7 @@ if __name__ == "__main__":
     ap.add_argument("--status-show", action="store_true")
     ap.add_argument("--crystal", action="append", metavar="ID", help="crystal the notice is about (repeatable)")
     ap.add_argument("--pause", action="append", metavar="ID", help="crystal to pause everywhere (repeatable)")
+    ap.add_argument("--pull-reports", metavar="VERSION", help="pull bug reports quoted as fixed in VERSION into patch-notes.json")
     ap.add_argument("--bulletins-show", action="store_true", help="print the live bulletin rules")
     ap.add_argument("--bulletins-reset", action="store_true", help="remove all bulletin rules (built-in ones stay)")
     ap.add_argument("--bulletin-page", action="append", metavar="REGEX", help="a page (path regex) where bulletins get controls; replaces the built-in WO-only list")
@@ -580,6 +608,9 @@ if __name__ == "__main__":
     ap.add_argument("--tag", metavar="TEXT", help='badge text on the crystals\' Settings rows (default "Known issue")')
     args = ap.parse_args()
     root = Path(__file__).resolve().parent
+    if args.pull_reports:
+        pull_reports(root, args.pull_reports, WAYMARK_API)
+        sys.exit(0)
     if (args.bulletins_show or args.bulletins_reset or args.bulletin_page or args.bulletin_unpage or args.bulletin_pattern
             or args.bulletin_selector or args.bulletin_unselector or args.bulletin_closer):
         bulletins_command(root, args)
@@ -605,6 +636,7 @@ if __name__ == "__main__":
         sys.exit(0)
     if args.release:
         live = check_releasable()
+        pull_reports(root, VERSION, WAYMARK_API)  # bug reports quoted as fixed in this version
         stamp_release_date(root)  # before building, so the published file carries it
     out = build(root)
     if args.release:

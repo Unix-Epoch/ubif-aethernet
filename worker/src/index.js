@@ -18,13 +18,16 @@
     POST /v1/:store/wo/:wo/unmark       { by, byId }             remove a mark (stays removed)
     POST /v1/:store/feedback            { kind, text, version, page, browser, diag, by, byId, storeName }
     POST /v1/:store/usage               { day, counts: {feature: n}, by, byId, storeName }
+    GET  /v1/fixed?version=2.22.0       bug reports quoted as fixed in that version: [{id, kind, quote, credit, store}]
+                                        (public text: it goes in the patch notes; build.py pulls it in)
     GET  /v1/:store/links?since=YYYY-MM-DD                       Divination's manual cleaning links since that day
     POST /v1/:store/links               { day, device, parent, by, byId }   link a phone's cleanings that day to WO `parent`
     POST /v1/:store/links/remove        { day, device, by, byId }           undo
   Admin (x-aethernet-admin = the ADMIN_KEY secret; never shipped in the script):
     GET  /v1/admin/ping
     GET  /v1/admin/feedback?status=new|planned|fixed|wontfix|all
-    POST /v1/admin/feedback/:id         { status?, note? }
+    POST /v1/admin/feedback/:id         { status?, note?, fixedIn?, quote?, credit? }  fixedIn + quote = quoted in that
+                                        version's patch notes (status becomes fixed); fixedIn "" = take it out
     GET  /v1/admin/usage?days=30
     GET  /v1/admin/stores                                        allowed stores + stores waiting
     POST /v1/admin/stores               { store, name, by }      grant access
@@ -42,6 +45,7 @@ const KINDS = ['bug', 'idea'], STATUSES = ['new', 'planned', 'fixed', 'wontfix']
 const FEATURE_RE = /^[a-zA-Z]{1,24}(:[a-zA-Z-]{1,24})?$/;
 const DEVICE_RE = /^[A-Za-z0-9:_-]{1,40}$/; // a cleaning's phone: its IMEI, or Aethernet's own key for one without
 const LINK_DAYS = 120;
+const VERSION_RE = /^\d+\.\d+\.\d+$/;
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -84,12 +88,23 @@ async function admin(req, env, url) {
   const fm = path.match(/^\/feedback\/(\d+)$/);
   if (req.method === 'POST' && fm) {
     const b = await body(req);
-    const row = await env.DB.prepare('SELECT status, note FROM feedback WHERE id = ?').bind(Number(fm[1])).first();
+    const row = await env.DB.prepare('SELECT status, note, fixed_in, quote, credit FROM feedback WHERE id = ?').bind(Number(fm[1])).first();
     if (!row) return fail(404, 'no such report');
     const status = STATUSES.includes(b.status) ? b.status : row.status;
     const note = typeof b.note === 'string' ? clean(b.note, 1000) : row.note;
-    await env.DB.prepare('UPDATE feedback SET status = ?, note = ?, updated_at = ? WHERE id = ?').bind(status, note, now(), Number(fm[1])).run();
-    return json({ ok: true, status, note });
+    // Quoting a report in the patch notes: the version it's fixed in, the quote, and who's credited.
+    let fixedIn = row.fixed_in ?? null, quote = row.quote ?? null, credit = row.credit ?? null, st = status;
+    if (typeof b.fixedIn === 'string') {
+      if (b.fixedIn === '') fixedIn = null;
+      else if (VERSION_RE.test(b.fixedIn)) { fixedIn = b.fixedIn; st = 'fixed'; }
+      else return fail(400, 'fixedIn must be a version like 2.22.0');
+    }
+    if (typeof b.quote === 'string') quote = clean(b.quote, 400) || null;
+    if (typeof b.credit === 'string') credit = clean(b.credit, 60) || null;
+    if (fixedIn && !quote) return fail(400, 'a quote is needed to put a report in the patch notes');
+    await env.DB.prepare('UPDATE feedback SET status = ?, note = ?, fixed_in = ?, quote = ?, credit = ?, updated_at = ? WHERE id = ?')
+      .bind(st, note, fixedIn, quote, credit, now(), Number(fm[1])).run();
+    return json({ ok: true, status: st, note, fixedIn, quote, credit });
   }
   if (req.method === 'GET' && path === '/stores') {
     const [allowed, seen] = await env.DB.batch([
@@ -135,6 +150,13 @@ async function allowed(env, store) {
 async function route(req, env) {
   const url = new URL(req.url);
   if (url.pathname.startsWith('/v1/admin/')) return admin(req, env, url);
+  // Bug reports quoted as fixed in a version (public: the same text goes in the patch notes).
+  if (req.method === 'GET' && url.pathname === '/v1/fixed') {
+    const v = url.searchParams.get('version') || '';
+    if (!VERSION_RE.test(v)) return fail(400, 'version=X.Y.Z required');
+    const r = await env.DB.prepare("SELECT id, kind, quote, credit, store_name AS store FROM feedback WHERE fixed_in = ? AND quote IS NOT NULL AND quote <> '' ORDER BY id").bind(v).all();
+    return json({ version: v, reports: r.results });
+  }
   const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|auto|feedback|usage|access|links|links\/remove)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark))?$/);
   if (!m) return fail(404, 'not found');
   const store = Number(m[1]);

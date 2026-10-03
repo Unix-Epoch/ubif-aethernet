@@ -3,7 +3,8 @@
     "version": "2.22.0",
     "notes": [
       "**Master's Mend**: Collapse and Hide for today now work on more kinds of announcement boxes, and new kinds can be added without updating Aethernet. If a box doesn't get the buttons, send a bug report from that page: it now says which boxes are on the page.",
-      "**Master's Mend**: scan to open now also works on the **Sales** page (not during a checkout or refund)."
+      "**Master's Mend**: scan to open now also works on the **Sales** page (not during a checkout or refund).",
+      "Patch notes now quote the bug reports each version fixes, with a thank-you to whoever sent them. Keep them coming: **Send Aethernet feedback** in the avatar menu."
     ],
     "updated": [
       "fixes"
