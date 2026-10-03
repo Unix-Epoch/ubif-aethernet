@@ -7,3 +7,5 @@ sandbox/state.json
 sandbox/.cache/
 __pycache__/
 worker/.dev.vars
+admin-worker/.wrangler/
+admin-worker/.dev.vars

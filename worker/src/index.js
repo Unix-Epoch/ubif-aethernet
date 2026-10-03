@@ -80,8 +80,30 @@ async function logHistory(env, store, wo, action, tag, detail, by) {
 
 async function admin(req, env, url) {
   if (!env.ADMIN_KEY || req.headers.get('x-aethernet-admin') !== env.ADMIN_KEY) return fail(403, 'admin key required');
-  const path = url.pathname.replace(/^\/v1\/admin/, '');
+  return adminApi(req, env, url, url.pathname.replace(/^\/v1\/admin/, ''));
+}
+
+/*
+  The admin routes, shared by this Worker (behind the admin key, for the in-Portal
+  panel) and the admin site (admin-worker/, behind Cloudflare Access). path: "/feedback", …
+*/
+export async function adminApi(req, env, url, path) {
   if (req.method === 'GET' && path === '/ping') return json({ ok: true });
+  // One store's Aethernet data (admin site → Store data): its tag list, tags, Auto-Waymarks, which WOs Aethernet saw close, manual cleaning links.
+  const sd = path.match(/^\/store\/(\d{1,6})$/);
+  if (req.method === 'GET' && sd) {
+    const store = Number(sd[1]), since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const [name, list, tags, marks, closed, links] = await env.DB.batch([
+      env.DB.prepare('SELECT COALESCE(a.name, s.name) AS name FROM (SELECT ? AS store) x LEFT JOIN store_access a ON a.store = x.store LEFT JOIN store_seen s ON s.store = x.store').bind(store),
+      env.DB.prepare('SELECT name, color FROM list WHERE store = ? ORDER BY pos').bind(store),
+      env.DB.prepare('SELECT wo, tag, by_name AS by, at FROM wo_tags WHERE store = ? ORDER BY at DESC').bind(store),
+      env.DB.prepare('SELECT wo, due, kind, created_at AS at, removed_at AS removedAt FROM auto_marks WHERE store = ? ORDER BY due').bind(store),
+      env.DB.prepare('SELECT wo, closed_at AS at FROM wo_closed WHERE store = ?').bind(store),
+      env.DB.prepare('SELECT day, device, parent, by_name AS by, at FROM cleaning_links WHERE store = ? AND day >= ? ORDER BY day DESC, at DESC').bind(store, since),
+    ]);
+    return json({ store, name: (name.results[0] || {}).name || null, list: list.results, tags: tags.results,
+      marks: marks.results.map((m) => Object.assign(m, { kind: m.kind || 'rfp' })), closed: closed.results, links: links.results });
+  }
   if (req.method === 'GET' && path === '/feedback') {
     const st = url.searchParams.get('status') || 'all';
     const q = STATUSES.includes(st)
