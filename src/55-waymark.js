@@ -649,7 +649,7 @@ AE.crystal({
     let listFilter = '';
     function renderList() {
       const S = LS();
-      if (!onList() || !S.chips) { document.querySelectorAll('.' + LI).forEach((x) => x.remove()); document.querySelectorAll('tr.sg-wm-hidden').forEach((r) => r.classList.remove('sg-wm-hidden')); renderFilter(); return; }
+      if (!onList() || !S.chips) { document.querySelectorAll('.' + LI).forEach((x) => x.remove()); unfit(); document.querySelectorAll('tr.sg-wm-hidden').forEach((r) => r.classList.remove('sg-wm-hidden')); renderFilter(); return; }
       const idx = new Map();
       for (const row of document.querySelectorAll('tbody tr')) {
         const a = row.querySelector('a[href*="/repair/workorder/"]');
@@ -661,6 +661,7 @@ AE.crystal({
         const link = cell && cell.querySelector('a[href*="/repair/workorder/"]');
         const wrap = link && link.parentElement;
         if (!wrap) continue;
+        wrap.setAttribute('data-ae-fit', ''); // every row's name may use its row's free room (fitNames)
         const items = itemsOf(woId);
         // Tag filter: hide rows without the chosen tag.
         row.classList.toggle('sg-wm-hidden', !!(S.filter && listFilter && !items.some((it) => (it.t && it.t.tag === listFilter) || (listFilter === '@auto' && it.auto))));
@@ -677,7 +678,29 @@ AE.crystal({
         if (!li.childNodes.length) continue;
         wrap.append(li);
       }
+      fitNames();
       renderFilter();
+    }
+    /*
+      Portal caps the customer's name at 7.5rem (120 px, "…" after). Rows with tags make the Customer column
+      wider (120 px + their chips), so the other rows' names may use that room too. The room comes from what
+      the column needs without any fitting (Portal's 120 px + the widest row of chips), never from the cells'
+      current widths, so it can't feed back and creep the table wider.
+    */
+    const PORTAL_CAP = 120, GAP = 6;
+    function fitNames() {
+      const rows = [...document.querySelectorAll('tbody tr td [data-ae-fit]')].map((wrap) => {
+        const link = wrap.querySelector(':scope > a'), name = link && link.querySelector(':scope > div'), li = wrap.querySelector('.' + LI);
+        return { wrap, link, name, used: li && li.offsetWidth ? li.offsetWidth + GAP : 0 };
+      }).filter((r) => r.name);
+      const widest = rows.reduce((m, r) => Math.max(m, PORTAL_CAP + r.used), PORTAL_CAP);
+      for (const r of rows) {
+        const room = Math.max(PORTAL_CAP, widest - r.used) + 'px';
+        if (r.name.style.maxWidth !== room) { r.name.style.maxWidth = room; r.link.style.maxWidth = room; }
+      }
+    }
+    function unfit() {
+      document.querySelectorAll('[data-ae-fit]').forEach((w) => { const a = w.querySelector(':scope > a'), d = a && a.querySelector(':scope > div'); if (a) a.style.maxWidth = ''; if (d) d.style.maxWidth = ''; w.removeAttribute('data-ae-fit'); });
     }
     // "+N": every tag on the order (removable when editing), and + Tag.
     function openAll(woId, anchor) {
