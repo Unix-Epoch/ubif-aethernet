@@ -13,7 +13,9 @@
     POST /v1/:store/wo/:wo/untag        { tag, by, byId }        remove
     PUT  /v1/:store/list                { list: [{name,color}], by, byId }
     POST /v1/:store/closed              { wos: [id…] }           seen closed
-    POST /v1/:store/auto                { marks: [{wo, due}] }   Auto-Waymark new RFP WOs (existing/removed ignored)
+    POST /v1/:store/auto                { marks: [{wo, due, kind}] }   Auto-Waymark WOs (kind: rfp | callback; existing/removed ignored)
+    POST /v1/:store/wo/:wo/end          { by, byId, reason }     the WO left its mark's status: the mark is deleted (not
+                                        "removed"), so it comes back fresh if the WO returns to Ready for pickup / Awaiting callback
     POST /v1/:store/wo/:wo/push         { due, by, byId }        move a mark later (never earlier)
     POST /v1/:store/wo/:wo/unmark       { by, byId }             remove a mark (stays removed)
     POST /v1/:store/feedback            { kind, text, version, page, browser, diag, by, byId, storeName }
@@ -32,6 +34,8 @@
     GET  /v1/admin/stores                                        allowed stores + stores waiting
     POST /v1/admin/stores               { store, name, by }      grant access
     POST /v1/admin/stores/:store/remove                          revoke access
+    GET  /v1/admin/auto-rules                                    Auto-Waymark rules' states
+    POST /v1/admin/auto-rules           { rule, state }          off | staged (new WOs only) | live (backfill too)
   Store access: GET /v1/:store/access?name=&user= answers { allowed } (and
   records the store as seen). Every other /v1/:store/… call is refused (403)
   for stores without access.
@@ -45,6 +49,7 @@ const KINDS = ['bug', 'idea'], STATUSES = ['new', 'planned', 'fixed', 'wontfix']
 const FEATURE_RE = /^[a-zA-Z]{1,24}(:[a-zA-Z-]{1,24})?$/;
 const DEVICE_RE = /^[A-Za-z0-9:_-]{1,40}$/; // a cleaning's phone: its IMEI, or Aethernet's own key for one without
 const LINK_DAYS = 120;
+const MARK_KINDS = ['rfp', 'callback'], RULE_STATES = ['off', 'staged', 'live'];
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
 
 const CORS = {
@@ -128,6 +133,19 @@ async function admin(req, env, url) {
     accessCache.delete(Number(rm[1]));
     return json({ ok: true });
   }
+  if (path === '/auto-rules') {
+    if (req.method === 'POST') {
+      const b = await body(req);
+      const rule = clean(b.rule, 24), state = b.state;
+      if (!/^[a-z-]{2,24}$/.test(rule) || !RULE_STATES.includes(state)) return fail(400, 'rule and state (off | staged | live) required');
+      const t = now();
+      await env.DB.prepare('INSERT INTO auto_rules (rule, state, staged_at, live_at) VALUES (?, ?, ?, ?) ON CONFLICT (rule) DO UPDATE SET state = excluded.state, ' +
+        'staged_at = COALESCE(auto_rules.staged_at, excluded.staged_at), live_at = CASE WHEN excluded.state = \'live\' THEN COALESCE(auto_rules.live_at, excluded.live_at) ELSE auto_rules.live_at END')
+        .bind(rule, state, state === 'off' ? null : t, state === 'live' ? t : null).run();
+    }
+    const r = await env.DB.prepare('SELECT rule, state, staged_at AS stagedAt, live_at AS liveAt FROM auto_rules ORDER BY rule').all();
+    return json({ rules: r.results });
+  }
   if (req.method === 'GET' && path === '/usage') {
     const days = Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30));
     const since = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
@@ -157,7 +175,7 @@ async function route(req, env) {
     const r = await env.DB.prepare("SELECT id, kind, quote, credit, store_name AS store FROM feedback WHERE fixed_in = ? AND quote IS NOT NULL AND quote <> '' ORDER BY id").bind(v).all();
     return json({ version: v, reports: r.results });
   }
-  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|auto|feedback|usage|access|links|links\/remove)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark))?$/);
+  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|auto|feedback|usage|access|links|links\/remove)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark|end))?$/);
   if (!m) return fail(404, 'not found');
   const store = Number(m[1]);
   const wo = m[3] ? Number(m[3]) : null;
@@ -173,15 +191,19 @@ async function route(req, env) {
   if (!(await allowed(env, store))) return fail(403, 'this store does not have access to Aethernet');
 
   if (req.method === 'GET' && what === 'all') {
-    const [list, tags, marks] = await env.DB.batch([
+    const [list, tags, marks, rules, gone] = await env.DB.batch([
       env.DB.prepare('SELECT name, color FROM list WHERE store = ? ORDER BY pos').bind(store),
       env.DB.prepare('SELECT wo, tag, by_name AS by, at FROM wo_tags WHERE store = ? ORDER BY at').bind(store),
-      env.DB.prepare('SELECT wo, due, created_at AS at FROM auto_marks WHERE store = ? AND removed_at IS NULL').bind(store),
+      env.DB.prepare('SELECT wo, due, kind, created_at AS at FROM auto_marks WHERE store = ? AND removed_at IS NULL').bind(store),
+      env.DB.prepare('SELECT rule, state, staged_at, live_at FROM auto_rules'),
+      env.DB.prepare('SELECT wo, kind FROM auto_marks WHERE store = ? AND removed_at IS NOT NULL').bind(store),
     ]);
-    const byWo = {}, auto = {};
+    const byWo = {}, auto = {}, ruleMap = {};
     for (const r of tags.results) (byWo[r.wo] = byWo[r.wo] || []).push({ tag: r.tag, by: r.by, at: r.at });
-    for (const r of marks.results) auto[r.wo] = { due: r.due, at: r.at };
-    return json({ list: list.results, tags: byWo, auto });
+    for (const r of marks.results) auto[r.wo] = { due: r.due, at: r.at, kind: r.kind || 'rfp' };
+    for (const r of rules.results) ruleMap[r.rule] = { state: r.state, stagedAt: r.staged_at, liveAt: r.live_at };
+    // removed: marks removed with × (they stay removed while the WO stays in that status)
+    return json({ list: list.results, tags: byWo, auto, rules: ruleMap, removed: gone.results.map((r) => ({ wo: r.wo, kind: r.kind || 'rfp' })) });
   }
 
   // Divination: cleanings a person linked to an order by hand (a phone's cleanings that day count for `parent`).
@@ -240,10 +262,21 @@ async function route(req, env) {
     const marks = (Array.isArray(b.marks) ? b.marks : []).filter((x) => x && Number.isInteger(x.wo) && x.wo > 0 && DATE_RE.test(x.due)).slice(0, 500);
     const created = [];
     for (const x of marks) {
-      const r = await env.DB.prepare('INSERT OR IGNORE INTO auto_marks (store, wo, due, created_at) VALUES (?, ?, ?, ?)').bind(store, x.wo, x.due, now()).run();
+      const kind = MARK_KINDS.includes(x.kind) ? x.kind : 'rfp';
+      const r = await env.DB.prepare('INSERT OR IGNORE INTO auto_marks (store, wo, due, kind, created_at) VALUES (?, ?, ?, ?, ?)').bind(store, x.wo, x.due, kind, now()).run();
       if (r.meta.changes) { created.push(x.wo); await logHistory(env, store, x.wo, 'auto', null, x.due, { name: 'Auto-Waymark', id: null }); }
     }
     return json({ created });
+  }
+
+  // The WO left its mark's status: delete the mark (removed ones too), so a later return starts fresh.
+  if (req.method === 'POST' && what === 'end') {
+    const b = await body(req);
+    const cur = await env.DB.prepare('SELECT due, kind, removed_at FROM auto_marks WHERE store = ? AND wo = ?').bind(store, wo).first();
+    if (!cur) return json({ ended: false });
+    await env.DB.prepare('DELETE FROM auto_marks WHERE store = ? AND wo = ?').bind(store, wo).run();
+    if (!cur.removed_at) await logHistory(env, store, wo, 'auto-end', null, clean(b.reason, 80) || cur.due, who(b));
+    return json({ ended: true });
   }
 
   if (req.method === 'POST' && (what === 'push' || what === 'unmark')) {

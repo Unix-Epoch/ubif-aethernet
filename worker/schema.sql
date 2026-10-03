@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS auto_marks (  -- Auto-Waymark: follow-up date set whe
   store INTEGER NOT NULL, wo INTEGER NOT NULL,
   due TEXT NOT NULL,                     -- YYYY-MM-DD, store-local
   created_at TEXT NOT NULL,
-  removed_at TEXT,                       -- × removes; the row stays so it isn't re-created
+  removed_at TEXT,                       -- × removes; the row stays so it isn't re-created (until the WO leaves the status: /end deletes it)
+  kind TEXT,                             -- rfp (Ready for pickup, NULL in old rows) | callback (Awaiting callback)
   PRIMARY KEY (store, wo)
 );
 CREATE TABLE IF NOT EXISTS feedback (    -- bug reports and suggestions from the Feedback button
@@ -56,4 +57,7 @@ CREATE TABLE IF NOT EXISTS cleaning_links (  -- Divination: a phone's cleanings 
   parent INTEGER NOT NULL,                    -- the order (WO) they count for
   by_name TEXT, by_id INTEGER, at TEXT NOT NULL,
   PRIMARY KEY (store, day, device)
+);
+CREATE TABLE IF NOT EXISTS auto_rules (    -- Auto-Waymark rules beyond Ready for pickup: off | staged (new WOs only) | live (backfill too)
+  rule TEXT PRIMARY KEY, state TEXT NOT NULL, staged_at TEXT, live_at TEXT
 );
