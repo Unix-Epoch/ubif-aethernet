@@ -11,18 +11,10 @@
   - Header button: the board — open WOs grouped by tag, filterable.
     Managers (the roles below) get × on each tag there to clear it;
     everyone else removes tags from the WO itself.
-  - Auto-Waymark: a follow-up date (its own kind of mark, not a tag; one look
-    for both kinds, only the date differs):
-      · Ready for pickup (rfp): 3 days after that day, added after end of day
-        (7 PM local), or on the first Portal load after that if nobody had
-        Portal open then.
-      · Awaiting callback (callback, since 2.22.0; Garrett: contact every
-        day): the day after, added right away. A new rule ships "off" and is
-        switched on from the admin panel → Auto-Waymark: Stage (new WOs only)
-        then Push (live: the scan backfills WOs already waiting).
-    When a WO leaves the status its mark belongs to, the mark is deleted and
-    the nickname's date cleared; returning to either status starts fresh.
-    Right-click pushes it
+  - Auto-Waymark: a WO that reaches Ready for pickup gets a follow-up date
+    3 days after that day (its own kind of mark, not a tag), added after end
+    of day (7 PM local) — or on the first Portal load after that if nobody
+    had Portal open then. Right-click pushes it
     later (never earlier); × removes it for good. The board's second tab
     lists them by due date. Found by a scan of Portal's active list every 10
     minutes (one tab per browser does it; the server ignores repeats), and
@@ -32,13 +24,12 @@
     bubble from the icon if any were left open past their due day.
   - If the nickname already has a date in it when the mark is made
     ("PS5 SLIM (10/01)"), that date is the mark's date instead.
-  - While a WO is at Ready for pickup or Awaiting callback, its device nickname is just the
+  - While a WO is at Ready for pickup, its device nickname is just the
     Auto-Waymark date ("10/02", the store's usual M/DD) and is kept that way:
     pushes rewrite it, and the scan puts it back if it drifts. A later date
     typed into the nickname by hand moves the mark to match instead.
-  - Texting the customer (calls go with a text) moves the mark to 3 days from
-    that day at Ready for pickup, 1 day (tomorrow) at Awaiting callback (only
-    ever later), credited
+  - Texting the customer from a WO at Ready for pickup moves its
+    Auto-Waymark to 3 days from that day (only ever later), credited
     "<name> (texted the customer)". Uses core's text-sent event, so it works
     with Recitation off.
   - Settings → Waymark: the store's managed tag list. Only Portal's
@@ -86,7 +77,7 @@ AE.waymark = (() => {
   function load(force) {
     if (!force && cache && Date.now() - cacheAt < TTL) return Promise.resolve(cache);
     if (inflight) return inflight;
-    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {}, auto: j.auto || {}, rules: j.rules || {}, removed: j.removed || [], closed: j.closed || [] }; load.cache = cache; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
+    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {}, auto: j.auto || {}, closed: j.closed || [] }; load.cache = cache; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
       .finally(() => { inflight = null; });
     return inflight;
   }
@@ -127,16 +118,6 @@ AE.waymark = (() => {
   // ------------------------------------------------------------ Auto-Waymark
   const AUTO_DAYS = 3, RFP_STATUS = 13; // 13 = Ready for pickup
   const CLOSED_STATUSES = [14, 15, 25];   // Sale complete, (closed), Cancelled
-  // The Auto-Waymark rules: which status, how many days, and whether marks wait for end of day.
-  const RULES = {
-    rfp: { status: 13, days: 3, eod: true, name: 'Ready for pickup', push: [3, 1, 7] },
-    callback: { status: 7, days: 1, eod: false, name: 'Awaiting callback', push: [1, 3, 7] },
-  };
-  const kindOfStatus = (st) => Object.keys(RULES).find((k) => RULES[k].status === Number(st)) || null;
-  const markKind = (m) => (m && m.kind) || 'rfp';
-  // rfp is always live; the others: off | staged (WOs that newly enter the status) | live (backfill too), from the admin panel.
-  const ruleState = (k, c) => (k === 'rfp' ? { state: 'live' } : ((c || cache || {}).rules || {})[k] || { state: 'off' });
-  const isDateNick = (n) => /^\(?\s*\d{1,2}\/\d{1,2}(\/\d{2,4})?\s*\)?$/.test((n || '').trim());
   const EOD_HOUR = 19;                    // marks go on after end of day, 7 PM local
   const afterEod = () => AE.nowDate().getHours() >= EOD_HOUR; // AE.nowDate: the dev tools can shift it
   const pad = (n) => String(n).padStart(2, '0');
@@ -167,12 +148,12 @@ AE.waymark = (() => {
     return null;
   }
   const woDetail = async (woId) => { const j = await AE.api('GET', '/api/workorder/' + woId); return (j && j.workorder) || AE.unwrap(j); };
-  // Set the nickname to the mark's date, only while the WO is in its mark's status.
+  // Set the nickname to the mark's date, only while the WO is at Ready for pickup.
   // Sends the device record back unchanged apart from `name`, as Portal's own edit does.
   async function syncNickname(woId, due, wo) {
     wo = wo || await woDetail(woId);
     const dev = wo && wo.CustomerDevice;
-    if (!dev || !dev.customerDeviceId || !kindOfStatus(wo.workorderStatusId)) return false;
+    if (!dev || !dev.customerDeviceId || Number(wo.workorderStatusId) !== RFP_STATUS) return false;
     const name = nickDate(due);
     if ((dev.name || '').trim() === name) return false;
     await AE.api('PUT', '/api/customer-devices/' + dev.customerDeviceId, {
@@ -181,21 +162,6 @@ AE.waymark = (() => {
     });
     if (location.pathname.indexOf('/repair/workorder/' + woId) === 0) AE.refreshView(); // show the new nickname
     return true;
-  }
-
-  // The WO left its mark's status: delete the mark and clear a date-only nickname (it starts fresh if it comes back).
-  async function endMark(woId, reason, wo) {
-    await call('POST', '/wo/' + woId + '/end', { reason });
-    if (cache) { delete cache.auto[woId]; AE.emit('waymark-changed', cache); }
-    wo = wo || await woDetail(woId);
-    const dev = wo && wo.CustomerDevice;
-    if (dev && dev.customerDeviceId && isDateNick(dev.name) && !kindOfStatus(wo.workorderStatusId)) {
-      await AE.api('PUT', '/api/customer-devices/' + dev.customerDeviceId, {
-        customerDeviceId: dev.customerDeviceId, customerId: dev.customerId, passcode: dev.passcode, serial: dev.serial,
-        imei: dev.imei, deviceCatalogId: dev.deviceCatalogId, name: '',
-      });
-      if (location.pathname.indexOf('/repair/workorder/' + woId) === 0) AE.refreshView();
-    }
   }
 
   // opts.by: who it's credited to in the history; opts.why: start of the toast (e.g. "Customer texted").
@@ -212,34 +178,31 @@ AE.waymark = (() => {
     } catch (e) { fail('mark moved, but the nickname couldn\'t be updated', e); }
   }
 
-  // A text to the customer restarts the follow-up: the mark moves to its rule's days from today
-  // (3 at Ready for pickup, 1 at Awaiting callback), never earlier than it already is.
+  // A text to the customer from a WO at Ready for pickup restarts its follow-up:
+  // the mark moves to 3 days from today, never earlier than it already is.
   async function customerTexted(woId) {
     if (!configured() || AE.status.blocked('waymark')) return;
     const c = await load(true);
     const m = c.auto && c.auto[woId];
     if (!m) return;
-    const kind = markKind(m), due = addDays(today(), RULES[kind].days);
+    const due = addDays(today(), AUTO_DAYS);
     if (due <= m.due) return;
     const wo = await woDetail(woId);
-    if (!wo || Number(wo.workorderStatusId) !== RULES[kind].status) return;
+    if (!wo || Number(wo.workorderStatusId) !== RFP_STATUS) return;
     const p = await me();
     await pushMark(woId, due, { by: (p.name || 'Someone') + ' (texted the customer)', why: 'Customer texted', track: 'waymark:pushTexted' });
   }
 
-  // Right after a tech changes this WO's status (seen from the WO page).
+  // Right after a tech sets this WO to Ready for pickup (seen from the WO page).
   async function checkWo(woId) {
     if (!configured() || AE.status.paused('waymark')) return;
-    let [c, wo] = await Promise.all([load(true), woDetail(woId)]);
-    if (!wo) return;
-    const kind = kindOfStatus(wo.workorderStatusId);
+    const [c, wo] = await Promise.all([load(), woDetail(woId)]);
+    if (!wo || Number(wo.workorderStatusId) !== RFP_STATUS) return;
     let m = c.auto[woId];
-    if (m && markKind(m) !== kind) { await endMark(woId, 'left ' + RULES[markKind(m)].name, wo); m = null; wo = await woDetail(woId); }
-    if (!kind || ruleState(kind, c).state === 'off') return; // staged: this WO is newly entering, so it counts
     if (!m) {
-      if (RULES[kind].eod && !afterEod()) return; // the evening scan (or tomorrow's first load) marks it
-      const due = parseNick(wo.CustomerDevice && wo.CustomerDevice.name) || addDays(today(), RULES[kind].days);
-      const r = await call('POST', '/auto', { marks: [{ wo: Number(woId), due, kind }] });
+      if (!afterEod()) return; // the evening scan (or tomorrow's first load) marks it
+      const due = parseNick(wo.CustomerDevice && wo.CustomerDevice.name) || addDays(today(), AUTO_DAYS);
+      const r = await call('POST', '/auto', { marks: [{ wo: Number(woId), due }] });
       if (!(r.created && r.created.length)) return; // removed earlier with ×: stays removed
       await load(true);
       m = autoOf(woId);
@@ -278,26 +241,16 @@ AE.waymark = (() => {
     server may have ignored marks that were removed with ×).
   */
   function planScan(rows, c, noCreate) {
-    const plan = { create: [], follow: [], rename: [], waiting: [], end: [] };
-    const removed = new Map((c.removed || []).map((x) => (typeof x === 'object' ? [Number(x.wo), x.kind || 'rfp'] : [Number(x), null])));
+    const plan = { create: [], follow: [], rename: [], waiting: [] };
     for (const r of rows) {
+      if (Number(r.workorderStatusId) !== RFP_STATUS) continue;
       const wo = Number(r.workorderId), nick = ((r.customerDevice && r.customerDevice.name) || '').trim();
-      const kind = kindOfStatus(r.workorderStatusId);
-      // Left the status its mark belongs to (or one removed with × in another status): the mark ends.
-      if ((c.auto[wo] && markKind(c.auto[wo]) !== kind) || (removed.has(wo) && removed.get(wo) !== kind)) {
-        plan.end.push({ wo, from: c.auto[wo] ? markKind(c.auto[wo]) : removed.get(wo), nick, clearNick: !kind && isDateNick(nick) });
-        continue;
-      }
-      if (!kind) continue;
-      const rule = RULES[kind], st = ruleState(kind, c);
       let due = c.auto[wo] && c.auto[wo].due;
       if (!due) {
-        if (noCreate || st.state === 'off' || removed.has(wo)) continue;
-        if (st.state === 'staged' && !(Date.parse(r.updatedAt) >= Date.parse(st.stagedAt))) continue; // staged: only WOs that entered since
-        if (rule.eod && !(afterEod() || rfpSince(r) < today())) { plan.waiting.push({ wo, rfp: rfpSince(r), nick }); continue; } // today's RFPs wait for 7 PM
-        const fromDay = addDays(rfpSince(r), rule.days);
-        due = parseNick(nick) || (kind === 'callback' && fromDay < today() ? today() : fromDay); // the nickname's date wins; callbacks backfilled are due today
-        plan.create.push({ wo, due, kind, nick, from: parseNick(nick) ? 'nickname' : rule.name + ' + ' + rule.days });
+        if (noCreate) continue;
+        if (!(afterEod() || rfpSince(r) < today())) { plan.waiting.push({ wo, rfp: rfpSince(r), nick }); continue; } // today's RFPs wait for 7 PM
+        due = parseNick(nick) || addDays(rfpSince(r), AUTO_DAYS); // the nickname's date wins
+        plan.create.push({ wo, due, nick, from: parseNick(nick) ? 'nickname' : 'RFP day + ' + AUTO_DAYS });
       }
       if (nick === nickDate(due)) continue;
       const typed = parseNick(nick);
@@ -305,20 +258,6 @@ AE.waymark = (() => {
       if (nick !== nickDate(due)) plan.rename.push({ wo, from: nick, to: nickDate(due), due });
     }
     return plan;
-  }
-
-  // Admin panel → Auto-Waymark: what making the not-yet-live rules live would add at this store (backfill).
-  async function backfillPreview() {
-    const [rows, c] = await Promise.all([AE.data.workorders(Date.now(), 0), load(true)]);
-    const removed = new Set((c.removed || []).map((x) => Number(typeof x === 'object' ? x.wo : x)));
-    const out = [];
-    for (const r of rows) {
-      const kind = kindOfStatus(r.workorderStatusId), wo = Number(r.workorderId);
-      if (!kind || kind === 'rfp' || ruleState(kind, c).state === 'live' || c.auto[wo] || removed.has(wo)) continue;
-      const nick = ((r.customerDevice && r.customerDevice.name) || '').trim(), since = rfpSince(r), fromDay = addDays(since, RULES[kind].days);
-      out.push({ wo, kind, name: AE.data.nameOf(r), since, due: parseNick(nick) || (fromDay < today() ? today() : fromDay) });
-    }
-    return out.sort((a, b) => a.since.localeCompare(b.since));
   }
 
   async function scan(rows, opts = {}) {
@@ -332,16 +271,8 @@ AE.waymark = (() => {
     let plan = planScan(rows, c);
     if (opts.dryRun) return Object.assign(plan, { rows });
     if (!AE.status.paused('waymark')) {
-      for (const e of plan.end) {
-        try {
-          const reason = 'left ' + (RULES[e.from] || RULES.rfp).name;
-          if (e.clearNick) await endMark(e.wo, reason); // also clears the date-only nickname
-          else await call('POST', '/wo/' + e.wo + '/end', { reason });
-        } catch (err) { console.warn('[' + AE_NAME + '] Waymark end, WO ' + e.wo + ':', err.message || err); }
-      }
-      if (plan.end.length) { c = await load(true); plan = Object.assign(planScan(rows, c), { end: plan.end }); }
       if (plan.create.length) {
-        const j = await call('POST', '/auto', { marks: plan.create.map(({ wo, due, kind }) => ({ wo, due, kind })) }); // removed ones are ignored
+        const j = await call('POST', '/auto', { marks: plan.create.map(({ wo, due }) => ({ wo, due })) }); // removed ones are ignored
         if (j.created && j.created.length) c = await load(true);
         plan = planScan(rows, c, true);
       }
@@ -441,7 +372,6 @@ AE.waymark = (() => {
   #sg-wm-push .ttl { padding:4px 8px 6px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
   #sg-wm-push .opt { display:flex; justify-content:space-between; width:100%; padding:7px 8px; border:0; border-radius:6px; background:none; cursor:pointer;
     color:var(--aui-on-surface, #1a1c1e); font:400 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:left; }
-  #sg-wm-push .opt.def { background:var(--aui-primary-soft, #faecff); font-weight:700; }
   #sg-wm-push .opt:hover, #sg-wm-push .opt:focus-visible { background:var(--aui-neutral-soft, #f1f0f4); outline:0; }
   #sg-wm-push .pick { display:flex; gap:6px; padding:6px 8px 2px; border-top:1px solid var(--aui-outline-soft, #eeedf1); margin-top:4px; }
   #sg-wm-push .pick input { flex:1; min-width:0; height:30px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:6px; background:var(--aui-surface, #fff);
@@ -481,19 +411,19 @@ AE.waymark = (() => {
     const st = dueState(mark.due);
     const label = (st === 'today' ? 'Today · ' : st === 'overdue' ? 'Overdue · ' : '') + fmtDate(mark.due);
     const el = h('span', { class: 'sg-auto ' + st, role: 'note',
-      title: 'Auto-Waymark: follow up by ' + fmtDate(mark.due) + ' (set when it reached ' + (RULES[markKind(mark)] || RULES.rfp).name + '). Right-click to push it later; × removes it.' },
+      title: 'Auto-Waymark: follow up by ' + fmtDate(mark.due) + ' (set when it reached Ready for pickup). Right-click to push it later; × removes it.' },
       h('span', { html: CAL_SVG, style: 'line-height:0' }), label,
       h('button', { type: 'button', title: 'Remove this Auto-Waymark', 'aria-label': 'Remove Auto-Waymark', onclick: async (e) => {
         e.stopPropagation();
         try { await unmark(woId); } catch (err) { fail("couldn't remove the Auto-Waymark", err); }
         onChange && onChange();
       } }, '×'));
-    el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); pushMenu(e.clientX, e.clientY, woId, mark.due, onChange, markKind(mark)); });
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); pushMenu(e.clientX, e.clientY, woId, mark.due, onChange); });
     return el;
   }
 
   // Right-click menu: only ever later.
-  function pushMenu(x, y, woId, due, onChange, kind) {
+  function pushMenu(x, y, woId, due, onChange) {
     document.getElementById('sg-wm-push')?.remove();
     ensureCss();
     const go = async (next) => {
@@ -501,13 +431,11 @@ AE.waymark = (() => {
       try { await pushMark(woId, next); } catch (e) { fail("couldn't move the Auto-Waymark", e); }
       onChange && onChange();
     };
-    // First option = the rule's own step (+1 day for Awaiting callback, +3 for Ready for pickup), highlighted.
-    const opt = (label, days, first) => { const d = addDays(due, days); return h('button', { type: 'button', class: 'opt' + (first ? ' def' : ''), role: 'menuitem', onclick: () => go(d) }, label, h('span', { class: 'sg-soft' }, fmtDate(d))); };
-    const LABEL = { 1: '+1 day', 3: '+3 days', 7: '+1 week' };
+    const opt = (label, days) => { const d = addDays(due, days); return h('button', { type: 'button', class: 'opt', role: 'menuitem', onclick: () => go(d) }, label, h('span', { class: 'sg-soft' }, fmtDate(d))); };
     const pick = h('input', { type: 'date', min: addDays(due, 1), value: addDays(due, 1), 'aria-label': 'Pick a later date' });
     const menu = h('div', { id: 'sg-wm-push', class: 'sg sg-card', role: 'menu', 'aria-label': 'Push Auto-Waymark later' },
       h('div', { class: 'ttl' }, 'Push later · now ' + fmtDate(due)),
-      ...(RULES[kind] || RULES.rfp).push.map((d, i) => opt(LABEL[d], d, i === 0)),
+      opt('+1 day', 1), opt('+3 days', 3), opt('+1 week', 7),
       h('div', { class: 'pick' }, pick, h('button', { type: 'button', class: 'sg-btn', onclick: () => { if (pick.value && pick.value > due) go(pick.value); } }, 'Set')));
     document.body.appendChild(menu);
     menu.style.left = Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8)) + 'px';
@@ -529,7 +457,6 @@ AE.waymark = (() => {
       auto: ['Auto-Waymark set for ', dates(x.detail)],
       push: [who + ' pushed the Auto-Waymark ', dates(x.detail)],
       unmark: [who + ' removed the Auto-Waymark ', dates(x.detail)],
-      'auto-end': ['Auto-Waymark ended: ', dates(x.detail)],
     }[x.action] || [who + ' ' + x.action + ' ', x.tag || x.detail || ''];
     return h('li', null, parts[0], h('b', null, parts[1]), ' ', h('span', { class: 'when' }, '· ' + when(x.at)));
   }
@@ -573,7 +500,7 @@ AE.waymark = (() => {
   const listSig = () => JSON.stringify(cache && cache.list);
   const summary = () => (cache ? cache.list.length + ' tag' + (cache.list.length === 1 ? '' : 's') : 'Store tags');
 
-  return { API, configured, call, load, RULES, ruleState, backfillPreview, tagsOf, autoOf, checkWo, customerTexted, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
+  return { API, configured, call, load, tagsOf, autoOf, checkWo, customerTexted, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
 })();
 
 AE.crystal({
@@ -947,7 +874,7 @@ AE.crystal({
           const rows = sorted.filter(([, m]) => W.dueState(m.due) === st);
           return rows.length ? h('div', { class: 'group' }, h('div', { class: 'gh' }, title + ' · ' + rows.length),
             rows.map(([id, m]) => h('div', { class: 'wo' }, woLine(id), h('div', { class: 'chips' }, W.autoChip(id, m, redraw))))) : null;
-        }).filter(Boolean) : [h('div', { class: 'sg-soft', style: 'padding:8px 0' }, 'No Auto-Waymarks. A work order gets one when it reaches Ready for pickup (3 days out) or Awaiting callback (the next day).')]),
+        }).filter(Boolean) : [h('div', { class: 'sg-soft', style: 'padding:8px 0' }, 'No Auto-Waymarks. A work order gets one, 3 days out, when it reaches Ready for pickup.')]),
           h('div', { class: 'sg-soft', style: 'padding:6px 0 2px' }, 'Right-click a date to push it later; × removes it.'));
         return;
       }

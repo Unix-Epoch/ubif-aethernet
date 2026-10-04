@@ -7,8 +7,7 @@
       "**Master's Mend**: scan to open now also works on the **Sales** page (not during a checkout or refund).",
       "Patch notes now quote the bug reports each version fixes, with a thank-you to whoever sent them. Keep them coming: **Send Aethernet feedback** in the avatar menu.",
       "Announcements about a fix in a newer version now have a **Check for updates** button (or **Update now** once it's out).",
-      "**Waymark**: tags now show on Portal's **Work orders list**: one tag beside each customer's name, plus **+N** for the rest, without making rows any taller. Hover a row to add or remove tags right from the list. Optional: a Waymark tag filter next to Portal's filters (off by default). All three are switches in Settings → Waymark.",
-      "**Waymark**: Auto-Waymarks now cover **Awaiting callback** too. Those customers need contact every day, so the mark is due the next day, texting the customer moves it to tomorrow, and right-click pushes start at +1 day. Both kinds look the same; only the date differs. When a work order leaves Ready for pickup or Awaiting callback, its Auto-Waymark and the nickname's date are cleared, and they start fresh if it comes back."
+      "**Waymark**: tags now show on Portal's **Work orders list**: one tag beside each customer's name, plus **+N** for the rest, without making rows any taller. Hover a row to add or remove tags right from the list. Optional: a Waymark tag filter next to Portal's filters (off by default). All three are switches in Settings → Waymark."
     ],
     "updated": [
       "fixes",
