@@ -19,7 +19,7 @@
     ]),
     ['autoClose', 'Swiftcast', 'Your new favorite tool. Auto-close cleanings in one click - even multiple at once.'],
     ...(AE_DEMO ? [] : [
-    ['galaxy', 'Macrocosmos', 'Galaxy Diagnostics exception: pre-fills the Sprinklr exception form from a Samsung WO.'],
+    ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],
     ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
     ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
     ]),

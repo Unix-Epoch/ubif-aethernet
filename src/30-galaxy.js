@@ -39,7 +39,7 @@ AE.crystal({
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    // Small status card, top-left (form) or bottom-left (portal).
+    // Small status card, top-left (form) or bottom-left (portal). text: plain, or { html } (e.g. with an AE.bugLink).
     function toast(text, kind, where = 'top') {
       AE.ensureCss();
       let el = document.getElementById('sg-galaxy-toast');
@@ -51,7 +51,7 @@ AE.crystal({
       el.style.bottom = where === 'top' ? '' : '16px';
       const mark = kind === 'busy' ? '<span class="sg-spin" style="margin-top:2px"></span>'
         : '<span class="sg-icon-state" style="color:' + (kind === 'ok' ? 'var(--aui-status-success,#136d31)' : 'var(--aui-status-error,#b91a24)') + '">' + (kind === 'ok' ? '✓' : '!') + '</span>';
-      el.innerHTML = mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">Galaxy Diagnostics exception</b>' + AE.esc(text) + '</div>';
+      el.innerHTML = mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">Galaxy Diagnostics exception</b>' + (text && typeof text === 'object' ? text.html : AE.esc(text)) + '</div>';
       el.style.borderColor = kind === 'err' ? 'var(--aui-status-error,#b91a24)' : '';
       if (where !== 'top' && kind !== 'busy') setTimeout(() => el.remove(), 8000);
     }
@@ -225,7 +225,8 @@ AE.crystal({
             toast('Form opened in a new tab for WO ' + woId + '.', 'ok', 'bottom');
           } catch (e) {
             formTab?.close();
-            toast('Could not gather WO data: ' + (e && e.message ? e.message : e), 'err', 'bottom');
+            toast({ html: 'Macrocosmos couldn\'t grab its required data from this WO. If you keep seeing this, ' +
+              AE.bugLink('report a bug', { where: 'Macrocosmos', error: 'Gathering data for WO ' + woId + ' failed: ' + (e && e.message ? e.message : e) }) + '!' }, 'err', 'bottom');
           } finally {
             main.disabled = false;
           }
@@ -344,7 +345,7 @@ AE.crystal({
             to(1);
             AE.spellDone(spell, ok ? 'ok' : 'err');
             if (ok) {
-              el.title = 'GD Exception: filled — check it over, then hit Submit yourself.';
+              el.title = 'Exception data filled. Hit Submit when you\'re ready.';
               setTimeout(() => { el.classList.add('leave'); setTimeout(() => el.remove(), 750); }, 2400); // after the flash
             } else {
               el.classList.add('failed');
@@ -362,7 +363,7 @@ AE.crystal({
         const total = 13 + (data.storeEmail ? 1 : 0); // email + the 12 fields below (+ store email)
         const cast = castIcon(total);
         const email = await waitForField('Your email address', 8000);
-        if (!email) { cast.finish(false, 'Form did not load in time — fill it in by hand.'); return; }
+        if (!email) { cast.finish(false, 'Looks like the form didn\'t load itself in time - close this tab and try again.'); return; }
 
         const failed = [];
         const step = async (label, ok) => { if (!(await ok)) failed.push(label); cast.step(); };
@@ -388,7 +389,7 @@ AE.crystal({
         if (!data.imei) failed.push('IMEI (none on the WO)');
         if (!data.deviceName) failed.push('Device Full SKU (none on the WO)');
 
-        if (failed.length) cast.finish(false, 'WO ' + data.woId + ': could NOT fill ' + failed.join(', ') + ' — fill those in by hand before submitting.');
+        if (failed.length) cast.finish(false, 'Couldn\'t fill in the proper info, please close this tab and try again, or fill in the missing info by hand. Missing: ' + failed.join(', ') + '.');
         else cast.finish(true);
       }
       setTimeout(fill, 800); // the form renders client-side
