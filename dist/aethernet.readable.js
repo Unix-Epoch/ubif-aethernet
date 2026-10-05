@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.22.0
+// @version      2.22.1
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -34,13 +34,13 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.22.0';            // filled in by build.py
+const AE_VERSION = '2.22.1';            // filled in by build.py
 const AE_DEV = false;                      // true only in the dev channel ("Aethernet (dev)")
 // false (used bare, never declared): build.py swaps it for true in the demo
 // channel's build (build.py --demo: only a few crystals, nothing else) and
 // false everywhere else, so the other side's code is dropped by the minifier.
-const AE_BUILD_TIME = '2026-10-05T00:27:57-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = 'b21dc2f-dirty';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_BUILD_TIME = '2026-10-05T14:25:49-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = 'b0ee056-dirty';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';     // where installs update from
 // The Portal sandbox (sandbox/server.py: Portal's real app on fake data) — dev builds only.
 const AE_SANDBOX = AE_DEV && location.host === 'localhost:8790';
@@ -1945,7 +1945,10 @@ AE.status = (() => {
     pill.addEventListener('mouseleave', () => { since = Date.now(); timer = setTimeout(() => pill.remove(), Math.max(0, left)); });
     document.body.appendChild(pill);
   }
-  if (updated && !false) showUpdatedPill(lastVersion); // it opens the patch notes, which the demo build doesn't have
+  // It opens the patch notes (which the demo build doesn't have), so only when there are notes newer than the last
+  // version seen here: a quiet patch (no notes, e.g. 2.22.1) updates without it.
+  const unseenNotes = !lastVersion || PATCH_NOTES.some((n) => newer(n.version, lastVersion) && !newer(n.version, AE_VERSION));
+  if (updated && !false && unseenNotes) showUpdatedPill(lastVersion);
   AE.hooks.updatedPill = showUpdatedPill; // dev tools
   AE.hooks.patchVersions = PATCH_NOTES.map((n) => n.version);
 
@@ -6368,7 +6371,8 @@ AE.crystal({
           build.py --bulletin-…), so a new kind of bulletin can be covered without an update.
           pages replaces the built-in list; patterns, selectors and closers add to it.
         */
-        const BUILT_IN = { pages: ['^/repair/workorder/\\d+'], patterns: ['shorty', 'modal', 'slideout', 'fullscreen'], selectors: [], closers: ['.appcues-skip', '[data-step="skip"]'] };
+        // Work orders, and Arrivals (the list and an arrival's drawer: iPhone arrivals get Apple's announcement there too).
+        const BUILT_IN = { pages: ['^/repair/workorder/\\d+', '^/check-in/arrivals(/|$)'], patterns: ['shorty', 'modal', 'slideout', 'fullscreen'], selectors: [], closers: ['.appcues-skip', '[data-step="skip"]'] };
         const rules = () => {
           const r = (AE.status && AE.status.get().bulletins) || {};
           const uniq = (a) => [...new Set(a)];
@@ -6386,9 +6390,16 @@ AE.crystal({
         const store = () => GM_getValue(KEY, {});
         const put = (k, v) => { const all = store(); if (v) all[k] = v; else delete all[k]; GM_setValue(KEY, all); };
         const onPage = (R) => R.pages.some((src) => { const x = re(src); return x && x.test(location.pathname); });
+        // A box is known by its heading; without one (e.g. Verizon's Advanced Exchange shorty), by its first line of text.
+        // Never by our own bar's words: they'd change the key once the bar is in, and a saved Collapse would never match.
         const titleOf = (box) => {
           const sc = scopeOf(box), hd = sc.querySelector('h1, h2, h3, h4');
-          return ((hd ? hd.textContent : sc.textContent) || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+          const body = sc.querySelector('[role="dialog"]') || sc;
+          const first = !hd && [...body.querySelectorAll('p, li')].find((e) => e.textContent.trim() && !e.closest('[' + MARK + '-bar]'));
+          let t = hd ? hd.textContent : first ? first.textContent : body.textContent || '';
+          const bar = !hd && !first && sc.querySelector('[' + MARK + '-bar]');
+          if (bar) t = t.replace(bar.textContent, '');
+          return t.replace(/\s+/g, ' ').trim().slice(0, 120);
         };
         // A box is known by its title, so a new announcement shows normally.
         const keyOf = (t) => { let x = 0; for (let i = 0; i < t.length; i++) x = (x * 31 + t.charCodeAt(i)) | 0; return 'b' + (x >>> 0).toString(36); };
