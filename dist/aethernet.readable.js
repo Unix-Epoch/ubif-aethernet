@@ -14,7 +14,6 @@
 // @downloadURL  https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js
 // ==/UserScript==
 
-/* Built by build.py from src/ — edit those files, not this one. */
 (function aethernet() {
 'use strict';
 
@@ -40,30 +39,31 @@ const AE_DEV = false;                      // true only in the dev channel ("Aet
 // false (used bare, never declared): build.py swaps it for true in the demo
 // channel's build (build.py --demo: only a few crystals, nothing else) and
 // false everywhere else, so the other side's code is dropped by the minifier.
-const AE_BUILD_TIME = '2026-10-02T18:35:44-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = 'd732df4-dirty';   // git commit it was built from ("-dirty" = uncommitted changes)
-const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';
-const AE_READABLE_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.readable.js'; // same build, unminified     // where installs update from
+const AE_BUILD_TIME = '2026-10-04T23:57:24-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = '4e0c943-dirty';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';     // where installs update from
 // The Portal sandbox (sandbox/server.py: Portal's real app on fake data) — dev builds only.
 const AE_SANDBOX = AE_DEV && location.host === 'localhost:8790';
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net' || AE_SANDBOX;
-// Swiftcast's Verizon screen protector (SKU 101516; setting key refreshLabor) is EXPERIMENTAL: off unless switched on. Flip to true
-// (with a notice) once it's verified; everyone who never chose follows it.
-const AE_REFRESH_LABOR_DEFAULT = false;
+// Swiftcast's Verizon screen protector (SKU 101516; setting key refreshLabor): on by default since 2.22.0
+// (verified on live VZ Refreshes, Oct 3, 2026). Everyone who never chose follows this. Anyone who switched it
+// off while it was Experimental is switched back on once (ae_refresh_labor_on); after that, their choice sticks.
+const AE_REFRESH_LABOR_DEFAULT = true;
 
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
     crystals: false ? { cleaningRate: true, autoClose: true, glamour: true }
       : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, fixes: true },
-    cleaningRate: { target: 75 },
     // Swiftcast: offer Dualcast (all of a device's cleanings at once); refreshLabor: null = follow
     // AE.REFRESH_LABOR_DEFAULT (only a user's own choice is stored, so the default can change in a release).
     autoClose: { dualcast: true, refreshLabor: null },
     glamour: { theme: 'portal', custom: [], // custom: [{ id, name, bg, fg, accent, custom: true }]
-      login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
+      login: { image: '', blank: false, fill: false, mark: true } }, // login page (01b-login.js); image = data URL; blank = no picture
     ...(false ? {} : {
       printLabels: { delayMs: 900 },
+      // Waymark on Portal's Work orders list: one chip + N per order, clickable, optional tag filter (src/55-waymark.js)
+      waymarkList: { chips: true, edit: true, filter: false },
       fixes: { logoLink: true, appcuesButtons: true, appcuesBoxes: true, scanNav: true, scanDebug: false, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all', reportsRetry: true }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
       // Blank = use the logged-in user / current store automatically.
       galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
@@ -92,7 +92,16 @@ const AE = (() => {
   const stored = GM_getValue(SETTINGS_KEY, {});
   // Pre-2.4 installs saved the on/off switches as `tools`; carry them over.
   if (stored.tools && !stored.crystals) { stored.crystals = stored.tools; delete stored.tools; }
+  // 2.22.0: the screen protector is on for everyone, once, including anyone who switched it off while it was Experimental.
+  if (!GM_getValue('ae_refresh_labor_on', false)) {
+    if (stored.autoClose && stored.autoClose.refreshLabor === false) { stored.autoClose.refreshLabor = null; GM_setValue(SETTINGS_KEY, stored); }
+    GM_setValue('ae_refresh_labor_on', true);
+  }
   const settings = merge(DEFAULTS, stored);
+  // Aethernet-wide settings from the admin panel (Settings tab), sent with the store access check
+  // (01-access.js) and kept here, so they apply right away on the next load.
+  const CONFIG_KEY = 'ae_config', CONFIG_DEFAULTS = { cleaningTarget: 75 };
+  const config = () => Object.assign({}, CONFIG_DEFAULTS, GM_getValue(CONFIG_KEY, {}));
   const saveSettings = (next) => GM_setValue(SETTINGS_KEY, next);
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -615,17 +624,18 @@ const AE = (() => {
     background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
   .sg-confirm .sg-actions .sg-btn { flex:1; }
   `;
-  function confirmDialog({ title, message, warning, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) {
+  // icon: a crystal/spell id shown left of the title. cancelLabel: null = no Cancel button (a notice with just OK).
+  function confirmDialog({ title, message, warning, icon: iconId, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) {
     ensureCss();
     if (!document.getElementById('sg-confirm-css')) document.head.append(h('style', { id: 'sg-confirm-css' }, CONFIRM_CSS));
     return new Promise((resolve) => {
       const done = (v) => { scrim.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
       const ok = h('button', { type: 'button', class: 'sg-btn sg-lg sg-primary', onclick: () => done(true) }, confirmLabel);
       const card = h('div', { class: 'sg sg-card sg-confirm', role: 'alertdialog', 'aria-modal': 'true' },
-        h('h2', null, title),
+        iconId ? h('h2', { style: 'display:flex;align-items:center;gap:10px' }, h('span', { html: actionIcon(iconId, 28), style: 'line-height:0;flex:none' }), title) : h('h2', null, title),
         message ? h('div', { html: message }) : null,
         warning ? h('div', { class: 'sg-warn' }, warning) : null,
-        h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => done(false) }, cancelLabel), ok));
+        h('div', { class: 'sg-actions' }, cancelLabel === null ? null : h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => done(false) }, cancelLabel), ok));
       const scrim = h('div', { class: 'sg sg-confirm-scrim', onclick: (e) => { if (e.target === scrim) done(false); } }, card);
       const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
       document.addEventListener('keydown', onKey, true);
@@ -635,6 +645,7 @@ const AE = (() => {
   }
 
   // Small status card, bottom-left, auto-dismissing. kind: 'ok' | 'err' | 'busy'
+  // text: plain text, or { html } for markup Aethernet built itself (e.g. an AE.bugLink).
   function toast(title, text, kind = 'ok', ms = 6000) {
     ensureCss();
     const mark = kind === 'busy' ? '<span class="sg-spin" style="margin-top:2px"></span>'
@@ -642,7 +653,7 @@ const AE = (() => {
     const el = h('div', { class: 'sg sg-card sg-toast', role: 'status', style:
       'position:fixed;z-index:2147483647;left:16px;bottom:16px;max-width:420px;padding:12px 16px;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4;animation:sg-in .2s ease-out' +
       (kind === 'err' ? ';border-color:var(--aui-status-error,#b91a24)' : ''),
-      html: mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">' + esc(title) + '</b>' + esc(text) + '</div>' });
+      html: mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">' + esc(title) + '</b>' + (text && typeof text === 'object' ? text.html : esc(text)) + '</div>' });
     document.querySelectorAll('.sg-toast').forEach((t) => t.remove());
     document.body.appendChild(el);
     if (kind !== 'busy') setTimeout(() => el.remove(), ms);
@@ -669,16 +680,20 @@ const AE = (() => {
         workOrderStatusIds: primaryFilter === 'Active' ? OPEN_STATUS_IDS : [],
         order: primaryFilter === 'Active' ? 'nextUpdate,DESC' : 'createdAt,DESC',
       });
-      return (j && j.workOrders) || [];
+      const rows = (j && j.workOrders) || [];
+      rows.count = j && Number.isInteger(j.rowCount) ? j.rowCount : null; // Portal's total for this filter
+      return rows;
     }
     // All open WOs, plus closed WOs created since `sinceMs` (newest first,
     // so paging stops once past it). maxClosedPages bounds old lookbacks.
     async function workorders(sinceMs, maxClosedPages = PAGE_CAP) {
       const byId = new Map();
+      // Page by Portal's own total (rowCount), not by a short page: a server that sends fewer rows
+      // per page than asked would otherwise end the list early (and open WOs would look closed).
       for (let p = 1; p <= PAGE_CAP; p++) {
         const rows = await listPage('Active', p);
         rows.forEach((r) => byId.set(r.workorderId, r));
-        if (rows.length < PAGE_SIZE) break;
+        if (!rows.length || (rows.count != null ? byId.size >= rows.count : rows.length < PAGE_SIZE)) break;
       }
       for (let p = 1; p <= maxClosedPages; p++) {
         const rows = await listPage('Closed', p);
@@ -854,12 +869,14 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close crystal when it's enabled
+    // Bug report links (06-feedback.js replaces these; without it, e.g. the demo build, just the words).
+    bugLink: (label) => esc(label), bugLinkEl: (label) => h('span', null, label),
   };
 })();
 
@@ -897,6 +914,7 @@ AE.gate = (() => {
     const res = await fetch(API + '/v1/' + p.storeId + '/access' + q, { headers: { 'x-aethernet-key': KEY }, credentials: 'omit', cache: 'no-store' });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
+    if (j.config && typeof j.config === 'object') GM_setValue(AE.CONFIG_KEY, j.config); // Aethernet-wide settings (admin panel)
     return !!j.allowed;
   }
 
@@ -956,7 +974,8 @@ AE.gate = (() => {
   Glamour on the login page: your own picture in place of Portal's (the photo
   on the purple panel, or filling the whole panel), and the Aethernet mark in
   the bottom-left corner. Settings: Glamour → Login page
-  (settings.glamour.login = { image: data URL or '', fill, mark }).
+  (settings.glamour.login = { image: data URL or '', blank, fill, mark }; blank = no picture and no
+  headline: just the purple panel).
 
   Runs before the store check (01-access.js): nobody is signed in on the
   login page, so there's no store to check. It applies only if this browser
@@ -977,6 +996,7 @@ AE.loginPage = (() => {
     #ae-login-img { object-fit: contain !important; object-position: center bottom; max-width: 100%; } /* any shape shows whole, standing on the bottom like Portal's photo */
     .ae-login-fill { background: var(--ae-login-image) center / cover no-repeat !important; }
     .ae-login-fill > :not(#ae-login-img) { visibility: hidden; }
+    .ae-login-blank > * { visibility: hidden !important; }
     #ae-login-mark { position: fixed; left: 16px; bottom: 14px; z-index: 10; display: flex; align-items: center; gap: 6px; color: #8223d2; opacity: .85; }
   `;
   const allowed = () => false || (GM_getValue('ae_access', null) || {}).allowed === true;
@@ -998,6 +1018,7 @@ AE.loginPage = (() => {
     document.getElementById('ae-login-mark')?.remove();
     document.querySelectorAll('.ae-login-hidden').forEach((e) => e.classList.remove('ae-login-hidden'));
     document.querySelectorAll('.ae-login-fill').forEach((e) => { e.classList.remove('ae-login-fill'); e.style.removeProperty('--ae-login-image'); });
+    document.querySelectorAll('.ae-login-blank').forEach((e) => e.classList.remove('ae-login-blank'));
   }
 
   function paint() {
@@ -1011,7 +1032,11 @@ AE.loginPage = (() => {
 
     // The picture
     let mine = document.getElementById('ae-login-img');
-    if (!c.image) {
+    panel.classList.toggle('ae-login-blank', !!c.blank);
+    if (c.blank) {
+      mine?.remove(); photo.classList.remove('ae-login-hidden');
+      panel.classList.remove('ae-login-fill'); panel.style.removeProperty('--ae-login-image');
+    } else if (!c.image) {
       mine?.remove(); photo.classList.remove('ae-login-hidden');
       panel.classList.remove('ae-login-fill'); panel.style.removeProperty('--ae-login-image');
     } else if (c.fill) {
@@ -1059,11 +1084,21 @@ AE.boot = function aethernetBoot() {
 
     {
       "latest":   { "version": "2.11.0", "date": "…" },        // set by build.py --release
+      "bulletins": {                                         // (2.22.0+) Master's Mend bulletin rules, set by build.py --bulletin-…
+        "pages":     ["^/repair/workorder/\\d+"],           // where bulletins get Collapse / Hide for today (replaces the built-in list)
+        "patterns":  ["shorty", "modal"],                   // extra Appcues pattern types that count as bulletins
+        "selectors": ["appcues-experience-container"],      // extra CSS selectors for a bulletin's box (page, shadow roots, frames)
+        "closers":   [".appcues-skip"]                      // extra close buttons to hide (they dismiss a bulletin for good)
+      },
       "incident": {                                          // set by build.py --status …
         "id", "severity": "info|warning|error", "title", "message",
         "crystals": ["cleaningRate"],   // which crystals it's about (badges in Settings; a crystal's name in
                                         // the title becomes its icon + a link to its Settings)
-        "tag": "Fixed in future version", // the badge's text on those crystals' Settings rows (default "Known issue")
+        "tag": "…",                     // (2.21.0) the badge's text on those crystals' rows (default "Known issue")
+        "mentions": ["fixes"],          // (2.22.0+) named in the title (icon + link to Settings), no badge
+        "chips": [{ "id": "fixes", "text": "Fix in a newer version", "below": "2.22.0" }],
+                                        // (2.22.0+) badges on crystals' Settings rows; `below`: only on
+                                        // installs older than that version (the fixed one never shows it)
         "pause": ["autoClose"],         // kill switch: these crystals stop acting
         "fixedIn": "2.10.1",            // installs at/after this version stop showing it
         "posted", "updated"
@@ -1092,10 +1127,17 @@ AE.status = (() => {
   const ids = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && /^[A-Za-z]{1,30}$/.test(x)).slice(0, 12) : []);
 
   function clean(raw) {
-    const out = { latest: null, incident: null };
+    const out = { latest: null, incident: null, bulletins: null };
     if (!raw || typeof raw !== 'object') return out;
     const l = raw.latest;
     if (l && VER_RE.test(l.version || '')) out.latest = { version: l.version, date: text(l.date, 40) };
+    // Bulletin rules: plain strings, length- and count-capped; used as regexes / CSS selectors
+    // (each one tried on its own, so a bad one is just skipped). Data only: nothing here runs.
+    const strs = (a, n, re) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && x.length && x.length <= 200 && (!re || re.test(x))).slice(0, n) : []);
+    const b = raw.bulletins;
+    if (b && typeof b === 'object') {
+      out.bulletins = { pages: strs(b.pages, 20), patterns: strs(b.patterns, 12, /^[a-z-]{1,24}$/), selectors: strs(b.selectors, 20), closers: strs(b.closers, 20) };
+    }
     const i = raw.incident;
     if (i && typeof i === 'object' && text(i.title, 140)) {
       out.incident = {
@@ -1107,6 +1149,9 @@ AE.status = (() => {
         pause: ids(i.pause),
         fixedIn: VER_RE.test(i.fixedIn || '') ? i.fixedIn : null,
         tag: text(i.tag, 40),
+        mentions: ids(i.mentions),
+        chips: (Array.isArray(i.chips) ? i.chips : []).filter((c) => c && ids([c.id]).length).slice(0, 12)
+          .map((c) => ({ id: c.id, text: text(c.text, 40) || 'Known issue', below: VER_RE.test(c.below || '') ? c.below : null })),
         updated: text(i.updated || i.posted, 40),
       };
     }
@@ -1121,6 +1166,16 @@ AE.status = (() => {
     return i && !(i.fixedIn && !newer(i.fixedIn, AE_VERSION)) ? i : null;
   };
   const paused = (id) => !!incident() && incident().pause.includes(id);
+  // The badge for a crystal's Settings row, if any: paused, a (version-gated) chip, or "Known issue" for a crystal it's about.
+  function chipFor(id) {
+    const inc = incident();
+    if (!inc) return null;
+    if (inc.pause.includes(id)) return { text: 'Paused', kind: 'paused', title: inc.title };
+    const c = inc.chips.find((x) => x.id === id);
+    if (c) return !c.below || newer(c.below, AE_VERSION) ? { text: c.text, kind: inc.severity, title: inc.title } : null;
+    if (inc.crystals.includes(id)) return { text: inc.tag || 'Known issue', kind: inc.severity, title: inc.title };
+    return null;
+  }
   const crystalName = (id) => (AE.crystals.find((c) => c.id === id) || {}).name || id;
 
   // For a crystal's action: true (and says why) when it's paused remotely.
@@ -1196,8 +1251,8 @@ AE.status = (() => {
   #sg-status-banner .body { flex:1; min-width:0; }
   #sg-status-banner .title { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-weight:700; }
   #sg-status-banner .title .sg-aicon { width:18px; height:18px; }
-  #sg-status-banner .crys { display:inline-flex; align-items:center; gap:4px; color:inherit; text-decoration:underline; text-underline-offset:2px; vertical-align:-3px; }
-  #sg-status-banner .crys .sg-aicon { width:18px; height:18px; }
+  #sg-status-banner .crys { color:inherit; text-decoration:underline; text-underline-offset:2px; } /* inline, so its text sits on the line's baseline */
+  #sg-status-banner .crys .sg-aicon { display:inline-block; width:18px; height:18px; vertical-align:-4px; margin-right:4px; }
   #sg-status-banner .who { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; opacity:.75; }
   #sg-status-banner .msg { margin-top:2px; overflow-wrap:anywhere; }
   #sg-status-banner .extra { margin-top:6px; font-size:13px; font-weight:600; }
@@ -1224,12 +1279,16 @@ AE.status = (() => {
     el.style.top = Math.round(top + 10) + 'px';
   }
 
-  // The title, with each named crystal's name turned into its icon + a link to its Settings
-  // (built as elements: the notice text stays plain text). Crystals not named get their icon up front.
-  function titleParts(inc) {
-    let parts = [inc.title];
-    const lead = [];
-    for (const id of inc.crystals) {
+  // Does the notice point to a fix in a newer version than this install? (fixedIn ahead of us,
+  // or a version-gated chip that applies here.)
+  const needsNewer = (inc) => (inc.fixedIn && newer(inc.fixedIn, AE_VERSION)) || inc.chips.some((c) => c.below && newer(c.below, AE_VERSION));
+
+  // Notice text with each named crystal's name turned into its icon + a link to its Settings (built as
+  // elements: the notice text stays plain text). The title also gets the icons of crystals it doesn't name.
+  function linkNames(inc, text, lead) {
+    let parts = [text];
+    const icons = [];
+    for (const id of [...new Set([...inc.crystals, ...inc.mentions])]) {
       const name = crystalName(id);
       let hit = false;
       parts = parts.flatMap((p) => {
@@ -1239,10 +1298,11 @@ AE.status = (() => {
         return [p.slice(0, i), h('a', { href: '#', class: 'crys', title: 'Open ' + name + ' in Settings', onclick: (e) => { e.preventDefault(); AE.openSettings(id); } },
           h('span', { html: AE.actionIcon(id, 18) }), name), p.slice(i + name.length)];
       });
-      if (!hit) lead.push(h('span', { title: name, html: AE.actionIcon(id, 18) }));
+      if (lead && !hit && inc.crystals.includes(id)) icons.push(h('span', { title: name, html: AE.actionIcon(id, 18) }));
     }
-    return [...lead, h('span', null, ...parts.filter((p) => p !== ''))];
+    return [...icons, h('span', null, ...parts.filter((p) => p !== ''))];
   }
+  const titleParts = (inc) => linkNames(inc, inc.title, true);
 
   function renderBanner() {
     const inc = incident();
@@ -1258,12 +1318,14 @@ AE.status = (() => {
       h('span', { class: 'mark', title: AE_NAME, html: icon('aetheryte', 26) }),
       h('div', { class: 'body' },
         h('div', { class: 'title' }, h('span', { class: 'who' }, AE_NAME + ' notice'), ...titleParts(inc)),
-        inc.message ? h('div', { class: 'msg' }, inc.message) : null,
+        inc.message ? h('div', { class: 'msg' }, ...linkNames(inc, inc.message, false)) : null,
         pausedNames.length ? h('div', { class: 'extra' }, 'Paused until it\'s fixed: ' + pausedNames.join(', ') + '.') : null,
         inc.fixedIn ? h('div', { class: 'extra' }, 'Fixed in v' + inc.fixedIn + '. You have v' + AE_VERSION + '.') : null,
         h('div', { class: 'acts' },
-          inc.fixedIn && upd ? h('button', { type: 'button', class: 'sg-btn', onclick: () => startUpdate(upd) }, 'Update now') : null,
-          inc.crystals.length ? h('button', { type: 'button', class: 'sg-btn', onclick: () => AE.openSettings(inc.crystals[0]) }, 'Open in Settings') : null)),
+          // The notice says a fix is in a newer version than this one: offer to get it.
+          needsNewer(inc) ? (upd ? h('button', { type: 'button', class: 'sg-btn', onclick: () => startUpdate(upd) }, 'Update now')
+            : false ? null : h('button', { type: 'button', class: 'sg-btn', onclick: () => checkNow() }, 'Check for updates')) : null,
+          inc.crystals.length || inc.mentions.length ? h('button', { type: 'button', class: 'sg-btn', onclick: () => AE.openSettings(inc.crystals[0] || inc.mentions[0]) }, 'Open in Settings') : null)),
       h('button', { type: 'button', class: 'sg-x', title: 'Dismiss (it comes back if the notice is updated)', onclick: () => { GM_setValue(DISMISS_KEY, key); el.remove(); } }, '✕'));
     document.body.appendChild(el);
     placeBanner();
@@ -1307,7 +1369,7 @@ AE.status = (() => {
   // Dev tools: show a pretend status.json (not saved; the next real check replaces it).
   function simulate(raw) { state = clean(raw); GM_deleteValue(DISMISS_KEY); GM_deleteValue(UPDATE_DISMISS_KEY); render(); }
 
-  return { get: () => state, incident, paused, blocked, refresh, checkNow, startUpdate, updateAvailable, newer, simulate, url: STATUS_URL };
+  return { get: () => state, incident, paused, chipFor, blocked, refresh, checkNow, startUpdate, updateAvailable, newer, simulate, url: STATUS_URL };
 })();
 
 // ===== 05-settings.js =====
@@ -1323,25 +1385,25 @@ AE.status = (() => {
 
   // Crystals are named after FFXIV actions; the description says what each does.
   const CRYSTAL_INFO = [
-    ['cleaningRate', 'Divination', "Live cleaning rate: header badge with today's cleaning percentage."],
+    ['cleaningRate', 'Divination', "Your store's live cleaning rate - shoot for 100% or more!"],
     // The demo build (false) ships only Divination, Swiftcast and Glamour; the
     // rest sit in false ? [] : […] so their text isn't in that file at all.
     ...(false ? [] : [
-    ['woCleanings', 'Esuna', 'WO cleanings pill: shows whether a work order\'s device has cleanings, with Create for available ones.'],
-    ['textNotes', 'Recitation', 'Text → WO note: when you text a customer from a WO, the text is added to the WO notes.'],
+    ['woCleanings', 'Esuna', 'Divination but for your work order page, with an easy Swiftcast button.'],
+    ['textNotes', 'Recitation', 'Imprints a work order with the text of your message, whenever you text a customer from a WO. **This does not work anywhere else; only inside of a work order!**'],
     ]),
-    ['autoClose', 'Swiftcast', 'Cleaning auto-close: one-click check-in → complete sale on cleaning arrivals.'],
+    ['autoClose', 'Swiftcast', 'Your new favorite tool. Auto-close cleanings in one click - even multiple at once.'],
     ...(false ? [] : [
-    ['galaxy', 'Macrocosmos', 'Galaxy Diagnostics exception: pre-fills the Sprinklr exception form from a Samsung WO.'],
-    ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
-    ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
+    ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],
+    ['buybacks', 'Bountiful Yield', 'Set of handy "add all" buttons for setting up your Buybacks and RMAs.'],
+    ['printLabels', 'Quick Synthesis', '\'Print All\' for your Receiving. No longer shall you have to manually print 20+ generic SKU labels!'],
     ]),
-    ['glamour', 'Glamour', 'Page theming: recolour Portal with a preset theme or one you make.'],
+    ['glamour', 'Glamour', 'Beautify your Portal - change the colors of your pages and change the image on your login page.'],
     ...(false ? [] : [
-    ['waymark', 'Waymark', 'Work-order tags: tag WOs for the whole store and see them grouped on a board.'],
-    ['countCheck', 'Lay of the Land', 'Inventory count check: on a count, shows which expected serials haven\'t been scanned yet, and any unexpected scans.'],
-    ['rowColors', 'Rainbow Drip', 'WO list colors: colors each row of the work-order list by its status.'],
-    ['fixes', "Master's Mend", 'Small fixes to Portal, each with its own switch.'],
+    ['waymark', 'Waymark', 'Keep track of important details on your WOs; tagging that the whole store can see, along with a board at the top of the screen that groups all the info together.'],
+    ['countCheck', 'Lay of the Land', 'Restoring the inventory count experience to what we remember - variance and unscanned serials at Arm\'s Length.'],
+    ['rowColors', 'Rainbow Drip', 'Restoring the work orders list to what you remember, with colors for each status. Goodbye, corporate minimalism! (sorta.)'],
+    ['fixes', "Master's Mend", 'Doing what a million dollar company can\'t; fixing genuinely annoying issues.'],
     ]),
   ];
 
@@ -1418,6 +1480,14 @@ AE.status = (() => {
   .sg-flair .ic { flex:none; width:18px; height:18px; margin-top:1px; color:#d6a000; line-height:0; }
   .sg-flair b { color:var(--aui-primary, #8223d2); }
   @keyframes sg-flair { 0%, 100% { background-position:0 0, 100% 0; } 50% { background-position:0 0, 0% 0; } }
+  .sg-fixed { margin:10px 0 2px; }
+  .sg-fixed .hd { font-size:12px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); margin-bottom:6px; }
+  .sg-fixed figure { position:relative; margin:0 0 8px; padding:10px 12px 10px 14px; border-radius:12px; border-left:4px solid var(--aui-status-success, #136d31);
+    background:var(--aui-neutral-soft, #f1f0f4); }
+  .sg-fixed blockquote { margin:0 70px 4px 0; font-style:italic; overflow-wrap:anywhere; }
+  .sg-fixed figcaption { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-fixed .ok { position:absolute; top:8px; right:10px; padding:1px 8px; border-radius:10000rem; font-size:11px; font-weight:700;
+    background:var(--aui-status-success-soft, #c5ffc8); color:var(--aui-status-on-success-soft, #062011); }
   .sg-patch .tag.thanks { background:linear-gradient(105deg, #ffcc00, #b36cf0); color:#2b0a47; }
   @media (prefers-reduced-motion: reduce) { .sg-flair { animation:none; } }
   .sg-about-scrim { position:fixed; inset:0; z-index:2147483647; background:var(--aui-scrim-overlay, #0c0e1180);
@@ -1587,8 +1657,6 @@ AE.status = (() => {
       h('h4', null, 'Share with another store'),
       h('div', { class: 'link-row' }, linkInput, copyBtn),
       h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Open the link with Tampermonkey installed to add ' + AE_NAME + '. Installs update themselves.'),
-      h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'The installed file is minified to keep it small. ',
-        h('a', { href: AE_READABLE_URL, target: '_blank', rel: 'noopener', style: 'color:var(--aui-primary,#8223d2)' }, 'Read the source'), ' (the same build, unminified).'),
       h('div', { class: 'fine' }, 'A personal project. Not affiliated with or supported by Asurion or uBreakiFix.'),
       h('div', { class: 'fine', style: 'margin-top:4px' }, 'Crystal icons are FINAL FANTASY XIV action icons. © SQUARE ENIX. Not affiliated with Square Enix.'),
       h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')));
@@ -1602,7 +1670,7 @@ AE.status = (() => {
   // Patch notes — its own modal, above Settings. Every release is a panel,
   // newest first. `since` (the version you updated from) expands everything
   // newer than it; otherwise just the latest is open.
-  const PATCH_NOTES = [{"version": "2.21.0", "notes": ["**Swiftcast**: if Portal's server briefly fails a status change (like \"Error while fetching service bench details\"), Swiftcast now waits a moment and tries again, up to twice, instead of stopping. Status changes are safe to repeat, so nothing is done twice.", "**Master's Mend**: announcement boxes on work orders (like \"Apple iOS 27 and Repair Mode\") get **\u2013 Collapse**, which shrinks one to an icon at the bottom left, and **Hide for today**. They never disappear for good: click the icon to bring one back. A new announcement always shows.", "**Master's Mend**: scan to open works again. Portal now keeps some hidden dialogs on every page, and Aethernet mistook them for open ones, so it ignored every scan. It also works on **Arrivals** and inventory's list pages now (purchase orders, counts, RMA/buyback and store products), but still never while checking in or out, on a PO, while receiving, or during a count. If a scan still doesn't work, send a bug report from that page: it now includes your last few scans and what happened to each. For a live view, turn on **Show scan debugging** (Settings \u2192 Master's Mend \u2192 Scan to open) to see exactly what the scanner sent and why nothing happened."], "updated": ["autoClose", "fixes"], "date": "2026-10-02T22:35:44Z"}, {"version": "2.20.0", "notes": ["**Divination**: link a cleaning to its order by hand. When a cleaning can't be matched automatically (for example, the carrier set it up on the customer's other phone), pick the order from **Link to\u2026** next to it in the cleaning rate panel. The link counts for everyone at the store, in today's rate and the history, and shows who linked it, with **Undo**."], "updated": ["cleaningRate"], "date": "2026-10-02T16:59:02Z"}, {"version": "2.19.0", "notes": ["**Swiftcast**: the experimental commission option now adds the right item, the **Verizon Free Screen Protector (101516)**, the same way Portal's checkout does. Portal credits it back, so the sale stays $0. It's still off by default while it's being verified (Settings \u2192 Swiftcast).", "**Divination**: the Reports page now scrolls when the cleaning rate history makes it taller than the window, so the whole card (and the day-by-day table) can be reached.", "**Master's Mend**: Portal's **Support Ticket** and **Enhancement Idea** buttons now fit in: Support Ticket is a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before (Settings \u2192 Master's Mend to turn it off).", "**Divination**, **Esuna** and **Swiftcast**: cleanings now find their work order even when the carrier used the phone's *other* IMEI. Dual-SIM phones (most recent iPhones and Samsungs) have two; when the IMEIs differ, a cleaning still links if it's the same phone model for a customer with the same name."], "updated": ["autoClose", "cleaningRate", "fixes", "woCleanings"], "date": "2026-10-02T16:27:41Z"}, {"version": "2.18.0", "notes": ["**Divination**: a **Cleaning rate history** card on the Reports page shows your cleaning percentage over the last 7, 30 or 90 days, this month or last month: the overall rate, how many days hit the target, a bar for each day and a day-by-day table.", "**Master's Mend**: if Portal's Reports page is stuck loading, a warning explains the usual cause: an ad blocker like uBlock Origin blocks Portal's reports. Turn it off for Portal and reload.", "**Swiftcast**: new **experimental** option to add the refresh labor SKU (10156) to Verizon Device Refresh cleanings, for commission. It's still being tested, so it's off by default (Settings \u2192 Swiftcast \u2192 Refresh labor). If the labor can't be added, the cleaning is still completed at $0.", "**Swiftcast**: the old lightning bolt button has been replaced by one button named for what's waiting. With one cleaning it's **Swiftcast** (now with its real icon); with two it becomes **Dualcast** and creates both, one after the other; with three or more, **Triplecast**. Right-click Dualcast or Triplecast to close only this cleaning. A short explainer shows the first time. Dualcast is also in Esuna's list and Divination's panel, and can be turned off in Settings under Swiftcast.", "**Swiftcast**, **Quick Synthesis** and **Macrocosmos**: some visual changes to enhance the feel of these crystals.", "**Swiftcast**, **Dualcast** and **Triplecast** now keep you from reloading the page mid-cast, so no work order gets left half-done: F5 / Ctrl+R / Cmd+R do nothing until the cast ends, and closing the tab or using the browser's reload button asks first. The box reminds you while it runs."], "thanks": ["**C.Boyd** at Lexington, for the idea for **Divination**'s cleaning rate history!", "**C.Pritchard** at Lynnhaven, for the idea for **Swiftcast**'s refresh labor option!"], "updated": ["cleaningRate", "autoClose", "woCleanings", "printLabels", "galaxy", "fixes"], "date": "2026-10-02T00:06:27Z"}, {"version": "2.17.1", "notes": ["Patch notes: thank-yous and credits now get their own highlight, so the people who help build Aethernet stand out."], "date": "2026-10-01T05:32:00Z"}, {"version": "2.17.0", "notes": ["New crystal: **Rainbow Drip**. Work-order lists color each row by its status: red for Ready for work; blue for Diagnostics, Work in progress and Quality check; green for Ready for pickup; purple for Need to order, Ready for diag and Repair summary; yellow for Awaiting callback, Awaiting item and Awaiting device. It replaces the **UBIF Status Row Classes** script: if that's still running, you'll see how to turn it off.", "New crystal: **Master's Mend**, small fixes to Portal, each with its own switch in Settings. First fix: the ubreakifix logo in the top left is now a real link to the dashboard, so you can middle-click or right-click it to open a new tab.", "No more reloading to see changes: a text logged by **Recitation** shows in the WO notes right away, and so do Auto-Waymark nickname changes and cleanings closed out by **Swiftcast**. The page refreshes its data in place.", "**Master's Mend**: scan to open. Scan a WO label to open that work order, or an item label to open the item, from the dashboard, the work-order list or a customer. On a WO, scanned items are still added to it, and scanning does nothing on inventory, check-in or check-out pages or while you're typing in a field. Scanners that were a little too slow for Portal's own scan features now work with them too.", "**Glamour**: make the login page yours. In Glamour's settings, under **Login page**, choose a picture to replace Portal's photo (best fit: 768 \u00d7 871 px, shown in the setting), or fill the whole purple panel with it, and show the Aethernet mark in the bottom-left corner.", "**Master's Mend**: sort the Work orders list by any column. Click the arrows beside a column name. Most columns sort across every page; Customer, Device/Issue, Location, Service Outcome, Completed and Created/Cancelled By sort the page you're on (their arrows are underlined).", "**Auto-Waymark**: texting the customer from a work order at Ready for pickup restarts its follow-up: the Auto-Waymark (and nickname) moves to 3 days from that day. It only ever moves later, and works whether or not Recitation is on.", "**Waymark**: managers can clear a tag straight from the board with the \u00d7 on it. Everyone else removes tags from the work order as before.", "**Master's Mend**: a **Hide auto notes** switch at the top of a work order's notes hides the automatic notes (status changes, check-in logs and the like), and loads every note on the work order, so you see the whole history of what people wrote, not just the first page. Flip it back any time; nothing is deleted.", "**Master's Mend**: a **Not contacted** chip on the Arrivals page, next to Portal's own (look for the Aethernet mark on its corner), lists every arrival that hasn't been contacted yet, from every page at once. Click an arrival to open it as usual; any other chip goes back to Portal's list. In Settings (Master's Mend), choose whether it lists all statuses or only arrivals that are still Not confirmed.", "Crystals that changed in an update now get a purple **Updated** sheen in Settings, like the yellow one on new crystals.", "Settings: **Save & reload** glows while you have changes to save. The **Aethernet has updated!** pill now goes away by itself after 10 seconds (the ring around its \u2715 counts down; hovering pauses it)."], "updated": ["textNotes", "autoClose", "glamour", "waymark"], "date": "2026-10-01T05:28:46Z", "thanks": ["**B.Young** at Lexington, for letting us crystallize **Rainbow Drip** from their script!"]}, {"version": "2.16.0", "notes": ["New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates as each item is scanned, without losing your place in the list.", "**Divination**: its icon now shows in its panel.", "Aethernet is now available store by store. If your store doesn't have access yet, you'll see a notice instead, and nothing else loads until it's added.", "**Swiftcast** won't create cleanings while the store is closed (after **Close store** in Portal). Open the store first.", "**Bountiful Yield** now works on RMA orders too: **Add all RMA parts** in the Add RMA parts popout. It stops if the RMA's line limit is reached."], "date": "2026-09-30T22:37:40Z"}, {"version": "2.15.0", "notes": ["New: **Send feedback**. Report a bug or suggest something straight from Portal: avatar menu \u2192 **Send Aethernet feedback**, or the link at the bottom of Settings. Bug reports can include technical details to help track the problem down (never customer details).", "Suggestions that get built are credited here in the patch notes."], "date": "2026-09-30T05:45:13Z"}, {"version": "2.14.1", "notes": ["Auto-Waymark: if a work order's nickname already has a date in it (like \"PS5 SLIM (10/01)\"), that date becomes its Auto-Waymark date. Otherwise it's 3 days after it reached Ready for pickup, as before.", "Fixed: work orders already at Ready for pickup when 2.14.0 arrived were dated from their last update instead of the date in their nickname. Their Auto-Waymarks have been corrected."], "date": "2026-09-30T00:47:16Z"}, {"version": "2.14.0", "notes": ["New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.", "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.", "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **\u00d7** removes it for good.", "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.", "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."], "date": "2026-09-30T00:37:49Z"}, {"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
+  const PATCH_NOTES = [{"version": "2.22.0", "notes": ["**Swiftcast**: VZ Device Refresh cleanings now get the **Verizon Free Screen Protector (101516)** added automatically at checkout, for your commission. Portal credits it back, so the sale stays $0. It's on for everyone; switch it off in Settings \u2192 Swiftcast if you'd rather not.", "**Master's Mend**: Collapse and Hide for today now work on more kinds of announcement boxes, and new kinds can be added without updating Aethernet. If a box doesn't get the buttons, send a bug report from that page: it now says which boxes are on the page.", "**Master's Mend**: scan to open now also works on the **Sales** page (not during a checkout or refund).", "Patch notes now quote the bug reports each version fixes, with a thank-you to whoever sent them. Keep them coming: **Send Aethernet feedback** in the avatar menu.", "Announcements about a fix in a newer version now have a **Check for updates** button (or **Update now** once it's out).", "**Waymark**: tags now show on Portal's **Work orders list**: one tag beside each customer's name, plus **+N** for the rest, without making rows any taller. Hover a row to add or remove tags right from the list. Optional: a Waymark tag filter next to Portal's filters (off by default). All three are switches in Settings \u2192 Waymark."], "updated": ["fixes", "autoClose", "waymark"], "reports": [{"id": 6, "quote": "Sales page scans not working", "credit": "J.FARKASOVSKY", "store": "Erie PA"}]}, {"version": "2.21.0", "notes": ["**Swiftcast**: if Portal's server briefly fails a status change (like \"Error while fetching service bench details\"), Swiftcast now waits a moment and tries again, up to twice, instead of stopping. Status changes are safe to repeat, so nothing is done twice.", "**Master's Mend**: announcement boxes on work orders (like \"Apple iOS 27 and Repair Mode\") get **\u2013 Collapse**, which shrinks one to an icon at the bottom left, and **Hide for today**. They never disappear for good: click the icon to bring one back. A new announcement always shows.", "**Master's Mend**: scan to open works again. Portal now keeps some hidden dialogs on every page, and Aethernet mistook them for open ones, so it ignored every scan. It also works on **Arrivals** and inventory's list pages now (purchase orders, counts, RMA/buyback and store products), but still never while checking in or out, on a PO, while receiving, or during a count. If a scan still doesn't work, send a bug report from that page: it now includes your last few scans and what happened to each. For a live view, turn on **Show scan debugging** (Settings \u2192 Master's Mend \u2192 Scan to open) to see exactly what the scanner sent and why nothing happened."], "updated": ["autoClose", "fixes"], "date": "2026-10-02T22:35:44Z"}, {"version": "2.20.0", "notes": ["**Divination**: link a cleaning to its order by hand. When a cleaning can't be matched automatically (for example, the carrier set it up on the customer's other phone), pick the order from **Link to\u2026** next to it in the cleaning rate panel. The link counts for everyone at the store, in today's rate and the history, and shows who linked it, with **Undo**."], "updated": ["cleaningRate"], "date": "2026-10-02T16:59:02Z"}, {"version": "2.19.0", "notes": ["**Swiftcast**: the experimental commission option now adds the right item, the **Verizon Free Screen Protector (101516)**, the same way Portal's checkout does. Portal credits it back, so the sale stays $0. It's still off by default while it's being verified (Settings \u2192 Swiftcast).", "**Divination**: the Reports page now scrolls when the cleaning rate history makes it taller than the window, so the whole card (and the day-by-day table) can be reached.", "**Master's Mend**: Portal's **Support Ticket** and **Enhancement Idea** buttons now fit in: Support Ticket is a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before (Settings \u2192 Master's Mend to turn it off).", "**Divination**, **Esuna** and **Swiftcast**: cleanings now find their work order even when the carrier used the phone's *other* IMEI. Dual-SIM phones (most recent iPhones and Samsungs) have two; when the IMEIs differ, a cleaning still links if it's the same phone model for a customer with the same name."], "updated": ["autoClose", "cleaningRate", "fixes", "woCleanings"], "date": "2026-10-02T16:27:41Z"}, {"version": "2.18.0", "notes": ["**Divination**: a **Cleaning rate history** card on the Reports page shows your cleaning percentage over the last 7, 30 or 90 days, this month or last month: the overall rate, how many days hit the target, a bar for each day and a day-by-day table.", "**Master's Mend**: if Portal's Reports page is stuck loading, a warning explains the usual cause: an ad blocker like uBlock Origin blocks Portal's reports. Turn it off for Portal and reload.", "**Swiftcast**: new **experimental** option to add the refresh labor SKU (10156) to Verizon Device Refresh cleanings, for commission. It's still being tested, so it's off by default (Settings \u2192 Swiftcast \u2192 Refresh labor). If the labor can't be added, the cleaning is still completed at $0.", "**Swiftcast**: the old lightning bolt button has been replaced by one button named for what's waiting. With one cleaning it's **Swiftcast** (now with its real icon); with two it becomes **Dualcast** and creates both, one after the other; with three or more, **Triplecast**. Right-click Dualcast or Triplecast to close only this cleaning. A short explainer shows the first time. Dualcast is also in Esuna's list and Divination's panel, and can be turned off in Settings under Swiftcast.", "**Swiftcast**, **Quick Synthesis** and **Macrocosmos**: some visual changes to enhance the feel of these crystals.", "**Swiftcast**, **Dualcast** and **Triplecast** now keep you from reloading the page mid-cast, so no work order gets left half-done: F5 / Ctrl+R / Cmd+R do nothing until the cast ends, and closing the tab or using the browser's reload button asks first. The box reminds you while it runs."], "thanks": ["**C.Boyd** at Lexington, for the idea for **Divination**'s cleaning rate history!", "**C.Pritchard** at Lynnhaven, for the idea for **Swiftcast**'s refresh labor option!"], "updated": ["cleaningRate", "autoClose", "woCleanings", "printLabels", "galaxy", "fixes"], "date": "2026-10-02T00:06:27Z"}, {"version": "2.17.1", "notes": ["Patch notes: thank-yous and credits now get their own highlight, so the people who help build Aethernet stand out."], "date": "2026-10-01T05:32:00Z"}, {"version": "2.17.0", "notes": ["New crystal: **Rainbow Drip**. Work-order lists color each row by its status: red for Ready for work; blue for Diagnostics, Work in progress and Quality check; green for Ready for pickup; purple for Need to order, Ready for diag and Repair summary; yellow for Awaiting callback, Awaiting item and Awaiting device. It replaces the **UBIF Status Row Classes** script: if that's still running, you'll see how to turn it off.", "New crystal: **Master's Mend**, small fixes to Portal, each with its own switch in Settings. First fix: the ubreakifix logo in the top left is now a real link to the dashboard, so you can middle-click or right-click it to open a new tab.", "No more reloading to see changes: a text logged by **Recitation** shows in the WO notes right away, and so do Auto-Waymark nickname changes and cleanings closed out by **Swiftcast**. The page refreshes its data in place.", "**Master's Mend**: scan to open. Scan a WO label to open that work order, or an item label to open the item, from the dashboard, the work-order list or a customer. On a WO, scanned items are still added to it, and scanning does nothing on inventory, check-in or check-out pages or while you're typing in a field. Scanners that were a little too slow for Portal's own scan features now work with them too.", "**Glamour**: make the login page yours. In Glamour's settings, under **Login page**, choose a picture to replace Portal's photo (best fit: 768 \u00d7 871 px, shown in the setting), or fill the whole purple panel with it, and show the Aethernet mark in the bottom-left corner.", "**Master's Mend**: sort the Work orders list by any column. Click the arrows beside a column name. Most columns sort across every page; Customer, Device/Issue, Location, Service Outcome, Completed and Created/Cancelled By sort the page you're on (their arrows are underlined).", "**Auto-Waymark**: texting the customer from a work order at Ready for pickup restarts its follow-up: the Auto-Waymark (and nickname) moves to 3 days from that day. It only ever moves later, and works whether or not Recitation is on.", "**Waymark**: managers can clear a tag straight from the board with the \u00d7 on it. Everyone else removes tags from the work order as before.", "**Master's Mend**: a **Hide auto notes** switch at the top of a work order's notes hides the automatic notes (status changes, check-in logs and the like), and loads every note on the work order, so you see the whole history of what people wrote, not just the first page. Flip it back any time; nothing is deleted.", "**Master's Mend**: a **Not contacted** chip on the Arrivals page, next to Portal's own (look for the Aethernet mark on its corner), lists every arrival that hasn't been contacted yet, from every page at once. Click an arrival to open it as usual; any other chip goes back to Portal's list. In Settings (Master's Mend), choose whether it lists all statuses or only arrivals that are still Not confirmed.", "Crystals that changed in an update now get a purple **Updated** sheen in Settings, like the yellow one on new crystals.", "Settings: **Save & reload** glows while you have changes to save. The **Aethernet has updated!** pill now goes away by itself after 10 seconds (the ring around its \u2715 counts down; hovering pauses it)."], "updated": ["textNotes", "autoClose", "glamour", "waymark"], "date": "2026-10-01T05:28:46Z", "thanks": ["**B.Young** at Lexington, for letting us crystallize **Rainbow Drip** from their script!"]}, {"version": "2.16.0", "notes": ["New crystal: **Lay of the Land** (inventory count check). On an inventory count, a **Missing serials** button shows which expected serials haven't been scanned yet, plus any unexpected scans (not in stock, not a serial, or scanned twice). Filter by category, sort, expand or collapse each item, search, copy the list, or download it as a spreadsheet. It updates as each item is scanned, without losing your place in the list.", "**Divination**: its icon now shows in its panel.", "Aethernet is now available store by store. If your store doesn't have access yet, you'll see a notice instead, and nothing else loads until it's added.", "**Swiftcast** won't create cleanings while the store is closed (after **Close store** in Portal). Open the store first.", "**Bountiful Yield** now works on RMA orders too: **Add all RMA parts** in the Add RMA parts popout. It stops if the RMA's line limit is reached."], "date": "2026-09-30T22:37:40Z"}, {"version": "2.15.0", "notes": ["New: **Send feedback**. Report a bug or suggest something straight from Portal: avatar menu \u2192 **Send Aethernet feedback**, or the link at the bottom of Settings. Bug reports can include technical details to help track the problem down (never customer details).", "Suggestions that get built are credited here in the patch notes."], "date": "2026-09-30T05:45:13Z"}, {"version": "2.14.1", "notes": ["Auto-Waymark: if a work order's nickname already has a date in it (like \"PS5 SLIM (10/01)\"), that date becomes its Auto-Waymark date. Otherwise it's 3 days after it reached Ready for pickup, as before.", "Fixed: work orders already at Ready for pickup when 2.14.0 arrived were dated from their last update instead of the date in their nickname. Their Auto-Waymarks have been corrected."], "date": "2026-09-30T00:47:16Z"}, {"version": "2.14.0", "notes": ["New in Waymark: **Auto-Waymark**. When a work order reaches Ready for pickup, it gets a follow-up date 3 days out, added after end of day (7 PM), next to the customer's name.", "While a work order is at Ready for pickup, its **device nickname is just the Auto-Waymark date** (e.g. 10/02) and stays in step with it: pushing the date rewrites the nickname, and typing a later date into the nickname moves the Auto-Waymark to match.", "Auto-Waymarks turn amber on the day and red once overdue. **Right-click** one to push it later (+1 day, +3 days, +1 week or a date you pick); **\u00d7** removes it for good.", "The Waymark icon shows a count of Auto-Waymarks due today (or overdue). Managers get a heads-up from the icon on their first Portal load of the day when any were left open past their due date.", "The Waymark board has a new **Auto-Waymark** tab listing them as Overdue, Due today and Upcoming."], "date": "2026-09-30T00:37:49Z"}, {"version": "2.13.0", "notes": ["New crystal: **Waymark** (work-order tags). Tag work orders for the whole store from **+ Tag** next to the customer's name, and see open work orders grouped by tag from the Waymark button in the header.", "Each store has its own tag list with colours, set in Settings \u2192 Waymark by store managers, district managers and franchise owners. Anyone can add one-off tags.", "Every tag change is logged on the work order (not as a Portal note). Tags and their history clear 7 days after a work order closes."], "date": "2026-09-29T23:53:08Z"}, {"version": "2.12.0", "notes": ["Aethernet is now about 40% smaller, and its daily update check downloads about 1 KB instead of the whole script.", "The installed file is minified. **About** links to the readable source (the same build, unminified).", "Fixed: in the first few minutes after a release, **Update** could open the previous version. New versions are now offered once they're fully out."], "date": "2026-09-29T23:28:58Z"}, {"version": "2.11.0", "notes": ["New: **Check for updates** at the bottom of Settings. If there's a newer version, one click opens Tampermonkey's Update page.", "When a new version is out, an **update available** pill appears within about 15 minutes, with an **Update** button.", "New: **Aethernet notices**. When the team knows about a problem, a banner under Portal's header says what's wrong and that it's being worked on. Affected crystals are marked in Settings.", "If a crystal is misbehaving, the team can pause it everywhere until it's fixed; the banner says which ones are paused."], "date": "2026-09-29T19:10:53Z"}, {"version": "2.10.0", "notes": ["New: **Patch notes**. Open them from the bottom of Settings; every release gets its own panel with the date and time it went out.", "The **Aethernet has updated!** pill now opens these patch notes (Settings stays open underneath)."], "date": "2026-09-29T16:18:34Z"}, {"version": "2.9.1", "date": "2026-09-29T15:38:03Z", "notes": ["**Macrocosmos**: the button wears the hotbar macro gear and shows its macro name, **GD Exception**, on hover.", "The first time the Macrocosmos button appears, a short explainer points at it, with a link straight to its settings.", "Settings can now open straight to one crystal with its settings expanded."]}, {"version": "2.9.0", "date": "2026-09-29T15:26:27Z", "notes": ["Every crystal now shows its FINAL FANTASY XIV action icon in Settings and About.", "The Galaxy Diagnostics pill is now the **Macrocosmos** icon itself, like a hotbar slot: click to file, drag to move."]}, {"version": "2.8.2", "date": "2026-09-28T15:42:48Z", "notes": ["**Glamour** now switches Portal's own light/dark theme, so theme-specific images (Inventory icons, the Reports banner) match your theme."]}, {"version": "2.8.1", "date": "2026-09-28T15:35:53Z", "notes": ["**Glamour**: dark themes put Portal in dark mode, so the ubreakifix logo turns white. Your own Portal mode comes back when you pick the Portal theme.", "Portal is now written as a proper noun everywhere."]}, {"version": "2.8.0", "date": "2026-09-28T15:28:00Z", "notes": ["New crystal: **Glamour** (page theming). Pick a preset (Limsa Lominsa, Gridania, Crystarium, Ul'dah, Ishgard, The Void) or make your own from a background, text and accent colour. Previews live; Cancel puts yours back."]}, {"version": "2.7.0", "date": "2026-09-28T14:41:31Z", "notes": ["Crystals are now named after FFXIV actions: Divination, Esuna, Recitation, Swiftcast, Macrocosmos, Bountiful Yield and Quick Synthesis.", "An **Aethernet has updated!** pill appears once after each update.", "New crystals get a yellow sheen in Settings until you've seen them.", "Each crystal's settings now sit under it in the Crystals list."]}, {"version": "2.6.0", "date": "2026-09-26T22:11:30Z", "notes": ["Settings sections collapse, and remember which ones you left open.", "New subtitle: Restoring the *flow* of NextGen.", "New **About** window: version, build time, author, your setup, and the install link to share with another store.", "The Aethernet name in titles uses its own wordmark."]}, {"version": "2.5.0", "date": "2026-09-26T21:35:43Z", "notes": ["New crystal: **Buyback add-all** (now Bountiful Yield). Adds every Apple (TLC) or Samsung/Google (UROC) part in a buyback order's Add buyback parts popout.", "Fixed: its buttons no longer need the script removed and re-added before each buyback."]}, {"version": "2.4.0", "date": "2026-09-26T21:30:09Z", "notes": ["Aethernet's tools are now called **crystals**. Your on/off switches carry over."]}, {"version": "2.3.2", "date": "2026-09-26T21:07:05Z", "notes": ["**Text \u2192 WO note** now works in every browser, including Firefox and Zen: it spots sent texts from the browser's own network log."]}, {"version": "2.3.1", "date": "2026-09-26T20:56:36Z", "notes": ["Attempted fix for **Text \u2192 WO note** on Firefox and Zen (finished in 2.3.2)."]}, {"version": "2.3.0", "date": "2026-09-26T20:52:51Z", "notes": ["New crystal: **Text \u2192 WO note** (now Recitation). Texting a customer from a WO adds a note: \"<you> sent a text message to <customer>.\" followed by the message."]}, {"version": "2.2.0", "date": "2026-09-26T20:42:10Z", "notes": ["New crystal: **WO cleanings pill** (now Esuna). On a work order, shows whether the device has cleanings available or done, with Create for available ones.", "Pending cleanings in the cleaning-rate list get a \u26a1 to create them, behind a confirmation."]}, {"version": "2.1.1", "date": "2026-09-26T20:30:12Z", "notes": ["Aethernet now installs from a link and updates itself."]}, {"version": "2.1.0", "date": "2026-09-26T20:29:50Z", "notes": ["The cleaning rate counts cleanings still waiting in Arrivals, shown as dashed chips.", "The cleaning list shows each customer's name instead of the device nickname."]}, {"version": "2.0.0", "date": "2026-09-26T19:37:00Z", "notes": ["First Aethernet release: one install bundling the cleaning auto-close \u26a1, the live cleaning rate badge, the Galaxy Diagnostics exception button and Print all labels, with a Settings menu in Portal's avatar menu."]}];
   const verTuple = (v) => String(v || '0').split('.').map(Number);
   const newer = (a, b) => { const x = verTuple(a), y = verTuple(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   const noteHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>');
@@ -1622,12 +1690,17 @@ AE.status = (() => {
         h('summary', null, h('span', { html: CHEV_SVG }), h('span', { class: 'ver' }, 'v' + n.version),
           n.version === AE_VERSION ? h('span', { class: 'tag' }, 'Installed') : null,
           isNew ? h('span', { class: 'tag new' }, 'New') : null,
-          (n.thanks || []).length || (n.credits || []).length ? h('span', { class: 'tag thanks', title: 'This version thanks someone' }, '♥ Thanks') : null,
+          (n.thanks || []).length || (n.credits || []).length || (n.reports || []).length ? h('span', { class: 'tag thanks', title: 'This version thanks someone' }, '♥ Thanks') : null,
           h('span', { class: 'when' }, when)),
         h('ul', null, n.notes.map((t) => h('li', { html: noteHtml(t) }))),
         // Attributions get a flair: "thanks" (free text, **bold** works) and "credits" (who suggested what shipped).
         (n.thanks || []).map((t) => flair('Thank you to ' + t)),
-        n.credits && n.credits.length ? flair('Suggested by ' + n.credits.map((c) => '**' + c + '**').join(', ') + '. Thank you!') : null);
+        n.credits && n.credits.length ? flair('Suggested by ' + n.credits.map((c) => '**' + c + '**').join(', ') + '. Thank you!') : null,
+        // Bug reports fixed in this version, quoted (pulled in by build.py from the reports marked fixed in it).
+        (n.reports || []).length ? h('div', { class: 'sg-fixed' }, h('div', { class: 'hd' }, 'Bug reports fixed'),
+          ...n.reports.map((r) => h('figure', null, h('span', { class: 'ok', title: 'Fixed in v' + n.version }, '✓ Fixed'),
+            h('blockquote', null, '“' + r.quote + '”'),
+            h('figcaption', { html: '— ' + noteHtml('**' + (r.credit || 'Someone') + '**' + (r.store ? ' at ' + r.store : '')) + ', thank you for reporting it!' })))) : null);
       panel.open = since ? isNew : i === 0;
       return panel;
     });
@@ -1692,18 +1765,16 @@ AE.status = (() => {
 
     // Each crystal's own settings, shown nested under it.
     const OPTIONS = {
-      cleaningRate: [() => 'Target ' + s.cleaningRate.target + '%',
-        input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; repaintSums(); }, 'number')],
       glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
-      autoClose: [() => (s.autoClose.dualcast !== false ? 'Dualcast on' : 'Dualcast off') + ((s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT) ? ' · screen protector on' : ''),
+      autoClose: [() => (s.autoClose.dualcast !== false ? 'Dualcast/Triplecast on' : 'Dualcast/Triplecast off') + ((s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT) ? ' · screen protector on' : ''),
         h('div', { class: 'sg-row', style: 'margin:8px 0' },
-          h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, h('span', { html: AE.actionIcon('dualcast', 20), style: 'line-height:0' }), 'Dualcast'),
-            h('span', { class: 'sg-soft', style: 'display:block' }, 'When a device has two or more cleanings waiting, one button creates them all, one after the other. Shown in the arrival' +
-              (false ? ' and in Divination\'s panel.' : ', in Esuna\'s list and in Divination\'s panel.'))),
+          h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, h('span', { html: AE.actionIcon('dualcast', 20), style: 'line-height:0' }),
+            h('span', { html: AE.actionIcon('triplecast', 20), style: 'line-height:0' }), 'Dualcast/Triplecast'),
+            h('span', { class: 'sg-soft', style: 'display:block' }, 'Swiftcast, but even more efficient. Close multiple (two or more) cleanings in one click. Wherever you see the icons, click it to close the referenced cleanings.')),
           toggle(s.autoClose.dualcast !== false, (v) => { s.autoClose.dualcast = v; repaintSums(); })),
         h('div', { class: 'sg-row', style: 'margin:8px 0' },
-          h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, 'Verizon screen protector (101516)', h('span', { class: 'sg-exp-tag' }, 'Experimental')),
-            h('span', { class: 'sg-soft', style: 'display:block' }, 'Adds the Verizon Free Screen Protector (101516) to VZ Device Refresh cleanings at checkout, the same way Portal\'s checkout does, for commission. Portal credits it back, so the sale stays $0. Still being tested: if it can\'t be added, the cleaning is completed without it.')),
+          h('div', null, h('b', null, 'VZW Refresh screen protector'),
+            h('span', { class: 'sg-soft', style: 'display:block' }, 'Adds the SKU 101516 to any VZW Refresh cleanings automatically. If an error occurs, Swiftcast will complete the cleaning without it. (Shouldn\'t happen, though!)')),
           toggle(!!(s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT), (v) => { s.autoClose.refreshLabor = v; repaintSums(); }))],
       ...(false ? {} : { // not in the demo build
         galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
@@ -1715,7 +1786,15 @@ AE.status = (() => {
           input('Tool version', s.galaxy.toolVersion, 'Latest', (v) => { s.galaxy.toolVersion = v.trim() || 'Latest'; }),
           input('Description', s.galaxy.description, 'ER', (v) => { s.galaxy.description = v; }),
           h('button', { class: 'sg-btn', style: 'margin:4px 0', onclick: (e) => { GM_deleteValue('gde_btn_pos'); e.target.textContent = 'Button position reset'; } }, 'Reset button position')],
-        waymark: [() => AE.waymark.summary(), AE.waymark.editor()],
+        waymark: [() => AE.waymark.summary(),
+          // The Work orders list: one chip + N per order (55-waymark.js "Work orders list").
+          ...[['chips', 'Tags on the Work orders list', 'One tag per order beside the customer\'s name, plus +N for the rest. Rows don\'t get taller.'],
+            ['edit', 'Add and remove tags from the list', 'Hover a row for + Tag and ×. Off: the chips just show.'],
+            ['filter', 'Tag filter on the Work orders list', 'A Waymark button next to Portal\'s filters, to show only work orders with one tag (on the page shown).']]
+            .map(([k, name, desc]) => h('div', { class: 'sg-row', style: 'margin:8px 0' },
+              h('div', null, h('b', null, name), h('span', { class: 'sg-soft', style: 'display:block' }, desc)),
+              toggle(!!(s.waymarkList || {})[k], (v) => { s.waymarkList = Object.assign({}, s.waymarkList, { [k]: v }); }))),
+          AE.waymark.editor()],
         fixes: [() => AE.fixesInfo.filter(([id]) => s.fixes[id] !== false).length + ' of ' + AE.fixesInfo.length + ' on',
           ...AE.fixesInfo.flatMap(([id, name, desc, extra]) => [h('div', { class: 'sg-row', style: 'margin:8px 0' },
             h('div', null, h('b', null, name), h('span', { class: 'sg-soft', style: 'display:block' }, desc)),
@@ -1727,13 +1806,12 @@ AE.status = (() => {
     };
     // A live Aethernet notice about this crystal (status.json): say so on its row.
     const issueTag = (id) => {
-      const inc = AE.status.incident();
-      if (!inc) return null;
-      if (inc.pause.includes(id)) return h('span', { class: 'sg-issue-tag paused', title: inc.title }, 'Paused');
-      if (inc.crystals.includes(id)) return h('span', { class: 'sg-issue-tag ' + inc.severity, title: inc.title }, inc.tag || 'Known issue');
-      return null;
+      const c = AE.status.chipFor(id);
+      return c ? h('span', { class: 'sg-issue-tag ' + c.kind, title: c.title }, c.text) : null;
     };
     const CHEV = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
+    // A description's **…** parts are bold (the rest stays plain text).
+    const boldParts = (t) => String(t).split(/\*\*(.+?)\*\*/).map((p, i) => (i % 2 ? h('b', { style: 'display:inline;font-size:inherit;line-height:inherit;color:inherit' }, p) : p)).filter((p) => p !== '');
     const crystalRow = (id, name, desc) => {
       const fresh = isNew(id), upd = !fresh && isUpdated(id);
       let optToggle = null, optBody = null;
@@ -1760,7 +1838,7 @@ AE.status = (() => {
         h('div', { class: 'sg-row' },
           h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : upd ? h('span', { class: 'sg-new-tag upd' }, 'Updated') : null,
               issueTag(id)),
-            h('span', { class: 'sg-soft' }, desc), optToggle ? h('div', null, optToggle) : null),
+            h('span', { class: 'sg-soft' }, ...boldParts(desc)), optToggle ? h('div', null, optToggle) : null),
           toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); })),
         optBody);
     };
@@ -1903,7 +1981,8 @@ AE.feedback = (() => {
   const API = 'https://aethernet-waymark.ubifaethernet.workers.dev';
   const KEY = 'ae_QFa2DKDy0DrlBd_A3bfZL3BtgM51idh6';
   const ADMIN_KEY_GM = 'ae_admin_key';
-  const configured = () => !AE_SANDBOX && /^(https:\/\/|http:\/\/localhost[:/])/.test(API); // off in the sandbox: fake data stays local
+  // In the sandbox only a local Worker (wrangler dev): fake data never reaches the real one.
+  const configured = () => (AE_SANDBOX ? /^http:\/\/localhost[:/]/.test(API) : /^(https:\/\/|http:\/\/localhost[:/])/.test(API));
 
   async function call(method, path, body, adminKey) {
     if (!configured()) throw new Error('The Aethernet service isn\'t set up');
@@ -1954,6 +2033,9 @@ AE.feedback = (() => {
   .sg-fb details { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
   .sg-fb pre { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--aui-surface-variant, #faf9fc); border:1px solid var(--aui-outline-soft, #eeedf1); border-radius:8px; padding:8px; font:11px ui-monospace, Menlo, monospace; }
   .sg-fb .sg-actions { margin-top:14px; }
+  .sg-fb .ctx { margin:0 0 10px; padding:8px 10px; border-radius:10px; font-size:13px; overflow-wrap:anywhere;
+    background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); }
+  .sg-fb .ctx b { display:block; font-size:11px; letter-spacing:.04em; text-transform:uppercase; opacity:.8; }
   .sg-adm { width:min(980px, 100%); height:min(760px, calc(100vh - 32px)); display:flex; flex-direction:column; padding:18px 20px 14px; font-size:14px; line-height:1.4; }
   .sg-adm .head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
   .sg-adm .head h2 { flex:1; margin:0; font-size:20px; font-weight:700; }
@@ -1983,6 +2065,15 @@ AE.feedback = (() => {
   .sg-adm .row .track i { display:block; height:100%; background:var(--aui-primary, #8223d2); border-radius:4px; }
   .sg-adm .row .n { font-variant-numeric:tabular-nums; color:var(--aui-on-surface-soft, #5d5e61); min-width:36px; text-align:right; }
   .sg-adm .sub { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-adm .qwrap { margin-top:6px; font-size:13px; }
+  .sg-adm .qwrap .innotes { color:var(--aui-status-success, #136d31); font-weight:700; font-size:12px; margin-right:8px; }
+  .sg-adm .quote-box summary { cursor:pointer; color:var(--aui-primary, #8223d2); font-weight:600; font-size:12px; display:inline; }
+  .sg-adm .qform { margin-top:6px; display:flex; flex-direction:column; gap:6px; }
+  .sg-adm .qform textarea { width:100%; box-sizing:border-box; padding:6px 8px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; font:inherit; font-size:13px;
+    background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); resize:vertical; }
+  .sg-adm .qrow { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .sg-adm .qrow input { height:30px; padding:0 8px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); }
+  .sg-adm .qrow .sg-btn { height:30px; font-size:13px; }
   .sg-adm .row.pick, .sg-adm .pick { cursor:pointer; }
   .sg-adm .row.pick:hover .name { color:var(--aui-primary, #8223d2); text-decoration:underline; }
   .sg-adm .card.wide { grid-column:1 / -1; }
@@ -2025,11 +2116,20 @@ AE.feedback = (() => {
       screen: innerWidth + 'x' + innerHeight,
       theme: document.body.classList.contains('asurion-dark') ? 'dark' : 'light',
       scans: (AE.scanLog || []).slice(-10), // Master's Mend scan to open: the last few scans and what happened
+      appcues: AE.appcuesSummary ? AE.appcuesSummary() : [], // Appcues boxes on the page (titles only): to write bulletin rules
     };
   }
-  function openFeedback() {
+  /*
+    A "report a bug" link anywhere in Aethernet opens this as a bug report with what went wrong
+    attached (opts.context: { where, error }), shown at the top and sent with the report
+    (diag.context), even with the technical details switched off. Every bug report link should
+    use AE.bugLink, so the error always travels with the report.
+  */
+  function openFeedback(opts = {}) {
     ensureCss();
     let kind = 'bug';
+    const ctx = opts.context && (opts.context.error || opts.context.where)
+      ? { where: String(opts.context.where || '').slice(0, 120), error: String(opts.context.error || '').slice(0, 600) } : null;
     const text = h('textarea', { maxlength: 4000, placeholder: 'What happened, and what did you expect? (Which work order or page, if it matters.)' });
     const include = h('input', { type: 'checkbox', checked: true });
     const setKind = (k) => {
@@ -2037,8 +2137,11 @@ AE.feedback = (() => {
       card.querySelectorAll('.kinds button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
       text.placeholder = k === 'bug' ? 'What happened, and what did you expect? (Which work order or page, if it matters.)' : 'What would make Portal or Aethernet better for you?';
       detailsRow.style.display = k === 'bug' ? '' : 'none';
+      if (ctxBox) ctxBox.style.display = k === 'bug' ? '' : 'none';
     };
-    const preview = () => JSON.stringify({ version: AE_VERSION, browser: browserName(), page: location.pathname, ...diagnostics() }, null, 1);
+    const ctxBox = ctx ? h('div', { class: 'ctx' }, h('b', null, 'Included with this report'), (ctx.where ? ctx.where + ': ' : '') + (ctx.error || '')) : null;
+    const diag = () => (ctx ? { context: ctx, ...diagnostics() } : diagnostics());
+    const preview = () => JSON.stringify({ version: AE_VERSION, browser: browserName(), page: location.pathname, ...diag() }, null, 1);
     const pre = h('pre', null, preview());
     const detailsRow = h('div', null,
       h('label', { class: 'chk' }, include, h('span', null, 'Include technical details (version, browser, this page\'s address, which crystals are on, recent Aethernet errors). No customer details.')),
@@ -2051,7 +2154,7 @@ AE.feedback = (() => {
         const p = await me();
         await call('POST', '/v1/' + p.storeId + '/feedback', {
           kind, text: t, version: AE_VERSION, browser: browserName(), page: location.pathname,
-          diag: kind === 'bug' && include.checked ? diagnostics() : null, by: p.name, byId: p.userId, storeName: p.storeName,
+          diag: kind === 'bug' ? (include.checked ? diag() : ctx ? { context: ctx } : null) : null, by: p.name, byId: p.userId, storeName: p.storeName,
         });
         AE.track('feedback:' + kind);
         close();
@@ -2067,7 +2170,7 @@ AE.feedback = (() => {
       h('div', { class: 'kinds' },
         h('button', { type: 'button', 'data-k': 'bug', class: 'on', onclick: () => setKind('bug') }, '🐞 Report a bug'),
         h('button', { type: 'button', 'data-k': 'idea', onclick: () => setKind('idea') }, '💡 Suggest something')),
-      text, detailsRow,
+      ctxBox, text, detailsRow,
       h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Sent with your name and store so the team can follow up in person.'),
       h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Cancel'), send));
     const close = modal('sg-feedback', card);
@@ -2114,9 +2217,10 @@ AE.feedback = (() => {
       tabs.replaceChildren(
         h('button', { type: 'button', class: 'tab' + (tab === 'reports' ? ' on' : ''), onclick: () => { tab = 'reports'; draw(); } }, 'Reports'),
         h('button', { type: 'button', class: 'tab' + (tab === 'usage' ? ' on' : ''), onclick: () => { tab = 'usage'; draw(); } }, 'Usage'),
-        h('button', { type: 'button', class: 'tab' + (tab === 'stores' ? ' on' : ''), onclick: () => { tab = 'stores'; draw(); } }, 'Stores'));
+        h('button', { type: 'button', class: 'tab' + (tab === 'stores' ? ' on' : ''), onclick: () => { tab = 'stores'; draw(); } }, 'Stores'),
+        h('button', { type: 'button', class: 'tab' + (tab === 'settings' ? ' on' : ''), onclick: () => { tab = 'settings'; draw(); } }, 'Settings'));
       body.replaceChildren(h('div', { class: 'sg-soft' }, 'Loading…'));
-      try { tab === 'reports' ? await drawReports() : tab === 'usage' ? await drawUsage() : await drawStores(); }
+      try { tab === 'reports' ? await drawReports() : tab === 'usage' ? await drawUsage() : tab === 'stores' ? await drawStores() : await drawSettings(); }
       catch (e) { if (/admin key/.test(e.message)) { GM_deleteValue(ADMIN_KEY_GM); unlock('The saved key was refused.'); } else body.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load: " + (e.message || e))); }
     }
 
@@ -2138,14 +2242,39 @@ AE.feedback = (() => {
         } }, 'Save');
         let diag = null;
         try { diag = r.diag ? JSON.parse(r.diag) : null; } catch (_) {}
+        // Quote it in a version's patch notes (marks it fixed). The next public version by default.
+        const nextVersion = AE_VERSION.split('.').slice(0, 3).join('.');
+        // "G.Green"; names Portal stores in ALL CAPS come out in normal case.
+        const title = (x) => (x === x.toUpperCase() ? x.toLowerCase().replace(/(^|[\s'-])\S/g, (m) => m.toUpperCase()) : x);
+        const shortName = (n) => { const w = title(String(n || '').trim()).split(/\s+/); return w.length > 1 ? w[0][0].toUpperCase() + '.' + w[w.length - 1] : w[0] || ''; };
+        const qText = h('textarea', { rows: 2, maxlength: 400, placeholder: 'The quote, as it should read in the patch notes' }, r.quote || String(r.text || '').trim().slice(0, 300));
+        const qCredit = h('input', { type: 'text', maxlength: 60, value: r.credit || shortName(r.user_name), placeholder: 'Credit (e.g. G.Green)' });
+        const qVer = h('input', { type: 'text', maxlength: 12, value: r.fixed_in || nextVersion, placeholder: '2.22.0', style: 'width:80px' });
+        const inNotes = h('span', { class: 'innotes' }, r.fixed_in ? '✓ In v' + r.fixed_in + ' patch notes' : '');
+        const quoteSave = async (out) => {
+          try {
+            const j2 = await call('POST', '/v1/admin/feedback/' + r.id, out ? { fixedIn: '' } : { fixedIn: qVer.value.trim(), quote: qText.value, credit: qCredit.value }, key());
+            r.fixed_in = j2.fixedIn; r.status = j2.status; st.value = j2.status;
+            inNotes.textContent = j2.fixedIn ? '✓ In v' + j2.fixedIn + ' patch notes' : '';
+            AE.toast(out ? 'Taken out of the patch notes' : 'Quoted in v' + j2.fixedIn + ' patch notes', out ? '' : 'Marked fixed. It shows up in the notes with the next build.', 'ok');
+          } catch (e) { AE.toast("Couldn't save", e.message || String(e), 'err'); }
+        };
+        const quoteBox = h('details', { class: 'quote-box' + (r.fixed_in ? ' on' : '') },
+          h('summary', null, r.fixed_in ? 'Quoted in the patch notes' : 'Quote in patch notes…'),
+          h('div', { class: 'qform' }, qText,
+            h('div', { class: 'qrow' }, h('span', { class: 'sub' }, '—'), qCredit, h('span', { class: 'sub' }, 'at ' + (r.store_name || 'Store') + ' · fixed in v'), qVer,
+              h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => quoteSave(false) }, 'Quote & mark fixed'),
+              h('button', { type: 'button', class: 'sg-btn', onclick: () => quoteSave(true) }, 'Take out'))));
         return h('div', { class: 'rep' },
           h('div', { class: 'top' }, h('span', { class: 'kind ' + r.kind }, r.kind === 'bug' ? 'Bug' : 'Idea'),
             h('span', { class: 'who' }, r.user_name || 'Someone'), h('span', { class: 'sub' }, (r.store_name || 'Store') + ' #' + r.store),
             h('span', { class: 'meta' }, when(r.created_at) + ' · v' + (r.version || '?') + ' · ' + (r.browser || '') + (r.page ? ' · ' + r.page : ''))),
           h('div', { class: 'txt' }, r.text),
+          diag && diag.context ? h('div', { class: 'sub', style: 'color:var(--aui-status-error,#b91a24);margin:-2px 0 6px;overflow-wrap:anywhere' },
+            'Sent from a bug link · ' + (diag.context.where ? diag.context.where + ': ' : '') + (diag.context.error || '')) : null,
           diag ? h('details', { class: 'sub' }, h('summary', null, 'Technical details' + (diag.errors && diag.errors.length ? ' · ' + diag.errors.length + ' recent error' + (diag.errors.length === 1 ? '' : 's') : '')),
             h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(diag, null, 1))) : null,
-          h('div', { class: 'ctl' }, st, note, save));
+          h('div', { class: 'ctl' }, st, note, save), r.kind === 'bug' ? h('div', { class: 'qwrap' }, inNotes, quoteBox) : null);
       };
       body.replaceChildren(h('div', { class: 'bar' }, sel, h('span', { class: 'sub' }, 'Reporters don\'t see statuses or notes. Credit suggestions that ship in the patch notes.')),
         ...(j.feedback.length ? j.feedback.map(rep) : [h('div', { class: 'sub', style: 'padding:12px 0' }, 'Nothing here.')]));
@@ -2159,6 +2288,27 @@ AE.feedback = (() => {
       stops Aethernet there on its next page load; the Worker refuses its
       services to it within a minute.
     */
+    // Aethernet-wide settings: every store, from each install's next page load.
+    async function drawSettings() {
+      const j = await call('GET', '/v1/admin/config', null, key());
+      const me = await AE.profile().catch(() => ({}));
+      const target = h('input', { type: 'number', min: 1, max: 200, step: 1, value: j.config.cleaningTarget,
+        style: 'width:80px;height:32px;padding:0 8px;border:1px solid var(--aui-outline,#c6c6ca);border-radius:8px;background:var(--aui-surface,#fff);color:var(--aui-on-surface,#1a1c1e)' });
+      const save = h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: async () => {
+        save.disabled = true;
+        try {
+          const r = await call('POST', '/v1/admin/config', { cleaningTarget: Number(target.value), by: me.name }, key());
+          target.value = r.config.cleaningTarget;
+          AE.toast('Saved', 'Divination\'s target is now ' + r.config.cleaningTarget + '% for every store, from their next page load.', 'ok');
+        } catch (e) { AE.toast("Couldn't save", e.message || String(e), 'err'); }
+        save.disabled = false;
+      } }, 'Save');
+      body.replaceChildren(h('div', { class: 'card', style: 'max-width:520px' },
+        h('h3', null, 'Divination'),
+        h('div', { class: 'bar', style: 'margin:0' }, h('span', null, 'Target cleaning rate'), target, h('span', null, '%'), save),
+        h('div', { class: 'sub' }, 'Colors the badge (below target: red; target to 99%: yellow; 100% or more: green) and sets the target line and "days at target" in the history. Applies to every store.')));
+    }
+
     async function drawStores() {
       const j = await call('GET', '/v1/admin/stores', null, key());
       const me = await AE.profile().catch(() => ({}));
@@ -2324,6 +2474,22 @@ AE.feedback = (() => {
   if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Send ' + AE_NAME + ' feedback', openFeedback);
   AE.trackDaily('active');
 
+  // Bug report links: a link that opens Send feedback as a bug report with the error attached.
+  // AE.bugLink(label, context) gives HTML (for innerHTML); AE.bugLinkEl the same as an element.
+  // context: { where: 'Divination', error: 'Manual links couldn't be loaded: HTTP 500' }.
+  const bugAttr = (context) => AE.esc(JSON.stringify(context || {}));
+  AE.bugLink = (label, context) => '<a href="#" class="sg-bug-link" data-ae-bug="' + bugAttr(context) + '">' + AE.esc(label) + '</a>';
+  AE.bugLinkEl = (label, context) => h('a', { href: '#', class: 'sg-bug-link', 'data-ae-bug': JSON.stringify(context || {}) }, label);
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('[data-ae-bug]');
+    if (!a) return;
+    e.preventDefault(); e.stopPropagation();
+    let context = null;
+    try { context = JSON.parse(a.dataset.aeBug); } catch (_) {}
+    AE.track('feedback:bugLink');
+    openFeedback({ context });
+  }, true);
+
   return { openFeedback, openAdmin, flushUsage };
 })();
 
@@ -2367,7 +2533,7 @@ AE.crystal({
   run() {
     const { h, esc } = AE;
     const { nameOf } = AE.data;
-    const TARGET = AE.settings.cleaningRate.target;
+    const TARGET = AE.config().cleaningTarget; // Aethernet-wide, from the admin panel
     const REFRESH_MS = 2 * 60 * 1000;
     const BADGE_ID = 'sg-rate-badge', PANEL_ID = 'sg-rate-panel';
     let last = null, loading = false, lastError = null;
@@ -2433,7 +2599,7 @@ AE.crystal({
       return { rows, unlinked: cleanings.filter((c) => !used.has(c.key)) };
     }
 
-    let linksError = null;
+    let linksError = null, linkError = null; // loading the manual links / saving one
     async function compute() {
       const start = new Date(); start.setHours(0, 0, 0, 0);
       const startMs = start.getTime(), endMs = startMs + 86400000, day = keyOf(start);
@@ -2453,6 +2619,7 @@ AE.crystal({
     async function setLink(device, parent) {
       AE.track(parent ? 'cleaningRate:link' : 'cleaningRate:unlink');
       await AE.waymark.call('POST', parent ? '/links' : '/links/remove', { day: last.day, device, parent: parent ? Number(parent) : undefined });
+      linkError = null;
       await refresh();
     }
 
@@ -2469,9 +2636,9 @@ AE.crystal({
       else if (!anchor && !b.isConnected) { b.classList.add('floating'); document.body.appendChild(b); }
       b.classList.remove('good', 'ok', 'bad', 'none');
       b.classList.add(lastError && !last ? 'none' : level(last && last.pct));
-      const text = lastError && !last ? 'Cleanings: error'
+      const text = lastError && !last ? 'Cleanings · ???'
         : !last ? 'Cleanings'
-        : last.pct == null ? 'Cleanings · no AM orders yet'
+        : last.pct == null ? 'Cleanings · make a WO first!'
         : null;
       const lead = loading ? '<span class="sg-spin"></span>' : '<span class="dot"></span>';
       b.innerHTML = lead + (text ? esc(text) : 'Cleanings ' + last.linked + '/' + last.parents + ' · <b>' + last.pct + '%</b>');
@@ -2483,7 +2650,7 @@ AE.crystal({
       b.title = (last && last.pct != null ? 'Cleanings ' + last.linked + '/' + last.parents + ' · ' + last.pct + '%' +
         (last.pending ? ' (' + last.pending + ' pending)' : '') + ' — ' : '') +
         (last ? 'updated ' + fmtTime(last.at) : 'Loading') + (lastError ? ' — last refresh failed: ' + lastError : '') +
-        ' · target ' + TARGET + '%, ideally 100% · click for details';
+        ' · click for details';
     }
 
     // Chip for one cleaning. Pending ones link to the arrival and, with
@@ -2492,7 +2659,7 @@ AE.crystal({
       const label = esc(AE.CLEANING_PROGRAMS[c.programId]);
       if (!c.pending) return '<a class="sg-chip" href="/repair/workorder/' + c.workorderId + '">' + label + '</a>';
       const mk = AE.autoClose
-        ? '<button type="button" class="sg-mk" title="Create this cleaning (check in → complete $0 sale)" data-arrival="' + c.arrivalId +
+        ? '<button type="button" class="sg-mk" title="Swiftcast this" data-arrival="' + c.arrivalId +
           '" data-program="' + c.programId + '" data-name="' + esc(nameOf(parent)) + '">' + AE.icon('bolt', 12) + '</button>'
         : '';
       return '<span class="sg-chip pending"><a href="/check-in/arrivals/' + c.arrivalId + '" title="In Arrivals — not checked in yet" style="color:inherit;font-weight:400">' +
@@ -2506,7 +2673,7 @@ AE.crystal({
       const waiting = matched.filter((c) => c.pending);
       if (!AE.autoClose || !AE.autoClose.dualcastOn() || waiting.length < 2) return matched.map((c) => chip(c, wo)).join('');
       const name = waiting.length >= 3 ? 'Triplecast' : 'Dualcast';
-      const go = '<button type="button" class="sg-cast-go" title="' + name + ': create all ' + waiting.length + ' pending cleanings for this order, one after the other" data-dual="' +
+      const go = '<button type="button" class="sg-cast-go" title="' + name + ' this" data-dual="' +
         esc(JSON.stringify(waiting.map((c) => ({ arrivalId: c.arrivalId, programId: c.programId })))) + '" data-name="' + esc(nameOf(wo)) + '">' +
         '<span class="b">' + AE.icon('bolt', 12) + '</span>' + name + '</button>';
       return matched.filter((c) => !c.pending).map((c) => chip(c, wo)).join('') +
@@ -2519,7 +2686,7 @@ AE.crystal({
       const r = b && b.getBoundingClientRect();
       if (r && !b.classList.contains('floating')) { p.style.top = (r.bottom + 8) + 'px'; p.style.left = Math.max(8, Math.min(r.left, innerWidth - 476)) + 'px'; p.style.bottom = ''; }
       else { p.style.left = '16px'; p.style.bottom = '60px'; p.style.top = ''; }
-      if (!last) { p.innerHTML = lastError ? '<span class="miss">' + esc(lastError) + '</span>' : '<span class="sg-soft">Loading…</span>'; return; }
+      if (!last) { p.innerHTML = lastError ? '<span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '<span class="sg-soft">Divining…</span>'; return; }
 
       const linkTo = (c) => c.pending
         ? '<a href="/check-in/arrivals/' + c.arrivalId + '">arrival ' + c.arrivalId + '</a>'
@@ -2528,12 +2695,13 @@ AE.crystal({
         ? '<table>' + last.rows.map(({ p: wo, matched }) =>
           '<tr><td><div class="who">' + esc(nameOf(wo) || 'Unknown customer') + '</div>' +
           '<div class="sg-soft"><a href="/repair/workorder/' + wo.workorderId + '">' + wo.workorderId + '</a> · ' + fmtTime(new Date(wo.createdAt)) + '</div></td>' +
-          '<td style="text-align:right">' + (matched.length ? chips(matched, wo) : '<span class="miss">No cleanings</span>') +
+          '<td style="text-align:right">' + (matched.length ? chips(matched, wo) : '<span class="miss">nothing here!</span>') +
           [...new Map(matched.filter((c) => c.manual).map((c) => [c.manual.device, c.manual])).values()].map((l) =>
             '<div class="man">Linked by hand by ' + esc(l.by || 'someone') + ' · <button type="button" data-unlink="' + esc(l.device) + '">Undo</button></div>').join('') +
           '</td></tr>'
         ).join('') + '</table>'
-        : '<p class="sg-soft">No Asurion Mobility orders created today yet.</p>';
+        : '<p class="sg-soft">There\'s nothing here yet! If you\'re seeing this in error, please ' +
+          AE.bugLink('report a bug', { where: 'Divination', error: 'No Asurion Mobility orders found today; cleanings seen: ' + last.unlinked.length }) + '!</p>';
       // Unlinked cleanings, one line per phone, each with "Link to…" (today's orders).
       let extra = '';
       if (last.unlinked.length) {
@@ -2541,26 +2709,30 @@ AE.crystal({
         for (const c of last.unlinked) { const k = devKey(c); if (!phones.has(k)) phones.set(k, []); phones.get(k).push(c); }
         const opts = last.rows.map(({ p: wo }) => '<option value="' + wo.workorderId + '">' + esc((nameOf(wo) || 'Unknown') + ' · ' + wo.workorderId + ' · ' + fmtTime(new Date(wo.createdAt))) + '</option>').join('');
         const canLink = linksOn() && last.rows.length;
-        extra = '<div class="unl"><div class="sg-soft">' + last.unlinked.length + " cleaning(s) today not linked to any of today's orders (not counted)" +
+        const n = last.unlinked.length;
+        extra = '<div class="unl"><div class="sg-soft">' + n + (n === 1 ? ' cleaning' : ' cleanings') + " today not linked to any of today's orders (not counted)" +
           (canLink ? '. If one belongs to an order, link it:' : ':') + '</div>' +
           [...phones].map(([k, cs]) => '<div class="unl-row"><div><b>' + esc(nameOf(cs[0]) || 'Unknown customer') + '</b> <span class="sg-soft">' +
             cs.map((c) => esc(AE.CLEANING_PROGRAMS[c.programId]) + ' (' + linkTo(c) + ')').join(', ') + '</span></div>' +
-            (canLink ? '<select data-link="' + esc(k) + '" title="Count this phone\'s cleanings today for one of today\'s orders (for everyone at the store)"><option value="">Link to…</option>' + opts + '</select>' : '') +
+            (canLink ? '<select data-link="' + esc(k) + '" title="Link this cleaning to an existing work order"><option value="">Link to…</option>' + opts + '</select>' : '') +
             '</div>').join('') +
-          (linksError ? '<div class="miss" style="font-size:12px">Manual links couldn\'t be loaded: ' + esc(linksError) + '</div>' : '') + '</div>';
+          (linksError ? '<div class="miss" style="font-size:12px">Manual links couldn\'t be loaded. If this is in error, please ' +
+            AE.bugLink('report a bug', { where: 'Divination', error: 'Manual links couldn\'t be loaded: ' + linksError }) + '!</div>' : '') + '</div>';
       }
       const scroll = p.scrollTop;
       p.innerHTML =
         '<div style="display:flex;align-items:center;gap:8px">' + AE.actionIcon('cleaningRate', 26) + '<b style="flex:1;font-size:16px">Today\'s cleaning rate: <span style="color:' + levelColor(last.pct) + '">' +
-        (last.pct == null ? '—' : last.pct + '%') + '</span></b><button type="button" class="sg-btn" data-refresh>Refresh</button></div>' +
+        (last.pct == null ? 'none!' : last.pct + '%') + '</span></b><button type="button" class="sg-btn" data-refresh>Re-divine</button></div>' +
         '<div class="sg-soft" style="margin-top:4px">' + last.linked + ' cleanings' + (last.pending ? ' (' + last.pending + ' pending in Arrivals)' : '') +
-        ' ÷ ' + last.parents + ' Asurion Mobility orders created today · target ' + TARGET +
-        '%, ideally 100% · updated ' + fmtTime(last.at) + (lastError ? '<br><span class="miss">Last refresh failed: ' + esc(lastError) + '</span>' : '') + '</div>' +
+        ' ÷ ' + last.parents + ' Asurion Mobility orders created today · updated ' + fmtTime(last.at) +
+        (lastError ? '<br><span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '') +
+        (linkError ? '<br><span class="miss">Couldn\'t link this! Try again, and if it keeps failing, ' +
+          AE.bugLink('report a bug', { where: 'Divination', error: 'Couldn\'t save a manual link: ' + linkError }) + '!</span>' : '') + '</div>' +
         table + extra +
         '<p class="sg-soft" style="margin:10px 0 0"><a href="/reporting/metrics">Past days: Reports → Cleaning rate history</a></p>';
       p.scrollTop = scroll;
       p.querySelector('[data-refresh]').onclick = (e) => { e.stopPropagation(); refresh(); };
-      const linkFail = (e) => { lastError = 'Couldn\'t save the link: ' + (e.message || e); renderPanel(); };
+      const linkFail = (e) => { linkError = e.message || String(e); renderPanel(); };
       p.querySelectorAll('select[data-link]').forEach((sel) => {
         sel.onclick = (e) => e.stopPropagation();
         sel.onchange = () => { if (!sel.value) return; sel.disabled = true; setLink(sel.dataset.link, sel.value).catch(linkFail); };
@@ -2828,6 +3000,10 @@ AE.crystal({
       #${PILL_ID}.none  { background:transparent; border-color:var(--aui-outline,#c6c6ca); color:var(--aui-on-surface-soft,#5d5e61); font-weight:400; }
       #${PILL_ID}.load  { background:transparent; border-color:var(--aui-outline-soft,#eeedf1); color:var(--aui-on-surface-soft,#5d5e61); font-weight:400; }
       #${PILL_ID} .sg-spin { width:12px; height:12px; }
+      #${PILL_ID}.icon { width:30px; height:30px; padding:0; justify-content:center; border:2px solid var(--aui-status-success,#136d31); background:var(--aui-surface,#fff); }
+      #${PILL_ID}.avail .sg-aicon { width:18px; height:18px; border-radius:50%; }
+      #${PILL_ID}.icon .sg-aicon { width:22px; height:22px; border-radius:50%; }
+      #${POP_ID} .hd { display:flex; align-items:center; gap:8px; font-size:16px; font-weight:700; }
       #${POP_ID} { position:fixed; z-index:2147483646; width:380px; padding:16px; font-size:14px; line-height:1.4; }
       #${POP_ID} .row { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--aui-outline-soft,#eeedf1); }
       #${POP_ID} .row:first-of-type { border-top:0; }
@@ -2875,14 +3051,15 @@ AE.crystal({
     }
 
     function pillFor(s) {
-      if (!s || s.status === 'loading') return { cls: 'load', html: '<span class="sg-spin"></span>Checking cleanings…' };
-      if (s.status === 'error') return { cls: 'none', html: 'Cleanings: couldn\'t check', title: s.error };
+      if (!s || s.status === 'loading') return { cls: 'load', html: '<span class="sg-spin"></span>Divining…' };
+      if (s.status === 'error') return { cls: 'none', html: 'Divination failed', bug: true,
+        title: 'Esuna and Divination seem to have hit a roadblock somewhere. Click to report a bug.' };
       if (AE.CLEANING_PROGRAMS[s.wo.programId]) return null; // this is a cleaning
       const avail = s.matched.filter((c) => c.pending).length, done = s.matched.length - avail;
       if (!s.matched.length) return s.wo.programId === AE.PARENT_PROGRAM_ID ? { cls: 'none', html: 'No cleanings' } : null;
-      if (avail && done) return { cls: 'avail', html: AE.icon('bolt', 14) + 'Cleanings: ' + avail + ' available, ' + done + ' done' };
-      if (avail) return { cls: 'avail', html: AE.icon('bolt', 14) + 'Cleanings available (' + avail + ')' };
-      return { cls: 'done', html: '✓ Cleanings done (' + done + ')' };
+      if (avail && done) return { cls: 'avail', html: AE.actionIcon('woCleanings', 18) + 'Swiftcast available (' + avail + ' / ' + done + ')', title: avail + ' available, ' + done + ' done' };
+      if (avail) return { cls: 'avail', html: AE.actionIcon('woCleanings', 18) + 'Swiftcast available (' + avail + ')' };
+      return { cls: 'done icon', html: AE.actionIcon('woCleanings', 22), title: (done === 1 ? '1 cleaning' : done + ' cleanings') + ' done — click for details' };
     }
 
     function render() {
@@ -2891,8 +3068,11 @@ AE.crystal({
       const spec = state && state.woId === woId ? pillFor(state) : null;
       const row = woId && nameRow(woId);
       if (!spec || !row) { existing?.remove(); return; }
-      const pill = existing || h('button', { id: PILL_ID, type: 'button', class: 'sg', onclick: togglePop });
+      const pill = existing || h('button', { id: PILL_ID, type: 'button', class: 'sg', onclick: (e) => pillClick(e) });
       pill.className = 'sg ' + spec.cls;
+      // A failed lookup: the pill is a bug report link carrying the error (AE.bugLink) instead of opening the list.
+      if (spec.bug) pill.dataset.aeBug = JSON.stringify({ where: 'Esuna', error: 'Cleaning lookup for WO ' + woId + ' failed: ' + state.error });
+      else delete pill.dataset.aeBug;
       pill.innerHTML = spec.html;
       pill.title = spec.title || 'Cleanings for this device — click for details';
       if (pill.parentElement !== row) row.appendChild(pill);
@@ -2910,7 +3090,7 @@ AE.crystal({
         const label = esc(AE.CLEANING_PROGRAMS[c.programId]);
         if (c.pending) {
           const act = AE.autoClose
-            ? '<button type="button" class="sg-btn sg-primary" data-arrival="' + c.arrivalId + '" data-program="' + c.programId + '" data-name="' + esc(AE.data.nameOf(c)) + '">' + AE.icon('bolt', 14) + 'Create</button>'
+            ? '<button type="button" class="sg-btn sg-primary" data-arrival="' + c.arrivalId + '" data-program="' + c.programId + '" data-name="' + esc(AE.data.nameOf(c)) + '">' + AE.actionIcon('autoClose', 18) + 'Swiftcast this</button>'
             : '';
           return '<div class="row"><div><b>' + label + '</b><div class="sg-soft">Available — <a href="/check-in/arrivals/' + c.arrivalId + '">arrival ' + c.arrivalId + '</a></div></div>' + act + '</div>';
         }
@@ -2919,12 +3099,12 @@ AE.crystal({
       }).join('');
       const waiting = state.matched.filter((c) => c.pending);
       const dual = AE.autoClose && AE.autoClose.dualcastOn() && waiting.length >= 2
-        ? '<button type="button" class="sg-btn sg-primary" data-dualcast style="width:100%;justify-content:center;margin:0 0 8px">' + AE.actionIcon('dualcast', 18) +
-          'Dualcast · create all ' + waiting.length + '</button>'
+        ? '<button type="button" class="sg-btn sg-primary" data-dualcast style="width:100%;justify-content:center;margin:0 0 8px">' + AE.actionIcon(waiting.length >= 3 ? 'triplecast' : 'dualcast', 18) +
+          (waiting.length >= 3 ? 'Triplecast' : 'Dualcast') + ' this</button>'
         : '';
-      pop.innerHTML = '<b style="font-size:16px">Cleanings for this device</b>' +
-        '<div class="sg-soft" style="margin:2px 0 8px">Matched to this WO by device IMEI</div>' + dual +
-        (rows || '<p class="sg-soft">No cleanings found for this device (open, recently closed, or waiting in Arrivals).</p>');
+      pop.innerHTML = '<div class="hd">' + AE.actionIcon('woCleanings', 24) + 'Esuna</div>' +
+        '<div class="sg-soft" style="margin:2px 0 8px">Quickly clear out this WO\'s cleanings</div>' + dual +
+        (rows || '<p class="sg-soft">There\'s nothing here! Check Divination at the top to see if there are unlinked cleanings!</p>');
       const db = pop.querySelector('[data-dualcast]');
       if (db) db.onclick = (e) => {
         e.stopPropagation();
@@ -2940,6 +3120,10 @@ AE.crystal({
       });
     }
 
+    function pillClick(e) {
+      if (e.currentTarget.dataset.aeBug) return; // the bug report link handler (06-feedback.js) takes it
+      togglePop(e);
+    }
     function togglePop(e) {
       e.stopPropagation();
       const pop = document.getElementById(POP_ID);
@@ -3056,7 +3240,8 @@ AE.crystal({
           if (n) AE.refreshView();
           if (n) AE.toast('Text logged', (n > 1 ? n + ' texts' : 'Text') + ' added to WO ' + m[1] + "'s notes.", 'ok', 4000);
         } catch (e) {
-          AE.toast('Text sent, but not logged', "Couldn't add the WO note: " + (e.message || e) + ' — add it by hand.', 'err', 12000);
+          AE.toast('Text sent, but not logged', { html: "Couldn't add this text to the WO notes. " +
+            AE.bugLink('Report a bug.', { where: 'Recitation', error: 'Adding the text note to WO ' + m[1] + ' failed: ' + (e.message || e) }) }, 'err', 12000);
         } finally { busy = null; }
       })();
       return busy;
@@ -3079,7 +3264,7 @@ AE.crystal({
                 each followed by the same auto-note the UI posts
     checkout    [screen protector] verify cart total is $0 → checkout/complete-order
     screen protector
-                EXPERIMENTAL, off unless switched on (Settings → Swiftcast; default
+                On by default since 2.22.0 (Settings → Swiftcast; default
                 AE_REFRESH_LABOR_DEFAULT). VZ Device Refresh (program 11759) only, at
                 checkout: the Verizon Free Screen Protector (SKU 101516, $15), which
                 earns the tech commission. Sent exactly as Portal's own checkout
@@ -3288,6 +3473,11 @@ AE.crystal({
     }
 
     const woLink = (id) => '<a href="/repair/workorder/' + id + '">WO ' + id + '</a>';
+    const report = (error) => ' If you\'re seeing this repeatedly, ' + AE.bugLink('report a bug', { where: 'Swiftcast', error }) + '!';
+    // laborNote holds what went wrong with the screen protector (sent with the bug report); staff see one plain line.
+    const laborLine = (detail) => '<br><b>Note:</b> VZW Refresh screen protector could not be added, or adding it changed the cart\'s value to something other than 0.' + report(detail);
+    // A run left half-done: a button to its work order (the finish text links it too).
+    const openWo = (id) => h('a', { class: 'sg-btn', href: '/repair/workorder/' + id }, 'Open WO ' + id);
 
     /*
       Never act while the store is closed (Portal's Close store button). Asked
@@ -3297,11 +3487,11 @@ AE.crystal({
     async function storeClosed() {
       let open;
       try { open = (await AE.api('GET', '/api/auth/user')).isStoreOpen; } catch (e) {
-        AE.toast('Swiftcast', "Couldn't check whether the store is open (" + (e.message || e) + '). Nothing was created.', 'err', 9000);
+        AE.toast('Swiftcast', { html: "Couldn't check whether the store is open. Nothing was created." + report("Couldn't check whether the store is open: " + (e.message || e)) }, 'err', 9000);
         return true;
       }
       if (open === false) {
-        AE.toast('Swiftcast is off while the store is closed', 'Open the store in Portal, then try again. Nothing was created.', 'err', 9000);
+        AE.toast('Swiftcast is disabled while the store is closed.', 'Please wait until the store is open to use Swiftcast. Portal does not allow us to sale complete anything while the store is closed.', 'err', 9000);
         return true;
       }
       return false;
@@ -3326,7 +3516,7 @@ AE.crystal({
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       const done = [], notes = [];
-      let woId = null;
+      let woId = null, left = false; // left: a cleaning was left half-done (its Open WO button stays)
       try {
         for (const [i, it] of items.entries()) {
           panel.step((i + 1) + ' of ' + items.length + ': ' + (AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning'));
@@ -3336,14 +3526,17 @@ AE.crystal({
           if (laborNote) notes.push(laborNote);
           if (!fake) AE.emit('cleaning-changed', { arrivalId: it.arrivalId, woId: id });
         }
-        panel.finish('ok', 'Done — ' + done.map(woLink).join(' and ') + ' checked in, completed, and sold at $0.' + notes.map((n) => '<br><b>Note:</b> ' + AE.esc(n)).join(''));
+        panel.finish('ok', castOf(items.length)[1] + ' complete. ' + done.map(woLink).join(' and ') + (done.length > 1 ? ' sales completed.' : ' sale completed.') + notes.map(laborLine).join(''));
       } catch (e) {
         const stopped = e instanceof AE.Stopped;
-        const left = woId ? ' ' + woLink(woId) + ' was left at the last step listed above.' : '';
-        panel.finish(stopped ? 'stop' : 'err', (stopped ? 'Stopped.' : AE.esc(e.message)) + left +
-          (done.length ? ' Already finished: ' + done.map(woLink).join(', ') + '.' : '') + ' The rest were not started.');
+        const left = woId ? ' ' + woLink(woId) + ' was left as stated above.' : '';
+        // The error itself only goes in the bug report (staff get plain words; friendlier per-error text is on the to-do list).
+        panel.finish(stopped ? 'stop' : 'err', ((stopped ? 'Stopped.' : '') + left +
+          (done.length ? ' Already finished: ' + done.map(woLink).join(', ') + '.' : '') + ' The rest were not started.').trim() +
+          (stopped ? '' : report(e.message + (woId ? ' (WO ' + woId + ')' : ''))));
+        if (woId) { panel.actions(openWo(woId)); left = true; }
       } finally {
-        panel.actions();
+        if (!left) panel.actions();
         running = false;
         if (!fake) { AE.emit('cleaning-changed', {}); if (done.length) AE.refreshView(); }
       }
@@ -3374,20 +3567,21 @@ AE.crystal({
       const panel = AE.progressPanel(castingTitle(1), { icon: 'autoClose', total: 9, hold: true });
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
-      let woId = null;
+      let woId = null, left = false;
       const log = (t, id) => { if (id) woId = id; panel.step(t); };
       log.plan = (n) => panel.plan(n);
       const btn = document.getElementById(BTN_ID);
       if (btn) btn.disabled = true;
       try {
         const id = await run(arrivalId, log);
-        panel.finish('ok', 'Done — ' + woLink(id) + ' checked in, completed, and sold at $0.' + (laborNote ? '<br><b>Note:</b> ' + AE.esc(laborNote) : ''));
+        panel.finish('ok', 'Swiftcast complete. ' + woLink(id) + ' sale completed.' + (laborNote ? laborLine(laborNote) : ''));
       } catch (e) {
-        const where = woId ? ' ' + woLink(woId) + ' was left at the last step listed above.' : ' No work order was created.';
+        const where = woId ? ' ' + woLink(woId) + ' was left as stated above.' : ' No work order was created.';
         const stopped = e instanceof AE.Stopped;
-        panel.finish(stopped ? 'stop' : 'err', (stopped ? 'Stopped.' : AE.esc(e.message)) + where);
+        panel.finish(stopped ? 'stop' : 'err', ((stopped ? 'Stopped.' : '') + where).trim() + (stopped ? '' : report(e.message + (woId ? ' (WO ' + woId + ')' : ''))));
+        if (woId) { panel.actions(openWo(woId)); left = true; }
       } finally {
-        panel.actions();
+        if (!left) panel.actions();
         running = false;
         if (btn) btn.disabled = false;
         AE.emit('cleaning-changed', { arrivalId, woId }); // badge + WO pill refresh
@@ -3411,8 +3605,8 @@ AE.crystal({
       const b = h('button', {
         type: 'button', class: 'sg-fab sg-cast' + (n > 1 ? ' multi' : ''), 'aria-label': name,
         title: n > 1
-          ? name + ': create all ' + n + ' cleanings waiting for this device (' + names.join(' + ') + '), one after the other. Right-click to close only this one.'
-          : 'Swiftcast: check in, walk to Ready for pickup, and complete the $0 sale',
+          ? name + ' this! Right click to Swiftcast only this cleaning, instead.'
+          : 'Swiftcast this!',
         style: 'align-self:center;width:' + size + 'px;height:' + size + 'px',
         html: AE.actionIcon(iconId, size) + (n > 1 ? '<span class="n">' + n + '</span>' : ''),
         onclick: () => (n > 1 ? AE.autoClose.dualcast({ items, customerName, fake }) : single()),
@@ -3425,8 +3619,8 @@ AE.crystal({
       const [, name] = castOf(items.length);
       const opt = (label, sub, fn) => h('button', { type: 'button', class: 'opt', role: 'menuitem', onclick: () => { menu.remove(); fn(); } }, h('b', null, label), h('span', { class: 'sg-soft' }, sub));
       const menu = h('div', { id: MENU_ID, class: 'sg sg-card', role: 'menu', style: 'left:' + Math.min(x, innerWidth - 300) + 'px;top:' + Math.max(8, y - 120) + 'px' },
-        opt('Close only this cleaning', AE.CLEANING_PROGRAMS[items[0].programId] || 'This arrival', single),
-        opt(name + ': close all ' + items.length, items.map((it) => AE.CLEANING_PROGRAMS[it.programId]).join(' + '), all));
+        opt('Swiftcast this cleaning', AE.CLEANING_PROGRAMS[items[0].programId] || 'This arrival', single),
+        opt(name + ' these cleanings', items.map((it) => AE.CLEANING_PROGRAMS[it.programId]).join(' + '), all));
       document.body.appendChild(menu);
       const off = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', off, true); } };
       setTimeout(() => document.addEventListener('mousedown', off, true), 0);
@@ -3485,28 +3679,28 @@ AE.crystal({
       async dualcast({ items, customerName, fake }) {
         if (!items || items.length < 2 || (!fake && AE.status.blocked('autoClose'))) return;
         if (!fake && await storeClosed()) return;
-        if (running) { AE.confirm({ title: 'Already running', message: 'Another cleaning is being closed out — wait for it to finish.', confirmLabel: 'OK' }); return; }
+        if (running) { AE.confirm({ icon: 'autoClose', title: 'Swiftcast is already running.', message: 'Please wait until it\'s finished! You can check the progress of the current process in the bottom right of your screen, unless you moved it.', confirmLabel: 'OK', cancelLabel: null }); return; }
         const ok = await AE.confirm({
-          title: 'Create all ' + items.length + ' cleanings?',
+          icon: castOf(items.length)[0],
+          title: castOf(items.length)[1] + ' these?',
           message: '<b>' + AE.esc(customerName || 'Customer') + '</b><ul style="margin:6px 0 0;padding-left:20px">' +
-            items.map((it) => '<li>' + AE.esc(AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning') + ' <span class="sg-soft">· arrival ' + it.arrivalId + '</span></li>').join('') + '</ul>' +
-            '<div class="sg-soft" style="margin-top:6px">Each one is checked in, walked to Ready for pickup, and completed as a $0 sale, one after the other.</div>' +
+            items.map((it) => '<li>' + AE.esc(AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning') + '</li>').join('') + '</ul>' +
             (fake ? '<div style="margin-top:6px;color:#e0761a;font-weight:600">Test run from the dev tools: nothing is sent to Portal.</div>' : ''),
           warning: "Are you sure you'd like to create these cleanings? Only use this if you are the one who repaired this device!",
-          confirmLabel: 'Yes, create ' + items.length + ' cleanings',
+          confirmLabel: 'Yes, ' + castOf(items.length)[1] + ' these',
         });
         if (ok) await runMany(items, customerName, fake);
       },
       async confirmAndRun({ arrivalId, programId, customerName }) {
         if (AE.status.blocked('autoClose')) return;
         if (await storeClosed()) return; // before asking, so nobody confirms for nothing
-        if (running) { AE.confirm({ title: 'Already running', message: 'Another cleaning is being closed out — wait for it to finish.', confirmLabel: 'OK' }); return; }
+        if (running) { AE.confirm({ icon: 'autoClose', title: 'Swiftcast is already running.', message: 'Please wait until it\'s finished! You can check the progress of the current process in the bottom right of your screen, unless you moved it.', confirmLabel: 'OK', cancelLabel: null }); return; }
         const ok = await AE.confirm({
-          title: 'Create this cleaning?',
-          message: '<b>' + AE.esc(customerName || 'Customer') + '</b> · ' + AE.esc(AE.CLEANING_PROGRAMS[programId] || 'Cleaning') +
-            '<div class="sg-soft" style="margin-top:6px">Checks in arrival ' + arrivalId + ', walks it to Ready for pickup, and completes the $0 sale.</div>',
+          icon: 'autoClose',
+          title: 'Swiftcast this?',
+          message: '<b>' + AE.esc(customerName || 'Customer') + '</b> · ' + AE.esc(AE.CLEANING_PROGRAMS[programId] || 'Cleaning'),
           warning: "Are you sure you'd like to create this cleaning? Only use this if you are the one who repaired this device!",
-          confirmLabel: 'Yes, create cleaning',
+          confirmLabel: 'Yes, Swiftcast this',
         });
         if (ok) await onClick(arrivalId, true);
       },
@@ -3596,7 +3790,7 @@ AE.crystal({
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    // Small status card, top-left (form) or bottom-left (portal).
+    // Small status card, top-left (form) or bottom-left (portal). text: plain, or { html } (e.g. with an AE.bugLink).
     function toast(text, kind, where = 'top') {
       AE.ensureCss();
       let el = document.getElementById('sg-galaxy-toast');
@@ -3608,7 +3802,7 @@ AE.crystal({
       el.style.bottom = where === 'top' ? '' : '16px';
       const mark = kind === 'busy' ? '<span class="sg-spin" style="margin-top:2px"></span>'
         : '<span class="sg-icon-state" style="color:' + (kind === 'ok' ? 'var(--aui-status-success,#136d31)' : 'var(--aui-status-error,#b91a24)') + '">' + (kind === 'ok' ? '✓' : '!') + '</span>';
-      el.innerHTML = mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">Galaxy Diagnostics exception</b>' + AE.esc(text) + '</div>';
+      el.innerHTML = mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">Galaxy Diagnostics exception</b>' + (text && typeof text === 'object' ? text.html : AE.esc(text)) + '</div>';
       el.style.borderColor = kind === 'err' ? 'var(--aui-status-error,#b91a24)' : '';
       if (where !== 'top' && kind !== 'busy') setTimeout(() => el.remove(), 8000);
     }
@@ -3782,7 +3976,8 @@ AE.crystal({
             toast('Form opened in a new tab for WO ' + woId + '.', 'ok', 'bottom');
           } catch (e) {
             formTab?.close();
-            toast('Could not gather WO data: ' + (e && e.message ? e.message : e), 'err', 'bottom');
+            toast({ html: 'Macrocosmos couldn\'t grab its required data from this WO. If you keep seeing this, ' +
+              AE.bugLink('report a bug', { where: 'Macrocosmos', error: 'Gathering data for WO ' + woId + ' failed: ' + (e && e.message ? e.message : e) }) + '!' }, 'err', 'bottom');
           } finally {
             main.disabled = false;
           }
@@ -3901,7 +4096,7 @@ AE.crystal({
             to(1);
             AE.spellDone(spell, ok ? 'ok' : 'err');
             if (ok) {
-              el.title = 'GD Exception: filled — check it over, then hit Submit yourself.';
+              el.title = 'Exception data filled. Hit Submit when you\'re ready.';
               setTimeout(() => { el.classList.add('leave'); setTimeout(() => el.remove(), 750); }, 2400); // after the flash
             } else {
               el.classList.add('failed');
@@ -3919,7 +4114,7 @@ AE.crystal({
         const total = 13 + (data.storeEmail ? 1 : 0); // email + the 12 fields below (+ store email)
         const cast = castIcon(total);
         const email = await waitForField('Your email address', 8000);
-        if (!email) { cast.finish(false, 'Form did not load in time — fill it in by hand.'); return; }
+        if (!email) { cast.finish(false, 'Looks like the form didn\'t load itself in time - close this tab and try again.'); return; }
 
         const failed = [];
         const step = async (label, ok) => { if (!(await ok)) failed.push(label); cast.step(); };
@@ -3945,7 +4140,7 @@ AE.crystal({
         if (!data.imei) failed.push('IMEI (none on the WO)');
         if (!data.deviceName) failed.push('Device Full SKU (none on the WO)');
 
-        if (failed.length) cast.finish(false, 'WO ' + data.woId + ': could NOT fill ' + failed.join(', ') + ' — fill those in by hand before submitting.');
+        if (failed.length) cast.finish(false, 'Couldn\'t fill in the proper info, please close this tab and try again, or fill in the missing info by hand. Missing: ' + failed.join(', ') + '.');
         else cast.finish(true);
       }
       setTimeout(fill, 800); // the form renders client-side
@@ -4645,7 +4840,7 @@ AE.glamour = (() => {
   }
 
   function loginEditor(s, repaint) {
-    s.glamour.login = Object.assign({ image: '', fill: false, mark: true }, s.glamour.login);
+    s.glamour.login = Object.assign({ image: '', blank: false, fill: false, mark: true }, s.glamour.login);
     const L = s.glamour.login;
     const thumb = h('div', { class: 'thumb' });
     const status = h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:4px' });
@@ -4653,12 +4848,14 @@ AE.glamour = (() => {
       const f = file.files[0]; file.value = '';
       if (!f) return;
       status.textContent = 'Preparing…';
-      try { L.image = await shrinkImage(f); status.textContent = 'Picked. Save to use it.'; } catch (e) { status.textContent = e.message; }
+      try { L.image = await shrinkImage(f); L.blank = false; status.textContent = 'Picked. Save to use it.'; } catch (e) { status.textContent = e.message; }
       paint(); repaint();
     } });
     const fill = h('input', { type: 'checkbox', checked: !!L.fill, onchange: (e) => { L.fill = e.target.checked; paint(); repaint(); } });
     const mark = h('input', { type: 'checkbox', checked: L.mark !== false, onchange: (e) => { L.mark = e.target.checked; repaint(); } });
-    const reset = h('button', { type: 'button', class: 'sg-btn', onclick: () => { L.image = ''; status.textContent = "Back to Portal's picture once you save."; paint(); repaint(); } }, "Portal's picture");
+    const reset = h('button', { type: 'button', class: 'sg-btn', onclick: () => { L.image = ''; L.blank = false; status.textContent = "Back to Portal's picture once you save."; paint(); repaint(); } }, "Portal's picture");
+    // No picture: Portal's photo and headline are hidden too, leaving just the purple panel.
+    const none = h('button', { type: 'button', class: 'sg-btn', onclick: () => { L.image = ''; L.blank = true; status.textContent = 'No picture once you save.'; paint(); repaint(); } }, 'No picture');
     // Recommended sizes: Portal's own photo is a 768 × 871 cut-out PNG; the panel
     // is the right 60% of the window, full height (about square: 1152 × 1080 on 1080p).
     const tip = h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' });
@@ -4669,8 +4866,10 @@ AE.glamour = (() => {
       thumb.style.backgroundImage = L.image ? 'url("' + L.image + '")' + (L.fill ? '' : ', linear-gradient(45deg, #8223d2, #ae4fd2)') : '';
       thumb.style.backgroundSize = L.image && !L.fill ? 'contain, cover' : 'cover';
       thumb.style.backgroundPosition = L.image && !L.fill ? 'center bottom, center' : 'center';
-      thumb.textContent = L.image ? '' : "Portal's";
-      reset.disabled = !L.image;
+      if (L.blank) { thumb.style.backgroundImage = 'linear-gradient(45deg, #8223d2, #ae4fd2)'; thumb.style.backgroundSize = 'cover'; }
+      thumb.textContent = L.image ? '' : L.blank ? '' : "Portal's";
+      reset.disabled = !L.image && !L.blank;
+      none.disabled = !!L.blank;
       fill.disabled = !L.image;
     }
     paint();
@@ -4679,7 +4878,7 @@ AE.glamour = (() => {
       h('div', { class: 'sg-soft', style: 'font-size:12px' }, 'Shown on Portal\'s sign-in page in this browser.'),
       h('div', { class: 'row' }, thumb,
         h('div', null,
-          h('div', { class: 'btns' }, h('button', { type: 'button', class: 'sg-btn', onclick: () => file.click() }, 'Choose picture…'), reset, file),
+          h('div', { class: 'btns' }, h('button', { type: 'button', class: 'sg-btn', onclick: () => file.click() }, 'Choose picture…'), reset, none, file),
           status,
           h('label', { class: 'chk' }, fill, 'Fill the whole purple panel'),
           tip,
@@ -4814,7 +5013,9 @@ AE.waymark = (() => {
   const EDITOR_ROLES = ['Store Manager - Corp', 'Store Manager - Franchisee', 'District Manager', 'District Manager - Franchisee', 'Store Owner - Franchisee'];
   const COLORS = { purple: 'var(--aui-primary, #8223d2)', blue: '#4a68f9', teal: '#1592a8', green: '#2f9e5b', lime: '#6f9a12', yellow: '#b38f00', orange: '#d9670f', red: '#d1344b', grey: 'var(--aui-on-surface-soft, #5d5e61)' };
   const TTL = 60 * 1000;
-  const configured = () => !AE_SANDBOX && /^(https:\/\/|http:\/\/localhost[:/])/.test(API); // localhost = a wrangler dev test build; off in the Portal sandbox
+  // localhost = a wrangler dev test build (a local Worker + database). The Portal sandbox may use one of those,
+  // but never a real Worker.
+  const configured = () => (AE_SANDBOX ? /^http:\/\/localhost[:/]/.test(API) : /^(https:\/\/|http:\/\/localhost[:/])/.test(API));
 
   let cache = null, cacheAt = 0, inflight = null;
   let roleInfo = null;
@@ -4842,7 +5043,7 @@ AE.waymark = (() => {
   function load(force) {
     if (!force && cache && Date.now() - cacheAt < TTL) return Promise.resolve(cache);
     if (inflight) return inflight;
-    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {}, auto: j.auto || {} }; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
+    inflight = call('GET', '').then((j) => { cache = { list: j.list || [], tags: j.tags || {}, auto: j.auto || {}, closed: j.closed || [] }; load.cache = cache; cacheAt = Date.now(); AE.emit('waymark-changed', cache); return cache; })
       .finally(() => { inflight = null; });
     return inflight;
   }
@@ -4882,6 +5083,7 @@ AE.waymark = (() => {
 
   // ------------------------------------------------------------ Auto-Waymark
   const AUTO_DAYS = 3, RFP_STATUS = 13; // 13 = Ready for pickup
+  const CLOSED_STATUSES = [14, 15, 25];   // Sale complete, (closed), Cancelled
   const EOD_HOUR = 19;                    // marks go on after end of day, 7 PM local
   const afterEod = () => AE.nowDate().getHours() >= EOD_HOUR; // AE.nowDate: the dev tools can shift it
   const pad = (n) => String(n).padStart(2, '0');
@@ -5047,11 +5249,27 @@ AE.waymark = (() => {
         try { await syncNickname(r.wo, r.due); } catch (e) { console.warn('[' + AE_NAME + '] Waymark nickname sync, WO ' + r.wo + ':', e.message || e); }
       }
     }
+    /*
+      Closed WOs (their tags and marks are cleared 7 days later). Missing from the active list
+      isn't enough: a short or failed list once reported 14 open WOs closed at once (Sep 30 and
+      Oct 3, 2026). So each one is checked in Portal first, and only Sale complete / Cancelled
+      (or gone) counts. And WOs recorded as closed that are in the active list are reopened.
+    */
     const open = new Set(rows.map((r) => Number(r.workorderId)));
+    const reopen = (c.closed || []).map(Number).filter((id) => open.has(id));
+    if (reopen.length) await call('POST', '/open', { wos: reopen });
+    const recorded = new Set((c.closed || []).map(Number));
     const known = [...new Set([...Object.keys(c.tags), ...Object.keys(c.auto)].map(Number))];
-    const closed = known.filter((id) => !open.has(id));
+    const missing = rows.length ? known.filter((id) => !open.has(id) && !recorded.has(id)).slice(0, 25) : [];
+    const closed = [];
+    for (const id of missing) {
+      try {
+        const wo = await woDetail(id);
+        if (wo && CLOSED_STATUSES.includes(Number(wo.workorderStatusId))) closed.push(id); // only a clear "closed" from Portal counts
+      } catch (e) { if (/HTTP 404/.test(e.message || '')) closed.push(id); }
+    }
     if (closed.length) await call('POST', '/closed', { wos: closed });
-    return plan;
+    return Object.assign(plan, { reopened: reopen, closed });
   }
 
 
@@ -5150,7 +5368,10 @@ AE.waymark = (() => {
     return el;
   }
   const when = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
-  const fail = (what, e) => AE.toast('Waymark: ' + what, (e && e.message) || String(e), 'err');
+  // Errors: plain words for staff; the error itself only goes with the bug report.
+  const bug = (what, e) => ({ where: 'Waymark', error: what + ': ' + ((e && e.message) || String(e)) });
+  const reportEl = (what, e) => [' If you keep seeing this, ', AE.bugLinkEl('report a bug', bug(what, e)), '!'];
+  const fail = (what, e) => AE.toast('Waymark: ' + what, { html: 'If you keep seeing this, ' + AE.bugLink('report a bug', bug(what, e)) + '!' }, 'err');
 
   const CAL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 2h2v2h6V2h2v2h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V2zM5 9v10h14V9H5z"/></svg>';
 
@@ -5242,13 +5463,13 @@ AE.waymark = (() => {
           h('div', { class: 'sg-soft', style: 'margin-top:4px' }, 'Saves straight away (not with Save & reload). Removing a tag from the list keeps it on work orders as a one-off.'));
       };
       draw();
-    }).catch((e) => root.replaceChildren(h('div', { class: 'sg-soft', style: 'margin-top:8px' }, "Couldn't load the tag list: " + (e.message || e))));
+    }).catch((e) => root.replaceChildren(h('div', { class: 'sg-soft', style: 'margin-top:8px' }, "Couldn't load the tag list.", ...reportEl('Loading the tag list', e))));
     return root;
   }
   const listSig = () => JSON.stringify(cache && cache.list);
   const summary = () => (cache ? cache.list.length + ' tag' + (cache.list.length === 1 ? '' : 's') : 'Store tags');
 
-  return { API, configured, call, load, tagsOf, autoOf, checkWo, customerTexted, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
+  return { reportEl, API, configured, call, load, tagsOf, autoOf, checkWo, customerTexted, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
 })();
 
 AE.crystal({
@@ -5290,16 +5511,18 @@ AE.crystal({
 
     async function toggle(woId, tag, on) {
       try { await W.setTag(woId, tag, on); } catch (e) { W.fail("couldn't update tags", e); }
-      renderRow();
+      renderRow(); renderList();
       if (document.getElementById(POP_ID)) renderPop(woId);
     }
 
-    function togglePop(woId) {
+    let popAnchor = null; // the + Tag that opened the popover (WO page, or a row of the WO list)
+    function togglePop(woId, anchor) {
       if (document.getElementById(POP_ID)) { document.getElementById(POP_ID).remove(); return; }
-      renderPop(woId);
+      renderPop(woId, anchor);
     }
-    function renderPop(woId) {
-      const btn = document.querySelector('#' + ROW_ID + ' .add');
+    function renderPop(woId, anchor) {
+      if (anchor) popAnchor = anchor;
+      const btn = (popAnchor && popAnchor.isConnected ? popAnchor : null) || document.querySelector('#' + ROW_ID + ' .add');
       let pop = document.getElementById(POP_ID);
       if (!pop) { pop = h('div', { id: POP_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': 'Tags for this work order' }); document.body.appendChild(pop); }
       const on = new Set(W.tagsOf(woId).map((t) => t.tag));
@@ -5330,14 +5553,185 @@ AE.crystal({
         W.history(woId).then((items) => {
           hist.replaceChildren(...(items.length ? items.map(W.historyLine)
             : [h('li', { class: 'sg-soft' }, 'No tag changes yet.')]));
-        }).catch(() => hist.replaceChildren(h('li', { class: 'sg-soft' }, "Couldn't load history.")));
-      }).catch((e) => { pop.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load tags: " + (e.message || e))); });
+        }).catch((e) => hist.replaceChildren(h('li', { class: 'sg-soft' }, "Couldn't load history.", ...W.reportEl('Loading WO ' + woId + '\'s tag history', e))));
+      }).catch((e) => { pop.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load tags.", ...W.reportEl('Loading WO ' + woId + '\'s tags', e))); });
     }
     document.addEventListener('click', (e) => {
       // composedPath: the clicked chip may already be redrawn (detached) by now.
       const pop = document.getElementById(POP_ID), path = e.composedPath();
-      if (pop && !path.includes(pop) && !path.includes(document.getElementById(ROW_ID)) && !path.some((n) => n.id === 'sg-wm-push')) pop.remove();
+      if (pop && !path.includes(pop) && !path.includes(document.getElementById(ROW_ID)) && !path.some((n) => n.id === 'sg-wm-push' || (n.classList && (n.classList.contains('sg-wm-li') || n.classList.contains('sg-wm-all'))))) pop.remove();
     });
+
+    /*
+      ---------------------------------------------------- Work orders list
+      Each order's tags on Portal's Work orders list (/repair/workorders),
+      Settings → Waymark (settings.waymarkList): one compact chip beside the
+      customer's name, on the line the name already uses (rows don't get taller),
+      plus "+N" for the rest. Which chip: an Auto-Waymark due today or overdue,
+      else the first tag in the store's list order (one-offs after), else an
+      upcoming Auto-Waymark. edit: hovering a row shows × and "+ Tag"; "+N"
+      lists them all. filter (off by default): a Waymark dropdown next to
+      Portal's filters hides rows without that tag (on the page shown).
+      Portal's row opens the WO on click, so our clicks stop there.
+      Portal's Customer cell: td > div > a[href=/repair/workorder/<id>] > div (name).
+    */
+    const LI = 'sg-wm-li', ALL_ID = 'sg-wm-all', FILTER_ID = 'sg-wm-filter';
+    const LS = () => Object.assign({ chips: true, edit: true, filter: false }, AE.settings.waymarkList || {});
+    const onList = () => /^\/repair\/workorders\/?$/.test(location.pathname);
+    document.head.append(h('style', null, `
+      .sg-wm-li-wrap { display:flex !important; align-items:center; gap:6px; min-width:0; flex-wrap:nowrap; }
+      .sg-wm-li-wrap > a { min-width:0; overflow:hidden; }
+      .sg-wm-li-wrap > a > div { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .${LI} { position:relative; display:inline-flex; align-items:center; gap:4px; flex:none; white-space:nowrap; line-height:1; }
+      .${LI} .sg-tag, .sg-wm-all .sg-tag { height:18px; padding:0 7px; font-size:11px; max-width:140px; }
+      .${LI} .sg-auto, .sg-wm-all .sg-auto { height:18px; padding:0 5px; font-size:11px; border-radius:5px; }
+      .${LI} .sg-auto svg { width:11px; height:11px; }
+      .${LI} .more { height:18px; padding:0 6px; border-radius:10000rem; border:0; cursor:pointer; font:700 11px/1 Apercu, "Helvetica Neue", Arial, sans-serif;
+        background:color-mix(in srgb, var(--aui-on-surface, #1a1c1e) 12%, transparent); color:var(--aui-on-surface, #1a1c1e); }
+      /* + Tag and × float over the row on hover (no space reserved, so no gap after the tags, and hovering never reflows) */
+      .${LI} .add { position:absolute; left:calc(100% + 4px); top:50%; transform:translateY(-50%); display:inline-flex; align-items:center; visibility:hidden; height:18px; padding:0 7px; border-radius:10000rem; border:1px dashed var(--aui-primary, #8223d2); background:transparent; cursor:pointer;
+        color:var(--aui-primary, #8223d2); font:700 11px/1 Apercu, "Helvetica Neue", Arial, sans-serif; }
+      .${LI}:not(.edit) .sg-tag button, .${LI}:not(.edit) .sg-auto button { display:none; }
+      /* × as a small badge on the chip's top-right corner (hover), so the chip's text stays readable */
+      .${LI} .sg-tag, .${LI} .sg-auto { position:relative; overflow:visible; max-width:none; }
+      .${LI}.edit .sg-tag button, .${LI}.edit .sg-auto button { visibility:hidden; position:absolute; right:-6px; top:-7px; width:14px; height:14px; padding:0;
+        display:inline-flex; align-items:center; justify-content:center; border-radius:50%; opacity:1; font-size:11px; line-height:1;
+        background:var(--aui-on-surface, #1a1c1e); color:var(--aui-surface, #fff); box-shadow:0 0 0 1.5px var(--aui-surface, #fff); }
+      tr:hover .${LI}.edit .add, tr:hover .${LI}.edit .sg-tag button, tr:hover .${LI}.edit .sg-auto button,
+      .${LI}.edit:focus-within .add, .${LI}.edit:focus-within button { visibility:visible; }
+      #${ALL_ID} { position:fixed; z-index:2147483646; width:260px; padding:10px 12px; font-size:13px; }
+      #${ALL_ID} h4 { margin:0 0 8px; font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+      #${ALL_ID} .r { margin:6px 0; display:flex; }
+      #${ALL_ID} .add { height:22px; padding:0 9px; border-radius:10000rem; border:1px dashed var(--aui-primary, #8223d2); background:transparent; cursor:pointer;
+        color:var(--aui-primary, #8223d2); font:700 12px/1 Apercu, "Helvetica Neue", Arial, sans-serif; }
+      tr.sg-wm-hidden { display:none !important; }
+      #${FILTER_ID} { position:relative; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px 0 14px; margin-left:8px; border-radius:8px; cursor:pointer;
+        border:1px solid var(--aui-primary, #8223d2); background:transparent; color:var(--aui-primary, #8223d2); font:400 15px Apercu, "Helvetica Neue", Arial, sans-serif; }
+      #${FILTER_ID} .ae { position:absolute; left:-8px; top:-9px; width:18px; height:18px; border-radius:50%; background:var(--aui-primary, #8223d2); color:#fff;
+        font:700 8px/18px Apercu, Arial, sans-serif; text-align:center; box-shadow:0 0 0 2px var(--aui-surface, #fff); }
+      #${FILTER_ID}.on { background:var(--aui-primary, #8223d2); color:#fff; }
+    `));
+    const listOrder = (c) => new Map((c ? c.list : []).map((l, i) => [l.name, i]));
+    // Everything on an order, most important first.
+    function itemsOf(woId) {
+      const auto = W.autoOf(woId), st = auto && W.dueState(auto.due), ord = listOrder(W.load.cache || null);
+      const tags = W.tagsOf(woId).slice().sort((a, b) => (ord.has(a.tag) ? ord.get(a.tag) : 999) - (ord.has(b.tag) ? ord.get(b.tag) : 999));
+      const urgent = auto && (st === 'today' || st === 'overdue');
+      return [...(urgent ? [{ auto }] : []), ...tags.map((t) => ({ t })), ...(auto && !urgent ? [{ auto }] : [])];
+    }
+    const chipFor = (woId, it, edit) => {
+      if (it.auto) {
+        const el = W.autoChip(woId, it.auto, () => { renderList(); renderRow(); });
+        if (!edit) el.querySelector('button')?.remove();
+        return el;
+      }
+      return W.chip(it.t.tag, { title: it.t.tag + ' · added by ' + (it.t.by || 'someone') + ', ' + W.when(it.t.at), onRemove: edit ? () => toggle(woId, it.t.tag, false) : null });
+    };
+    const stop = (e) => { e.stopPropagation(); };
+    function custIndex(table) {
+      const head = table && table.querySelector('thead tr');
+      return head ? [...head.children].findIndex((c) => c.textContent.trim().toLowerCase() === 'customer') : -1;
+    }
+    let listFilter = '';
+    function renderList() {
+      const S = LS();
+      if (!onList() || !S.chips) { document.querySelectorAll('.' + LI).forEach((x) => x.remove()); unfit(); document.querySelectorAll('tr.sg-wm-hidden').forEach((r) => r.classList.remove('sg-wm-hidden')); renderFilter(); return; }
+      const idx = new Map();
+      for (const row of document.querySelectorAll('tbody tr')) {
+        const a = row.querySelector('a[href*="/repair/workorder/"]');
+        const m = a && a.getAttribute('href').match(/\/repair\/workorder\/(\d+)/);
+        if (!m) continue;
+        const woId = m[1], table = row.closest('table');
+        if (!idx.has(table)) idx.set(table, custIndex(table));
+        const cell = row.children[idx.get(table)];
+        const link = cell && cell.querySelector('a[href*="/repair/workorder/"]');
+        const wrap = link && link.parentElement;
+        if (!wrap) continue;
+        wrap.setAttribute('data-ae-fit', ''); // every row's name may use its row's free room (fitNames)
+        const items = itemsOf(woId);
+        // Tag filter: hide rows without the chosen tag.
+        row.classList.toggle('sg-wm-hidden', !!(S.filter && listFilter && !items.some((it) => (it.t && it.t.tag === listFilter) || (listFilter === '@auto' && it.auto))));
+        const key = woId + '|' + JSON.stringify(items) + '|' + S.edit;
+        let li = wrap.querySelector('.' + LI);
+        if (li && li.dataset.key === key) continue;
+        li?.remove();
+        if (!items.length && !S.edit) continue;
+        wrap.classList.add('sg-wm-li-wrap');
+        li = h('span', { class: LI + (S.edit ? ' edit' : ''), 'data-key': key, onclick: stop, onmousedown: stop });
+        if (items[0]) li.append(chipFor(woId, items[0], S.edit));
+        if (items.length > 1) li.append(h('button', { type: 'button', class: 'more', title: 'All ' + items.length + ' tags', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openAll(woId, e.currentTarget); } }, '+' + (items.length - 1)));
+        if (S.edit) li.append(h('button', { type: 'button', class: 'add', title: 'Tag this work order', onclick: (e) => { e.preventDefault(); e.stopPropagation(); togglePop(woId, e.currentTarget); } }, '+ Tag'));
+        if (!li.childNodes.length) continue;
+        wrap.append(li);
+      }
+      fitNames();
+      renderFilter();
+    }
+    /*
+      Portal caps the customer's name at 7.5rem (120 px, "…" after). Rows with tags make the Customer column
+      wider (120 px + their chips), so the other rows' names may use that room too. The room comes from what
+      the column needs without any fitting (Portal's 120 px + the widest row of chips), never from the cells'
+      current widths, so it can't feed back and creep the table wider.
+    */
+    const PORTAL_CAP = 120, GAP = 6;
+    function fitNames() {
+      const rows = [...document.querySelectorAll('tbody tr td [data-ae-fit]')].map((wrap) => {
+        const link = wrap.querySelector(':scope > a'), name = link && link.querySelector(':scope > div'), li = wrap.querySelector('.' + LI);
+        return { wrap, link, name, used: li && li.offsetWidth ? li.offsetWidth + GAP : 0 };
+      }).filter((r) => r.name);
+      const widest = rows.reduce((m, r) => Math.max(m, PORTAL_CAP + r.used), PORTAL_CAP);
+      for (const r of rows) {
+        const room = Math.max(PORTAL_CAP, widest - r.used) + 'px';
+        if (r.name.style.maxWidth !== room) { r.name.style.maxWidth = room; r.link.style.maxWidth = room; }
+      }
+    }
+    function unfit() {
+      document.querySelectorAll('[data-ae-fit]').forEach((w) => { const a = w.querySelector(':scope > a'), d = a && a.querySelector(':scope > div'); if (a) a.style.maxWidth = ''; if (d) d.style.maxWidth = ''; w.removeAttribute('data-ae-fit'); });
+    }
+    // "+N": every tag on the order (removable when editing), and + Tag.
+    function openAll(woId, anchor) {
+      document.getElementById(ALL_ID)?.remove();
+      const S = LS(), items = itemsOf(woId);
+      const name = (anchor.closest('.sg-wm-li-wrap')?.querySelector('a')?.textContent || '').trim();
+      const box = h('div', { id: ALL_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': 'Tags', onclick: stop, onmousedown: stop },
+        h('h4', null, (name ? name + ' · ' : '') + items.length + ' tags'),
+        ...items.map((it) => h('div', { class: 'r' }, chipFor(woId, it, S.edit))),
+        S.edit ? h('div', { class: 'r' }, h('button', { type: 'button', class: 'add', onclick: (e) => { e.stopPropagation(); box.remove(); togglePop(woId, anchor); } }, '+ Tag')) : null);
+      document.body.append(box);
+      const r = anchor.getBoundingClientRect();
+      box.style.top = Math.min(r.bottom + 6, innerHeight - box.offsetHeight - 8) + 'px';
+      box.style.left = Math.max(8, Math.min(r.left - 10, innerWidth - box.offsetWidth - 8)) + 'px';
+    }
+    document.addEventListener('click', (e) => { const b = document.getElementById(ALL_ID); if (b && !e.composedPath().includes(b)) b.remove(); });
+    // Tag filter (off by default): next to Portal's filters (Needs Attention, Program, Device type).
+    function renderFilter() {
+      let f = document.getElementById(FILTER_ID);
+      const S = LS();
+      const anchor = onList() && S.chips && S.filter && [...document.querySelectorAll('button, [role="button"]')].find((b) => b.offsetParent && b.textContent.trim() === 'Device type');
+      if (!anchor) { f?.remove(); if (listFilter) { listFilter = ''; } return; }
+      const label = !listFilter ? 'Waymark' : listFilter === '@auto' ? 'Waymark: Auto-Waymark' : 'Waymark: ' + listFilter;
+      if (!f) {
+        f = h('button', { type: 'button', id: FILTER_ID, class: 'sg', title: 'Show only work orders with a Waymark tag (on this page)', onclick: (e) => { e.stopPropagation(); filterMenu(f); } });
+      }
+      if (f.dataset.label !== label) { f.dataset.label = label; f.replaceChildren(h('span', { class: 'ae' }, 'Ae'), label + ' ▾'); f.classList.toggle('on', !!listFilter); }
+      const host = anchor.closest('div') || anchor;
+      if (f.previousElementSibling !== host) host.after(f);
+    }
+    function filterMenu(f) {
+      document.getElementById('sg-wm-fmenu')?.remove();
+      const pick = (v) => { listFilter = v; menu.remove(); renderList(); };
+      const c = W.load.cache || { list: [] };
+      const menu = h('div', { id: 'sg-wm-fmenu', class: 'sg sg-card', style: 'position:fixed;z-index:2147483646;padding:6px;min-width:200px', onclick: stop },
+        h('button', { type: 'button', class: 'sg-btn', style: 'width:100%;justify-content:flex-start;border:0', onclick: () => pick('') }, 'All work orders'),
+        h('button', { type: 'button', class: 'sg-btn', style: 'width:100%;justify-content:flex-start;border:0', onclick: () => pick('@auto') }, 'Auto-Waymark'),
+        ...c.list.map((l) => h('button', { type: 'button', class: 'sg-btn', style: 'width:100%;justify-content:flex-start;border:0', onclick: () => pick(l.name) }, W.chip(l.name))));
+      document.body.append(menu);
+      const r = f.getBoundingClientRect();
+      menu.style.top = (r.bottom + 6) + 'px'; menu.style.left = Math.min(r.left, innerWidth - menu.offsetWidth - 8) + 'px';
+      setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }));
+    }
+    AE.every(1000, () => { if (onList() && LS().chips) W.load().catch(() => {}); renderList(); });
+    AE.on('waymark-changed', () => renderList());
 
     // ---------------------------------------------------- header button + board
     function renderButton() {
@@ -5420,7 +5814,7 @@ AE.crystal({
         drawBoard(board, c, wos);
         W.scan(wos).then(() => W.load()).then((c2) => { if (board.isConnected) drawBoard(board, c2, wos); }).catch(() => {});
       } catch (e) {
-        board.querySelector('.list').replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load: " + (e.message || e)));
+        board.querySelector('.list').replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load.", ...W.reportEl('Loading the board', e)));
       }
     }
     function drawBoard(board, c, wos) {
@@ -5689,12 +6083,12 @@ AE.crystal({
         (a PO, receiving, a PO's projection, editing/reviewing a count, an
         RMA or buyback order, store transfers, purchase requests, local
         pricing). Arrivals and inventory's list pages (home, POs, counts,
-        RMA/buyback, store products) are allowed (LIST_PAGES; anything else
-        under /boh, /check-in or /check-out is blocked). Checked against
+        RMA/buyback, store products) and Sales (/check-out/sales) are allowed
+        (LIST_PAGES; anything else under /boh, /check-in or /check-out is blocked). Checked against
         Portal first.
       · item label (<item number>-<10+ digit serial>) → opens the item's
-        page, from the dashboard, WO list, customers, Arrivals and those
-        inventory list pages. On a WO, Portal adds it to the WO instead.
+        page, from the dashboard, WO list, customers, Arrivals, Sales and
+        those inventory list pages. On a WO, Portal adds it to the WO instead.
       · never while you're typing in a field or a dialog/drawer is open
         (the scan is meant for that field), and never acts on scans
         Portal's own pages consume.
@@ -5798,9 +6192,9 @@ AE.crystal({
     display:contents, so tucking also gives the box display:block.
 */
 AE.fixesInfo = [
-  ['logoLink', 'Logo link', 'The ubreakifix logo is a real link to the dashboard: middle-click or right-click it to open a new tab.'],
-  ['autoNotes', 'Hide auto notes switch', 'A switch at the top of a work order\'s notes hides the automatic ones (status changes, check-in logs…) and loads every note, so you see everything people wrote. Flip it back any time; nothing is deleted.'],
-  ['notContacted', 'Not contacted (Arrivals)', 'A "Not contacted" chip on the Arrivals page, next to Portal\'s own, lists every arrival that hasn\'t been contacted yet (no Contacted tag), from every page.',
+  ['logoLink', 'Logo link', 'Restores the ability to right click or middle click the UBIF logo in the top left to open a new tab.'],
+  ['autoNotes', 'Hide auto notes switch', 'A switch at the top of WO notes hides all Auto notes, revealing the notes people actually typed themselves.'],
+  ['notContacted', 'Not contacted (Arrivals)', 'Adds the ability to filter arrivals by \'not contacted.\'',
     // Which statuses the chip lists: everything not contacted, or only the ones still Not confirmed.
     (s, h) => {
       const pick = (v) => { s.fixes.notContactedStatus = v; paint(); };
@@ -5816,13 +6210,13 @@ AE.fixesInfo = [
     }],
   ['reportsRetry', 'Reports page help', 'If Portal\'s Reports page is stuck loading, a warning explains the usual cause (an ad blocker like uBlock Origin) and how to fix it. The details are included if you send a bug report.'],
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
-  ['appcuesBoxes', 'Collapse announcement boxes', 'Announcement boxes on work orders (like "Apple iOS 27 and Repair Mode") get – Collapse, to shrink them to an icon, and Hide for today. They never disappear for good: the icon at the bottom left brings them back.'],
-  ['appcuesButtons', 'Support Ticket & Enhancement Idea buttons', 'Portal\'s Support Ticket and Enhancement Idea buttons are made to fit: Support Ticket becomes a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before.'],
-  ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Works on Arrivals and inventory\'s lists, but never while checking in or out, on a PO, receiving, or doing a count, or while typing in a field.',
-    // Debugging: a live log of what the scanner sends and what happened.
-    (s, h) => h('label', { style: 'display:flex;align-items:center;gap:8px;margin:-2px 0 10px 14px;font-size:12px', class: 'sg-soft' },
+  ['appcuesBoxes', 'Collapse announcement boxes', 'Adds the ability to collapse or dismiss the large white boxes that show up on certain WOs; they\'ll either be dismissed for the day or indefinitely, but they can always be restored with the icon on the bottom left of your screen.'],
+  ['appcuesButtons', 'Support Ticket & Enhancement Idea buttons', 'Reskins/moves these two buttons around a bit on the Dashboard so they fit. They work just as before.'],
+  ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Works on Arrivals, Sales and inventory\'s lists, but never while checking in or out, on a PO, receiving, or doing a count, or while typing in a field.',
+    // Debugging: a live log of what the scanner sends and what happened. Dev builds only (build.py writes true/false for false, so other builds drop it).
+    false && ((s, h) => h('label', { style: 'display:flex;align-items:center;gap:8px;margin:-2px 0 10px 14px;font-size:12px', class: 'sg-soft' },
       h('input', { type: 'checkbox', checked: !!s.fixes.scanDebug, onchange: (e) => { s.fixes.scanDebug = e.target.checked; } }),
-      'Show scan debugging (a log of every scan, bottom right; to find out why a scan didn\'t work)')],
+      'Show scan debugging (a log of every scan, bottom right; to find out why a scan didn\'t work)'))],
 ];
 
 AE.crystal({
@@ -5871,7 +6265,25 @@ AE.crystal({
         while (win && win !== window && win.frameElement) { const f = win.frameElement.getBoundingClientRect(); x += f.left; y += f.top; win = win.frameElement.ownerDocument.defaultView; }
         return { left: x, top: y, width: r.width, height: r.height, right: x + r.width, bottom: y + r.height };
       }
-      return { TUCK, roots, outerBox, pageRect };
+      // What Appcues has on the page (for bug reports: enough to write a bulletin rule). Appcues content
+      // is Asurion's announcements, not customer data; titles only.
+      function summary() {
+        const out = [];
+        for (const r of roots()) {
+          for (const el of r.querySelectorAll('*')) {
+            const tag = el.tagName.toLowerCase();
+            if (!/^appcues/.test(tag) && !/^appcues-container-/.test(el.id || '')) continue;
+            const scope = el.shadowRoot || el;
+            const hd = scope.querySelector && scope.querySelector('h1, h2, h3, h4, [role="dialog"]');
+            out.push({ tag, id: (el.id || '').slice(0, 60), pattern: el.getAttribute('data-pattern-type'), position: el.getAttribute('data-position'),
+              shadow: !!el.shadowRoot, frame: el.ownerDocument !== document, title: hd ? (hd.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80) : null });
+            if (out.length >= 12) return out;
+          }
+        }
+        return out;
+      }
+      AE.appcuesSummary = summary;
+      return { TUCK, roots, outerBox, pageRect, summary };
     })();
 
     const FIXES = {
@@ -5950,14 +6362,32 @@ AE.crystal({
       },
       appcuesBoxes() {
         const KEY = 'ae_appcues_boxes', TIP_KEY = 'ae_box_tip_seen', ICONS = 'ae-box-icons', MARK = 'data-ae-box';
-        const PATTERNS = ['shorty', 'modal', 'slideout', 'fullscreen'];
+        /*
+          Which boxes are bulletins: built in, plus rules from status.json ("bulletins", 2.22.0+;
+          build.py --bulletin-…), so a new kind of bulletin can be covered without an update.
+          pages replaces the built-in list; patterns, selectors and closers add to it.
+        */
+        const BUILT_IN = { pages: ['^/repair/workorder/\\d+'], patterns: ['shorty', 'modal', 'slideout', 'fullscreen'], selectors: [], closers: ['.appcues-skip', '[data-step="skip"]'] };
+        const rules = () => {
+          const r = (AE.status && AE.status.get().bulletins) || {};
+          const uniq = (a) => [...new Set(a)];
+          return { pages: (r.pages && r.pages.length ? r.pages : BUILT_IN.pages), patterns: uniq([...BUILT_IN.patterns, ...(r.patterns || [])]),
+            selectors: uniq([...BUILT_IN.selectors, ...(r.selectors || [])]), closers: uniq([...BUILT_IN.closers, ...(r.closers || [])]) };
+        };
+        const reCache = new Map();
+        const re = (src) => { if (!reCache.has(src)) { let x = null; try { x = new RegExp(src); } catch (_) { /* bad rule: skipped */ } reCache.set(src, x); } return reCache.get(src); };
+        const qsa = (root, sel) => { try { return [...root.querySelectorAll(sel)]; } catch (_) { return []; } };
+        const scopeOf = (box) => box.shadowRoot || box;
+        // Appcues' newer containers (<appcues-experience-container>, shadow DOM) also hold buttons like Support
+        // Ticket; only ones with a heading or a dialog are bulletins.
+        const isBulletin = (box) => { const sc = scopeOf(box); return !!sc.querySelector('h1, h2, h3, h4, [role="dialog"]') && !box.closest('.sg'); };
         const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
         const store = () => GM_getValue(KEY, {});
         const put = (k, v) => { const all = store(); if (v) all[k] = v; else delete all[k]; GM_setValue(KEY, all); };
-        const onWo = () => /^\/repair\/workorder\/\d+/.test(location.pathname);
+        const onPage = (R) => R.pages.some((src) => { const x = re(src); return x && x.test(location.pathname); });
         const titleOf = (box) => {
-          const hd = box.querySelector('h1, h2, h3, h4');
-          return ((hd ? hd.textContent : box.textContent) || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+          const sc = scopeOf(box), hd = sc.querySelector('h1, h2, h3, h4');
+          return ((hd ? hd.textContent : sc.textContent) || '').replace(/\s+/g, ' ').trim().slice(0, 120);
         };
         // A box is known by its title, so a new announcement shows normally.
         const keyOf = (t) => { let x = 0; for (let i = 0; i < t.length; i++) x = (x * 31 + t.charCodeAt(i)) | 0; return 'b' + (x >>> 0).toString(36); };
@@ -5981,23 +6411,28 @@ AE.crystal({
         const BAR_CSS = '[' + MARK + '-bar]{display:flex;gap:6px;justify-content:flex-end;padding:6px 8px 0;position:relative;z-index:3}' +
           '[' + MARK + '-bar] button{font:600 12px Apercu,"Helvetica Neue",Helvetica,Arial,sans-serif;height:26px;padding:0 10px;border-radius:10000rem;cursor:pointer;' +
           'border:1px solid rgba(0,0,0,.25);background:rgba(255,255,255,.7);color:#1a1c1e}' +
-          '[' + MARK + '-bar] button:hover{border-color:#8223d2;color:#8223d2}' +
-          '[' + MARK + '] .appcues-skip{display:none !important}'; // Appcues' own × dismisses it for good
-        function controls(box, key, title) {
-          const doc = box.ownerDocument;
-          if (!doc.getElementById('ae-box-css')) { const st = doc.createElement('style'); st.id = 'ae-box-css'; st.textContent = BAR_CSS; (doc.head || doc.documentElement).append(st); }
-          if (box.querySelector('[' + MARK + '-bar]')) return;
+          '[' + MARK + '-bar] button:hover{border-color:#8223d2;color:#8223d2}';
+        // Appcues' own close buttons dismiss a bulletin for good: hidden (inside the bulletin only).
+        const closerCss = (R, inShadow) => R.closers.map((c) => (inShadow ? '' : '[' + MARK + '] ') + c).join(',') + '{display:none !important}';
+        function controls(box, key, title, R) {
+          const doc = box.ownerDocument, sc = scopeOf(box), inShadow = !!box.shadowRoot;
+          const styleHome = inShadow ? sc : (doc.head || doc.documentElement);
+          let st = (inShadow ? sc : doc).querySelector('#ae-box-css');
+          if (!st) { st = doc.createElement('style'); st.id = 'ae-box-css'; styleHome.append(st); }
+          const css = BAR_CSS + closerCss(R, inShadow);
+          if (st.textContent !== css) st.textContent = css;
+          if (sc.querySelector('[' + MARK + '-bar]')) return;
           box.setAttribute(MARK, key);
           const bar = doc.createElement('div'); bar.setAttribute(MARK + '-bar', '');
           const btn = (label, tip, fn) => { const b = doc.createElement('button'); b.type = 'button'; b.textContent = label; b.title = tip; b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(); }); return b; };
           bar.append(
             btn('– Collapse', 'Collapse to an icon (bottom left). Click the icon to bring it back.', () => { put(key, { title, collapsed: true }); AE.track('fixes:boxCollapse'); tick(); }),
             btn('Hide for today', 'Hide until tomorrow. The icon (bottom left) brings it back today.', () => { put(key, { title, hiddenDay: today() }); AE.track('fixes:boxHideToday'); tick(); }));
-          (box.querySelector('modal-container') || box).prepend(bar);
+          (sc.querySelector('modal-container') || (inShadow ? (sc.firstElementChild || sc) : box)).prepend(bar);
         }
         function tip(box) {
           if (GM_getValue(TIP_KEY, false) || document.querySelector('.ae-box-tip')) return;
-          const bar = box.querySelector('[' + MARK + '-bar]');
+          const bar = scopeOf(box).querySelector('[' + MARK + '-bar]');
           if (!bar) return;
           const r = AC.pageRect(bar);
           if (!r.width) return;
@@ -6013,19 +6448,24 @@ AE.crystal({
         const tucked = new Set();
         function tick() {
           tucked.forEach((b) => b.classList.remove(AC.TUCK)); tucked.clear();
-          const boxes = [];
-          if (onWo()) {
+          const boxes = [], R = rules();
+          if (onPage(R)) {
+            const seen = new Set();
+            const take = (box) => {
+              if (seen.has(box)) return;
+              seen.add(box);
+              const title = titleOf(box);
+              if (title) boxes.push({ box, title, key: keyOf(title) });
+            };
             for (const r of AC.roots()) {
-              for (const box of r.querySelectorAll('appcues[data-pattern-type]')) {
-                if (!PATTERNS.includes(box.getAttribute('data-pattern-type'))) continue;
-                const title = titleOf(box);
-                if (title) boxes.push({ box, title, key: keyOf(title) });
-              }
+              for (const box of r.querySelectorAll('appcues[data-pattern-type]')) if (R.patterns.includes(box.getAttribute('data-pattern-type'))) take(box);
+              for (const box of qsa(r, 'appcues-experience-container')) if (isBulletin(box)) take(box);
+              for (const sel of R.selectors) for (const box of qsa(r, sel)) if (isBulletin(box)) take(box);
             }
           }
           const all = store(), shown = [];
           for (const b of boxes) {
-            controls(b.box, b.key, b.title);
+            controls(b.box, b.key, b.title, R);
             if (away(all[b.key])) { const o = AC.outerBox(b.box); o.classList.add(AC.TUCK); tucked.add(o); shown.push(b); }
             else tip(b.box);
           }
@@ -6129,7 +6569,7 @@ AE.crystal({
             const input = AE.h('input', { type: 'checkbox', checked: hide, onchange: (e) => { hide = e.target.checked; GM_setValue(KEY, hide); AE.track(hide ? 'fixes:hideAutoNotes' : 'fixes:showAutoNotes'); paint(); } });
             bar = AE.h('div', { id: BAR },
               AE.h('span', { class: 'n' }),
-              AE.h('label', { title: 'Hide the automatic notes (status changes, check-in logs…). Nothing is deleted; flip it back any time.' },
+              AE.h('label', { title: 'Hide all Auto notes.' },
                 input, AE.h('span', { class: 'knob' }), 'Hide auto notes'));
             list.before(bar); // Portal's list is a flex column; we sit just above it
           }
@@ -6183,7 +6623,7 @@ AE.crystal({
               rows = all.filter((a) => !contacted(a) && (!onlyUnconfirmed || Number(a.arrivalStatus && a.arrivalStatus.arrivalStatusId) === NOT_CONFIRMED));
               loadedKey = key; loadedAt = Date.now();
             })
-            .catch((e) => { AE.toast('Not contacted', "Couldn't load the arrivals: " + (e.message || e), 'err'); turnOff(); })
+            .catch((e) => { AE.toast('Not contacted', { html: "Couldn't load the arrivals. If you keep seeing this, " + AE.bugLink('report a bug', { where: "Master's Mend", error: 'Not contacted: loading the arrivals failed: ' + (e.message || e) }) + '!' }, 'err'); turnOff(); })
             .finally(() => { loading = null; paint(); });
         }
         // Portal's own table shows them: its loaded page becomes the not-contacted list (all of it, one page).
@@ -6315,7 +6755,8 @@ AE.crystal({
               AE.h('div', { class: 'sg-soft', style: 'font-size:13px' },
                 (blocked ? 'Your browser stopped Portal\'s reports request before it went out. ' : '') +
                 'Ad blockers like uBlock Origin block Portal\'s reports. Turn yours off for portal.ubreakifix.net (click its icon in the toolbar and switch it off for this site), then reload.'),
-              !blocked && st && st.status ? AE.h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:4px' }, 'Still stuck without one? Use Send feedback → Bug; the details are included.') : null,
+              !blocked && st && st.status ? AE.h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:4px' }, 'Still stuck without one? ',
+                AE.bugLinkEl('Send a bug report', { where: 'Reports page', error: 'Reports stuck loading (reports request: ' + st.status + ')' }), '; the details are included.') : null,
               AE.h('div', { style: 'display:flex;gap:8px;margin-top:10px' },
                 AE.h('button', { type: 'button', class: 'sg-btn sg-primary', style: 'height:30px;font-size:13px', onclick: () => location.reload() }, 'Reload page'))),
             AE.h('button', { type: 'button', class: 'sg-x', title: 'Dismiss', onclick: close }, '✕'));
@@ -6363,12 +6804,12 @@ AE.crystal({
         }
         function serverSort(id, dir) {
           const sel = getSel(), c = current(sel);
-          if (!c.pf) return AE.toast('Sort', "Couldn't find the list's settings in Portal.", 'err');
+          if (!c.pf) return AE.toast('Sort', { html: "Couldn't find the list's settings in Portal. If you keep seeing this, " + AE.bugLink('report a bug', { where: "Master's Mend", error: 'Sort: no list filter key on ' + location.pathname }) + '!' }, 'err');
           const order = id + ',' + dir;
           const entry = Object.assign({}, c.g, { order, page: 1 });
           if (c.tab) entry.tabs = Object.assign({}, c.g.tabs, { [c.tab]: Object.assign({}, (c.g.tabs || {})[c.tab], { order }) });
           const r = AE.portal('dispatch', { slice: 'repair', action: { type: 'repair/setWorkorderlistFilterSelection', payload: { [c.pf]: entry } } });
-          if (!r.stores) AE.toast('Sort', "Couldn't reach Portal's list.", 'err');
+          if (!r.stores) AE.toast('Sort', { html: "Couldn't reach Portal's list. If you keep seeing this, " + AE.bugLink('report a bug', { where: "Master's Mend", error: 'Sort: Portal\'s store not reachable on ' + location.pathname }) + '!' }, 'err');
           pageSort = null;
           AE.track('fixes:woSort');
         }
@@ -6479,6 +6920,7 @@ AE.crystal({
           /^\/boh\/inventory\/?$/,                                   // Inventory home
           /^\/boh\/inventory\/(purchase-orders|counts|rma-buyback)\/?$/, // lists (not a PO, receiving, or a count)
           /^\/boh\/inventory\/store-products(\/[^/]+)?\/?$/,          // store products and a product's page
+          /^\/check-out\/sales\/?$/,                                 // Sales (the list; not the cart, a checkout or a refund)
         ];
         const listPage = () => LIST_PAGES.some((re) => re.test(path()));
         const scanPage = () => /^\/(boh|check-in|check-out)(\/|$)/.test(path()) && !listPage();
@@ -6496,7 +6938,8 @@ AE.crystal({
             const id = wo[1];
             if (path().startsWith('/repair/workorder/' + id)) return 'already on WO ' + id;
             try { await AE.api('GET', '/api/workorder/' + id); } catch (e) {
-              AE.toast('Scan', "Couldn't open WO " + id + ': ' + (/HTTP 404/.test(e.message) ? 'no such work order.' : e.message), 'err', 6000);
+              AE.toast('Scan', { html: AE.esc("Couldn't open WO " + id + (/HTTP 404/.test(e.message) ? ': no such work order.' : '.')) + ' If you keep seeing this, ' +
+                AE.bugLink('report a bug', { where: "Master's Mend", error: 'Scan to open WO ' + id + ' failed: ' + e.message }) + '!' }, 'err', 8000);
               return 'WO lookup failed';
             }
             go('/repair/workorder/' + id);
@@ -6516,7 +6959,7 @@ AE.crystal({
           Aethernet did and why (focus, open dialogs, page).
         */
         const dbg = (() => {
-          if (!on.scanDebug) return null;
+          if (!false || !on.scanDebug) return null; // dev builds only (build.py writes true/false for false)
           const ID = 'ae-scan-debug', rows = [];
           document.head.append(AE.h('style', null, `
             #${ID} { position:fixed; right:16px; bottom:16px; z-index:2147483645; width:440px; max-height:46vh; overflow:auto; padding:10px 12px; font:12px/1.4 ui-monospace, Menlo, monospace; }
@@ -6870,7 +7313,8 @@ AE.crystal({
         h('button', { type: 'button', class: 'sg-btn', style: 'height:30px;font-size:13px', onclick: () => load(id, false, true) }, 'Refresh'),
         h('button', { type: 'button', class: 'sg-x', title: 'Close', onclick: () => { giveBackFocus(); p.remove(); } }, '✕'));
       if (s.status !== 'ready') {
-        p.replaceChildren(head, h('div', { class: 'sg-soft', style: 'padding:10px 0' }, s.status === 'loading' ? 'Comparing expected and scanned serials…' : "Couldn't load this count: " + s.error));
+        p.replaceChildren(head, h('div', { class: 'sg-soft', style: 'padding:10px 0' }, ...(s.status === 'loading' ? ['Comparing expected and scanned serials…']
+          : ["Couldn't load this count. If you keep seeing this, ", AE.bugLinkEl('report a bug', { where: 'Lay of the Land', error: 'Loading count ' + id + ' failed: ' + s.error }), '!'])));
         return;
       }
       const d = s.data;
