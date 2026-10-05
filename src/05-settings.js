@@ -15,7 +15,7 @@
     // rest sit in AE_DEMO ? [] : […] so their text isn't in that file at all.
     ...(AE_DEMO ? [] : [
     ['woCleanings', 'Esuna', 'Divination but for your work order page, with an easy Swiftcast button.'],
-    ['textNotes', 'Recitation', 'Text → WO note: when you text a customer from a WO, the text is added to the WO notes.'],
+    ['textNotes', 'Recitation', 'Imprints a work order with the text of your message, whenever you text a customer from a WO. **This does not work anywhere else; only inside of a work order!**'],
     ]),
     ['autoClose', 'Swiftcast', 'Cleaning auto-close: one-click check-in → complete sale on cleaning arrivals.'],
     ...(AE_DEMO ? [] : [
@@ -435,6 +435,8 @@
       return c ? h('span', { class: 'sg-issue-tag ' + c.kind, title: c.title }, c.text) : null;
     };
     const CHEV = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
+    // A description's **…** parts are bold (the rest stays plain text).
+    const boldParts = (t) => String(t).split(/\*\*(.+?)\*\*/).map((p, i) => (i % 2 ? h('b', { style: 'display:inline;font-size:inherit;line-height:inherit;color:inherit' }, p) : p)).filter((p) => p !== '');
     const crystalRow = (id, name, desc) => {
       const fresh = isNew(id), upd = !fresh && isUpdated(id);
       let optToggle = null, optBody = null;
@@ -461,7 +463,7 @@
         h('div', { class: 'sg-row' },
           h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : upd ? h('span', { class: 'sg-new-tag upd' }, 'Updated') : null,
               issueTag(id)),
-            h('span', { class: 'sg-soft' }, desc), optToggle ? h('div', null, optToggle) : null),
+            h('span', { class: 'sg-soft' }, ...boldParts(desc)), optToggle ? h('div', null, optToggle) : null),
           toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); })),
         optBody);
     };

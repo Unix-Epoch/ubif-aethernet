@@ -91,7 +91,8 @@ AE.crystal({
           if (n) AE.refreshView();
           if (n) AE.toast('Text logged', (n > 1 ? n + ' texts' : 'Text') + ' added to WO ' + m[1] + "'s notes.", 'ok', 4000);
         } catch (e) {
-          AE.toast('Text sent, but not logged', "Couldn't add the WO note: " + (e.message || e) + ' — add it by hand.', 'err', 12000);
+          AE.toast('Text sent, but not logged', { html: "Couldn't add this text to the WO notes. " +
+            AE.bugLink('Report a bug.', { where: 'Recitation', error: 'Adding the text note to WO ' + m[1] + ' failed: ' + (e.message || e) }) }, 'err', 12000);
         } finally { busy = null; }
       })();
       return busy;

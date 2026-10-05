@@ -624,6 +624,7 @@ const AE = (() => {
   }
 
   // Small status card, bottom-left, auto-dismissing. kind: 'ok' | 'err' | 'busy'
+  // text: plain text, or { html } for markup Aethernet built itself (e.g. an AE.bugLink).
   function toast(title, text, kind = 'ok', ms = 6000) {
     ensureCss();
     const mark = kind === 'busy' ? '<span class="sg-spin" style="margin-top:2px"></span>'
@@ -631,7 +632,7 @@ const AE = (() => {
     const el = h('div', { class: 'sg sg-card sg-toast', role: 'status', style:
       'position:fixed;z-index:2147483647;left:16px;bottom:16px;max-width:420px;padding:12px 16px;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4;animation:sg-in .2s ease-out' +
       (kind === 'err' ? ';border-color:var(--aui-status-error,#b91a24)' : ''),
-      html: mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">' + esc(title) + '</b>' + esc(text) + '</div>' });
+      html: mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">' + esc(title) + '</b>' + (text && typeof text === 'object' ? text.html : esc(text)) + '</div>' });
     document.querySelectorAll('.sg-toast').forEach((t) => t.remove());
     document.body.appendChild(el);
     if (kind !== 'busy') setTimeout(() => el.remove(), ms);
