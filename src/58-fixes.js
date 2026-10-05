@@ -307,7 +307,8 @@ AE.crystal({
           build.py --bulletin-…), so a new kind of bulletin can be covered without an update.
           pages replaces the built-in list; patterns, selectors and closers add to it.
         */
-        const BUILT_IN = { pages: ['^/repair/workorder/\\d+'], patterns: ['shorty', 'modal', 'slideout', 'fullscreen'], selectors: [], closers: ['.appcues-skip', '[data-step="skip"]'] };
+        // Work orders, and Arrivals (the list and an arrival's drawer: iPhone arrivals get Apple's announcement there too).
+        const BUILT_IN = { pages: ['^/repair/workorder/\\d+', '^/check-in/arrivals(/|$)'], patterns: ['shorty', 'modal', 'slideout', 'fullscreen'], selectors: [], closers: ['.appcues-skip', '[data-step="skip"]'] };
         const rules = () => {
           const r = (AE.status && AE.status.get().bulletins) || {};
           const uniq = (a) => [...new Set(a)];
