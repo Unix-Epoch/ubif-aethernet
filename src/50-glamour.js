@@ -245,7 +245,7 @@ AE.glamour = (() => {
   }
 
   function loginEditor(s, repaint) {
-    s.glamour.login = Object.assign({ image: '', fill: false, mark: true }, s.glamour.login);
+    s.glamour.login = Object.assign({ image: '', blank: false, fill: false, mark: true }, s.glamour.login);
     const L = s.glamour.login;
     const thumb = h('div', { class: 'thumb' });
     const status = h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:4px' });
@@ -253,12 +253,14 @@ AE.glamour = (() => {
       const f = file.files[0]; file.value = '';
       if (!f) return;
       status.textContent = 'Preparing…';
-      try { L.image = await shrinkImage(f); status.textContent = 'Picked. Save to use it.'; } catch (e) { status.textContent = e.message; }
+      try { L.image = await shrinkImage(f); L.blank = false; status.textContent = 'Picked. Save to use it.'; } catch (e) { status.textContent = e.message; }
       paint(); repaint();
     } });
     const fill = h('input', { type: 'checkbox', checked: !!L.fill, onchange: (e) => { L.fill = e.target.checked; paint(); repaint(); } });
     const mark = h('input', { type: 'checkbox', checked: L.mark !== false, onchange: (e) => { L.mark = e.target.checked; repaint(); } });
-    const reset = h('button', { type: 'button', class: 'sg-btn', onclick: () => { L.image = ''; status.textContent = "Back to Portal's picture once you save."; paint(); repaint(); } }, "Portal's picture");
+    const reset = h('button', { type: 'button', class: 'sg-btn', onclick: () => { L.image = ''; L.blank = false; status.textContent = "Back to Portal's picture once you save."; paint(); repaint(); } }, "Portal's picture");
+    // No picture: Portal's photo and headline are hidden too, leaving just the purple panel.
+    const none = h('button', { type: 'button', class: 'sg-btn', onclick: () => { L.image = ''; L.blank = true; status.textContent = 'No picture once you save.'; paint(); repaint(); } }, 'No picture');
     // Recommended sizes: Portal's own photo is a 768 × 871 cut-out PNG; the panel
     // is the right 60% of the window, full height (about square: 1152 × 1080 on 1080p).
     const tip = h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' });
@@ -269,8 +271,10 @@ AE.glamour = (() => {
       thumb.style.backgroundImage = L.image ? 'url("' + L.image + '")' + (L.fill ? '' : ', linear-gradient(45deg, #8223d2, #ae4fd2)') : '';
       thumb.style.backgroundSize = L.image && !L.fill ? 'contain, cover' : 'cover';
       thumb.style.backgroundPosition = L.image && !L.fill ? 'center bottom, center' : 'center';
-      thumb.textContent = L.image ? '' : "Portal's";
-      reset.disabled = !L.image;
+      if (L.blank) { thumb.style.backgroundImage = 'linear-gradient(45deg, #8223d2, #ae4fd2)'; thumb.style.backgroundSize = 'cover'; }
+      thumb.textContent = L.image ? '' : L.blank ? '' : "Portal's";
+      reset.disabled = !L.image && !L.blank;
+      none.disabled = !!L.blank;
       fill.disabled = !L.image;
     }
     paint();
@@ -279,7 +283,7 @@ AE.glamour = (() => {
       h('div', { class: 'sg-soft', style: 'font-size:12px' }, 'Shown on Portal\'s sign-in page in this browser.'),
       h('div', { class: 'row' }, thumb,
         h('div', null,
-          h('div', { class: 'btns' }, h('button', { type: 'button', class: 'sg-btn', onclick: () => file.click() }, 'Choose picture…'), reset, file),
+          h('div', { class: 'btns' }, h('button', { type: 'button', class: 'sg-btn', onclick: () => file.click() }, 'Choose picture…'), reset, none, file),
           status,
           h('label', { class: 'chk' }, fill, 'Fill the whole purple panel'),
           tip,

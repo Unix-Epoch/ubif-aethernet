@@ -23,7 +23,7 @@
     ['buybacks', 'Bountiful Yield', 'Set of handy "add all" buttons for setting up your Buybacks and RMAs.'],
     ['printLabels', 'Quick Synthesis', '\'Print All\' for your Receiving. No longer shall you have to manually print 20+ generic SKU labels!'],
     ]),
-    ['glamour', 'Glamour', 'Page theming: recolour Portal with a preset theme or one you make.'],
+    ['glamour', 'Glamour', 'Beautify your Portal - change the colors of your pages and change the image on your login page.'],
     ...(AE_DEMO ? [] : [
     ['waymark', 'Waymark', 'Work-order tags: tag WOs for the whole store and see them grouped on a board.'],
     ['countCheck', 'Lay of the Land', 'Inventory count check: on a count, shows which expected serials haven\'t been scanned yet, and any unexpected scans.'],

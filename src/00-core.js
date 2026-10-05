@@ -39,7 +39,7 @@ const AE = (() => {
     // AE.REFRESH_LABOR_DEFAULT (only a user's own choice is stored, so the default can change in a release).
     autoClose: { dualcast: true, refreshLabor: null },
     glamour: { theme: 'portal', custom: [], // custom: [{ id, name, bg, fg, accent, custom: true }]
-      login: { image: '', fill: false, mark: true } }, // login page (01b-login.js); image = data URL
+      login: { image: '', blank: false, fill: false, mark: true } }, // login page (01b-login.js); image = data URL; blank = no picture
     ...(AE_DEMO ? {} : {
       printLabels: { delayMs: 900 },
       // Waymark on Portal's Work orders list: one chip + N per order, clickable, optional tag filter (src/55-waymark.js)

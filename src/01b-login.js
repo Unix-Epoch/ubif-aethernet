@@ -2,7 +2,8 @@
   Glamour on the login page: your own picture in place of Portal's (the photo
   on the purple panel, or filling the whole panel), and the Aethernet mark in
   the bottom-left corner. Settings: Glamour → Login page
-  (settings.glamour.login = { image: data URL or '', fill, mark }).
+  (settings.glamour.login = { image: data URL or '', blank, fill, mark }; blank = no picture and no
+  headline: just the purple panel).
 
   Runs before the store check (01-access.js): nobody is signed in on the
   login page, so there's no store to check. It applies only if this browser
@@ -23,6 +24,7 @@ AE.loginPage = (() => {
     #ae-login-img { object-fit: contain !important; object-position: center bottom; max-width: 100%; } /* any shape shows whole, standing on the bottom like Portal's photo */
     .ae-login-fill { background: var(--ae-login-image) center / cover no-repeat !important; }
     .ae-login-fill > :not(#ae-login-img) { visibility: hidden; }
+    .ae-login-blank > * { visibility: hidden !important; }
     #ae-login-mark { position: fixed; left: 16px; bottom: 14px; z-index: 10; display: flex; align-items: center; gap: 6px; color: #8223d2; opacity: .85; }
   `;
   const allowed = () => AE_DEMO || (GM_getValue('ae_access', null) || {}).allowed === true;
@@ -44,6 +46,7 @@ AE.loginPage = (() => {
     document.getElementById('ae-login-mark')?.remove();
     document.querySelectorAll('.ae-login-hidden').forEach((e) => e.classList.remove('ae-login-hidden'));
     document.querySelectorAll('.ae-login-fill').forEach((e) => { e.classList.remove('ae-login-fill'); e.style.removeProperty('--ae-login-image'); });
+    document.querySelectorAll('.ae-login-blank').forEach((e) => e.classList.remove('ae-login-blank'));
   }
 
   function paint() {
@@ -57,7 +60,11 @@ AE.loginPage = (() => {
 
     // The picture
     let mine = document.getElementById('ae-login-img');
-    if (!c.image) {
+    panel.classList.toggle('ae-login-blank', !!c.blank);
+    if (c.blank) {
+      mine?.remove(); photo.classList.remove('ae-login-hidden');
+      panel.classList.remove('ae-login-fill'); panel.style.removeProperty('--ae-login-image');
+    } else if (!c.image) {
       mine?.remove(); photo.classList.remove('ae-login-hidden');
       panel.classList.remove('ae-login-fill'); panel.style.removeProperty('--ae-login-image');
     } else if (c.fill) {
