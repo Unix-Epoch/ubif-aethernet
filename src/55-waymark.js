@@ -402,7 +402,10 @@ AE.waymark = (() => {
     return el;
   }
   const when = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
-  const fail = (what, e) => AE.toast('Waymark: ' + what, (e && e.message) || String(e), 'err');
+  // Errors: plain words for staff; the error itself only goes with the bug report.
+  const bug = (what, e) => ({ where: 'Waymark', error: what + ': ' + ((e && e.message) || String(e)) });
+  const reportEl = (what, e) => [' If you keep seeing this, ', AE.bugLinkEl('report a bug', bug(what, e)), '!'];
+  const fail = (what, e) => AE.toast('Waymark: ' + what, { html: 'If you keep seeing this, ' + AE.bugLink('report a bug', bug(what, e)) + '!' }, 'err');
 
   const CAL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 2h2v2h6V2h2v2h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V2zM5 9v10h14V9H5z"/></svg>';
 
@@ -494,13 +497,13 @@ AE.waymark = (() => {
           h('div', { class: 'sg-soft', style: 'margin-top:4px' }, 'Saves straight away (not with Save & reload). Removing a tag from the list keeps it on work orders as a one-off.'));
       };
       draw();
-    }).catch((e) => root.replaceChildren(h('div', { class: 'sg-soft', style: 'margin-top:8px' }, "Couldn't load the tag list: " + (e.message || e))));
+    }).catch((e) => root.replaceChildren(h('div', { class: 'sg-soft', style: 'margin-top:8px' }, "Couldn't load the tag list.", ...reportEl('Loading the tag list', e))));
     return root;
   }
   const listSig = () => JSON.stringify(cache && cache.list);
   const summary = () => (cache ? cache.list.length + ' tag' + (cache.list.length === 1 ? '' : 's') : 'Store tags');
 
-  return { API, configured, call, load, tagsOf, autoOf, checkWo, customerTexted, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
+  return { reportEl, API, configured, call, load, tagsOf, autoOf, checkWo, customerTexted, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
 })();
 
 AE.crystal({
@@ -584,8 +587,8 @@ AE.crystal({
         W.history(woId).then((items) => {
           hist.replaceChildren(...(items.length ? items.map(W.historyLine)
             : [h('li', { class: 'sg-soft' }, 'No tag changes yet.')]));
-        }).catch(() => hist.replaceChildren(h('li', { class: 'sg-soft' }, "Couldn't load history.")));
-      }).catch((e) => { pop.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load tags: " + (e.message || e))); });
+        }).catch((e) => hist.replaceChildren(h('li', { class: 'sg-soft' }, "Couldn't load history.", ...W.reportEl('Loading WO ' + woId + '\'s tag history', e))));
+      }).catch((e) => { pop.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load tags.", ...W.reportEl('Loading WO ' + woId + '\'s tags', e))); });
     }
     document.addEventListener('click', (e) => {
       // composedPath: the clicked chip may already be redrawn (detached) by now.
@@ -845,7 +848,7 @@ AE.crystal({
         drawBoard(board, c, wos);
         W.scan(wos).then(() => W.load()).then((c2) => { if (board.isConnected) drawBoard(board, c2, wos); }).catch(() => {});
       } catch (e) {
-        board.querySelector('.list').replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load: " + (e.message || e)));
+        board.querySelector('.list').replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load.", ...W.reportEl('Loading the board', e)));
       }
     }
     function drawBoard(board, c, wos) {
