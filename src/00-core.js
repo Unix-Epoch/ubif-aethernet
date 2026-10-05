@@ -604,17 +604,18 @@ const AE = (() => {
     background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
   .sg-confirm .sg-actions .sg-btn { flex:1; }
   `;
-  function confirmDialog({ title, message, warning, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) {
+  // icon: a crystal/spell id shown left of the title. cancelLabel: null = no Cancel button (a notice with just OK).
+  function confirmDialog({ title, message, warning, icon: iconId, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) {
     ensureCss();
     if (!document.getElementById('sg-confirm-css')) document.head.append(h('style', { id: 'sg-confirm-css' }, CONFIRM_CSS));
     return new Promise((resolve) => {
       const done = (v) => { scrim.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
       const ok = h('button', { type: 'button', class: 'sg-btn sg-lg sg-primary', onclick: () => done(true) }, confirmLabel);
       const card = h('div', { class: 'sg sg-card sg-confirm', role: 'alertdialog', 'aria-modal': 'true' },
-        h('h2', null, title),
+        iconId ? h('h2', { style: 'display:flex;align-items:center;gap:10px' }, h('span', { html: actionIcon(iconId, 28), style: 'line-height:0;flex:none' }), title) : h('h2', null, title),
         message ? h('div', { html: message }) : null,
         warning ? h('div', { class: 'sg-warn' }, warning) : null,
-        h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => done(false) }, cancelLabel), ok));
+        h('div', { class: 'sg-actions' }, cancelLabel === null ? null : h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => done(false) }, cancelLabel), ok));
       const scrim = h('div', { class: 'sg sg-confirm-scrim', onclick: (e) => { if (e.target === scrim) done(false); } }, card);
       const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
       document.addEventListener('keydown', onKey, true);

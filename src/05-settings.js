@@ -17,7 +17,7 @@
     ['woCleanings', 'Esuna', 'Divination but for your work order page, with an easy Swiftcast button.'],
     ['textNotes', 'Recitation', 'Imprints a work order with the text of your message, whenever you text a customer from a WO. **This does not work anywhere else; only inside of a work order!**'],
     ]),
-    ['autoClose', 'Swiftcast', 'Cleaning auto-close: one-click check-in → complete sale on cleaning arrivals.'],
+    ['autoClose', 'Swiftcast', 'Your new favorite tool. Auto-close cleanings in one click - even multiple at once.'],
     ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Galaxy Diagnostics exception: pre-fills the Sprinklr exception form from a Samsung WO.'],
     ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
@@ -391,15 +391,15 @@
     // Each crystal's own settings, shown nested under it.
     const OPTIONS = {
       glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
-      autoClose: [() => (s.autoClose.dualcast !== false ? 'Dualcast on' : 'Dualcast off') + ((s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT) ? ' · screen protector on' : ''),
+      autoClose: [() => (s.autoClose.dualcast !== false ? 'Dualcast/Triplecast on' : 'Dualcast/Triplecast off') + ((s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT) ? ' · screen protector on' : ''),
         h('div', { class: 'sg-row', style: 'margin:8px 0' },
-          h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, h('span', { html: AE.actionIcon('dualcast', 20), style: 'line-height:0' }), 'Dualcast'),
-            h('span', { class: 'sg-soft', style: 'display:block' }, 'When a device has two or more cleanings waiting, one button creates them all, one after the other. Shown in the arrival' +
-              (AE_DEMO ? ' and in Divination\'s panel.' : ', in Esuna\'s list and in Divination\'s panel.'))),
+          h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, h('span', { html: AE.actionIcon('dualcast', 20), style: 'line-height:0' }),
+            h('span', { html: AE.actionIcon('triplecast', 20), style: 'line-height:0' }), 'Dualcast/Triplecast'),
+            h('span', { class: 'sg-soft', style: 'display:block' }, 'Swiftcast, but even more efficient. Close multiple (two or more) cleanings in one click. Wherever you see the icons, click it to close the referenced cleanings.')),
           toggle(s.autoClose.dualcast !== false, (v) => { s.autoClose.dualcast = v; repaintSums(); })),
         h('div', { class: 'sg-row', style: 'margin:8px 0' },
-          h('div', null, h('b', null, 'Verizon screen protector (101516)'),
-            h('span', { class: 'sg-soft', style: 'display:block' }, 'Adds the Verizon Free Screen Protector (101516) to VZ Device Refresh cleanings at checkout, the same way Portal\'s checkout does, for commission. Portal credits it back, so the sale stays $0. If it can\'t be added, the cleaning is completed without it.')),
+          h('div', null, h('b', null, 'VZW Refresh screen protector'),
+            h('span', { class: 'sg-soft', style: 'display:block' }, 'Adds the SKU 101516 to any VZW Refresh cleanings automatically. If an error occurs, Swiftcast will complete the cleaning without it. (Shouldn\'t happen, though!)')),
           toggle(!!(s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT), (v) => { s.autoClose.refreshLabor = v; repaintSums(); }))],
       ...(AE_DEMO ? {} : { // not in the demo build
         galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',

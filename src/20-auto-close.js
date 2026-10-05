@@ -218,6 +218,11 @@ AE.crystal({
     }
 
     const woLink = (id) => '<a href="/repair/workorder/' + id + '">WO ' + id + '</a>';
+    const report = (error) => ' If you\'re seeing this repeatedly, ' + AE.bugLink('report a bug', { where: 'Swiftcast', error }) + '!';
+    // laborNote holds what went wrong with the screen protector (sent with the bug report); staff see one plain line.
+    const laborLine = (detail) => '<br><b>Note:</b> VZW Refresh screen protector could not be added, or adding it changed the cart\'s value to something other than 0.' + report(detail);
+    // A run left half-done: a button to its work order (the finish text links it too).
+    const openWo = (id) => h('a', { class: 'sg-btn', href: '/repair/workorder/' + id }, 'Open WO ' + id);
 
     /*
       Never act while the store is closed (Portal's Close store button). Asked
@@ -227,11 +232,11 @@ AE.crystal({
     async function storeClosed() {
       let open;
       try { open = (await AE.api('GET', '/api/auth/user')).isStoreOpen; } catch (e) {
-        AE.toast('Swiftcast', "Couldn't check whether the store is open (" + (e.message || e) + '). Nothing was created.', 'err', 9000);
+        AE.toast('Swiftcast', { html: "Couldn't check whether the store is open. Nothing was created." + report("Couldn't check whether the store is open: " + (e.message || e)) }, 'err', 9000);
         return true;
       }
       if (open === false) {
-        AE.toast('Swiftcast is off while the store is closed', 'Open the store in Portal, then try again. Nothing was created.', 'err', 9000);
+        AE.toast('Swiftcast is disabled while the store is closed.', 'Please wait until the store is open to use Swiftcast. Portal does not allow us to sale complete anything while the store is closed.', 'err', 9000);
         return true;
       }
       return false;
@@ -256,7 +261,7 @@ AE.crystal({
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
       const done = [], notes = [];
-      let woId = null;
+      let woId = null, left = false; // left: a cleaning was left half-done (its Open WO button stays)
       try {
         for (const [i, it] of items.entries()) {
           panel.step((i + 1) + ' of ' + items.length + ': ' + (AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning'));
@@ -266,14 +271,17 @@ AE.crystal({
           if (laborNote) notes.push(laborNote);
           if (!fake) AE.emit('cleaning-changed', { arrivalId: it.arrivalId, woId: id });
         }
-        panel.finish('ok', 'Done — ' + done.map(woLink).join(' and ') + ' checked in, completed, and sold at $0.' + notes.map((n) => '<br><b>Note:</b> ' + AE.esc(n)).join(''));
+        panel.finish('ok', castOf(items.length)[1] + ' complete. ' + done.map(woLink).join(' and ') + (done.length > 1 ? ' sales completed.' : ' sale completed.') + notes.map(laborLine).join(''));
       } catch (e) {
         const stopped = e instanceof AE.Stopped;
-        const left = woId ? ' ' + woLink(woId) + ' was left at the last step listed above.' : '';
-        panel.finish(stopped ? 'stop' : 'err', (stopped ? 'Stopped.' : AE.esc(e.message)) + left +
-          (done.length ? ' Already finished: ' + done.map(woLink).join(', ') + '.' : '') + ' The rest were not started.');
+        const left = woId ? ' ' + woLink(woId) + ' was left as stated above.' : '';
+        // The error itself only goes in the bug report (staff get plain words; friendlier per-error text is on the to-do list).
+        panel.finish(stopped ? 'stop' : 'err', ((stopped ? 'Stopped.' : '') + left +
+          (done.length ? ' Already finished: ' + done.map(woLink).join(', ') + '.' : '') + ' The rest were not started.').trim() +
+          (stopped ? '' : report(e.message + (woId ? ' (WO ' + woId + ')' : ''))));
+        if (woId) { panel.actions(openWo(woId)); left = true; }
       } finally {
-        panel.actions();
+        if (!left) panel.actions();
         running = false;
         if (!fake) { AE.emit('cleaning-changed', {}); if (done.length) AE.refreshView(); }
       }
@@ -304,20 +312,21 @@ AE.crystal({
       const panel = AE.progressPanel(castingTitle(1), { icon: 'autoClose', total: 9, hold: true });
       const stop = h('button', { class: 'sg-btn sg-lg sg-danger', onclick: () => { stopRequested = true; stop.disabled = true; stop.textContent = 'Stopping after current call…'; } }, '■ Stop');
       panel.actions(stop);
-      let woId = null;
+      let woId = null, left = false;
       const log = (t, id) => { if (id) woId = id; panel.step(t); };
       log.plan = (n) => panel.plan(n);
       const btn = document.getElementById(BTN_ID);
       if (btn) btn.disabled = true;
       try {
         const id = await run(arrivalId, log);
-        panel.finish('ok', 'Done — ' + woLink(id) + ' checked in, completed, and sold at $0.' + (laborNote ? '<br><b>Note:</b> ' + AE.esc(laborNote) : ''));
+        panel.finish('ok', 'Swiftcast complete. ' + woLink(id) + ' sale completed.' + (laborNote ? laborLine(laborNote) : ''));
       } catch (e) {
-        const where = woId ? ' ' + woLink(woId) + ' was left at the last step listed above.' : ' No work order was created.';
+        const where = woId ? ' ' + woLink(woId) + ' was left as stated above.' : ' No work order was created.';
         const stopped = e instanceof AE.Stopped;
-        panel.finish(stopped ? 'stop' : 'err', (stopped ? 'Stopped.' : AE.esc(e.message)) + where);
+        panel.finish(stopped ? 'stop' : 'err', ((stopped ? 'Stopped.' : '') + where).trim() + (stopped ? '' : report(e.message + (woId ? ' (WO ' + woId + ')' : ''))));
+        if (woId) { panel.actions(openWo(woId)); left = true; }
       } finally {
-        panel.actions();
+        if (!left) panel.actions();
         running = false;
         if (btn) btn.disabled = false;
         AE.emit('cleaning-changed', { arrivalId, woId }); // badge + WO pill refresh
@@ -341,8 +350,8 @@ AE.crystal({
       const b = h('button', {
         type: 'button', class: 'sg-fab sg-cast' + (n > 1 ? ' multi' : ''), 'aria-label': name,
         title: n > 1
-          ? name + ': create all ' + n + ' cleanings waiting for this device (' + names.join(' + ') + '), one after the other. Right-click to close only this one.'
-          : 'Swiftcast: check in, walk to Ready for pickup, and complete the $0 sale',
+          ? name + ' this! Right click to Swiftcast only this cleaning, instead.'
+          : 'Swiftcast this!',
         style: 'align-self:center;width:' + size + 'px;height:' + size + 'px',
         html: AE.actionIcon(iconId, size) + (n > 1 ? '<span class="n">' + n + '</span>' : ''),
         onclick: () => (n > 1 ? AE.autoClose.dualcast({ items, customerName, fake }) : single()),
@@ -355,8 +364,8 @@ AE.crystal({
       const [, name] = castOf(items.length);
       const opt = (label, sub, fn) => h('button', { type: 'button', class: 'opt', role: 'menuitem', onclick: () => { menu.remove(); fn(); } }, h('b', null, label), h('span', { class: 'sg-soft' }, sub));
       const menu = h('div', { id: MENU_ID, class: 'sg sg-card', role: 'menu', style: 'left:' + Math.min(x, innerWidth - 300) + 'px;top:' + Math.max(8, y - 120) + 'px' },
-        opt('Close only this cleaning', AE.CLEANING_PROGRAMS[items[0].programId] || 'This arrival', single),
-        opt(name + ': close all ' + items.length, items.map((it) => AE.CLEANING_PROGRAMS[it.programId]).join(' + '), all));
+        opt('Swiftcast this cleaning', AE.CLEANING_PROGRAMS[items[0].programId] || 'This arrival', single),
+        opt(name + ' these cleanings', items.map((it) => AE.CLEANING_PROGRAMS[it.programId]).join(' + '), all));
       document.body.appendChild(menu);
       const off = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', off, true); } };
       setTimeout(() => document.addEventListener('mousedown', off, true), 0);
@@ -415,28 +424,28 @@ AE.crystal({
       async dualcast({ items, customerName, fake }) {
         if (!items || items.length < 2 || (!fake && AE.status.blocked('autoClose'))) return;
         if (!fake && await storeClosed()) return;
-        if (running) { AE.confirm({ title: 'Already running', message: 'Another cleaning is being closed out — wait for it to finish.', confirmLabel: 'OK' }); return; }
+        if (running) { AE.confirm({ icon: 'autoClose', title: 'Swiftcast is already running.', message: 'Please wait until it\'s finished! You can check the progress of the current process in the bottom right of your screen, unless you moved it.', confirmLabel: 'OK', cancelLabel: null }); return; }
         const ok = await AE.confirm({
-          title: 'Create all ' + items.length + ' cleanings?',
+          icon: castOf(items.length)[0],
+          title: castOf(items.length)[1] + ' these?',
           message: '<b>' + AE.esc(customerName || 'Customer') + '</b><ul style="margin:6px 0 0;padding-left:20px">' +
-            items.map((it) => '<li>' + AE.esc(AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning') + ' <span class="sg-soft">· arrival ' + it.arrivalId + '</span></li>').join('') + '</ul>' +
-            '<div class="sg-soft" style="margin-top:6px">Each one is checked in, walked to Ready for pickup, and completed as a $0 sale, one after the other.</div>' +
+            items.map((it) => '<li>' + AE.esc(AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning') + '</li>').join('') + '</ul>' +
             (fake ? '<div style="margin-top:6px;color:#e0761a;font-weight:600">Test run from the dev tools: nothing is sent to Portal.</div>' : ''),
           warning: "Are you sure you'd like to create these cleanings? Only use this if you are the one who repaired this device!",
-          confirmLabel: 'Yes, create ' + items.length + ' cleanings',
+          confirmLabel: 'Yes, ' + castOf(items.length)[1] + ' these',
         });
         if (ok) await runMany(items, customerName, fake);
       },
       async confirmAndRun({ arrivalId, programId, customerName }) {
         if (AE.status.blocked('autoClose')) return;
         if (await storeClosed()) return; // before asking, so nobody confirms for nothing
-        if (running) { AE.confirm({ title: 'Already running', message: 'Another cleaning is being closed out — wait for it to finish.', confirmLabel: 'OK' }); return; }
+        if (running) { AE.confirm({ icon: 'autoClose', title: 'Swiftcast is already running.', message: 'Please wait until it\'s finished! You can check the progress of the current process in the bottom right of your screen, unless you moved it.', confirmLabel: 'OK', cancelLabel: null }); return; }
         const ok = await AE.confirm({
-          title: 'Create this cleaning?',
-          message: '<b>' + AE.esc(customerName || 'Customer') + '</b> · ' + AE.esc(AE.CLEANING_PROGRAMS[programId] || 'Cleaning') +
-            '<div class="sg-soft" style="margin-top:6px">Checks in arrival ' + arrivalId + ', walks it to Ready for pickup, and completes the $0 sale.</div>',
+          icon: 'autoClose',
+          title: 'Swiftcast this?',
+          message: '<b>' + AE.esc(customerName || 'Customer') + '</b> · ' + AE.esc(AE.CLEANING_PROGRAMS[programId] || 'Cleaning'),
           warning: "Are you sure you'd like to create this cleaning? Only use this if you are the one who repaired this device!",
-          confirmLabel: 'Yes, create cleaning',
+          confirmLabel: 'Yes, Swiftcast this',
         });
         if (ok) await onClick(arrivalId, true);
       },
