@@ -28,7 +28,7 @@
     ['waymark', 'Waymark', 'Keep track of important details on your WOs; tagging that the whole store can see, along with a board at the top of the screen that groups all the info together.'],
     ['countCheck', 'Lay of the Land', 'Restoring the inventory count experience to what we remember - variance and unscanned serials at Arm\'s Length.'],
     ['rowColors', 'Rainbow Drip', 'Restoring the work orders list to what you remember, with colors for each status. Goodbye, corporate minimalism! (sorta.)'],
-    ['fixes', "Master's Mend", 'Small fixes to Portal, each with its own switch.'],
+    ['fixes', "Master's Mend", 'Doing what a million dollar company can\'t; fixing genuinely annoying issues.'],
     ]),
   ];
 

@@ -132,9 +132,9 @@
     display:contents, so tucking also gives the box display:block.
 */
 AE.fixesInfo = [
-  ['logoLink', 'Logo link', 'The ubreakifix logo is a real link to the dashboard: middle-click or right-click it to open a new tab.'],
-  ['autoNotes', 'Hide auto notes switch', 'A switch at the top of a work order\'s notes hides the automatic ones (status changes, check-in logs…) and loads every note, so you see everything people wrote. Flip it back any time; nothing is deleted.'],
-  ['notContacted', 'Not contacted (Arrivals)', 'A "Not contacted" chip on the Arrivals page, next to Portal\'s own, lists every arrival that hasn\'t been contacted yet (no Contacted tag), from every page.',
+  ['logoLink', 'Logo link', 'Restores the ability to right click or middle click the UBIF logo in the top left to open a new tab.'],
+  ['autoNotes', 'Hide auto notes switch', 'A switch at the top of WO notes hides all Auto notes, revealing the notes people actually typed themselves.'],
+  ['notContacted', 'Not contacted (Arrivals)', 'Adds the ability to filter arrivals by \'not contacted.\'',
     // Which statuses the chip lists: everything not contacted, or only the ones still Not confirmed.
     (s, h) => {
       const pick = (v) => { s.fixes.notContactedStatus = v; paint(); };
@@ -150,13 +150,13 @@ AE.fixesInfo = [
     }],
   ['reportsRetry', 'Reports page help', 'If Portal\'s Reports page is stuck loading, a warning explains the usual cause (an ad blocker like uBlock Origin) and how to fix it. The details are included if you send a bug report.'],
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
-  ['appcuesBoxes', 'Collapse announcement boxes', 'Announcement boxes on work orders (like "Apple iOS 27 and Repair Mode") get – Collapse, to shrink them to an icon, and Hide for today. They never disappear for good: the icon at the bottom left brings them back.'],
-  ['appcuesButtons', 'Support Ticket & Enhancement Idea buttons', 'Portal\'s Support Ticket and Enhancement Idea buttons are made to fit: Support Ticket becomes a normal item in the left menu, and Enhancement Idea sits next to View all under Metrics overview instead of over the calendar. They work just as before.'],
+  ['appcuesBoxes', 'Collapse announcement boxes', 'Adds the ability to collapse or dismiss the large white boxes that show up on certain WOs; they\'ll either be dismissed for the day or indefinitely, but they can always be restored with the icon on the bottom left of your screen.'],
+  ['appcuesButtons', 'Support Ticket & Enhancement Idea buttons', 'Reskins/moves these two buttons around a bit on the Dashboard so they fit. They work just as before.'],
   ['scanNav', 'Scan to open', 'Scan a WO label to open the WO, or an item label to open the item (on a WO, items are added to it as usual). Works on Arrivals, Sales and inventory\'s lists, but never while checking in or out, on a PO, receiving, or doing a count, or while typing in a field.',
-    // Debugging: a live log of what the scanner sends and what happened.
-    (s, h) => h('label', { style: 'display:flex;align-items:center;gap:8px;margin:-2px 0 10px 14px;font-size:12px', class: 'sg-soft' },
+    // Debugging: a live log of what the scanner sends and what happened. Dev builds only (build.py writes true/false for __DEV__, so other builds drop it).
+    __DEV__ && ((s, h) => h('label', { style: 'display:flex;align-items:center;gap:8px;margin:-2px 0 10px 14px;font-size:12px', class: 'sg-soft' },
       h('input', { type: 'checkbox', checked: !!s.fixes.scanDebug, onchange: (e) => { s.fixes.scanDebug = e.target.checked; } }),
-      'Show scan debugging (a log of every scan, bottom right; to find out why a scan didn\'t work)')],
+      'Show scan debugging (a log of every scan, bottom right; to find out why a scan didn\'t work)'))],
 ];
 
 AE.crystal({
@@ -509,7 +509,7 @@ AE.crystal({
             const input = AE.h('input', { type: 'checkbox', checked: hide, onchange: (e) => { hide = e.target.checked; GM_setValue(KEY, hide); AE.track(hide ? 'fixes:hideAutoNotes' : 'fixes:showAutoNotes'); paint(); } });
             bar = AE.h('div', { id: BAR },
               AE.h('span', { class: 'n' }),
-              AE.h('label', { title: 'Hide the automatic notes (status changes, check-in logs…). Nothing is deleted; flip it back any time.' },
+              AE.h('label', { title: 'Hide all Auto notes.' },
                 input, AE.h('span', { class: 'knob' }), 'Hide auto notes'));
             list.before(bar); // Portal's list is a flex column; we sit just above it
           }
@@ -563,7 +563,7 @@ AE.crystal({
               rows = all.filter((a) => !contacted(a) && (!onlyUnconfirmed || Number(a.arrivalStatus && a.arrivalStatus.arrivalStatusId) === NOT_CONFIRMED));
               loadedKey = key; loadedAt = Date.now();
             })
-            .catch((e) => { AE.toast('Not contacted', "Couldn't load the arrivals: " + (e.message || e), 'err'); turnOff(); })
+            .catch((e) => { AE.toast('Not contacted', { html: "Couldn't load the arrivals. If you keep seeing this, " + AE.bugLink('report a bug', { where: "Master's Mend", error: 'Not contacted: loading the arrivals failed: ' + (e.message || e) }) + '!' }, 'err'); turnOff(); })
             .finally(() => { loading = null; paint(); });
         }
         // Portal's own table shows them: its loaded page becomes the not-contacted list (all of it, one page).
@@ -744,12 +744,12 @@ AE.crystal({
         }
         function serverSort(id, dir) {
           const sel = getSel(), c = current(sel);
-          if (!c.pf) return AE.toast('Sort', "Couldn't find the list's settings in Portal.", 'err');
+          if (!c.pf) return AE.toast('Sort', { html: "Couldn't find the list's settings in Portal. If you keep seeing this, " + AE.bugLink('report a bug', { where: "Master's Mend", error: 'Sort: no list filter key on ' + location.pathname }) + '!' }, 'err');
           const order = id + ',' + dir;
           const entry = Object.assign({}, c.g, { order, page: 1 });
           if (c.tab) entry.tabs = Object.assign({}, c.g.tabs, { [c.tab]: Object.assign({}, (c.g.tabs || {})[c.tab], { order }) });
           const r = AE.portal('dispatch', { slice: 'repair', action: { type: 'repair/setWorkorderlistFilterSelection', payload: { [c.pf]: entry } } });
-          if (!r.stores) AE.toast('Sort', "Couldn't reach Portal's list.", 'err');
+          if (!r.stores) AE.toast('Sort', { html: "Couldn't reach Portal's list. If you keep seeing this, " + AE.bugLink('report a bug', { where: "Master's Mend", error: 'Sort: Portal\'s store not reachable on ' + location.pathname }) + '!' }, 'err');
           pageSort = null;
           AE.track('fixes:woSort');
         }
@@ -878,7 +878,8 @@ AE.crystal({
             const id = wo[1];
             if (path().startsWith('/repair/workorder/' + id)) return 'already on WO ' + id;
             try { await AE.api('GET', '/api/workorder/' + id); } catch (e) {
-              AE.toast('Scan', "Couldn't open WO " + id + ': ' + (/HTTP 404/.test(e.message) ? 'no such work order.' : e.message), 'err', 6000);
+              AE.toast('Scan', { html: AE.esc("Couldn't open WO " + id + (/HTTP 404/.test(e.message) ? ': no such work order.' : '.')) + ' If you keep seeing this, ' +
+                AE.bugLink('report a bug', { where: "Master's Mend", error: 'Scan to open WO ' + id + ' failed: ' + e.message }) + '!' }, 'err', 8000);
               return 'WO lookup failed';
             }
             go('/repair/workorder/' + id);
@@ -898,7 +899,7 @@ AE.crystal({
           Aethernet did and why (focus, open dialogs, page).
         */
         const dbg = (() => {
-          if (!on.scanDebug) return null;
+          if (!__DEV__ || !on.scanDebug) return null; // dev builds only (build.py writes true/false for __DEV__)
           const ID = 'ae-scan-debug', rows = [];
           document.head.append(AE.h('style', null, `
             #${ID} { position:fixed; right:16px; bottom:16px; z-index:2147483645; width:440px; max-height:46vh; overflow:auto; padding:10px 12px; font:12px/1.4 ui-monospace, Menlo, monospace; }
