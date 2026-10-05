@@ -282,8 +282,6 @@
       h('h4', null, 'Share with another store'),
       h('div', { class: 'link-row' }, linkInput, copyBtn),
       h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Open the link with Tampermonkey installed to add ' + AE_NAME + '. Installs update themselves.'),
-      h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'The installed file is minified to keep it small. ',
-        h('a', { href: AE_READABLE_URL, target: '_blank', rel: 'noopener', style: 'color:var(--aui-primary,#8223d2)' }, 'Read the source'), ' (the same build, unminified).'),
       h('div', { class: 'fine' }, 'A personal project. Not affiliated with or supported by Asurion or uBreakiFix.'),
       h('div', { class: 'fine', style: 'margin-top:4px' }, 'Crystal icons are FINAL FANTASY XIV action icons. © SQUARE ENIX. Not affiliated with Square Enix.'),
       h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')));

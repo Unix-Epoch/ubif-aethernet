@@ -151,7 +151,6 @@ def header(version: str) -> str:
 // @downloadURL  {raw}/{FILENAME}
 // ==/UserScript==
 
-/* Built by build.py from src/ — edit those files, not this one. */
 """
 
 
@@ -262,7 +261,6 @@ def build(root: Path, version: str = VERSION) -> Path:
         "__BUILD_TIME__": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "__BUILD_COMMIT__": git_commit(root),
         "__INSTALL_URL__": f"{raw}/{FILENAME}",
-        "__READABLE_URL__": f"{raw}/{READABLE_FILENAME}",
         "__WAYMARK_API__": os.environ.get("WAYMARK_API", DEV["waymark_api"] if dev else WAYMARK_API),
         "__WAYMARK_KEY__": waymark_key(root),
         # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), plus

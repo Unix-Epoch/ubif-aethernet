@@ -21,8 +21,7 @@ const AE_DEV = __DEV__;                      // true only in the dev channel ("A
 // false everywhere else, so the other side's code is dropped by the minifier.
 const AE_BUILD_TIME = '__BUILD_TIME__';       // ISO time of the build
 const AE_BUILD_COMMIT = '__BUILD_COMMIT__';   // git commit it was built from ("-dirty" = uncommitted changes)
-const AE_INSTALL_URL = '__INSTALL_URL__';
-const AE_READABLE_URL = '__READABLE_URL__'; // same build, unminified     // where installs update from
+const AE_INSTALL_URL = '__INSTALL_URL__';     // where installs update from
 // The Portal sandbox (sandbox/server.py: Portal's real app on fake data) — dev builds only.
 const AE_SANDBOX = AE_DEV && location.host === 'localhost:8790';
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net' || AE_SANDBOX;
