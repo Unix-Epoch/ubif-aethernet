@@ -190,7 +190,7 @@ AE.crystal({
       const r = b && b.getBoundingClientRect();
       if (r && !b.classList.contains('floating')) { p.style.top = (r.bottom + 8) + 'px'; p.style.left = Math.max(8, Math.min(r.left, innerWidth - 476)) + 'px'; p.style.bottom = ''; }
       else { p.style.left = '16px'; p.style.bottom = '60px'; p.style.top = ''; }
-      if (!last) { p.innerHTML = lastError ? '<span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '<span class="sg-soft">Divining.....</span>'; return; }
+      if (!last) { p.innerHTML = lastError ? '<span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '<span class="sg-soft">Divining…</span>'; return; }
 
       const linkTo = (c) => c.pending
         ? '<a href="/check-in/arrivals/' + c.arrivalId + '">arrival ' + c.arrivalId + '</a>'
