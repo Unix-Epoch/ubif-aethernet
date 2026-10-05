@@ -326,9 +326,16 @@ AE.crystal({
         const store = () => GM_getValue(KEY, {});
         const put = (k, v) => { const all = store(); if (v) all[k] = v; else delete all[k]; GM_setValue(KEY, all); };
         const onPage = (R) => R.pages.some((src) => { const x = re(src); return x && x.test(location.pathname); });
+        // A box is known by its heading; without one (e.g. Verizon's Advanced Exchange shorty), by its first line of text.
+        // Never by our own bar's words: they'd change the key once the bar is in, and a saved Collapse would never match.
         const titleOf = (box) => {
           const sc = scopeOf(box), hd = sc.querySelector('h1, h2, h3, h4');
-          return ((hd ? hd.textContent : sc.textContent) || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+          const body = sc.querySelector('[role="dialog"]') || sc;
+          const first = !hd && [...body.querySelectorAll('p, li')].find((e) => e.textContent.trim() && !e.closest('[' + MARK + '-bar]'));
+          let t = hd ? hd.textContent : first ? first.textContent : body.textContent || '';
+          const bar = !hd && !first && sc.querySelector('[' + MARK + '-bar]');
+          if (bar) t = t.replace(bar.textContent, '');
+          return t.replace(/\s+/g, ' ').trim().slice(0, 120);
         };
         // A box is known by its title, so a new announcement shows normally.
         const keyOf = (t) => { let x = 0; for (let i = 0; i < t.length; i++) x = (x * 31 + t.charCodeAt(i)) | 0; return 'b' + (x >>> 0).toString(36); };
