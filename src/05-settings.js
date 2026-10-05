@@ -21,7 +21,7 @@
     ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],
     ['buybacks', 'Bountiful Yield', 'Set of handy "add all" buttons for setting up your Buybacks and RMAs.'],
-    ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
+    ['printLabels', 'Quick Synthesis', '\'Print All\' for your Receiving. No longer shall you have to manually print 20+ generic SKU labels!'],
     ]),
     ['glamour', 'Glamour', 'Page theming: recolour Portal with a preset theme or one you make.'],
     ...(AE_DEMO ? [] : [
