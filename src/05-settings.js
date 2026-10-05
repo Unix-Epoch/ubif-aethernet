@@ -26,7 +26,7 @@
     ['glamour', 'Glamour', 'Beautify your Portal - change the colors of your pages and change the image on your login page.'],
     ...(AE_DEMO ? [] : [
     ['waymark', 'Waymark', 'Keep track of important details on your WOs; tagging that the whole store can see, along with a board at the top of the screen that groups all the info together.'],
-    ['countCheck', 'Lay of the Land', 'Inventory count check: on a count, shows which expected serials haven\'t been scanned yet, and any unexpected scans.'],
+    ['countCheck', 'Lay of the Land', 'Restoring the inventory count experience to what we remember - variance and unscanned serials at Arm\'s Length.'],
     ['rowColors', 'Rainbow Drip', 'WO list colors: colors each row of the work-order list by its status.'],
     ['fixes', "Master's Mend", 'Small fixes to Portal, each with its own switch.'],
     ]),

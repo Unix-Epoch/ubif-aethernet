@@ -260,7 +260,8 @@ AE.crystal({
         h('button', { type: 'button', class: 'sg-btn', style: 'height:30px;font-size:13px', onclick: () => load(id, false, true) }, 'Refresh'),
         h('button', { type: 'button', class: 'sg-x', title: 'Close', onclick: () => { giveBackFocus(); p.remove(); } }, '✕'));
       if (s.status !== 'ready') {
-        p.replaceChildren(head, h('div', { class: 'sg-soft', style: 'padding:10px 0' }, s.status === 'loading' ? 'Comparing expected and scanned serials…' : "Couldn't load this count: " + s.error));
+        p.replaceChildren(head, h('div', { class: 'sg-soft', style: 'padding:10px 0' }, ...(s.status === 'loading' ? ['Comparing expected and scanned serials…']
+          : ["Couldn't load this count. If you keep seeing this, ", AE.bugLinkEl('report a bug', { where: 'Lay of the Land', error: 'Loading count ' + id + ' failed: ' + s.error }), '!'])));
         return;
       }
       const d = s.data;
