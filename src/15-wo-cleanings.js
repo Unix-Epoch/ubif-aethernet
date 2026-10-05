@@ -34,6 +34,10 @@ AE.crystal({
       #${PILL_ID}.none  { background:transparent; border-color:var(--aui-outline,#c6c6ca); color:var(--aui-on-surface-soft,#5d5e61); font-weight:400; }
       #${PILL_ID}.load  { background:transparent; border-color:var(--aui-outline-soft,#eeedf1); color:var(--aui-on-surface-soft,#5d5e61); font-weight:400; }
       #${PILL_ID} .sg-spin { width:12px; height:12px; }
+      #${PILL_ID}.icon { width:30px; height:30px; padding:0; justify-content:center; border:2px solid var(--aui-status-success,#136d31); background:var(--aui-surface,#fff); }
+      #${PILL_ID}.avail .sg-aicon { width:18px; height:18px; border-radius:50%; }
+      #${PILL_ID}.icon .sg-aicon { width:22px; height:22px; border-radius:50%; }
+      #${POP_ID} .hd { display:flex; align-items:center; gap:8px; font-size:16px; font-weight:700; }
       #${POP_ID} { position:fixed; z-index:2147483646; width:380px; padding:16px; font-size:14px; line-height:1.4; }
       #${POP_ID} .row { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--aui-outline-soft,#eeedf1); }
       #${POP_ID} .row:first-of-type { border-top:0; }
@@ -81,14 +85,15 @@ AE.crystal({
     }
 
     function pillFor(s) {
-      if (!s || s.status === 'loading') return { cls: 'load', html: '<span class="sg-spin"></span>Checking cleanings…' };
-      if (s.status === 'error') return { cls: 'none', html: 'Cleanings: couldn\'t check', title: s.error };
+      if (!s || s.status === 'loading') return { cls: 'load', html: '<span class="sg-spin"></span>Divining…' };
+      if (s.status === 'error') return { cls: 'none', html: 'Divination failed', bug: true,
+        title: 'Esuna and Divination seem to have hit a roadblock somewhere. Click to report a bug.' };
       if (AE.CLEANING_PROGRAMS[s.wo.programId]) return null; // this is a cleaning
       const avail = s.matched.filter((c) => c.pending).length, done = s.matched.length - avail;
       if (!s.matched.length) return s.wo.programId === AE.PARENT_PROGRAM_ID ? { cls: 'none', html: 'No cleanings' } : null;
-      if (avail && done) return { cls: 'avail', html: AE.icon('bolt', 14) + 'Cleanings: ' + avail + ' available, ' + done + ' done' };
-      if (avail) return { cls: 'avail', html: AE.icon('bolt', 14) + 'Cleanings available (' + avail + ')' };
-      return { cls: 'done', html: '✓ Cleanings done (' + done + ')' };
+      if (avail && done) return { cls: 'avail', html: AE.actionIcon('woCleanings', 18) + 'Swiftcast available (' + avail + ' / ' + done + ')', title: avail + ' available, ' + done + ' done' };
+      if (avail) return { cls: 'avail', html: AE.actionIcon('woCleanings', 18) + 'Swiftcast available (' + avail + ')' };
+      return { cls: 'done icon', html: AE.actionIcon('woCleanings', 22), title: (done === 1 ? '1 cleaning' : done + ' cleanings') + ' done — click for details' };
     }
 
     function render() {
@@ -97,8 +102,11 @@ AE.crystal({
       const spec = state && state.woId === woId ? pillFor(state) : null;
       const row = woId && nameRow(woId);
       if (!spec || !row) { existing?.remove(); return; }
-      const pill = existing || h('button', { id: PILL_ID, type: 'button', class: 'sg', onclick: togglePop });
+      const pill = existing || h('button', { id: PILL_ID, type: 'button', class: 'sg', onclick: (e) => pillClick(e) });
       pill.className = 'sg ' + spec.cls;
+      // A failed lookup: the pill is a bug report link carrying the error (AE.bugLink) instead of opening the list.
+      if (spec.bug) pill.dataset.aeBug = JSON.stringify({ where: 'Esuna', error: 'Cleaning lookup for WO ' + woId + ' failed: ' + state.error });
+      else delete pill.dataset.aeBug;
       pill.innerHTML = spec.html;
       pill.title = spec.title || 'Cleanings for this device — click for details';
       if (pill.parentElement !== row) row.appendChild(pill);
@@ -116,7 +124,7 @@ AE.crystal({
         const label = esc(AE.CLEANING_PROGRAMS[c.programId]);
         if (c.pending) {
           const act = AE.autoClose
-            ? '<button type="button" class="sg-btn sg-primary" data-arrival="' + c.arrivalId + '" data-program="' + c.programId + '" data-name="' + esc(AE.data.nameOf(c)) + '">' + AE.icon('bolt', 14) + 'Create</button>'
+            ? '<button type="button" class="sg-btn sg-primary" data-arrival="' + c.arrivalId + '" data-program="' + c.programId + '" data-name="' + esc(AE.data.nameOf(c)) + '">' + AE.actionIcon('autoClose', 18) + 'Swiftcast this</button>'
             : '';
           return '<div class="row"><div><b>' + label + '</b><div class="sg-soft">Available — <a href="/check-in/arrivals/' + c.arrivalId + '">arrival ' + c.arrivalId + '</a></div></div>' + act + '</div>';
         }
@@ -125,12 +133,12 @@ AE.crystal({
       }).join('');
       const waiting = state.matched.filter((c) => c.pending);
       const dual = AE.autoClose && AE.autoClose.dualcastOn() && waiting.length >= 2
-        ? '<button type="button" class="sg-btn sg-primary" data-dualcast style="width:100%;justify-content:center;margin:0 0 8px">' + AE.actionIcon('dualcast', 18) +
-          'Dualcast · create all ' + waiting.length + '</button>'
+        ? '<button type="button" class="sg-btn sg-primary" data-dualcast style="width:100%;justify-content:center;margin:0 0 8px">' + AE.actionIcon(waiting.length >= 3 ? 'triplecast' : 'dualcast', 18) +
+          (waiting.length >= 3 ? 'Triplecast' : 'Dualcast') + ' this</button>'
         : '';
-      pop.innerHTML = '<b style="font-size:16px">Cleanings for this device</b>' +
-        '<div class="sg-soft" style="margin:2px 0 8px">Matched to this WO by device IMEI</div>' + dual +
-        (rows || '<p class="sg-soft">No cleanings found for this device (open, recently closed, or waiting in Arrivals).</p>');
+      pop.innerHTML = '<div class="hd">' + AE.actionIcon('woCleanings', 24) + 'Esuna</div>' +
+        '<div class="sg-soft" style="margin:2px 0 8px">Quickly clear out this WO\'s cleanings</div>' + dual +
+        (rows || '<p class="sg-soft">There\'s nothing here! Check Divination at the top to see if there are unlinked cleanings!</p>');
       const db = pop.querySelector('[data-dualcast]');
       if (db) db.onclick = (e) => {
         e.stopPropagation();
@@ -146,6 +154,10 @@ AE.crystal({
       });
     }
 
+    function pillClick(e) {
+      if (e.currentTarget.dataset.aeBug) return; // the bug report link handler (06-feedback.js) takes it
+      togglePop(e);
+    }
     function togglePop(e) {
       e.stopPropagation();
       const pop = document.getElementById(POP_ID);

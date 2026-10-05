@@ -14,7 +14,7 @@
     // The demo build (AE_DEMO) ships only Divination, Swiftcast and Glamour; the
     // rest sit in AE_DEMO ? [] : […] so their text isn't in that file at all.
     ...(AE_DEMO ? [] : [
-    ['woCleanings', 'Esuna', 'WO cleanings pill: shows whether a work order\'s device has cleanings, with Create for available ones.'],
+    ['woCleanings', 'Esuna', 'Divination but for your work order page, with an easy Swiftcast button.'],
     ['textNotes', 'Recitation', 'Text → WO note: when you text a customer from a WO, the text is added to the WO notes.'],
     ]),
     ['autoClose', 'Swiftcast', 'Cleaning auto-close: one-click check-in → complete sale on cleaning arrivals.'],

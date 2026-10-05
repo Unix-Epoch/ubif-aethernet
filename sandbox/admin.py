@@ -100,6 +100,9 @@ def handle(h, method, log):
             if body.get('parent', True):
                 w = api.new_wo(cust, dev, 5062, status=8)
                 out.append('WO ' + str(w['workorderId']))
+            for prog in body.get('done') or []:  # cleanings already sold for this device (status 14, Sale complete)
+                w = api.new_wo(cust, dev, int(prog), status=14)
+                out.append('done WO ' + str(w['workorderId']))
             for i, prog in enumerate(body.get('programs') or []):
                 a = api.new_arrival(cust, dev, int(prog), appointment_h=0.5 + i * 0.25)
                 a['contacted'] = bool(body.get('contacted'))
