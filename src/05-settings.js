@@ -20,7 +20,7 @@
     ['autoClose', 'Swiftcast', 'Your new favorite tool. Auto-close cleanings in one click - even multiple at once.'],
     ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],
-    ['buybacks', 'Bountiful Yield', 'Buyback add-all: bulk-adds Apple (TLC) or Samsung/Google (UROC) parts in the Add buyback parts popout.'],
+    ['buybacks', 'Bountiful Yield', 'Set of handy "add all" buttons for setting up your Buybacks and RMAs.'],
     ['printLabels', 'Quick Synthesis', 'Print all labels: prints every serial label on a PO Receive page.'],
     ]),
     ['glamour', 'Glamour', 'Page theming: recolour Portal with a preset theme or one you make.'],
