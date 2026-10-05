@@ -2,17 +2,26 @@
   {
     "version": "2.22.0",
     "notes": [
-      "**Swiftcast**: VZ Device Refresh cleanings now get the **Verizon Free Screen Protector (101516)** added automatically at checkout, for your commission. Portal credits it back, so the sale stays $0. It's on for everyone; switch it off in Settings → Swiftcast if you'd rather not.",
-      "**Master's Mend**: Collapse and Hide for today now work on more kinds of announcement boxes, and new kinds can be added without updating Aethernet. If a box doesn't get the buttons, send a bug report from that page: it now says which boxes are on the page.",
+      "**Swiftcast**: VZW Refresh cleanings now get the **VZW Refresh screen protector (SKU 101516)** added automatically at checkout, for your commission. Portal credits it back, so the sale stays $0. It's on for everyone; switch it off in Settings → Swiftcast if you'd rather not.",
+      "**Swiftcast**: if a cleaning is left half-done (stopped, or something went wrong), an **Open WO** button takes you straight to it. Confirmations now show which spell you're casting.",
+      "**Esuna**: the pill on a work order now reads **Swiftcast available**, and once every cleaning is done it shrinks to Esuna's icon. Its buttons say **Swiftcast this**, **Dualcast this** or **Triplecast this**.",
+      "**Waymark**: tags now show on Portal's **Work orders list**: one tag beside each customer's name, plus **+N** for the rest, without making rows any taller. Hover a row to add or remove tags right from the list. Optional: a Waymark tag filter next to Portal's filters (off by default). All three are switches in Settings → Waymark.",
+      "**Waymark**: fixed tags and Auto-Waymarks sometimes being cleared from work orders that were still open.",
+      "**Master's Mend**: Collapse and Hide for today now work on more kinds of announcement boxes. If a box doesn't get the buttons, send a bug report from that page: it now says which boxes are on the page.",
       "**Master's Mend**: scan to open now also works on the **Sales** page (not during a checkout or refund).",
+      "**Glamour**: the login page can now have **No picture**: Portal's photo and headline are hidden, leaving just the purple panel.",
+      "**Divination**: the target is now the same for every store, so it's no longer in Settings.",
+      "Every crystal got fresh wording. When something goes wrong, the message now has a **report a bug** link that sends what happened along with your report.",
       "Patch notes now quote the bug reports each version fixes, with a thank-you to whoever sent them. Keep them coming: **Send Aethernet feedback** in the avatar menu.",
-      "Announcements about a fix in a newer version now have a **Check for updates** button (or **Update now** once it's out).",
-      "**Waymark**: tags now show on Portal's **Work orders list**: one tag beside each customer's name, plus **+N** for the rest, without making rows any taller. Hover a row to add or remove tags right from the list. Optional: a Waymark tag filter next to Portal's filters (off by default). All three are switches in Settings → Waymark."
+      "Announcements about a fix in a newer version now have a **Check for updates** button (or **Update now** once it's out)."
     ],
     "updated": [
-      "fixes",
       "autoClose",
-      "waymark"
+      "woCleanings",
+      "waymark",
+      "fixes",
+      "glamour",
+      "cleaningRate"
     ],
     "reports": [
       {
