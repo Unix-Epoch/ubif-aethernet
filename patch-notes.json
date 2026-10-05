@@ -28,6 +28,18 @@
         "quote": "Sales page scans not working",
         "credit": "J.FARKASOVSKY",
         "store": "Erie PA"
+      },
+      {
+        "id": 7,
+        "quote": "Asurion notification for Verizon Extended Warranty \"Hide for Today\" button is non-functional",
+        "credit": "L.Basnight",
+        "store": "Lexington"
+      },
+      {
+        "id": 8,
+        "quote": "The pop up window for iphones doesn't get auto-dismissed when contacting leads",
+        "credit": "I.Michael",
+        "store": "Lynnhaven"
       }
     ]
   },
