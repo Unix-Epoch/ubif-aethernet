@@ -1,7 +1,7 @@
 {
   "latest": {
-    "version": "2.22.1.50",
-    "date": "2026-10-05T04:31:05Z"
+    "version": "2.22.1.51",
+    "date": "2026-10-05T04:35:37Z"
   },
   "incident": {
     "id": "2026-10-05-swiftcast-now-adds-vzw-screen-protectors",
@@ -24,5 +24,10 @@
       }
     ]
   },
-  "bulletins": null
+  "bulletins": {
+    "pages": [
+      "^/repair/workorder/\\d+",
+      "^/check-in/arrivals(/|$)"
+    ]
+  }
 }

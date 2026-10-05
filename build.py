@@ -224,8 +224,9 @@ def stamp_release_date(root: Path) -> None:
     # Patch notes carry the moment each version went out; --release fills it in.
     notes = load_notes(root)
     entry = next((n for n in notes if n["version"] == VERSION), None)
-    if not entry:
-        sys.exit(f"Refusing to publish: {NOTES_FILE} has no entry for {VERSION}. Write the patch notes first.")
+    if not entry:  # a quiet patch (e.g. 2.22.1): no notes, and installs show no "has updated" pill
+        print(f"Quiet release: {NOTES_FILE} has no entry for {VERSION}, so no patch notes.")
+        return
     if not entry.get("date"):
         entry["date"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         (root / NOTES_FILE).write_text(json.dumps(notes, indent=2, ensure_ascii=False) + "\n")
@@ -526,9 +527,9 @@ def release(root: Path, out: Path, live: str | None) -> None:
         gist_put(out.parent / name, files)
     print(f"Published v{VERSION} (was {live or 'nothing'}). Install/update URL:\n  {RAW_URL}")
     # Tell running installs there's an update (they check status.json every 10 minutes).
-    entry = next(n for n in load_notes(root) if n["version"] == VERSION)
+    entry = next((n for n in load_notes(root) if n["version"] == VERSION), None)  # none for a quiet patch
     status = load_status(root)
-    status["latest"] = {"version": VERSION, "date": entry["date"]}
+    status["latest"] = {"version": VERSION, "date": entry["date"] if entry else now_utc()}
     publish_status(root, status)
 
 

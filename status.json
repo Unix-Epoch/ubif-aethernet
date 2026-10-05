@@ -23,5 +23,11 @@
         "below": "2.22.0"
       }
     ]
+  },
+  "bulletins": {
+    "pages": [
+      "^/repair/workorder/\\d+",
+      "^/check-in/arrivals(/|$)"
+    ]
   }
 }

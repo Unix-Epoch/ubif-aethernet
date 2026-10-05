@@ -570,7 +570,10 @@
     pill.addEventListener('mouseleave', () => { since = Date.now(); timer = setTimeout(() => pill.remove(), Math.max(0, left)); });
     document.body.appendChild(pill);
   }
-  if (updated && !AE_DEMO) showUpdatedPill(lastVersion); // it opens the patch notes, which the demo build doesn't have
+  // It opens the patch notes (which the demo build doesn't have), so only when there are notes newer than the last
+  // version seen here: a quiet patch (no notes, e.g. 2.22.1) updates without it.
+  const unseenNotes = !lastVersion || PATCH_NOTES.some((n) => newer(n.version, lastVersion) && !newer(n.version, AE_VERSION));
+  if (updated && !AE_DEMO && unseenNotes) showUpdatedPill(lastVersion);
   AE.hooks.updatedPill = showUpdatedPill; // dev tools
   AE.hooks.patchVersions = PATCH_NOTES.map((n) => n.version);
 
