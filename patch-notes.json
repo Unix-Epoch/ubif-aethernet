@@ -2,26 +2,25 @@
   {
     "version": "2.22.0",
     "notes": [
-      "**Swiftcast**: VZW Refresh cleanings now get the **VZW Refresh screen protector (SKU 101516)** added automatically at checkout, for your commission. Portal credits it back, so the sale stays $0. It's on for everyone; switch it off in Settings → Swiftcast if you'd rather not.",
-      "**Swiftcast**: if a cleaning is left half-done (stopped, or something went wrong), an **Open WO** button takes you straight to it. Confirmations now show which spell you're casting.",
-      "**Esuna**: the pill on a work order now reads **Swiftcast available**, and once every cleaning is done it shrinks to Esuna's icon. Its buttons say **Swiftcast this**, **Dualcast this** or **Triplecast this**.",
-      "**Waymark**: tags now show on Portal's **Work orders list**: one tag beside each customer's name, plus **+N** for the rest, without making rows any taller. Hover a row to add or remove tags right from the list. Optional: a Waymark tag filter next to Portal's filters (off by default). All three are switches in Settings → Waymark.",
-      "**Waymark**: fixed tags and Auto-Waymarks sometimes being cleared from work orders that were still open.",
-      "**Master's Mend**: Collapse and Hide for today now work on more kinds of announcement boxes. If a box doesn't get the buttons, send a bug report from that page: it now says which boxes are on the page.",
-      "**Master's Mend**: scan to open now also works on the **Sales** page (not during a checkout or refund).",
-      "**Glamour**: the login page can now have **No picture**: Portal's photo and headline are hidden, leaving just the purple panel.",
-      "**Divination**: the target is now the same for every store, so it's no longer in Settings.",
-      "Every crystal got fresh wording. When something goes wrong, the message now has a **report a bug** link that sends what happened along with your report.",
-      "Patch notes now quote the bug reports each version fixes, with a thank-you to whoever sent them. Keep them coming: **Send Aethernet feedback** in the avatar menu.",
-      "Announcements about a fix in a newer version now have a **Check for updates** button (or **Update now** once it's out)."
+      "**Swiftcast**: Swiftcast now adds the VZW Refresh screen protector SKU automatically at checkout. Enjoy the extra commission!",
+      "**Swiftcast**: If a cleaning is left half-done due to you stopping it or an error, it will now link you to the half-complete WO. Confirmations have been made a fair bit clearer, as well.",
+      "**Esuna**: A couple changes here and there to make it stand out a little more. The icon now shows and it collapses when there is no action required (when the cleanings are done).",
+      "**Waymark**: Tags now show on Portal's **work orders list,** to make scanning down the list easier. Tags can be added or removed directly from the list, with a handy \"+Tag\" button that will show on hover. The WO list has also been modified slightly to show more of customer's names, Portal truncated names past 10-15 characters automatically. If there's space, we'll show the whole thing.",
+      "**Master's Mend**: Collapse and Hide for today should now work on more boxes. If you notice that it's not working for certain boxes, please send a bug report **from the affected page.** Data is sent along with that report that lets me know what page and what dialog box is having the issue. This feature is very experimental, so new boxes may require an update to be affected properly.",
+      "**Master's Mend**: Scan to Open now works on the Sales page.",
+      "**Glamour**: The login page now has an option to completely remove the image, if you don't want to replace it with something else yet.",
+      "Everything got some fresh new wording! I went through and updated all text throughout Aethernet, to improve understanding of features and to add a bit of character.",
+      "Every error message now contains a handy link to **__report a bug__**. These inline links record very important data, so if you see one, please make sure to use that link and not the one you'd find in your avatar menu.",
+      "Patch notes also now quote bug fixes, and they thank whoever sent them.",
+      "Announcements also show a \"check for updates\" button if it references an issue fixed in a newer version.",
+      "Thank you all for your support so far, and please, keep the bug reports and suggestions coming."
     ],
     "updated": [
       "autoClose",
       "woCleanings",
       "waymark",
       "fixes",
-      "glamour",
-      "cleaningRate"
+      "glamour"
     ],
     "reports": [
       {
