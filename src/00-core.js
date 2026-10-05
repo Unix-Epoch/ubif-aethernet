@@ -27,8 +27,8 @@ const AE_READABLE_URL = '__READABLE_URL__'; // same build, unminified     // whe
 const AE_SANDBOX = AE_DEV && location.host === 'localhost:8790';
 const AE_ON_PORTAL = location.hostname === 'portal.ubreakifix.net' || AE_SANDBOX;
 // Swiftcast's Verizon screen protector (SKU 101516; setting key refreshLabor): on by default since 2.22.0
-// (verified on live VZ Refreshes, Oct 3, 2026). Everyone who never chose follows this; anyone who switched it
-// off in Settings keeps it off.
+// (verified on live VZ Refreshes, Oct 3, 2026). Everyone who never chose follows this. Anyone who switched it
+// off while it was Experimental is switched back on once (ae_refresh_labor_on); after that, their choice sticks.
 const AE_REFRESH_LABOR_DEFAULT = true;
 
 const AE = (() => {
@@ -74,6 +74,11 @@ const AE = (() => {
   const stored = GM_getValue(SETTINGS_KEY, {});
   // Pre-2.4 installs saved the on/off switches as `tools`; carry them over.
   if (stored.tools && !stored.crystals) { stored.crystals = stored.tools; delete stored.tools; }
+  // 2.22.0: the screen protector is on for everyone, once, including anyone who switched it off while it was Experimental.
+  if (!GM_getValue('ae_refresh_labor_on', false)) {
+    if (stored.autoClose && stored.autoClose.refreshLabor === false) { stored.autoClose.refreshLabor = null; GM_setValue(SETTINGS_KEY, stored); }
+    GM_setValue('ae_refresh_labor_on', true);
+  }
   const settings = merge(DEFAULTS, stored);
   const saveSettings = (next) => GM_setValue(SETTINGS_KEY, next);
 

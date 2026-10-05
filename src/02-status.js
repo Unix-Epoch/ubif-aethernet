@@ -173,8 +173,8 @@ AE.status = (() => {
   #sg-status-banner .body { flex:1; min-width:0; }
   #sg-status-banner .title { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-weight:700; }
   #sg-status-banner .title .sg-aicon { width:18px; height:18px; }
-  #sg-status-banner .crys { display:inline-flex; align-items:center; gap:4px; color:inherit; text-decoration:underline; text-underline-offset:2px; vertical-align:-3px; }
-  #sg-status-banner .crys .sg-aicon { width:18px; height:18px; }
+  #sg-status-banner .crys { color:inherit; text-decoration:underline; text-underline-offset:2px; } /* inline, so its text sits on the line's baseline */
+  #sg-status-banner .crys .sg-aicon { display:inline-block; width:18px; height:18px; vertical-align:-4px; margin-right:4px; }
   #sg-status-banner .who { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; opacity:.75; }
   #sg-status-banner .msg { margin-top:2px; overflow-wrap:anywhere; }
   #sg-status-banner .extra { margin-top:6px; font-size:13px; font-weight:600; }
@@ -205,11 +205,11 @@ AE.status = (() => {
   // or a version-gated chip that applies here.)
   const needsNewer = (inc) => (inc.fixedIn && newer(inc.fixedIn, AE_VERSION)) || inc.chips.some((c) => c.below && newer(c.below, AE_VERSION));
 
-  // The title, with each named crystal's name turned into its icon + a link to its Settings
-  // (built as elements: the notice text stays plain text). Crystals not named get their icon up front.
-  function titleParts(inc) {
-    let parts = [inc.title];
-    const lead = [];
+  // Notice text with each named crystal's name turned into its icon + a link to its Settings (built as
+  // elements: the notice text stays plain text). The title also gets the icons of crystals it doesn't name.
+  function linkNames(inc, text, lead) {
+    let parts = [text];
+    const icons = [];
     for (const id of [...new Set([...inc.crystals, ...inc.mentions])]) {
       const name = crystalName(id);
       let hit = false;
@@ -220,10 +220,11 @@ AE.status = (() => {
         return [p.slice(0, i), h('a', { href: '#', class: 'crys', title: 'Open ' + name + ' in Settings', onclick: (e) => { e.preventDefault(); AE.openSettings(id); } },
           h('span', { html: AE.actionIcon(id, 18) }), name), p.slice(i + name.length)];
       });
-      if (!hit && inc.crystals.includes(id)) lead.push(h('span', { title: name, html: AE.actionIcon(id, 18) }));
+      if (lead && !hit && inc.crystals.includes(id)) icons.push(h('span', { title: name, html: AE.actionIcon(id, 18) }));
     }
-    return [...lead, h('span', null, ...parts.filter((p) => p !== ''))];
+    return [...icons, h('span', null, ...parts.filter((p) => p !== ''))];
   }
+  const titleParts = (inc) => linkNames(inc, inc.title, true);
 
   function renderBanner() {
     const inc = incident();
@@ -239,7 +240,7 @@ AE.status = (() => {
       h('span', { class: 'mark', title: AE_NAME, html: icon('aetheryte', 26) }),
       h('div', { class: 'body' },
         h('div', { class: 'title' }, h('span', { class: 'who' }, AE_NAME + ' notice'), ...titleParts(inc)),
-        inc.message ? h('div', { class: 'msg' }, inc.message) : null,
+        inc.message ? h('div', { class: 'msg' }, ...linkNames(inc, inc.message, false)) : null,
         pausedNames.length ? h('div', { class: 'extra' }, 'Paused until it\'s fixed: ' + pausedNames.join(', ') + '.') : null,
         inc.fixedIn ? h('div', { class: 'extra' }, 'Fixed in v' + inc.fixedIn + '. You have v' + AE_VERSION + '.') : null,
         h('div', { class: 'acts' },
