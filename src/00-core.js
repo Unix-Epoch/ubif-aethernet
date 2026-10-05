@@ -35,7 +35,6 @@ const AE = (() => {
   const DEFAULTS = {
     crystals: AE_DEMO ? { cleaningRate: true, autoClose: true, glamour: true }
       : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, fixes: true },
-    cleaningRate: { target: 75 },
     // Swiftcast: offer Dualcast (all of a device's cleanings at once); refreshLabor: null = follow
     // AE.REFRESH_LABOR_DEFAULT (only a user's own choice is stored, so the default can change in a release).
     autoClose: { dualcast: true, refreshLabor: null },
@@ -79,6 +78,10 @@ const AE = (() => {
     GM_setValue('ae_refresh_labor_on', true);
   }
   const settings = merge(DEFAULTS, stored);
+  // Aethernet-wide settings from the admin panel (Settings tab), sent with the store access check
+  // (01-access.js) and kept here, so they apply right away on the next load.
+  const CONFIG_KEY = 'ae_config', CONFIG_DEFAULTS = { cleaningTarget: 75 };
+  const config = () => Object.assign({}, CONFIG_DEFAULTS, GM_getValue(CONFIG_KEY, {}));
   const saveSettings = (next) => GM_setValue(SETTINGS_KEY, next);
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -844,11 +847,13 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, crystals, crystal, start, every,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close crystal when it's enabled
+    // Bug report links (06-feedback.js replaces these; without it, e.g. the demo build, just the words).
+    bugLink: (label) => esc(label), bugLinkEl: (label) => h('span', null, label),
   };
 })();

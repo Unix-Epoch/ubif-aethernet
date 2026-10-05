@@ -695,7 +695,8 @@ AE.crystal({
               AE.h('div', { class: 'sg-soft', style: 'font-size:13px' },
                 (blocked ? 'Your browser stopped Portal\'s reports request before it went out. ' : '') +
                 'Ad blockers like uBlock Origin block Portal\'s reports. Turn yours off for portal.ubreakifix.net (click its icon in the toolbar and switch it off for this site), then reload.'),
-              !blocked && st && st.status ? AE.h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:4px' }, 'Still stuck without one? Use Send feedback → Bug; the details are included.') : null,
+              !blocked && st && st.status ? AE.h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:4px' }, 'Still stuck without one? ',
+                AE.bugLinkEl('Send a bug report', { where: 'Reports page', error: 'Reports stuck loading (reports request: ' + st.status + ')' }), '; the details are included.') : null,
               AE.h('div', { style: 'display:flex;gap:8px;margin-top:10px' },
                 AE.h('button', { type: 'button', class: 'sg-btn sg-primary', style: 'height:30px;font-size:13px', onclick: () => location.reload() }, 'Reload page'))),
             AE.h('button', { type: 'button', class: 'sg-x', title: 'Dismiss', onclick: close }, '✕'));

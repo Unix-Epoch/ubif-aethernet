@@ -10,7 +10,7 @@
 
   // Crystals are named after FFXIV actions; the description says what each does.
   const CRYSTAL_INFO = [
-    ['cleaningRate', 'Divination', "Live cleaning rate: header badge with today's cleaning percentage."],
+    ['cleaningRate', 'Divination', "Your store's live cleaning rate - shoot for 100% or more!"],
     // The demo build (AE_DEMO) ships only Divination, Swiftcast and Glamour; the
     // rest sit in AE_DEMO ? [] : […] so their text isn't in that file at all.
     ...(AE_DEMO ? [] : [
@@ -390,8 +390,6 @@
 
     // Each crystal's own settings, shown nested under it.
     const OPTIONS = {
-      cleaningRate: [() => 'Target ' + s.cleaningRate.target + '%',
-        input('Target %', s.cleaningRate.target, '75', (v) => { s.cleaningRate.target = Number(v) || AE.DEFAULTS.cleaningRate.target; repaintSums(); }, 'number')],
       glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
       autoClose: [() => (s.autoClose.dualcast !== false ? 'Dualcast on' : 'Dualcast off') + ((s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT) ? ' · screen protector on' : ''),
         h('div', { class: 'sg-row', style: 'margin:8px 0' },

@@ -61,3 +61,6 @@ CREATE TABLE IF NOT EXISTS cleaning_links (  -- Divination: a phone's cleanings 
 CREATE TABLE IF NOT EXISTS auto_rules (    -- Auto-Waymark rules beyond Ready for pickup: off | staged (new WOs only) | live (backfill too)
   rule TEXT PRIMARY KEY, state TEXT NOT NULL, staged_at TEXT, live_at TEXT
 );
+CREATE TABLE IF NOT EXISTS config (        -- Aethernet-wide settings from the admin panel (e.g. cleaningTarget), JSON values
+  key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL
+);

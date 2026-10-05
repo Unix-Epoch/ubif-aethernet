@@ -25,7 +25,8 @@ AE.feedback = (() => {
   const API = '__WAYMARK_API__';
   const KEY = '__WAYMARK_KEY__';
   const ADMIN_KEY_GM = 'ae_admin_key';
-  const configured = () => !AE_SANDBOX && /^(https:\/\/|http:\/\/localhost[:/])/.test(API); // off in the sandbox: fake data stays local
+  // In the sandbox only a local Worker (wrangler dev): fake data never reaches the real one.
+  const configured = () => (AE_SANDBOX ? /^http:\/\/localhost[:/]/.test(API) : /^(https:\/\/|http:\/\/localhost[:/])/.test(API));
 
   async function call(method, path, body, adminKey) {
     if (!configured()) throw new Error('The Aethernet service isn\'t set up');
@@ -76,6 +77,9 @@ AE.feedback = (() => {
   .sg-fb details { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
   .sg-fb pre { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--aui-surface-variant, #faf9fc); border:1px solid var(--aui-outline-soft, #eeedf1); border-radius:8px; padding:8px; font:11px ui-monospace, Menlo, monospace; }
   .sg-fb .sg-actions { margin-top:14px; }
+  .sg-fb .ctx { margin:0 0 10px; padding:8px 10px; border-radius:10px; font-size:13px; overflow-wrap:anywhere;
+    background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); }
+  .sg-fb .ctx b { display:block; font-size:11px; letter-spacing:.04em; text-transform:uppercase; opacity:.8; }
   .sg-adm { width:min(980px, 100%); height:min(760px, calc(100vh - 32px)); display:flex; flex-direction:column; padding:18px 20px 14px; font-size:14px; line-height:1.4; }
   .sg-adm .head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
   .sg-adm .head h2 { flex:1; margin:0; font-size:20px; font-weight:700; }
@@ -159,9 +163,17 @@ AE.feedback = (() => {
       appcues: AE.appcuesSummary ? AE.appcuesSummary() : [], // Appcues boxes on the page (titles only): to write bulletin rules
     };
   }
-  function openFeedback() {
+  /*
+    A "report a bug" link anywhere in Aethernet opens this as a bug report with what went wrong
+    attached (opts.context: { where, error }), shown at the top and sent with the report
+    (diag.context), even with the technical details switched off. Every bug report link should
+    use AE.bugLink, so the error always travels with the report.
+  */
+  function openFeedback(opts = {}) {
     ensureCss();
     let kind = 'bug';
+    const ctx = opts.context && (opts.context.error || opts.context.where)
+      ? { where: String(opts.context.where || '').slice(0, 120), error: String(opts.context.error || '').slice(0, 600) } : null;
     const text = h('textarea', { maxlength: 4000, placeholder: 'What happened, and what did you expect? (Which work order or page, if it matters.)' });
     const include = h('input', { type: 'checkbox', checked: true });
     const setKind = (k) => {
@@ -169,8 +181,11 @@ AE.feedback = (() => {
       card.querySelectorAll('.kinds button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
       text.placeholder = k === 'bug' ? 'What happened, and what did you expect? (Which work order or page, if it matters.)' : 'What would make Portal or Aethernet better for you?';
       detailsRow.style.display = k === 'bug' ? '' : 'none';
+      if (ctxBox) ctxBox.style.display = k === 'bug' ? '' : 'none';
     };
-    const preview = () => JSON.stringify({ version: AE_VERSION, browser: browserName(), page: location.pathname, ...diagnostics() }, null, 1);
+    const ctxBox = ctx ? h('div', { class: 'ctx' }, h('b', null, 'Included with this report'), (ctx.where ? ctx.where + ': ' : '') + (ctx.error || '')) : null;
+    const diag = () => (ctx ? { context: ctx, ...diagnostics() } : diagnostics());
+    const preview = () => JSON.stringify({ version: AE_VERSION, browser: browserName(), page: location.pathname, ...diag() }, null, 1);
     const pre = h('pre', null, preview());
     const detailsRow = h('div', null,
       h('label', { class: 'chk' }, include, h('span', null, 'Include technical details (version, browser, this page\'s address, which crystals are on, recent Aethernet errors). No customer details.')),
@@ -183,7 +198,7 @@ AE.feedback = (() => {
         const p = await me();
         await call('POST', '/v1/' + p.storeId + '/feedback', {
           kind, text: t, version: AE_VERSION, browser: browserName(), page: location.pathname,
-          diag: kind === 'bug' && include.checked ? diagnostics() : null, by: p.name, byId: p.userId, storeName: p.storeName,
+          diag: kind === 'bug' ? (include.checked ? diag() : ctx ? { context: ctx } : null) : null, by: p.name, byId: p.userId, storeName: p.storeName,
         });
         AE.track('feedback:' + kind);
         close();
@@ -199,7 +214,7 @@ AE.feedback = (() => {
       h('div', { class: 'kinds' },
         h('button', { type: 'button', 'data-k': 'bug', class: 'on', onclick: () => setKind('bug') }, '🐞 Report a bug'),
         h('button', { type: 'button', 'data-k': 'idea', onclick: () => setKind('idea') }, '💡 Suggest something')),
-      text, detailsRow,
+      ctxBox, text, detailsRow,
       h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Sent with your name and store so the team can follow up in person.'),
       h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Cancel'), send));
     const close = modal('sg-feedback', card);
@@ -246,9 +261,10 @@ AE.feedback = (() => {
       tabs.replaceChildren(
         h('button', { type: 'button', class: 'tab' + (tab === 'reports' ? ' on' : ''), onclick: () => { tab = 'reports'; draw(); } }, 'Reports'),
         h('button', { type: 'button', class: 'tab' + (tab === 'usage' ? ' on' : ''), onclick: () => { tab = 'usage'; draw(); } }, 'Usage'),
-        h('button', { type: 'button', class: 'tab' + (tab === 'stores' ? ' on' : ''), onclick: () => { tab = 'stores'; draw(); } }, 'Stores'));
+        h('button', { type: 'button', class: 'tab' + (tab === 'stores' ? ' on' : ''), onclick: () => { tab = 'stores'; draw(); } }, 'Stores'),
+        h('button', { type: 'button', class: 'tab' + (tab === 'settings' ? ' on' : ''), onclick: () => { tab = 'settings'; draw(); } }, 'Settings'));
       body.replaceChildren(h('div', { class: 'sg-soft' }, 'Loading…'));
-      try { tab === 'reports' ? await drawReports() : tab === 'usage' ? await drawUsage() : await drawStores(); }
+      try { tab === 'reports' ? await drawReports() : tab === 'usage' ? await drawUsage() : tab === 'stores' ? await drawStores() : await drawSettings(); }
       catch (e) { if (/admin key/.test(e.message)) { GM_deleteValue(ADMIN_KEY_GM); unlock('The saved key was refused.'); } else body.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load: " + (e.message || e))); }
     }
 
@@ -298,6 +314,8 @@ AE.feedback = (() => {
             h('span', { class: 'who' }, r.user_name || 'Someone'), h('span', { class: 'sub' }, (r.store_name || 'Store') + ' #' + r.store),
             h('span', { class: 'meta' }, when(r.created_at) + ' · v' + (r.version || '?') + ' · ' + (r.browser || '') + (r.page ? ' · ' + r.page : ''))),
           h('div', { class: 'txt' }, r.text),
+          diag && diag.context ? h('div', { class: 'sub', style: 'color:var(--aui-status-error,#b91a24);margin:-2px 0 6px;overflow-wrap:anywhere' },
+            'Sent from a bug link · ' + (diag.context.where ? diag.context.where + ': ' : '') + (diag.context.error || '')) : null,
           diag ? h('details', { class: 'sub' }, h('summary', null, 'Technical details' + (diag.errors && diag.errors.length ? ' · ' + diag.errors.length + ' recent error' + (diag.errors.length === 1 ? '' : 's') : '')),
             h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(diag, null, 1))) : null,
           h('div', { class: 'ctl' }, st, note, save), r.kind === 'bug' ? h('div', { class: 'qwrap' }, inNotes, quoteBox) : null);
@@ -314,6 +332,27 @@ AE.feedback = (() => {
       stops Aethernet there on its next page load; the Worker refuses its
       services to it within a minute.
     */
+    // Aethernet-wide settings: every store, from each install's next page load.
+    async function drawSettings() {
+      const j = await call('GET', '/v1/admin/config', null, key());
+      const me = await AE.profile().catch(() => ({}));
+      const target = h('input', { type: 'number', min: 1, max: 200, step: 1, value: j.config.cleaningTarget,
+        style: 'width:80px;height:32px;padding:0 8px;border:1px solid var(--aui-outline,#c6c6ca);border-radius:8px;background:var(--aui-surface,#fff);color:var(--aui-on-surface,#1a1c1e)' });
+      const save = h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: async () => {
+        save.disabled = true;
+        try {
+          const r = await call('POST', '/v1/admin/config', { cleaningTarget: Number(target.value), by: me.name }, key());
+          target.value = r.config.cleaningTarget;
+          AE.toast('Saved', 'Divination\'s target is now ' + r.config.cleaningTarget + '% for every store, from their next page load.', 'ok');
+        } catch (e) { AE.toast("Couldn't save", e.message || String(e), 'err'); }
+        save.disabled = false;
+      } }, 'Save');
+      body.replaceChildren(h('div', { class: 'card', style: 'max-width:520px' },
+        h('h3', null, 'Divination'),
+        h('div', { class: 'bar', style: 'margin:0' }, h('span', null, 'Target cleaning rate'), target, h('span', null, '%'), save),
+        h('div', { class: 'sub' }, 'Colors the badge (below target: red; target to 99%: yellow; 100% or more: green) and sets the target line and "days at target" in the history. Applies to every store.')));
+    }
+
     async function drawStores() {
       const j = await call('GET', '/v1/admin/stores', null, key());
       const me = await AE.profile().catch(() => ({}));
@@ -478,6 +517,22 @@ AE.feedback = (() => {
   });
   if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Send ' + AE_NAME + ' feedback', openFeedback);
   AE.trackDaily('active');
+
+  // Bug report links: a link that opens Send feedback as a bug report with the error attached.
+  // AE.bugLink(label, context) gives HTML (for innerHTML); AE.bugLinkEl the same as an element.
+  // context: { where: 'Divination', error: 'Manual links couldn't be loaded: HTTP 500' }.
+  const bugAttr = (context) => AE.esc(JSON.stringify(context || {}));
+  AE.bugLink = (label, context) => '<a href="#" class="sg-bug-link" data-ae-bug="' + bugAttr(context) + '">' + AE.esc(label) + '</a>';
+  AE.bugLinkEl = (label, context) => h('a', { href: '#', class: 'sg-bug-link', 'data-ae-bug': JSON.stringify(context || {}) }, label);
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('[data-ae-bug]');
+    if (!a) return;
+    e.preventDefault(); e.stopPropagation();
+    let context = null;
+    try { context = JSON.parse(a.dataset.aeBug); } catch (_) {}
+    AE.track('feedback:bugLink');
+    openFeedback({ context });
+  }, true);
 
   return { openFeedback, openAdmin, flushUsage };
 })();

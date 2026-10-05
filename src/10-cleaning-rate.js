@@ -37,7 +37,7 @@ AE.crystal({
   run() {
     const { h, esc } = AE;
     const { nameOf } = AE.data;
-    const TARGET = AE.settings.cleaningRate.target;
+    const TARGET = AE.config().cleaningTarget; // Aethernet-wide, from the admin panel
     const REFRESH_MS = 2 * 60 * 1000;
     const BADGE_ID = 'sg-rate-badge', PANEL_ID = 'sg-rate-panel';
     let last = null, loading = false, lastError = null;
@@ -103,7 +103,7 @@ AE.crystal({
       return { rows, unlinked: cleanings.filter((c) => !used.has(c.key)) };
     }
 
-    let linksError = null;
+    let linksError = null, linkError = null; // loading the manual links / saving one
     async function compute() {
       const start = new Date(); start.setHours(0, 0, 0, 0);
       const startMs = start.getTime(), endMs = startMs + 86400000, day = keyOf(start);
@@ -123,6 +123,7 @@ AE.crystal({
     async function setLink(device, parent) {
       AE.track(parent ? 'cleaningRate:link' : 'cleaningRate:unlink');
       await AE.waymark.call('POST', parent ? '/links' : '/links/remove', { day: last.day, device, parent: parent ? Number(parent) : undefined });
+      linkError = null;
       await refresh();
     }
 
@@ -139,9 +140,9 @@ AE.crystal({
       else if (!anchor && !b.isConnected) { b.classList.add('floating'); document.body.appendChild(b); }
       b.classList.remove('good', 'ok', 'bad', 'none');
       b.classList.add(lastError && !last ? 'none' : level(last && last.pct));
-      const text = lastError && !last ? 'Cleanings: error'
+      const text = lastError && !last ? 'Cleanings · ???'
         : !last ? 'Cleanings'
-        : last.pct == null ? 'Cleanings · no AM orders yet'
+        : last.pct == null ? 'Cleanings · make a WO first!'
         : null;
       const lead = loading ? '<span class="sg-spin"></span>' : '<span class="dot"></span>';
       b.innerHTML = lead + (text ? esc(text) : 'Cleanings ' + last.linked + '/' + last.parents + ' · <b>' + last.pct + '%</b>');
@@ -153,7 +154,7 @@ AE.crystal({
       b.title = (last && last.pct != null ? 'Cleanings ' + last.linked + '/' + last.parents + ' · ' + last.pct + '%' +
         (last.pending ? ' (' + last.pending + ' pending)' : '') + ' — ' : '') +
         (last ? 'updated ' + fmtTime(last.at) : 'Loading') + (lastError ? ' — last refresh failed: ' + lastError : '') +
-        ' · target ' + TARGET + '%, ideally 100% · click for details';
+        ' · click for details';
     }
 
     // Chip for one cleaning. Pending ones link to the arrival and, with
@@ -162,7 +163,7 @@ AE.crystal({
       const label = esc(AE.CLEANING_PROGRAMS[c.programId]);
       if (!c.pending) return '<a class="sg-chip" href="/repair/workorder/' + c.workorderId + '">' + label + '</a>';
       const mk = AE.autoClose
-        ? '<button type="button" class="sg-mk" title="Create this cleaning (check in → complete $0 sale)" data-arrival="' + c.arrivalId +
+        ? '<button type="button" class="sg-mk" title="Swiftcast this" data-arrival="' + c.arrivalId +
           '" data-program="' + c.programId + '" data-name="' + esc(nameOf(parent)) + '">' + AE.icon('bolt', 12) + '</button>'
         : '';
       return '<span class="sg-chip pending"><a href="/check-in/arrivals/' + c.arrivalId + '" title="In Arrivals — not checked in yet" style="color:inherit;font-weight:400">' +
@@ -176,7 +177,7 @@ AE.crystal({
       const waiting = matched.filter((c) => c.pending);
       if (!AE.autoClose || !AE.autoClose.dualcastOn() || waiting.length < 2) return matched.map((c) => chip(c, wo)).join('');
       const name = waiting.length >= 3 ? 'Triplecast' : 'Dualcast';
-      const go = '<button type="button" class="sg-cast-go" title="' + name + ': create all ' + waiting.length + ' pending cleanings for this order, one after the other" data-dual="' +
+      const go = '<button type="button" class="sg-cast-go" title="' + name + ' this" data-dual="' +
         esc(JSON.stringify(waiting.map((c) => ({ arrivalId: c.arrivalId, programId: c.programId })))) + '" data-name="' + esc(nameOf(wo)) + '">' +
         '<span class="b">' + AE.icon('bolt', 12) + '</span>' + name + '</button>';
       return matched.filter((c) => !c.pending).map((c) => chip(c, wo)).join('') +
@@ -189,7 +190,7 @@ AE.crystal({
       const r = b && b.getBoundingClientRect();
       if (r && !b.classList.contains('floating')) { p.style.top = (r.bottom + 8) + 'px'; p.style.left = Math.max(8, Math.min(r.left, innerWidth - 476)) + 'px'; p.style.bottom = ''; }
       else { p.style.left = '16px'; p.style.bottom = '60px'; p.style.top = ''; }
-      if (!last) { p.innerHTML = lastError ? '<span class="miss">' + esc(lastError) + '</span>' : '<span class="sg-soft">Loading…</span>'; return; }
+      if (!last) { p.innerHTML = lastError ? '<span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '<span class="sg-soft">Divining.....</span>'; return; }
 
       const linkTo = (c) => c.pending
         ? '<a href="/check-in/arrivals/' + c.arrivalId + '">arrival ' + c.arrivalId + '</a>'
@@ -198,12 +199,13 @@ AE.crystal({
         ? '<table>' + last.rows.map(({ p: wo, matched }) =>
           '<tr><td><div class="who">' + esc(nameOf(wo) || 'Unknown customer') + '</div>' +
           '<div class="sg-soft"><a href="/repair/workorder/' + wo.workorderId + '">' + wo.workorderId + '</a> · ' + fmtTime(new Date(wo.createdAt)) + '</div></td>' +
-          '<td style="text-align:right">' + (matched.length ? chips(matched, wo) : '<span class="miss">No cleanings</span>') +
+          '<td style="text-align:right">' + (matched.length ? chips(matched, wo) : '<span class="miss">nothing here!</span>') +
           [...new Map(matched.filter((c) => c.manual).map((c) => [c.manual.device, c.manual])).values()].map((l) =>
             '<div class="man">Linked by hand by ' + esc(l.by || 'someone') + ' · <button type="button" data-unlink="' + esc(l.device) + '">Undo</button></div>').join('') +
           '</td></tr>'
         ).join('') + '</table>'
-        : '<p class="sg-soft">No Asurion Mobility orders created today yet.</p>';
+        : '<p class="sg-soft">There\'s nothing here yet! If you\'re seeing this in error, please ' +
+          AE.bugLink('report a bug', { where: 'Divination', error: 'No Asurion Mobility orders found today; cleanings seen: ' + last.unlinked.length }) + '!</p>';
       // Unlinked cleanings, one line per phone, each with "Link to…" (today's orders).
       let extra = '';
       if (last.unlinked.length) {
@@ -211,26 +213,30 @@ AE.crystal({
         for (const c of last.unlinked) { const k = devKey(c); if (!phones.has(k)) phones.set(k, []); phones.get(k).push(c); }
         const opts = last.rows.map(({ p: wo }) => '<option value="' + wo.workorderId + '">' + esc((nameOf(wo) || 'Unknown') + ' · ' + wo.workorderId + ' · ' + fmtTime(new Date(wo.createdAt))) + '</option>').join('');
         const canLink = linksOn() && last.rows.length;
-        extra = '<div class="unl"><div class="sg-soft">' + last.unlinked.length + " cleaning(s) today not linked to any of today's orders (not counted)" +
+        const n = last.unlinked.length;
+        extra = '<div class="unl"><div class="sg-soft">' + n + (n === 1 ? ' cleaning' : ' cleanings') + " today not linked to any of today's orders (not counted)" +
           (canLink ? '. If one belongs to an order, link it:' : ':') + '</div>' +
           [...phones].map(([k, cs]) => '<div class="unl-row"><div><b>' + esc(nameOf(cs[0]) || 'Unknown customer') + '</b> <span class="sg-soft">' +
             cs.map((c) => esc(AE.CLEANING_PROGRAMS[c.programId]) + ' (' + linkTo(c) + ')').join(', ') + '</span></div>' +
-            (canLink ? '<select data-link="' + esc(k) + '" title="Count this phone\'s cleanings today for one of today\'s orders (for everyone at the store)"><option value="">Link to…</option>' + opts + '</select>' : '') +
+            (canLink ? '<select data-link="' + esc(k) + '" title="Link this cleaning to an existing work order"><option value="">Link to…</option>' + opts + '</select>' : '') +
             '</div>').join('') +
-          (linksError ? '<div class="miss" style="font-size:12px">Manual links couldn\'t be loaded: ' + esc(linksError) + '</div>' : '') + '</div>';
+          (linksError ? '<div class="miss" style="font-size:12px">Manual links couldn\'t be loaded. If this is in error, please ' +
+            AE.bugLink('report a bug', { where: 'Divination', error: 'Manual links couldn\'t be loaded: ' + linksError }) + '!</div>' : '') + '</div>';
       }
       const scroll = p.scrollTop;
       p.innerHTML =
         '<div style="display:flex;align-items:center;gap:8px">' + AE.actionIcon('cleaningRate', 26) + '<b style="flex:1;font-size:16px">Today\'s cleaning rate: <span style="color:' + levelColor(last.pct) + '">' +
-        (last.pct == null ? '—' : last.pct + '%') + '</span></b><button type="button" class="sg-btn" data-refresh>Refresh</button></div>' +
+        (last.pct == null ? 'none!' : last.pct + '%') + '</span></b><button type="button" class="sg-btn" data-refresh>Re-divine</button></div>' +
         '<div class="sg-soft" style="margin-top:4px">' + last.linked + ' cleanings' + (last.pending ? ' (' + last.pending + ' pending in Arrivals)' : '') +
-        ' ÷ ' + last.parents + ' Asurion Mobility orders created today · target ' + TARGET +
-        '%, ideally 100% · updated ' + fmtTime(last.at) + (lastError ? '<br><span class="miss">Last refresh failed: ' + esc(lastError) + '</span>' : '') + '</div>' +
+        ' ÷ ' + last.parents + ' Asurion Mobility orders created today · updated ' + fmtTime(last.at) +
+        (lastError ? '<br><span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '') +
+        (linkError ? '<br><span class="miss">Couldn\'t link this! Try again, and if it keeps failing, ' +
+          AE.bugLink('report a bug', { where: 'Divination', error: 'Couldn\'t save a manual link: ' + linkError }) + '!</span>' : '') + '</div>' +
         table + extra +
         '<p class="sg-soft" style="margin:10px 0 0"><a href="/reporting/metrics">Past days: Reports → Cleaning rate history</a></p>';
       p.scrollTop = scroll;
       p.querySelector('[data-refresh]').onclick = (e) => { e.stopPropagation(); refresh(); };
-      const linkFail = (e) => { lastError = 'Couldn\'t save the link: ' + (e.message || e); renderPanel(); };
+      const linkFail = (e) => { linkError = e.message || String(e); renderPanel(); };
       p.querySelectorAll('select[data-link]').forEach((sel) => {
         sel.onclick = (e) => e.stopPropagation();
         sel.onchange = () => { if (!sel.value) return; sel.disabled = true; setLink(sel.dataset.link, sel.value).catch(linkFail); };

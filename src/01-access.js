@@ -31,6 +31,7 @@ AE.gate = (() => {
     const res = await fetch(API + '/v1/' + p.storeId + '/access' + q, { headers: { 'x-aethernet-key': KEY }, credentials: 'omit', cache: 'no-store' });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
+    if (j.config && typeof j.config === 'object') GM_setValue(AE.CONFIG_KEY, j.config); // Aethernet-wide settings (admin panel)
     return !!j.allowed;
   }
 

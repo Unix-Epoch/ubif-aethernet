@@ -35,9 +35,11 @@
     GET  /v1/admin/stores                                        allowed stores + stores waiting
     POST /v1/admin/stores               { store, name, by }      grant access
     POST /v1/admin/stores/:store/remove                          revoke access
+    GET  /v1/admin/config                                        Aethernet-wide settings (every store)
+    POST /v1/admin/config               { cleaningTarget, by }   change them (installs pick them up on their next page load)
     GET  /v1/admin/auto-rules                                    Auto-Waymark rules' states
     POST /v1/admin/auto-rules           { rule, state }          off | staged (new WOs only) | live (backfill too)
-  Store access: GET /v1/:store/access?name=&user= answers { allowed } (and
+  Store access: GET /v1/:store/access?name=&user= answers { allowed, config } (and
   records the store as seen). Every other /v1/:store/… call is refused (403)
   for stores without access.
   Daily cron: drop tags + history for WOs closed more than 7 days ago; usage older than 180 days;
@@ -47,6 +49,14 @@ const COLORS = ['purple', 'blue', 'teal', 'green', 'lime', 'yellow', 'orange', '
 const MAX_TAGS_PER_WO = 12, MAX_LIST = 40, KEEP_DAYS = 7;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const KINDS = ['bug', 'idea'], STATUSES = ['new', 'planned', 'fixed', 'wontfix'];
+// Aethernet-wide settings, set from the admin panel; sent with the access answer.
+const CONFIG_DEFAULTS = { cleaningTarget: 75 };
+async function readConfig(env) {
+  const r = await env.DB.prepare('SELECT key, value FROM config').all().catch(() => ({ results: [] }));
+  const out = { ...CONFIG_DEFAULTS };
+  for (const { key, value } of r.results) if (key in out) { try { out[key] = JSON.parse(value); } catch (_) {} }
+  return out;
+}
 const FEATURE_RE = /^[a-zA-Z]{1,24}(:[a-zA-Z-]{1,24})?$/;
 const DEVICE_RE = /^[A-Za-z0-9:_-]{1,40}$/; // a cleaning's phone: its IMEI, or Aethernet's own key for one without
 const LINK_DAYS = 120;
@@ -156,6 +166,15 @@ export async function adminApi(req, env, url, path) {
     accessCache.delete(Number(rm[1]));
     return json({ ok: true });
   }
+  if (path === '/config') {
+    if (req.method === 'POST') {
+      const b = await body(req), t = Number(b.cleaningTarget);
+      if (!Number.isInteger(t) || t < 1 || t > 200) return fail(400, 'cleaningTarget must be a whole number from 1 to 200');
+      await env.DB.prepare('INSERT INTO config (key, value, updated_by, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at')
+        .bind('cleaningTarget', JSON.stringify(t), clean(b.by, 60) || null, now()).run();
+    }
+    return json({ config: await readConfig(env) });
+  }
   if (path === '/auto-rules') {
     if (req.method === 'POST') {
       const b = await body(req);
@@ -209,7 +228,8 @@ async function route(req, env) {
     await env.DB.prepare('INSERT INTO store_seen (store, name, first_at, last_at, loads, last_user) VALUES (?, ?, ?, ?, 1, ?) ' +
       'ON CONFLICT (store) DO UPDATE SET name = COALESCE(excluded.name, name), last_at = excluded.last_at, loads = loads + 1, last_user = COALESCE(excluded.last_user, last_user)')
       .bind(store, name, t, t, user).run();
-    return json({ allowed: await allowed(env, store) });
+    const ok = await allowed(env, store);
+    return json(ok ? { allowed: true, config: await readConfig(env) } : { allowed: false });
   }
   if (!(await allowed(env, store))) return fail(403, 'this store does not have access to Aethernet');
 
