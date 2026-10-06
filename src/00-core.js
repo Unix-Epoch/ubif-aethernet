@@ -34,7 +34,7 @@ const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
     crystals: AE_DEMO ? { cleaningRate: true, autoClose: true, glamour: true }
-      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, fixes: true },
+      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, checkinDrafts: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, fixes: true },
     // Swiftcast: offer Dualcast (all of a device's cleanings at once); refreshLabor: null = follow
     // AE.REFRESH_LABOR_DEFAULT (only a user's own choice is stored, so the default can change in a release).
     autoClose: { dualcast: true, refreshLabor: null },
@@ -170,7 +170,7 @@ const AE = (() => {
       '    },',
       '    select: function (a) {',
       '      var st = stores().map(function (s) { return s.getState() || {}; }).find(function (st) { return st[a.slice]; });',
-      '      var v = st ? st[a.slice][a.key] : null;',
+      '      var v = st ? (a.key == null ? st[a.slice] : st[a.slice][a.key]) : null;', // no key: the whole slice
       // pick: for a list, only these fields of each item (keeps the answer small)
       '      if (a.pick && Array.isArray(v)) v = v.map(function (x) { var o = {}; a.pick.forEach(function (k) { o[k] = x && x[k]; }); return o; });',
       '      return { found: !!st, value: v };',
@@ -233,7 +233,8 @@ const AE = (() => {
       '  };',
       '  document.addEventListener(evt, function (e) {',
       '    var out;',
-      '    try { var req = JSON.parse(e.detail); out = ops[req.op](req.args || {}); }',
+      // fresh: look the stores up again now (a page that just opened has a new one; the list is otherwise kept 5 s)
+      '    try { var req = JSON.parse(e.detail); if (req.args && req.args.fresh) cache = null; out = ops[req.op](req.args || {}); }',
       '    catch (err) { out = { error: String(err && err.message || err) }; }',
       '    document.dispatchEvent(new CustomEvent(evt + ":done", { detail: JSON.stringify(out) }));',
       '  });',

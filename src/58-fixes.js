@@ -877,10 +877,14 @@ AE.crystal({
         const go = (url) => { history.pushState(null, '', url); dispatchEvent(new PopStateEvent('popstate', { state: null })); };
 
         async function act(scan, why, devTools) {
-          const wo = scan.match(WO_RE), item = scan.match(ITEM_RE);
-          if (!wo && !item) return 'not a WO or item label';
+          // A Return label (AEC + 6): reopens a saved incomplete check-in, from any page (it can't be data entry).
+          const aec = AE.checkinDrafts && scan.match(AE.checkinDrafts.CODE_RE);
+          const wo = !aec && scan.match(WO_RE), item = !aec && scan.match(ITEM_RE);
+          if (!aec && /^AEC[A-Z0-9]{6}$/i.test(scan)) return 'a Return label, but Return is off';
+          if (!aec && !wo && !item) return 'not a WO or item label';
           if (busyTyping() && !devTools) return 'typing in a field';
           if (dialogOpen()) return 'a dialog is open';
+          if (aec) { AE.track('fixes:scanReturn'); return AE.checkinDrafts.resume(aec[1].toUpperCase()); }
           if (wo) {
             if (scanPage()) return 'scans are data entry on this page';
             const id = wo[1];

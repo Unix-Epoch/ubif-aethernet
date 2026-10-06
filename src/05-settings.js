@@ -19,6 +19,9 @@
     ]),
     ['autoClose', 'Swiftcast', 'Your new favorite tool. Auto-close cleanings in one click - even multiple at once.'],
     ...(AE_DEMO ? [] : [
+    ['checkinDrafts', 'Return', 'Save a check-in you can\'t finish yet, print a label for the device, and scan it later to pick up where you left off.'],
+    ]),
+    ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],
     ['buybacks', 'Bountiful Yield', 'Set of handy "add all" buttons for setting up your Buybacks and RMAs.'],
     ['printLabels', 'Quick Synthesis', '\'Print All\' for your Receiving. No longer shall you have to manually print 20+ generic SKU labels!'],
