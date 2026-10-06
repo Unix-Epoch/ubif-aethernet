@@ -20,6 +20,7 @@
     ['autoClose', 'Swiftcast', 'Your new favorite tool. Auto-close cleanings in one click - even multiple at once.'],
     ...(AE_DEMO ? [] : [
     ['checkinDrafts', 'Return', 'Saves an incomplete check-in so you can create cleanings once the device is functional. Goodbye, paper slips!'],
+    ['leadReplies', 'Provoke', 'Answers your Arrivals leads with the right text from your lead sheet, out-of-warranty quotes included. One click sends it and marks the lead contacted.'],
     ]),
     ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],

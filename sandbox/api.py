@@ -16,7 +16,7 @@ STATE_FILE = HERE / 'state.json'
 LOCK = threading.RLock()
 STORE_ID = 914  # what the sandbox calls itself; none of the store's real data is used
 
-PROGRAMS = {5062: 'Asurion Mobility', 11759: 'VZ Device Refresh', 9470: 'VZ Sanitization', 11009: 'AT&T Enhanced Cleaning',
+PROGRAMS = {8849: 'Asurion Home+ Repairs', 5062: 'Asurion Mobility', 11759: 'VZ Device Refresh', 9470: 'VZ Sanitization', 11009: 'AT&T Enhanced Cleaning',
             9901: 'AT&T Device Diagnostic', 10303: 'AT&T Performance Check', 20001: 'Out Of Warranty'}
 CLEANINGS = [11759, 9470, 11009, 9901, 10303]
 STATUS = {1: 'Initial check-in', 2: 'Need to order', 3: 'Awaiting item', 7: 'Awaiting callback', 8: 'Ready for work', 9: 'Diagnostics',
@@ -106,9 +106,9 @@ def new_wo(cust, dev, program, status=8, created=None):
     return w
 
 
-def new_arrival(cust, dev, program, appointment_h=1.0):
+def new_arrival(cust, dev, program, appointment_h=1.0, arrival_type=1):
     aid = nxt('arrival')
-    a = {'arrivalId': aid, 'programId': program, 'customerId': cust['customerId'], 'customerDeviceId': dev['customerDeviceId'],
+    a = {'arrivalId': aid, 'programId': program, 'arrivalTypeId': arrival_type, 'customerId': cust['customerId'], 'customerDeviceId': dev['customerDeviceId'],
          'createdAt': now(), 'appointment': now(appointment_h), 'statusId': 20, 'checkedIn': False, 'contacted': False, 'workorderId': None,
          'serviceJobId': 'SJ' + str(aid)}
     load()['arrivals'][str(aid)] = a
@@ -179,10 +179,11 @@ def wo_detail(w):
 def arrival_view(a):
     return {'arrivalId': a['arrivalId'], 'program': {'programId': a['programId'], 'name': PROGRAMS.get(a['programId'], 'Program')},
             'arrivalStatus': {'arrivalStatusId': a['statusId'], 'arrivalStatusName': 'Confirmed' if a['statusId'] == 21 else 'Not confirmed'},
-            'arrivalAttributes': [{'arrivalAttributeTypeId': 53, 'value': '1'}] if a.get('contacted') else [], 'arrivalTypeId': 1,
+            'arrivalAttributes': [{'arrivalAttributeTypeId': 53, 'value': '1'}] if a.get('contacted') else [], 'arrivalTypeId': a.get('arrivalTypeId', 1),
             'appointment': a['appointment'], 'createdAt': a['createdAt'], 'updatedAt': a['createdAt'], 'customer': cust_view(a['customerId']),
             'customerDevice': dev_view(a['customerDeviceId']), 'deviceIssues': [{'name': 'Cleaning'}], 'clientId': 1, 'clientName': 'Asurion',
-            'storeId': STORE_ID, 'isDepotStore': False, 'isMissed': False, 'matchedRules': [], 'notes': [], 'source': 'Appointment',
+            'storeId': STORE_ID, 'isDepotStore': False, 'isMissed': False, 'matchedRules': [], 'notes': [n for n in load()['notes'] if n.get('arrivalId') == a['arrivalId']],
+            'source': 'Claim' if a.get('arrivalTypeId') == 3 else 'Appointment',
             'csuCartId': None, 'csuSalesOrderId': None, 'partnerJobDetails': {'serviceJobId': a['serviceJobId']}}
 
 
@@ -211,7 +212,7 @@ def route(method, path, body):
         st.update({'storeId': STORE_ID, 'storeName': 'Sandbox Store', 'address_1': '1 Sandbox Way', 'city': 'Testville', 'phone': '5555550100', 'email': 'sandbox@example.invalid'})
         # userAttributes: the Work orders list reads its page size from it (blank page without it)
         return 200, {'isAuthenticated': True, 'user': USER, 'currentStore': st, 'isStoreOpen': s['settings']['storeOpen'], 'abilities': fixture('abilities', []),
-                     'userAttributes': {'PageCount': 25}}
+                     'userAttributes': {'PageCount': 25}, 'storeTwilioPhoneNumber': '+15555550199', 'isOutboundCommunicationEnabled': True}
     if p == 'auth/user/stores':
         return 200, fixture('user-stores', [])
     if p == 'auth/store-options':
@@ -243,6 +244,13 @@ def route(method, path, body):
         page, size = int(q.get('page', 1)), int(q.get('pageSize', 10))
         return 200, {'data': rows[(page - 1) * size: page * size], 'rowCount': len(rows)}
     m = re.fullmatch(r'arrivals/(\d+)', p)
+    if m and method == 'PUT':  # Portal's "Contacted" dialog (and other arrival edits)
+        a = s['arrivals'].get(m.group(1))
+        if not a:
+            return 404, {'message': 'Arrival not found'}
+        if 'contacted' in body:
+            a['contacted'] = bool(body['contacted'])
+        return 200, arrival_view(a)
     if m:
         a = s['arrivals'].get(m.group(1))
         return (200, arrival_view(a)) if a else (404, {'message': 'Arrival not found'})
@@ -343,7 +351,30 @@ def route(method, path, body):
             d['name'] = body.get('name', d.get('name', ''))
         return 200, {'ok': True}
 
+    # ---- customer texts (Provoke): the chat panel's calls
+    m = re.fullmatch(r'customer/recent-jobs/(\d+)', p)
+    if m:
+        c = s['customers'].get(m.group(1), {})
+        return 200, {'customer': {'customerId': c.get('customerId'), 'fullName': c.get('fullName'), 'givenName': c.get('givenName'), 'familyName': c.get('familyName'),
+                                  'primaryPhoneNumber': c.get('phone'), 'contactPhoneNumber': c.get('phone'), 'canSms': True, 'canCall': True, 'canEmail': True},
+                     'arrivals': [], 'workorders': [], 'allowSMSForArrival': True}
+    m = re.fullmatch(r'messages/v1/customers/(\d+)', p)
+    if m:
+        rows = sorted([x for x in s.setdefault('messages', []) if x['customerId'] == m.group(1)], key=lambda x: x['contactDate'], reverse=True)
+        return 200, {'messages': rows[:int(q.get('pageSize', 10))], 'total': len(rows)}
+    if p == 'messages/v1/send' and method == 'POST':
+        x = {'messageId': str(nxt('note')), 'customerId': str(body.get('customerId')), 'content': body.get('message', ''), 'direction': 'OUTBOUND',
+             'contactDate': now(), 'status': 'sent', 'to': (body.get('messageDestination') or {}).get('smsPhoneNumber'),
+             'from': (body.get('messageSource') or {}).get('smsPhoneNumber'), 'senderId': USER['userId'], 'senderGivenName': USER['givenName'], 'senderFamilyName': USER['familyName']}
+        s.setdefault('messages', []).append(x)
+        return 200, x
+
     # ---- notes
+    if p == 'note' and method == 'POST' and body.get('arrivalId') and not body.get('workorderId'):  # a note on an arrival
+        n = {'noteId': str(nxt('note')), 'noteText': body.get('noteText', ''), 'arrivalId': int(body['arrivalId']), 'workorderId': None,
+             'noteType': body.get('noteType', 2), 'noteTag': body.get('noteTag'), 'createdBy': USER['userId'], 'createdAt': now()}
+        s['notes'].insert(0, n)
+        return 200, n
     if p in ('note', 'notes') and method == 'POST':
         items = body.get('notes') if p == 'notes' else [body]
         made = [add_note(n.get('workorderId'), n.get('noteText', ''), n.get('noteTag'), n.get('noteType', 2), n.get('customerId', '')) for n in items or []]
