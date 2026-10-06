@@ -15,9 +15,9 @@
     saves them to the Worker (/v1/:store/checkins). Saving the same check-in
     again updates it. Then it prints a label on the store's DYMO (DYMO
     Connect at https://127.0.0.1:41951-41960, the same 30330 labels as
-    Portal's WO labels): the Aethernet mark, INCOMPLETE CHECK-IN, customer ·
-    device · date and a Code128 barcode "AEC" + the 6-character code. No
-    printer: the label is shown on screen to print from the browser.
+    Portal's WO labels): the Aethernet mark, "Aethernet - Return", customer ·
+    device · date and a Code128 barcode "AEC" + the 6-character code. If it
+    can't print, the message offers Retry print.
   - Resume: scanning the label (Master's Mend's scan to open sends AEC codes
     here) or Resume on the customer's arrival. No work order yet: the
     check-in opens the way Portal's own Check-in button opens it (router
@@ -36,16 +36,17 @@ AE.crystal({
   name: 'Return',
   sites: ['portal.ubreakifix.net'],
   run() {
-    const { h, esc } = AE;
+    const { h } = AE;
     const STEPS = ['Customer', 'Device', 'Diagnosis', 'Parts and services'];
     const SLICE = 'checkInSlice';
-    const BTN_ID = 'ae-return-save', BOX_ID = 'ae-return-arrival', LABEL_ID = 'ae-return-label';
+    const BTN_ID = 'ae-return-save', BOX_ID = 'ae-return-arrival';
     const INITIAL_CHECKIN = 1; // work order status while the check-in isn't finished
     // What a person typed or picked; the rest of the slice is Portal's own bookkeeping.
     const KEEP = ['formStep', 'activeTab', 'isBusinessCustomerArrivalFlow', 'selectedBusiness', 'authorizedContacts', 'contactFields',
       'customerInfo', 'isImeiUnavailable', 'isSerialUnavailable', 'isServiceTagUnavailable', 'deviceInfo', 'customerDeviceDetails',
       'deviceDiagToggles', 'selectedDeviceIssues', 'selectedGoogleDeviceIssues', 'deviceDiagNotes', 'deviceIssuesAdditionalDetails', 'binLocation'];
     const MAX = 13000; // the Worker takes 14,000 characters of data
+    const TITLE = 'Aethernet - Return'; // the label's top line
 
     document.head.append(h('style', null, `
       #${BTN_ID} { display:inline-flex; align-items:center; gap:8px; margin-right:12px; flex:none; }
@@ -54,7 +55,6 @@ AE.crystal({
         border:1.5px dashed var(--aui-primary, #8223d2); border-radius:12px; font-size:14px; line-height:1.4; }
       #${BOX_ID} .txt { flex:1; min-width:180px; }
       #${BOX_ID} .sg-btn { height:32px; font-size:13px; }
-      #${LABEL_ID} .lbl { width:600px; max-width:100%; aspect-ratio:600 / 225; margin:12px 0; border-radius:16px; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.25); }
     `));
 
     const call = (method, path, body) => AE.waymark.call(method, '/checkins' + path, body);
@@ -87,24 +87,7 @@ AE.crystal({
       || (st.selectedBusiness && st.selectedBusiness.name) || '';
 
     // ------------------------------------------------------------ label
-    // Code128 (code set B: letters, digits, punctuation), as bar widths.
-    const C128 = ['212222', '222122', '222221', '121223', '121322', '131222', '122213', '122312', '132212', '221213', '221312', '231212', '112232', '122132', '122231', '113222', '123122', '123221', '223211', '221132', '221231', '213212', '223112', '312131', '311222', '321122', '321221', '312212', '322112', '322211', '212123', '212321', '232121', '111323', '131123', '131321', '112313', '132113', '132311', '211313', '231113', '231311', '112133', '112331', '132131', '113123', '113321', '133121', '313121', '211331', '231131', '213113', '213311', '213131', '311123', '311321', '331121', '312113', '312311', '332111', '314111', '221411', '431111', '111224', '111422', '121124', '121421', '141122', '141221', '112214', '112412', '122114', '122411', '142112', '142211', '241211', '221114', '413111', '241112', '134111', '111242', '121142', '121241', '114212', '124112', '124211', '411212', '421112', '421211', '212141', '214121', '412121', '111143', '111341', '131141', '114113', '114311', '411113', '411311', '113141', '114131', '311141', '411131', '211412', '211214', '211232', '2331112'];
-    function barcodeSvg(text) {
-      const vals = [104, ...[...text].map((c) => c.charCodeAt(0) - 32)];
-      vals.push(vals.reduce((sum, v, i) => sum + (i ? i * v : v), 0) % 103, 106);
-      let x = 0, rects = '';
-      for (const v of vals) [...C128.at(v)].forEach((w, i) => { if (i % 2 === 0) rects += '<rect x="' + x + '" y="0" width="' + w + '" height="40"/>'; x += Number(w); });
-      return '<svg viewBox="0 0 ' + x + ' 40" preserveAspectRatio="none" width="100%" height="100%">' + rects + '</svg>';
-    }
     const mark = (size, color) => AE.icon('aetheryte', size).replace(/currentColor/g, color);
-    // The label as the store sees it (on screen, when there's no printer).
-    function labelHtml(d) {
-      return '<div class="lbl" style="display:flex;gap:14px;align-items:center;padding:4% 4%;box-sizing:border-box;font-family:Arial,Helvetica,sans-serif;color:#000">' +
-        '<div style="width:20%;line-height:0">' + mark(100, '#000').replace(/width="\d+" height="\d+"/, 'width="100%" height="100%"') + '</div>' +
-        '<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:20px">INCOMPLETE CHECK-IN</div>' +
-        '<div style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(d.line) + '</div>' +
-        '<div style="height:44px;margin-top:6px">' + barcodeSvg(d.code) + '</div><div style="font-size:12px;letter-spacing:2px">' + esc(d.code) + '</div></div></div>';
-    }
     // The mark as a PNG, for the label file (DYMO takes images as base64 PNG).
     async function markPng() {
       const svg = mark(240, '#000').replace(/<svg /, '<svg xmlns="http://www.w3.org/2000/svg" ');
@@ -121,20 +104,21 @@ AE.crystal({
       '<HorizontalAlignment>Left</HorizontalAlignment><VerticalAlignment>Middle</VerticalAlignment><TextFitMode>ShrinkToFit</TextFitMode><UseFullFontHeight>True</UseFullFontHeight><Verticalized>False</Verticalized>' +
       '<StyledText><Element><String>' + xml(text) + '</String><Attributes><Font Family="Arial" Size="' + size + '" Bold="' + (bold ? 'True' : 'False') + '" Italic="False" Underline="False" Strikeout="False" /><ForeColor Alpha="255" Red="0" Green="0" Blue="0" /></Attributes></Element></StyledText>' +
       '</TextObject><Bounds X="' + b[0] + '" Y="' + b[1] + '" Width="' + b[2] + '" Height="' + b[3] + '" /></ObjectInfo>';
-    // Portal's own WO label layout (30330 Return Address, landscape, twips), with the mark on the left.
+    // Portal's own WO label (30330 Return Address, landscape, twips). DYMO pushes anything left of its printable area
+    // (about 330 twips in) back inside it, so the mark gets its own column from there and the text starts after a gap.
     async function labelXml(d) {
       return '<?xml version="1.0" encoding="utf-8"?><DieCutLabel Version="8.0" Units="twips"><PaperOrientation>Landscape</PaperOrientation><Id>ReturnAddress</Id><PaperName>30330 Return Address</PaperName>' +
         '<DrawCommands><RoundRectangle X="0" Y="0" Width="1080" Height="2880" Rx="180" Ry="180" /></DrawCommands>' +
         '<ObjectInfo><ImageObject><Name>MARK</Name>' + COLORS + '<Image>' + await markPng() + '</Image><ScaleMode>Uniform</ScaleMode><BorderWidth>0</BorderWidth>' +
         '<BorderColor Alpha="255" Red="0" Green="0" Blue="0" /><HorizontalAlignment>Center</HorizontalAlignment><VerticalAlignment>Center</VerticalAlignment></ImageObject>' +
-        '<Bounds X="120" Y="150" Width="600" Height="780" /></ObjectInfo>' +
-        textObj('TITLE', 'INCOMPLETE CHECK-IN', 11, true, [780, 60, 1980, 230]) +
-        textObj('LINE', d.line, 8, false, [780, 290, 1980, 180]) +
+        '<Bounds X="340" Y="200" Width="400" Height="680" /></ObjectInfo>' +
+        textObj('TITLE', TITLE, 11, true, [800, 70, 1770, 210]) +
+        textObj('LINE', d.line, 8, false, [800, 290, 1770, 170]) +
         '<ObjectInfo><BarcodeObject><Name>BARCODE</Name>' + COLORS.replace('<IsVariable>False</IsVariable>', '<IsVariable>True</IsVariable>') +
         '<Text>' + xml(d.code) + '</Text><Type>Code128Auto</Type><Size>Small</Size><TextPosition>Bottom</TextPosition>' +
         '<TextFont Family="Arial" Size="8" Bold="False" Italic="False" Underline="False" Strikeout="False" /><CheckSumFont Family="Arial" Size="8" Bold="False" Italic="False" Underline="False" Strikeout="False" />' +
         '<TextEmbedding>None</TextEmbedding><ECLevel>0</ECLevel><HorizontalAlignment>Left</HorizontalAlignment><QuietZonesPadding Left="0" Top="0" Right="0" Bottom="0" /></BarcodeObject>' +
-        '<Bounds X="780" Y="490" Width="1980" Height="530" /></ObjectInfo></DieCutLabel>';
+        '<Bounds X="800" Y="510" Width="1770" Height="490" /></ObjectInfo></DieCutLabel>';
     }
     // DYMO Connect's web service: the same hosts and ports Portal's DYMO library tries.
     let dymoBase = null;
@@ -162,27 +146,20 @@ AE.crystal({
       if (!r.ok) throw new Error('DYMO answered HTTP ' + r.status);
       return printer;
     }
-    // No printer: the label on screen, with a Print button (the browser's print).
-    function showLabel(d, why) {
-      document.getElementById(LABEL_ID)?.remove();
-      const close = () => box.remove();
-      const box = h('div', { id: LABEL_ID, class: 'sg sg-confirm-scrim', onclick: (e) => { if (e.target === box) close(); } },
-        h('div', { class: 'sg sg-card sg-confirm', role: 'dialog', 'aria-modal': 'true', style: 'width:min(680px, 100%)' },
-          h('h2', { style: 'display:flex;align-items:center;gap:10px' }, h('span', { html: AE.actionIcon('checkinDrafts', 28), style: 'line-height:0' }), 'Print this label'),
-          h('div', { class: 'sg-soft' }, why),
-          h('div', { html: labelHtml(d) }),
-          h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: close }, 'Close'),
-            h('button', { type: 'button', class: 'sg-btn sg-lg sg-primary', onclick: () => {
-              const w = window.open('', '_blank', 'width=700,height=360');
-              if (!w) return;
-              w.document.write('<!doctype html><title>' + esc(d.code) + '</title><style>@page{size:2in .75in;margin:0}body{margin:0}.lbl{width:2in;height:.75in}</style>' + labelHtml(d));
-              w.document.close(); w.focus(); w.print();
-            } }, 'Print'))));
-      document.body.append(box);
-    }
     async function label(d) {
       try { await printLabel(d); return true; }
-      catch (e) { console.warn('[' + AE_NAME + '] Return: label not printed:', e.message || e); showLabel(d, "Couldn't reach the label printer, so here's the label to print from the browser."); return false; }
+      catch (e) { console.warn('[' + AE_NAME + '] Return: label not printed:', e.message || e); return false; }
+    }
+    // A message that offers Retry print until the label goes through.
+    function printedOrRetry(t, title, text, d) {
+      const add = () => t.lastElementChild && t.lastElementChild.append(h('div', { style: 'margin-top:8px' },
+        h('button', { type: 'button', class: 'sg-btn sg-primary', style: 'height:30px;font-size:13px', onclick: async (e) => {
+          e.target.disabled = true; e.target.textContent = 'Printing…';
+          const ok = await label(d);
+          if (ok) { t.remove(); AE.toast(title, text, 'ok', 6000); }
+          else { e.target.disabled = false; e.target.textContent = 'Retry print'; }
+        } }, 'Retry print')));
+      add();
     }
     const labelFor = (draft) => ({ code: 'AEC' + draft.id, line: draft.label || '' });
 
@@ -201,10 +178,11 @@ AE.crystal({
         const j = await call('POST', '', { id: current && current.id, arrivalId, woId, step, label: line, data: trim(st) });
         current = { id: j.id, arrivalId, woId };
         AE.track('checkinDrafts:save');
-        const printed = await label({ code: 'AEC' + j.id, line });
-        AE.toast('Saved as incomplete', [who, dev].filter(Boolean).join(' · ') + ', at the ' + STEPS[step] + ' step. ' +
-          (printed ? 'The label is printing; stick it on the device and scan it to pick up where you left off.' : 'Stick the label on the device and scan it to pick up where you left off.') +
-          (woId ? ' The work order already exists, so its 15-minute cleaning window has started.' : ''), 'ok', 12000);
+        const d = { code: 'AEC' + j.id, line };
+        const printed = await label(d);
+        const text = [who, dev].filter(Boolean).join(' · ') + ', at the ' + STEPS[step] + ' step. Scan the printed label to pick up where you left off.';
+        const t = AE.toast('Saved as incomplete', printed ? text : text + " The label didn't print.", printed ? 'ok' : 'err', printed ? 9000 : 30000);
+        if (!printed) printedOrRetry(t, 'Saved as incomplete', text, d);
       } catch (e) {
         AE.toast('Return', { html: "Couldn't save this check-in." + report('Saving a check-in', e) }, 'err', 12000);
       } finally { btn.disabled = false; }
@@ -316,9 +294,12 @@ AE.crystal({
         h('div', { class: 'txt' }, h('b', { style: 'display:block' }, 'Incomplete check-in'),
           h('span', { class: 'sg-soft' }, 'Saved ' + fmtWhen(d.updatedAt || d.at) + ' by ' + (d.by || 'someone') + ' · ' + STEPS[Number(d.step) || 0] + ' step')),
         h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => resume(d.id) }, 'Resume'),
-        h('button', { type: 'button', class: 'sg-btn', onclick: () => { AE.track('checkinDrafts:reprint'); label(labelFor(d)); } }, 'Reprint label'),
         h('button', { type: 'button', class: 'sg-btn', onclick: async () => {
-          const ok = await AE.confirm({ icon: 'checkinDrafts', title: 'Discard this saved check-in?', message: 'Its label stops working. What was entered is deleted.', confirmLabel: 'Discard' });
+          AE.track('checkinDrafts:reprint');
+          if (!(await label(labelFor(d)))) printedOrRetry(AE.toast('Return', "The label didn't print.", 'err', 30000), 'Return', 'Label printed.', labelFor(d));
+        } }, 'Reprint label'),
+        h('button', { type: 'button', class: 'sg-btn', onclick: async () => {
+          const ok = await AE.confirm({ icon: 'checkinDrafts', title: 'Delete this saved check-in?', message: 'The label will cease to function, and all data will be deleted.', confirmLabel: 'Delete' });
           if (!ok) return;
           try { await call('POST', '/' + d.id + '/remove', {}); AE.track('checkinDrafts:discard'); boxData = []; box.remove(); }
           catch (e) { AE.toast('Return', { html: "Couldn't discard it." + report('Discarding saved check-in ' + d.id, e) }, 'err'); }

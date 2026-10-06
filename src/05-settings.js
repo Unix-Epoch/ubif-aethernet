@@ -19,7 +19,7 @@
     ]),
     ['autoClose', 'Swiftcast', 'Your new favorite tool. Auto-close cleanings in one click - even multiple at once.'],
     ...(AE_DEMO ? [] : [
-    ['checkinDrafts', 'Return', 'Save a check-in you can\'t finish yet, print a label for the device, and scan it later to pick up where you left off.'],
+    ['checkinDrafts', 'Return', 'Saves an incomplete check-in so you can create cleanings once the device is functional. Goodbye, paper slips!'],
     ]),
     ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],
