@@ -7,7 +7,8 @@
   Saved before then, the work order (and its 15 minutes) only start once the
   device is ready and the check-in is finished.
 
-  - Save as incomplete: a button in the check-in footer on every step. It
+  - Save as incomplete: a button in the check-in footer on every step but
+    Device (its boxes don't come back from Portal's state). It
     reads Portal's own check-in state (the check-in app's Redux slice
     "checkInSlice", through core's Portal bridge), keeps the parts a person
     typed or picked (customer, device, IMEI/serial, passcode, items with the
@@ -41,6 +42,7 @@ AE.crystal({
     const SLICE = 'checkInSlice';
     const BTN_ID = 'ae-return-save', BOX_ID = 'ae-return-arrival';
     const INITIAL_CHECKIN = 1; // work order status while the check-in isn't finished
+    const DEVICE_STEP = 1;     // formStep of the Device step: no saving there (see tick)
     // What a person typed or picked; the rest of the slice is Portal's own bookkeeping.
     const KEEP = ['formStep', 'activeTab', 'isBusinessCustomerArrivalFlow', 'selectedBusiness', 'authorizedContacts', 'contactFields',
       'customerInfo', 'isImeiUnavailable', 'isSerialUnavailable', 'isServiceTagUnavailable', 'deviceInfo', 'customerDeviceDetails',
@@ -317,6 +319,9 @@ AE.crystal({
       arrivalBox();
       const existing = document.getElementById(BTN_ID);
       if (!onCheckin) { existing?.remove(); return; }
+      // Not on the Device step: its boxes keep their own values and don't read them back from Portal's state,
+      // so a check-in saved there comes back with nothing filled in (Garrett's live test, Oct 6, 2026).
+      if (slice('formStep', false) === DEVICE_STEP) { existing?.remove(); return; }
       const woId = slice('workorder', false);
       if (current && woId && woId.workorderId) current.woId = woId.workorderId;
       if (current && current.woId && Date.now() - lastCheck > 20000) { lastCheck = Date.now(); checkDone(); }
