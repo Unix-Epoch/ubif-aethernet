@@ -30,6 +30,9 @@
     GET  /v1/:store/checkins/:id                                 one saved check-in, contents included
     POST /v1/:store/checkins            { id?, arrivalId?, woId?, step, label, data, by, byId }   save (new id, or update `id`)
     POST /v1/:store/checkins/:id/remove                          finished or discarded: deleted
+    GET  /v1/:store/sheets/:kind                                 Provoke: the store's synced sheet (leads | prices) → { data, syncedAt }
+  Sheet sync (x-aethernet-sheets = the SHEETS_KEY secret; only Garrett's Mac job has it):
+    POST /v1/sheets/:store/:kind        { data }                 replace that store's sheet (leads: canned texts; prices: Price sheet tabs)
   Admin (x-aethernet-admin = the ADMIN_KEY secret; never shipped in the script):
     GET  /v1/admin/ping
     GET  /v1/admin/feedback?status=new|planned|fixed|wontfix|all
@@ -85,9 +88,9 @@ const clean = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u00
 const tagName = (v) => clean(v, 32);
 const who = (b) => ({ name: clean(b.by, 60) || 'Someone', id: Number.isInteger(b.byId) ? b.byId : null });
 
-async function body(req) {
+async function body(req, max = 16000) {
   const text = await req.text();
-  if (text.length > 16000) throw new Error('too large');
+  if (text.length > max) throw new Error('too large');
   return text ? JSON.parse(text) : {};
 }
 
@@ -223,6 +226,22 @@ async function route(req, env) {
     if (!VERSION_RE.test(v)) return fail(400, 'version=X.Y.Z required');
     const r = await env.DB.prepare("SELECT id, kind, quote, credit, store_name AS store FROM feedback WHERE fixed_in = ? AND quote IS NOT NULL AND quote <> '' ORDER BY id").bind(v).all();
     return json({ version: v, reports: r.results });
+  }
+  // Provoke's sheets, pushed by the sync job on Garrett's Mac (its own key, not the admin key).
+  const sy = url.pathname.match(/^\/v1\/sheets\/(\d{1,6})\/(leads|prices)$/);
+  if (sy && req.method === 'POST') {
+    if (!env.SHEETS_KEY || req.headers.get('x-aethernet-sheets') !== env.SHEETS_KEY) return fail(403, 'sheets key required');
+    const b = await body(req, 400000);
+    if (!b.data || typeof b.data !== 'object') return fail(400, 'data required');
+    await env.DB.prepare('INSERT INTO sheets (store, kind, data, synced_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, kind) DO UPDATE SET data = excluded.data, synced_at = excluded.synced_at')
+      .bind(Number(sy[1]), sy[2], JSON.stringify(b.data), now()).run();
+    return json({ ok: true });
+  }
+  const sh = url.pathname.match(/^\/v1\/(\d{1,6})\/sheets\/(leads|prices)$/);
+  if (sh && req.method === 'GET') {
+    if (!(await allowed(env, Number(sh[1])))) return fail(403, 'this store does not have access to Aethernet');
+    const r = await env.DB.prepare('SELECT data, synced_at FROM sheets WHERE store = ? AND kind = ?').bind(Number(sh[1]), sh[2]).first();
+    return r ? json({ data: JSON.parse(r.data), syncedAt: r.synced_at }) : json({ data: null, syncedAt: null });
   }
   const cm = url.pathname.match(/^\/v1\/(\d{1,6})\/checkins\/([A-Za-z0-9]{6})(\/remove)?$/);
   const ci = cm ? { id: cm[2].toUpperCase(), remove: !!cm[3] } : null;

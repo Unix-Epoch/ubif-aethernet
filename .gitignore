@@ -9,3 +9,5 @@ __pycache__/
 worker/.dev.vars
 admin-worker/.wrangler/
 admin-worker/.dev.vars
+sheets/*.docx
+sheets/*.xlsx

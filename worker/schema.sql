@@ -70,3 +70,7 @@ CREATE TABLE IF NOT EXISTS checkin_drafts (  -- Return: incomplete check-ins (cu
   PRIMARY KEY (store, id)
 );
 CREATE INDEX IF NOT EXISTS checkin_drafts_arrival ON checkin_drafts (store, arrival_id);
+CREATE TABLE IF NOT EXISTS sheets (          -- Provoke: a store's lead texts and Price sheet, pushed by the sync job (JSON)
+  store INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL, synced_at TEXT NOT NULL,
+  PRIMARY KEY (store, kind)
+);
