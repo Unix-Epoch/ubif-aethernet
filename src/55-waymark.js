@@ -523,7 +523,7 @@ AE.crystal({
     const ROW_ID = 'sg-wm-row', POP_ID = 'sg-wm-pop', BTN_ID = 'sg-wm-btn', BOARD_ID = 'sg-wm-board';
     const currentWoId = () => { const m = location.pathname.match(/^\/repair\/workorder\/(\d+)/); return m ? m[1] : null; };
     const nameRow = (woId) => {
-      const heading = [...document.querySelectorAll('[data-aui="text"]')].find((el) => el.offsetParent && el.textContent.trim().startsWith('Work order #' + woId));
+      const heading = AE.woHeading(woId);
       return heading && heading.parentElement;
     };
 
@@ -765,6 +765,15 @@ AE.crystal({
       setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }));
     }
     AE.every(1000, () => { if (onList() && LS().chips) W.load().catch(() => {}); renderList(); });
+    // New or changed rows get their chips in the same frame (2.23). A cheap signature of the list
+    // (row count, first/last WO, rows already done) decides whether to redraw; the timer catches the rest.
+    let listSig = '';
+    AE.onDom(() => {
+      if (!onList() || !LS().chips) return;
+      const links = document.querySelectorAll('tbody tr a[href*="/repair/workorder/"]');
+      const sig = links.length + '|' + (links[0] && links[0].getAttribute('href')) + '|' + (links.length && links[links.length - 1].getAttribute('href')) + '|' + document.querySelectorAll('[data-ae-fit]').length;
+      if (sig !== listSig) { renderList(); listSig = links.length + '|' + (links[0] && links[0].getAttribute('href')) + '|' + (links.length && links[links.length - 1].getAttribute('href')) + '|' + document.querySelectorAll('[data-ae-fit]').length; }
+    });
     AE.on('waymark-changed', () => renderList());
 
     // ---------------------------------------------------- header button + board
@@ -953,6 +962,12 @@ AE.crystal({
     AE.onDom(() => {
       const a = AE.headerAnchor(), b = document.getElementById(BTN_ID);
       if (a && !(b && b.nextSibling === a)) renderButton();
+    });
+    AE.onDom(() => { // the tag row, in the same frame as Portal's heading (2.23)
+      const woId = currentWoId();
+      if (!woId) return;
+      const row = document.getElementById(ROW_ID), anchor = nameRow(woId);
+      if (anchor && !(row && row.parentElement === anchor)) renderRow();
     });
     AE.every(1000, () => {
       renderButton();

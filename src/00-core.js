@@ -927,6 +927,16 @@ const AE = (() => {
     return supportBtn;
   }
 
+  // The "Work order #123" heading on a WO page (Esuna's pill and Waymark's tags go in its row).
+  // Kept while it's in the page; the scan matches text first and checks visibility only on matches.
+  let woHead = null;
+  function woHeading(woId) {
+    const want = 'Work order #' + woId;
+    if (woHead && woHead.isConnected && woHead.textContent.trim().startsWith(want)) return woHead;
+    woHead = [...document.querySelectorAll('[data-aui="text"]')].find((el) => el.textContent.trim().startsWith(want) && el.offsetParent) || null;
+    return woHead;
+  }
+
   // When the page has a <body> (the script starts before Portal's HTML is parsed, @run-at document-start).
   function whenReady(fn) {
     if (document.body) return fn();
@@ -943,7 +953,7 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, woHeading,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,

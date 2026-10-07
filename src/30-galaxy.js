@@ -97,7 +97,7 @@ AE.crystal({
       window.addEventListener('resize', () => { const w = document.getElementById('sg-galaxy-btn'); if (w) savePos(clampToViewport(w)); });
 
       const currentWoId = () => { const m = location.pathname.match(/\/workorder\/(\d+)/); return m ? m[1] : null; };
-      const gspnTicketOnPage = () => { const m = document.body.innerText.match(/GSPN No\.\s*([0-9]+)/); return m ? m[1] : null; };
+      const gspnTicketOnPage = () => { const m = document.body.textContent.match(/GSPN No\.\s*([0-9]+)/); return m ? m[1] : null; }; // textContent: no layout
 
       async function collectData(woId) {
         const json = await AE.api('GET', '/api/workorder/' + woId);
@@ -246,14 +246,24 @@ AE.crystal({
         return true;
       };
 
-      AE.every(1000, () => {
+      // On page changes too (2.23), but reading the page's text is the costly part: at most 4 times a second,
+      // and only while this WO has no button yet.
+      let lastCheck = 0;
+      AE.onDom(() => {
+        const woId = currentWoId();
+        if (!woId || (injectedForWoId === woId && document.getElementById('sg-galaxy-btn')) || performance.now() - lastCheck < 250) return;
+        lastCheck = performance.now();
+        place();
+      });
+      AE.every(1000, place);
+      function place() {
         const woId = currentWoId();
         const existing = document.getElementById('sg-galaxy-btn');
         if (!woId) { existing?.remove(); document.getElementById('sg-galaxy-intro')?.remove(); injectedForWoId = null; return; }
         const ticket = gspnTicketOnPage() || (demoWo === woId ? 'demo' : null);
         if (ticket && (injectedForWoId !== woId || !existing)) { existing?.remove(); makeButton(); injectedForWoId = woId; }
         else if (!ticket && existing) { existing.remove(); document.getElementById('sg-galaxy-intro')?.remove(); injectedForWoId = null; }
-      });
+      }
     }
 
     // ------------------------------------------------------------ PART B

@@ -80,7 +80,7 @@ AE.crystal({
 
     // Anchor: the flex row holding the "Work order #… | NAME" heading.
     function nameRow(woId) {
-      const heading = [...document.querySelectorAll('[data-aui="text"]')].find((el) => el.offsetParent && el.textContent.trim().startsWith('Work order #' + woId));
+      const heading = AE.woHeading(woId);
       return heading && heading.parentElement;
     }
 
@@ -175,6 +175,14 @@ AE.crystal({
       if (!state || state.woId !== woId) { if (loadingFor !== woId) load(woId); }
       else if (stale) { state.at = Date.now(); load(woId, true); }
       render(); // Portal re-renders the header; put the pill back
+    });
+    // Same frame as Portal's heading (2.23): starts the lookup on a new WO and puts the pill back if Portal redraws.
+    AE.onDom(() => {
+      const woId = currentWoId();
+      if (!woId) return;
+      if ((!state || state.woId !== woId) && loadingFor !== woId) return load(woId);
+      const pill = document.getElementById(PILL_ID), row = nameRow(woId);
+      if (row && (!pill || pill.parentElement !== row)) render();
     });
     AE.on('cleaning-changed', () => { const woId = currentWoId(); if (woId) load(woId, true); });
   },

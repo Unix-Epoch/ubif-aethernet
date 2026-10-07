@@ -816,6 +816,12 @@ AE.crystal({
           const table = link && link.closest('table');
           const head = table && table.tHead && table.tHead.rows[0];
           if (!head) return;
+          // Nothing to do unless the list changed (rows, headers, our buttons, a page sort): asking Portal
+          // for the list's settings is the costly part, and this runs on every page change (2.23).
+          const sigOf = () => { const ls = table.tBodies[0] ? table.tBodies[0].querySelectorAll('a[href*="/repair/workorder/"]') : [];
+            return head.cells.length + '|' + ls.length + '|' + (ls[0] && ls[0].getAttribute('href')) + '|' + (ls.length && ls[ls.length - 1].getAttribute('href')) + '|' +
+              head.querySelectorAll('.' + BTN).length + '|' + JSON.stringify(pageSort) + '|' + moved; };
+          if (sigOf() === paintSig) return;
           const order = current(getSel()).order;
           const headers = [...head.cells].map((th) => ({ th, label: (th.innerText || '').trim().split('\n')[0].trim() }));
           for (const { th, label } of headers) {
@@ -839,7 +845,9 @@ AE.crystal({
             if ((b.dataset.dir || '') !== (dir || '')) { if (dir) b.dataset.dir = dir; else delete b.dataset.dir; }
           }
           applyPageSort(table, headers);
+          paintSig = sigOf();
         }
+        let paintSig = '';
         AE.onDom(paint); // same frame as Portal's rows (2.23; was 120 ms later, so a page sort flashed unsorted)
       },
       scanNav() {
