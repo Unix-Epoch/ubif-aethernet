@@ -10,11 +10,16 @@ script needs no new permissions.
 Every tab of the Price sheet is sent except Eagle of Va (Garrett, Oct 6): as raw rows, plus device
 rows ({name, cells: {column: raw}}) for tabs laid out as a device-by-repair grid.
 
+Only when a file changed: each run asks SharePoint for both files' version tags
+(ETag, no download) and downloads, parses and pushes only the sheets whose tag
+differs from the last push (sheets/.state.json). Each pushed sheet carries the
+file's own last-modified time ("modified"), which Aethernet shows.
+
 Key: the SHEETS_KEY Worker secret, read from the macOS Keychain
 (service "aethernet-sheets"). Runs from launchd every 15 minutes; outside
 8 AM-8 PM it does nothing.
 
-Usage: ~/Scripts/ubif-daily-sales/.venv/bin/python3 sync_sheets.py [--force] [--dry-run]
+Usage: ~/Scripts/ubif-daily-sales/.venv/bin/python3 sync_sheets.py [--force] [--dry-run] [--any-hour]
 """
 import io
 import json
@@ -32,10 +37,14 @@ import fetch_price_sheet as fps  # noqa: E402
 STORE = 914
 WORKER = "https://aethernet-waymark-dev.ubifaethernet.workers.dev"
 APP_KEY = "ae_QFa2DKDy0DrlBd_A3bfZL3BtgM51idh6"  # public: ships inside Aethernet
-LEADS_URL = ("https://ubreakifix-my.sharepoint.com/personal/c_boyd_ubreakifix_com/"
-             "_layouts/15/download.aspx?UniqueId=02F051BD-D255-4E00-BC98-F621D65F3284")
+SP = "https://ubreakifix-my.sharepoint.com/personal/"
+FILES = {  # kind: (owner's OneDrive, SharePoint UniqueId)
+    "leads": ("c_boyd_ubreakifix_com", "02F051BD-D255-4E00-BC98-F621D65F3284"),
+    "prices": ("b_bauer_ubreakifix_com", fps.UNIQUE_ID),
+}
 HERE = Path(__file__).resolve().parent
 LEADS_FILE = HERE / "lead-sheet.docx"
+STATE = HERE / ".state.json"
 
 
 def keychain():
@@ -137,20 +146,32 @@ def parse_prices(xlsx_path):
 
 
 # ------------------------------------------------------------------ download + push
-def download_leads():
+def fetch_changed(seen, force):
+    """{kind: (bytes, etag, modified)} for the files whose version tag changed (all with force)."""
     from playwright.sync_api import sync_playwright
+    out = {}
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(user_data_dir=str(fps.PROFILE_DIR), channel="chrome", headless=True)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto("https://ubreakifix-my.sharepoint.com/", timeout=30000, wait_until="domcontentloaded")
         page.wait_for_timeout(1500)
-        resp = ctx.request.get(LEADS_URL)
-        body = resp.body()
-        ctx.close()
-    if resp.status != 200 or not body.startswith(b"PK"):
-        raise RuntimeError(f"lead sheet download failed: HTTP {resp.status}, {len(body)} bytes")
-    LEADS_FILE.write_bytes(body)
-    return body
+        try:
+            for kind, (owner, uid) in FILES.items():
+                r = ctx.request.get(f"{SP}{owner}/_api/web/GetFileById('{uid}')?$select=ETag,TimeLastModified",
+                                    headers={"accept": "application/json;odata=nometadata"})
+                if r.status != 200:
+                    raise RuntimeError(f"{kind}: version check failed, HTTP {r.status}")
+                info = r.json()
+                if not force and seen.get(kind) == info["ETag"]:
+                    continue
+                d = ctx.request.get(f"{SP}{owner}/_layouts/15/download.aspx?UniqueId={uid}")
+                body = d.body()
+                if d.status != 200 or not body.startswith(b"PK"):
+                    raise RuntimeError(f"{kind}: download failed, HTTP {d.status}, {len(body)} bytes")
+                out[kind] = (body, info["ETag"], info["TimeLastModified"])
+        finally:
+            ctx.close()
+    return out
 
 
 def push(kind, data, key):
@@ -163,30 +184,38 @@ def push(kind, data, key):
 
 def main():
     force, dry = "--force" in sys.argv, "--dry-run" in sys.argv
-    if not force and not (8 <= datetime.now().hour < 20):
+    if not force and "--any-hour" not in sys.argv and not (8 <= datetime.now().hour < 20):
         return 0
+    seen = json.loads(STATE.read_text()) if STATE.exists() else {}
     lock = fps.acquire_profile_lock()
     if lock is None:
         print("Timed out waiting for the Chrome profile lock.", file=sys.stderr)
         return 2
     try:
-        leads = parse_leads(download_leads())
-        prices_ok = fps.download()
+        changed = fetch_changed(seen, force)
     finally:
         lock.close()
-    if prices_ok:
+    if not changed:
+        print("no changes")
+        return 0
+    data = {}
+    if "leads" in changed:
+        LEADS_FILE.write_bytes(changed["leads"][0])
+        data["leads"] = parse_leads(changed["leads"][0])
+    if "prices" in changed:
+        fps.OUT_FILE.write_bytes(changed["prices"][0])  # also keeps the audit's copy current
         fps.export_text()
-    prices = parse_prices(fps.OUT_FILE) if fps.OUT_FILE.exists() else None
-    print(f"leads: {len(leads['items'])} messages; prices: " +
-          (", ".join(f"{t['name']} {len(t['rows'])}" for t in prices["tabs"]) if prices else "none") +
-          ("" if prices_ok else " (download failed; last copy)"))
+        data["prices"] = parse_prices(fps.OUT_FILE)
+    for kind in data:
+        data[kind]["modified"] = changed[kind][2]
+    print("changed: " + ", ".join(f"{k} (edited {changed[k][2]})" for k in data))
     if dry:
-        print(json.dumps({"leads": leads, "prices": prices}, indent=1)[:4000])
         return 0
     key = keychain()
-    push("leads", leads, key)
-    if prices:
-        push("prices", prices, key)
+    for kind, d in data.items():
+        push(kind, d, key)
+        seen[kind] = changed[kind][1]
+    STATE.write_text(json.dumps(seen))
     print("pushed")
     return 0
 

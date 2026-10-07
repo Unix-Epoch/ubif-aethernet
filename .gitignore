@@ -11,3 +11,5 @@ admin-worker/.wrangler/
 admin-worker/.dev.vars
 sheets/*.docx
 sheets/*.xlsx
+sheets/.state.json
+sheets/*.log

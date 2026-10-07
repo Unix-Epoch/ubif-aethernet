@@ -196,6 +196,8 @@ AE.crystal({
       } catch (_) { /* no box rather than a broken one */ } finally { building = false; }
     }
 
+    // " (edited Oct 6)": when the sheet file itself last changed (the sync only pushes changed files).
+    const edited = (sh) => { const m = sh && sh.data && (sh.data.modified || sh.syncedAt); return m ? ' (edited ' + new Date(m).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ')' : ''; };
     function render(a, leads, prices) {
       const items = leads.data.items || [];
       const p = pick(a, leads.data, prices && prices.data);
@@ -247,8 +249,8 @@ AE.crystal({
         sel, chips, ta,
         second ? h('label', { class: 'chk' }, second, h('span', { class: 'hint', title: p.second.texts[0] }, 'Send secondary price match message?')) : null,
         h('div', { class: 'ft' }, msg, h('span', { class: 'sp' }), btn),
-        h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' }, 'From the lead sheet' + (chips && p.prices.length ? ' and Price sheet' : '') +
-          (leads.syncedAt ? ', as of ' + new Date(leads.syncedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '') + '.'));
+        h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' }, 'From the lead sheet' + edited(leads) +
+          (p.prices && p.prices.length ? ' and Price sheet' + edited(prices) : '') + '.'));
       setText();
       return root;
     }
