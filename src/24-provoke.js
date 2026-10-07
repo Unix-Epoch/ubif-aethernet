@@ -56,6 +56,7 @@ AE.crystal({
       #${BOX_ID} .ft { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px; }
       #${BOX_ID} .ft .sp { flex:1; }
       #${BOX_ID} label.chk { display:flex; gap:6px; align-items:center; font-size:13px; margin-top:8px; }
+      #${BOX_ID} .hint { text-decoration:underline dotted; text-underline-offset:3px; cursor:help; }
     `));
 
     // ------------------------------------------------------------ sheets
@@ -224,10 +225,10 @@ AE.crystal({
       }
       const root = h('div', { id: BOX_ID, class: 'sg' + (p.ready ? '' : ' need'), 'data-id': String(a.arrivalId) },
         h('div', { class: 'hd' }, h('span', { style: 'line-height:0', html: AE.actionIcon('leadReplies', 26) }),
-          h('div', { class: 'txt' }, h('b', null, 'Reply to this lead')),
+          h('div', { class: 'txt' }, h('b', null, 'Provoke - Reply')),
           h('span', { class: 'pill' }, p.ready ? 'Reply ready' : 'Needs a reply')),
         sel, chips, ta,
-        second ? h('label', { class: 'chk', title: p.second.texts[0] }, second, h('span', null, 'Then send: ', h('i', null, '“' + p.second.texts[0].slice(0, 60).replace(/\s+\S*$/, '') + '…”'))) : null,
+        second ? h('label', { class: 'chk' }, second, h('span', { class: 'hint', title: p.second.texts[0] }, 'Send secondary price match message?')) : null,
         h('div', { class: 'ft' }, msg, h('span', { class: 'sp' }), btn),
         h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' }, 'From the lead sheet' + (chips && p.prices.length ? ' and Price sheet' : '') +
           (leads.syncedAt ? ', as of ' + new Date(leads.syncedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '') + '.'));
