@@ -53,16 +53,41 @@ def keychain():
 
 
 # ------------------------------------------------------------------ leads (.docx)
+def is_red(run):
+    m = re.search(r'<w:color w:val="([0-9A-Fa-f]{6})"', run)
+    if not m:
+        return False
+    r, g, b = (int(m.group(1)[i:i + 2], 16) for i in (0, 2, 4))
+    return r >= 0xC0 and g < 0x60 and b < 0x60
+
+
+def unxml(t):
+    return t.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&apos;", "'")
+
+
 def paragraphs(docx):
+    """[(text, text without red runs)]. Red is the sheet's notes to staff ("- Always quote lowest
+    screen price…"): left out of titles (Garrett, Oct 6) but kept in messages ("$price")."""
     xml = zipfile.ZipFile(io.BytesIO(docx)).read("word/document.xml").decode("utf-8")
     out = []
     for p in re.findall(r"<w:p[ >].*?</w:p>", xml, re.S):
-        t = "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", p))
-        t = (t.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&apos;", "'"))
-        t = re.sub(r"\s+", " ", t).strip()
-        if t:
-            out.append(t)
+        full, plain = [], []
+        for run in re.findall(r"<w:r[ >].*?</w:r>", p, re.S):
+            t = unxml("".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", run)))
+            full.append(t)
+            if not is_red(run):
+                plain.append(t)
+        full, plain = (re.sub(r"\s+", " ", "".join(x)).strip() for x in (full, plain))
+        if full:
+            out.append((full, plain))
     return out
+
+
+def tidy_title(t):
+    t = re.sub(r"[\s\-–:]+$", "", re.sub(r"\(\s*\)", "", t)).strip()
+    if t.count("(") > t.count(")"):
+        t = t.rstrip(" -–") + ")"
+    return re.sub(r"\s+\)", ")", t)
 
 
 def is_message(t):
@@ -78,14 +103,14 @@ def parse_leads(docx):
         if title is not None and texts:
             items.append({"group": group, "title": title.rstrip(" -:"), "texts": list(texts)})
 
-    for t in paragraphs(docx):
+    for t, plain in paragraphs(docx):
         if is_message(t):
             texts.append(t)
             continue
         if title is not None and not texts:
             group = title.rstrip(" -:")  # the previous line was a heading
         flush()
-        title, texts = t, []
+        title, texts = tidy_title(plain or t), []
     flush()
     return {"items": items}
 
