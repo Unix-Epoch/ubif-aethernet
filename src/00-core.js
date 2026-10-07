@@ -861,14 +861,20 @@ const AE = (() => {
   */
   const domFns = [];
   let domObs = null, domRuns = 0, domFrame = 0, domBusy = false;
+  // How much the watcher costs (dev tools → Performance): runs, total ms, and the worst single frame.
+  const domStats = { runs: 0, ms: 0, worstFrame: 0, frame: 0, since: performance.now(), reset() { Object.assign(this, { runs: 0, ms: 0, worstFrame: 0, frame: 0, since: performance.now() }); } };
+  if (AE_DEV) try { window.__aeDomStats = domStats; } catch (_) {} // dev builds: readable by the sandbox tests
   function runDom() {
     if (domBusy) return;
     if (++domRuns > 8) { if (!domFrame) domFrame = requestAnimationFrame(() => { domFrame = 0; domRuns = 0; runDom(); }); return; }
-    if (!domFrame) domFrame = requestAnimationFrame(() => { domFrame = 0; domRuns = 0; });
+    if (!domFrame) domFrame = requestAnimationFrame(() => { domFrame = 0; domRuns = 0; domStats.frame = 0; });
     domBusy = true;
+    const t0 = performance.now();
     for (const fn of domFns) {
       try { const r = fn(); if (r && r.catch) r.catch((e) => noteError('dom', e)); } catch (e) { noteError('dom', e); }
     }
+    const dt = performance.now() - t0;
+    domStats.runs++; domStats.ms += dt; domStats.frame += dt; if (domStats.frame > domStats.worstFrame) domStats.worstFrame = domStats.frame;
     domBusy = false;
   }
   function watchDom(root) {
@@ -893,7 +899,7 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,

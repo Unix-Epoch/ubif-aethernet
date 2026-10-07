@@ -275,8 +275,10 @@ AE.crystal({
           if (item.nextElementSibling !== more) more.before(item);
           return true;
         }
+        let lastHead = null; // cached: this runs on page changes now, and the scan below is the expensive part
         function enhancementIdea(orig) {
-          const head = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,div')].find((e) => e.children.length === 0 && label(e) === 'Metrics overview');
+          if (!(lastHead && lastHead.isConnected)) lastHead = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,div')].find((e) => e.children.length === 0 && label(e) === 'Metrics overview') || null;
+          const head = lastHead;
           let row = head, viewAll = null;
           for (let i = 0; row && i < 4 && !viewAll; i++) { row = row.parentElement; viewAll = row && [...row.querySelectorAll('a, button')].find((e) => /^View all/.test(label(e))); }
           if (!viewAll) return false;
@@ -293,11 +295,18 @@ AE.crystal({
           return true;
         }
 
-        AE.every(1500, () => {
+        function run() {
           untuckAll();
           const st = find('Support Ticket'), idea = find('Enhancement Idea');
           if (st && supportTicket(st)) tuck(st); else document.getElementById(NAV_ID)?.remove();
           if (idea && enhancementIdea(idea)) tuck(idea); else document.getElementById(IDEA_ID)?.remove();
+        }
+        AE.every(1500, run);
+        // As Appcues draws them, before they're seen (2.23); only while the page holds Appcues at all.
+        AE.onDom(() => {
+          if (!document.querySelector('appcues, appcues-experience-container, iframe') && !tucked.size) return;
+          for (const r of roots()) if (r !== document) AE.watchDom(r);
+          run();
         });
       },
       appcuesBoxes() {
@@ -508,11 +517,14 @@ AE.crystal({
           })().finally(() => { loading = null; paint(); });
         }
 
+        let idsFor = null, idsCache = null;
         function paint() {
           const tab = document.querySelector('[data-testid="notes-tab"]');
           if (!tab) { if (style.textContent) style.textContent = ''; return; }
           const cards = [...tab.querySelectorAll('[id^="note-"]')].filter((c) => /^note-\d+$/.test(c.id));
-          const ids = autoIds();
+          const sig = cards.map((c) => c.id).join(',');
+          if (sig !== idsFor || idsCache === null) { idsCache = autoIds(); idsFor = sig; } // Portal's note list: only when the cards change
+          const ids = idsCache;
           const shownAuto = ids ? cards.filter((c) => ids.includes(c.id.slice(5))) : [];
           const css = hide && shownAuto.length ? shownAuto.map((c) => '#' + CSS.escape(c.id)).join(',') + ' { display:none !important; }' : '';
           if (style.textContent !== css) style.textContent = css;
@@ -535,10 +547,7 @@ AE.crystal({
             : hide ? (shownAuto.length ? shownAuto.length + ' auto note' + (shownAuto.length === 1 ? '' : 's') + ' hidden' : 'No auto notes')
             : shownAuto.length + ' auto note' + (shownAuto.length === 1 ? '' : 's');
         }
-        let queued = false;
-        new MutationObserver(() => { if (!queued) { queued = true; setTimeout(() => { queued = false; try { paint(); } catch (e) { AE.noteError('autoNotes', e); } }, 150); } })
-          .observe(document.body, { childList: true, subtree: true });
-        paint();
+        AE.onDom(paint); // same frame as Portal's notes (2.23; was 150 ms later, so auto notes flashed)
       },
       notContacted() {
         const CONTACTED = 53, NOT_CONFIRMED = 20, ENDPOINT = 'getUpcomingArrivals'; // Portal's ArrivalAttributeType.Contacted, ArrivalStatusEnum.NotConfirmed; the list's query
@@ -831,10 +840,7 @@ AE.crystal({
           }
           applyPageSort(table, headers);
         }
-        let queued = false;
-        new MutationObserver(() => { if (!queued) { queued = true; setTimeout(() => { queued = false; try { paint(); } catch (e) { AE.noteError('woSort', e); } }, 120); } })
-          .observe(document.body, { childList: true, subtree: true });
-        paint();
+        AE.onDom(paint); // same frame as Portal's rows (2.23; was 120 ms later, so a page sort flashed unsorted)
       },
       scanNav() {
         const GAP_MS = 60; // longest pause between a scanner's keys (Portal uses 40)

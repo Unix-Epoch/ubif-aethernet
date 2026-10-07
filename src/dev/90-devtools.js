@@ -234,6 +234,12 @@
       note(recording ? 'Recording: add the item in Portal\'s cart by hand, then copy the request below.' : 'Off.'),
       recOut);
 
+    const perf = section('Performance',
+      row(btn('Page watcher cost', () => {
+        const st = AE.domStats, secs = (performance.now() - st.since) / 1000;
+        AE.toast('Page watcher', st.runs + ' runs in ' + secs.toFixed(0) + ' s · ' + st.ms.toFixed(1) + ' ms total · avg ' + (st.runs ? (st.ms / st.runs).toFixed(2) : 0) + ' ms/run · worst frame ' + st.worstFrame.toFixed(1) + ' ms', 'ok', 15000);
+      }), btn('Reset', () => AE.domStats.reset())),
+      note('What Aethernet spends reacting to page changes. Budget: under 2 ms a frame on average.'));
     const general = section('Panels, toasts, dialogs',
       row(btn('Refresh view in place', async () => {
         const r = await AE.refreshView();
@@ -256,7 +262,7 @@
     const card = h('div', { class: 'sg sg-card sg-dev', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' dev tools' },
       h('div', { class: 'head' }, h('span', { style: 'color:#e0761a;line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Dev tools'), h('span', { class: 'tag' }, 'DEV v' + AE_VERSION),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
-      h('div', { class: 'scroll' }, updates, notices, access, settings, macro, waymark, rows, scans, recorder, general));
+      h('div', { class: 'scroll' }, updates, notices, access, settings, macro, waymark, rows, scans, recorder, perf, general));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-dev', onclick: (e) => { if (e.target === scrim) close(); } }, card);
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
