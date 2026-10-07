@@ -142,7 +142,7 @@ AE.crystal({
       let b = document.getElementById(BADGE_ID);
       if (!b) b = h('button', { id: BADGE_ID, type: 'button', class: 'sg', onclick: togglePanel });
       // Sits left of "UBIF support" in the header; floats bottom-left if that's missing.
-      const anchor = [...document.querySelectorAll('button')].find((x) => x.offsetParent && x.textContent.trim() === 'UBIF support');
+      const anchor = AE.headerAnchor();
       if (anchor && b.parentElement !== anchor.parentElement) { b.classList.remove('floating'); anchor.parentElement.insertBefore(b, anchor); }
       else if (!anchor && !b.isConnected) { b.classList.add('floating'); document.body.appendChild(b); }
       b.classList.remove('good', 'ok', 'bad', 'none');
@@ -468,6 +468,11 @@ AE.crystal({
 
     const onPortal = () => !/^\/login/.test(location.pathname);
     AE.every(1500, () => { if (onPortal()) renderBadge(); }); // SPA re-renders can drop the badge
+    AE.onDom(() => { // ...and puts it back in the same frame (2.23); only when it's missing or out of place
+      if (!onPortal()) return;
+      const a = AE.headerAnchor(), b = document.getElementById(BADGE_ID);
+      if (a ? b?.parentElement !== a.parentElement : !b?.isConnected) renderBadge(); // same group as Waymark's button, which sits right before the anchor
+    });
     setInterval(() => { if (onPortal() && !document.hidden) refresh(); }, REFRESH_MS);
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden && onPortal() && (!last || Date.now() - last.at > REFRESH_MS)) refresh();

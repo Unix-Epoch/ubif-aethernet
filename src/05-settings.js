@@ -538,8 +538,8 @@
     }).catch((e) => { who.replaceChildren(h('dt', null, 'Error'), h('dd', null, esc(e.message))); });
   }
 
-  // Add our item to the avatar menu whenever Portal renders it.
-  AE.every(400, () => {
+  // Add our item to the avatar menu whenever Portal renders it: in the same frame (2.23), timer as backup.
+  function menuItem() {
     const logout = document.querySelector('[data-testid="option-logout"]');
     const model = document.querySelector('[data-testid="option-view-account"]');
     if (!logout || !model || document.querySelector('[data-testid="option-aethernet"]')) return;
@@ -556,7 +556,9 @@
       open();
     });
     logout.parentElement.insertBefore(item, logout);
-  });
+  }
+  AE.every(400, menuItem);
+  AE.onDom(menuItem);
 
   function showUpdatedPill(fromVersion) {
     document.getElementById('sg-update-pill')?.remove();

@@ -193,6 +193,16 @@ AE.status = (() => {
   const ensureCss = () => { AE.ensureCss(); if (!document.getElementById('sg-status-css')) document.head.append(h('style', { id: 'sg-status-css' }, CSS)); };
 
   // Just under Portal's header, wherever it ends.
+  // Under Portal's header, following its height as it changes (ResizeObserver, 2.23) instead of
+  // re-measuring on a timer; the page watcher re-attaches when Portal swaps the header element.
+  let sizedHeader = null, headerRO = null;
+  function watchHeader() {
+    const header = document.querySelector('.components-header');
+    if (header === sizedHeader) return;
+    sizedHeader = header; headerRO?.disconnect(); headerRO = null;
+    if (header && typeof ResizeObserver !== 'undefined') { headerRO = new ResizeObserver(() => placeBanner()); headerRO.observe(header); }
+    placeBanner();
+  }
   function placeBanner() {
     const el = document.getElementById('sg-status-banner');
     if (!el) return;
@@ -284,7 +294,8 @@ AE.status = (() => {
       poll();
       setInterval(poll, POLL_MS);
       setInterval(render, 60 * 1000); // lets a rolling-out release appear once it's ready
-      AE.every(1500, placeBanner); // Portal's header can change height
+      AE.every(1500, placeBanner); // Portal's header can change height (backup)
+      AE.onDom(watchHeader);
     }, 0);
   }
 

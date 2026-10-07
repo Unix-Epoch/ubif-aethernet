@@ -769,7 +769,7 @@ AE.crystal({
 
     // ---------------------------------------------------- header button + board
     function renderButton() {
-      const anchor = [...document.querySelectorAll('button')].find((x) => x.offsetParent && x.textContent.trim() === 'UBIF support');
+      const anchor = AE.headerAnchor();
       let b = document.getElementById(BTN_ID);
       if (!anchor) { b?.remove(); return; }
       if (!b) b = h('button', { type: 'button', id: BTN_ID, class: 'sg', title: 'Waymark: work orders by tag', 'aria-label': 'Waymark board', html: AE.actionIcon('waymark', 26), onclick: (e) => { e.stopPropagation(); toggleBoard(); } });
@@ -949,6 +949,11 @@ AE.crystal({
 
     AE.on('waymark-changed', () => { renderRow(); });
     W.load().catch(() => {});
+    // In the header the moment Portal draws it (2.23); the timer below also refreshes the badge.
+    AE.onDom(() => {
+      const a = AE.headerAnchor(), b = document.getElementById(BTN_ID);
+      if (a && !(b && b.nextSibling === a)) renderButton();
+    });
     AE.every(1000, () => {
       renderButton();
       if (currentWoId()) { W.load().then(renderRow).catch(() => {}); renderRow(); }

@@ -864,7 +864,7 @@ const AE = (() => {
   const domFns = [];
   let domObs = null, domRuns = 0, domFrame = 0, domBusy = false;
   // How much the watcher costs (dev tools → Performance): runs, total ms, and the worst single frame.
-  const domStats = { runs: 0, ms: 0, worstFrame: 0, frame: 0, since: performance.now(), reset() { Object.assign(this, { runs: 0, ms: 0, worstFrame: 0, frame: 0, since: performance.now() }); } };
+  const domStats = { runs: 0, ms: 0, worstFrame: 0, frame: 0, byFn: {}, since: performance.now(), reset() { Object.assign(this, { runs: 0, ms: 0, worstFrame: 0, frame: 0, byFn: {}, since: performance.now() }); } };
   if (AE_DEV) try { window.__aeDomStats = domStats; } catch (_) {} // dev builds: readable by the sandbox tests
   function runDom() {
     if (domBusy) return;
@@ -873,7 +873,9 @@ const AE = (() => {
     domBusy = true;
     const t0 = performance.now();
     for (const fn of domFns) {
+      const f0 = AE_DEV ? performance.now() : 0;
       try { const r = fn(); if (r && r.catch) r.catch((e) => noteError('dom', e)); } catch (e) { noteError('dom', e); }
+      if (AE_DEV) { const k = fn.__aeWho || (fn.__aeWho = String(fn).replace(/\s+/g, ' ').slice(0, 70)), d = performance.now() - f0; const b = domStats.byFn[k] || (domStats.byFn[k] = { ms: 0, max: 0 }); b.ms += d; if (d > b.max) b.max = d; }
     }
     const dt = performance.now() - t0;
     domStats.runs++; domStats.ms += dt; domStats.frame += dt; if (domStats.frame > domStats.worstFrame) domStats.worstFrame = domStats.frame;
@@ -914,6 +916,17 @@ const AE = (() => {
     return settledP;
   }
 
+  // Portal's "UBIF support" header button: Divination's badge and Waymark's button sit left of it.
+  // Kept while it's in the page, so the page watcher doesn't scan every button on each change.
+  let supportBtn = null;
+  function headerAnchor() {
+    if (supportBtn && supportBtn.isConnected) return supportBtn;
+    // Inside Portal's header only, by text: no layout check (offsetParent forced a layout on every page change).
+    const hdr = document.querySelector('.components-header');
+    supportBtn = hdr ? [...hdr.querySelectorAll('button')].find((x) => x.textContent.trim() === 'UBIF support') || null : null;
+    return supportBtn;
+  }
+
   // When the page has a <body> (the script starts before Portal's HTML is parsed, @run-at document-start).
   function whenReady(fn) {
     if (document.body) return fn();
@@ -930,7 +943,7 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,

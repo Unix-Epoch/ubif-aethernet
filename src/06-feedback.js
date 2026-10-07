@@ -500,7 +500,7 @@ AE.feedback = (() => {
 
   // ------------------------------------------------------------ entry points
   // Avatar menu: "Send Aethernet feedback", cloned like the Settings item.
-  AE.every(400, () => {
+  function menuItem() {
     const settingsItem = document.querySelector('[data-testid="option-aethernet"]');
     if (!settingsItem || document.querySelector('[data-testid="option-aethernet-feedback"]')) return;
     const item = settingsItem.cloneNode(true);
@@ -514,7 +514,9 @@ AE.feedback = (() => {
       openFeedback();
     });
     settingsItem.after(item);
-  });
+  }
+  AE.every(400, menuItem);
+  AE.onDom(menuItem); // right after Settings' item, same frame (Settings registers first)
   if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Send ' + AE_NAME + ' feedback', openFeedback);
   AE.trackDaily('active');
 
