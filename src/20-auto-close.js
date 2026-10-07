@@ -451,7 +451,7 @@ AE.crystal({
       },
     };
 
-    const portalCheckinButton = () => [...document.querySelectorAll('button')].find((b) => b.offsetParent && b.textContent.trim() === 'Check-in');
+    const portalCheckinButton = () => AE.findButton((t) => t === 'Check-in');
 
     async function tick() {
       const m = location.pathname.match(/^\/check-in\/arrivals\/(\d+)$/);
@@ -490,5 +490,7 @@ AE.crystal({
       if (items.length > 1) castIntro(b, items);
     }
     AE.every(1000, tick);
+    // The drawer's footer, the frame it appears (2.23): tick returns early off arrival pages and for non-cleanings.
+    AE.onDom(() => { const on = /^\/check-in\/arrivals\/\d+$/.test(location.pathname), b = document.getElementById(BTN_ID); if (on ? !b : !!b) tick(); });
   },
 });

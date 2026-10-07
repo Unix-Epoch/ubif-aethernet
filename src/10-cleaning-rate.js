@@ -458,6 +458,11 @@ AE.crystal({
     }
     // Portal's Reports page renders late and re-renders; keep the card there.
     let histShownFor = null;
+    AE.onDom(() => { // the frame Portal draws its Reports card (2.23)
+      if (!/^\/reporting\/metrics/.test(location.pathname)) return;
+      const reports = document.querySelector('.reports-card');
+      if (reports && (!document.getElementById(HIST_ID) || histShownFor !== reports)) { histShownFor = reports; showHistory(); }
+    });
     AE.every(1000, () => {
       if (!/^\/reporting\/metrics/.test(location.pathname)) { histShownFor = null; unscroll(); return; }
       const reports = document.querySelector('.reports-card');

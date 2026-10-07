@@ -180,7 +180,7 @@ AE.crystal({
     async function box() {
       const id = arrivalId(), old = document.getElementById(BOX_ID);
       if (!id) { old?.remove(); boxFor = null; return; }
-      const anchor = [...document.querySelectorAll('*')].find((e) => e.children.length === 0 && e.textContent.trim() === 'Preferred contact method');
+      const anchor = AE.textEl('Preferred contact method');
       const column = anchor && anchor.closest('div') && anchor.closest('div').parentElement && anchor.closest('div').parentElement.parentElement;
       if (!column || building) return;
       if (old && old.dataset.id === id && old.parentElement === column) return;
@@ -256,6 +256,11 @@ AE.crystal({
     }
 
     AE.every(1000, box);
+    AE.onDom(() => { // the drawer's column, the frame it appears (2.23); box() keeps its own "decided" state
+      if (!arrivalId()) { document.getElementById(BOX_ID)?.remove(); return; }
+      const b = document.getElementById(BOX_ID);
+      if (!b || !b.isConnected) box();
+    });
     AE.leadReplies = { pick, pricesFor, screenPrices };
   },
 });

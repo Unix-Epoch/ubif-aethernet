@@ -239,7 +239,7 @@ AE.crystal({
         if (d.arrivalId && !/^\/check-in(\/|$)/.test(location.pathname)) {
           goTo('/check-in/arrivals/' + d.arrivalId);
           // until the drawer shows the arrival (Portal's check-in takes its details from what that loaded)
-          await waitFor(() => [...document.querySelectorAll('*')].some((e) => e.children.length === 0 && e.textContent.trim() === 'Preferred contact method'), 10000);
+          await waitFor(() => !!AE.textEl('Preferred contact method'), 10000);
           await AE.sleep(500);
         }
         goTo('/check-in', d.arrivalId ? { arrivalIdForCheckin: d.arrivalId } : null);
@@ -280,7 +280,7 @@ AE.crystal({
       const old = document.getElementById(BOX_ID);
       if (!id) { old?.remove(); boxFor = null; return; }
       // The drawer's contact-method box: ours goes at the end of the column that holds it.
-      const anchor = [...document.querySelectorAll('*')].find((e) => e.children.length === 0 && e.textContent.trim() === 'Preferred contact method');
+      const anchor = AE.textEl('Preferred contact method');
       const column = anchor && anchor.closest('div') && anchor.closest('div').parentElement && anchor.closest('div').parentElement.parentElement;
       if (!column) return;
       if (boxFor !== id || Date.now() - boxAt > 60000) {
@@ -326,7 +326,7 @@ AE.crystal({
       if (current && woId && woId.workorderId) current.woId = woId.workorderId;
       if (current && current.woId && Date.now() - lastCheck > 20000) { lastCheck = Date.now(); checkDone(); }
       if (existing && existing.isConnected) return;
-      const fwd = [...document.querySelectorAll('button')].find((b) => b.offsetParent && FORWARD.test(b.textContent.trim()) && !b.closest('.sg'));
+      const fwd = AE.findButton((t) => FORWARD.test(t), (b) => !!b.closest('.sg'));
       if (!fwd) return;
       let at = fwd;
       while (at.parentElement && at.parentElement.children.length === 1) at = at.parentElement;
@@ -335,6 +335,16 @@ AE.crystal({
       at.before(btn);
     }
     AE.every(1000, tick);
+    // Same frame as Portal's footer and drawer (2.23). Off the check-in and arrival pages it costs one path check.
+    let stepAt = 0;
+    AE.onDom(() => {
+      const p = location.pathname;
+      if (p !== '/check-in' && !/^\/check-in\/arrivals\/\d+/.test(p)) { if (document.getElementById(BTN_ID) || document.getElementById(BOX_ID)) tick(); return; }
+      const btn = document.getElementById(BTN_ID);
+      if (p === '/check-in' && btn && btn.isConnected && performance.now() - stepAt < 150) return; // the step (a Portal state read) at most every 150 ms
+      stepAt = performance.now();
+      if (p !== '/check-in' || !btn || !btn.isConnected || slice('formStep', false) === DEVICE_STEP) tick();
+    });
 
     AE.checkinDrafts = { resume, label, labelFor, CODE_RE: /^AEC([A-HJ-NP-Z2-9]{6})$/i };
   },

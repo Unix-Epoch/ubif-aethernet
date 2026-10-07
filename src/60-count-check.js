@@ -366,6 +366,11 @@ AE.crystal({
       if (p && !path.includes(p) && !path.includes(document.getElementById(PILL_ID))) p.remove();
     });
 
+    AE.onDom(() => { // a count page opened: start at once (2.23) instead of on the next tick
+      const id = countId();
+      if (id && (!state || state.id !== id) && loadingFor !== id) load(id);
+      else if (!id && state) { state = null; loadingFor = null; render(); }
+    });
     AE.every(1000, () => {
       const id = countId();
       if (!id) { if (state) { state = null; loadingFor = null; render(); } return; }

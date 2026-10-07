@@ -937,6 +937,28 @@ const AE = (() => {
     return woHead;
   }
 
+  // The element whose own text is exactly `text` (e.g. the arrival drawer's "Preferred contact method"),
+  // kept while it's in the page. Walks text nodes, not every element: cheap enough for the page watcher.
+  const textEls = new Map();
+  function textEl(text) {
+    const c = textEls.get(text);
+    if (c && c.isConnected && c.textContent.trim() === text) return c;
+    if (!document.body) return null;
+    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.nodeValue.trim() === text ? 1 : 3) });
+    let el = null;
+    for (let n = w.nextNode(); n; n = w.nextNode()) if (n.parentElement && n.parentElement.children.length === 0) { el = n.parentElement; break; }
+    textEls.set(text, el);
+    return el;
+  }
+  // A visible button whose text passes `test`: text first, visibility (a layout read) only on matches.
+  function findButton(test, skip) {
+    for (const b of document.querySelectorAll('button')) {
+      const t = b.textContent.trim();
+      if (test(t) && !(skip && skip(b)) && b.offsetParent) return b;
+    }
+    return null;
+  }
+
   // When the page has a <body> (the script starts before Portal's HTML is parsed, @run-at document-start).
   function whenReady(fn) {
     if (document.body) return fn();
@@ -953,7 +975,7 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, woHeading,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, woHeading, textEl, findButton,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
