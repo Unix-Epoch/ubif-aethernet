@@ -676,6 +676,7 @@ const AE = (() => {
     // All open WOs, plus closed WOs created since `sinceMs` (newest first,
     // so paging stops once past it). maxClosedPages bounds old lookbacks.
     async function workorders(sinceMs, maxClosedPages = PAGE_CAP) {
+      await afterLoad(); // never during Portal's own first load
       const byId = new Map();
       // Page by Portal's own total (rowCount), not by a short page: a server that sends fewer rows
       // per page than asked would otherwise end the list early (and open WOs would look closed).
@@ -694,6 +695,7 @@ const AE = (() => {
     }
     // Arrivals not yet checked in. pageSize=100 is honored (the UI uses 10).
     async function arrivals() {
+      await afterLoad();
       const out = [];
       for (let p = 1; p <= PAGE_CAP; p++) {
         const j = await api('GET', '/api/arrivals/upcoming-arrivals?page=' + p + '&pageSize=' + PAGE_SIZE);
@@ -883,6 +885,35 @@ const AE = (() => {
   }
   function onDom(fn) { domFns.push(fn); watchDom(document); try { fn(); } catch (e) { noteError('dom', e); } }
 
+  /*
+    Resolves once Portal's first load has settled: the page's load event, then
+    no new Portal API request for 600 ms (at most 8 s after load). Background
+    fetches (Divination's count, Esuna, Waymark's scan) wait on it so they never
+    compete with Portal's own first requests (Garrett, Oct 6, 2026). Later
+    calls resolve at once.
+  */
+  let settledP = null;
+  function afterLoad() {
+    if (settledP) return settledP;
+    settledP = new Promise((resolve) => {
+      const quiet = () => {
+        let last = performance.now(), obs = null;
+        try {
+          obs = new PerformanceObserver((list) => { if (list.getEntries().some((e) => /\/api\//.test(e.name))) last = performance.now(); });
+          obs.observe({ type: 'resource', buffered: false });
+        } catch (_) { /* no observer: the time limits below still apply */ }
+        const t0 = performance.now();
+        const check = () => {
+          const now = performance.now();
+          if (now - last >= 600 || now - t0 >= 8000) { obs?.disconnect(); resolve(); } else setTimeout(check, 150);
+        };
+        setTimeout(check, 150);
+      };
+      if (document.readyState === 'complete') quiet(); else addEventListener('load', quiet, { once: true });
+    });
+    return settledP;
+  }
+
   // When the page has a <body> (the script starts before Portal's HTML is parsed, @run-at document-start).
   function whenReady(fn) {
     if (document.body) return fn();
@@ -899,7 +930,7 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,

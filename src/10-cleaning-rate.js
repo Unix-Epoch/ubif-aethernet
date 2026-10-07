@@ -40,7 +40,14 @@ AE.crystal({
     const TARGET = AE.config().cleaningTarget; // Aethernet-wide, from the admin panel
     const REFRESH_MS = 2 * 60 * 1000;
     const BADGE_ID = 'sg-rate-badge', PANEL_ID = 'sg-rate-panel';
-    let last = null, loading = false, lastError = null;
+    // The badge's numbers from the last count today, shown at once on a new page while the
+    // fresh count waits for Portal's first load to settle (AE.afterLoad).
+    const BADGE_KEY = 'ae_rate_badge';
+    const todayKey = () => { const d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
+    let last = (() => {
+      const c = GM_getValue(BADGE_KEY, null);
+      return c && c.day === todayKey() ? Object.assign(c, { at: new Date(c.at), rows: [], unlinked: [], cached: true }) : null;
+    })(), loading = false, lastError = null;
 
     document.head.append(h('style', null, `
       #${BADGE_ID} { display:inline-flex; align-items:center; gap:8px; height:32px; padding:0 14px; margin:0 8px 0 12px; border-radius:10000rem;
@@ -190,7 +197,7 @@ AE.crystal({
       const r = b && b.getBoundingClientRect();
       if (r && !b.classList.contains('floating')) { p.style.top = (r.bottom + 8) + 'px'; p.style.left = Math.max(8, Math.min(r.left, innerWidth - 476)) + 'px'; p.style.bottom = ''; }
       else { p.style.left = '16px'; p.style.bottom = '60px'; p.style.top = ''; }
-      if (!last) { p.innerHTML = lastError ? '<span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '<span class="sg-soft">Divining…</span>'; return; }
+      if (!last || last.cached) { p.innerHTML = lastError && !last ? '<span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '<span class="sg-soft">Divining…</span>'; return; } // cached: numbers only, the list comes with the fresh count
 
       const linkTo = (c) => c.pending
         ? '<a href="/check-in/arrivals/' + c.arrivalId + '">arrival ' + c.arrivalId + '</a>'
@@ -273,7 +280,10 @@ AE.crystal({
     async function refresh() {
       if (loading) return;
       loading = true; renderBadge();
-      try { last = await compute(); lastError = null; }
+      try {
+        last = await compute(); lastError = null;
+        GM_setValue(BADGE_KEY, { day: todayKey(), parents: last.parents, linked: last.linked, pending: last.pending, pct: last.pct, at: last.at.toISOString() });
+      }
       catch (e) { lastError = e.message || String(e); }
       finally {
         loading = false; renderBadge();
