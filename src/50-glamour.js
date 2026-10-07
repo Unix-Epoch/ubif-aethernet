@@ -14,7 +14,7 @@
 */
 AE.glamour = (() => {
   const { h } = AE;
-  const STYLE_ID = 'sg-glamour';
+  const STYLE_ID = 'sg-glamour', EARLY_KEY = 'ae_glamour_css';
 
   const PRESETS = [
     { id: 'portal', name: 'Portal', note: 'Portal as it ships' },
@@ -172,7 +172,7 @@ AE.glamour = (() => {
   function apply(cfg) {
     const t = cfg && find(cfg, cfg.theme);
     const el = document.getElementById(STYLE_ID);
-    if (!t || !t.bg || ![t.bg, t.fg, t.accent].every(validHex)) { el?.remove(); holdMode(null); portalTheme(null); return; }
+    if (!t || !t.bg || ![t.bg, t.fg, t.accent].every(validHex)) { el?.remove(); GM_setValue(EARLY_KEY, ''); holdMode(null); portalTheme(null); return; }
     const dark = lum(t.bg) < 0.18;
     portalTheme(dark ? 'dark' : 'light');
     holdMode(dark ? 'asurion-dark' : 'asurion-light');
@@ -183,6 +183,7 @@ AE.glamour = (() => {
       + 'body { background:var(--aui-sub-surface) !important; color-scheme:' + (lum(t.bg) < 0.18 ? 'dark' : 'light') + '; }';
     const style = el || h('style', { id: STYLE_ID });
     style.textContent = css;
+    GM_setValue(EARLY_KEY, css); // painted at page start next time (AE.loginPage.early, 01b-login.js)
     document.head.append(style); // (re)append so it stays after Portal's own sheets
   }
 

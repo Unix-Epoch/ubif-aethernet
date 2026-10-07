@@ -430,6 +430,14 @@ AE.crystal({
             AE.h('span', { class: 'when' }, b.title, AE.h('br'), AE.h('span', { style: 'font-weight:400;opacity:.8' }, all[b.key].collapsed ? 'Collapsed · click to show' : 'Hidden for today · click to show')))));
         }
         AE.every(1000, tick);
+        // As a box is inserted, before it's drawn (2.23): only when the page holds Appcues at all, so
+        // ordinary Portal re-renders cost one querySelector. Its shadow roots and frames are watched too.
+        AE.onDom(() => {
+          const sel = ['appcues', 'appcues-experience-container', 'iframe', ...rules().selectors];
+          if (!sel.some((x) => { try { return !!document.querySelector(x); } catch (_) { return false; } })) return;
+          for (const r of AC.roots()) if (r !== document) AE.watchDom(r);
+          tick();
+        });
         // Old entries (boxes not seen for a while) are dropped: hidden-for-today ones once the day is over.
         const all = store();
         for (const [k, v] of Object.entries(all)) if (v.hiddenDay && v.hiddenDay !== today()) delete all[k];

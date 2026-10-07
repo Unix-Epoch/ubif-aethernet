@@ -128,6 +128,8 @@ def handle(h, method, log):
         if path == '/sandbox/settings' and method == 'POST':
             s['settings']['storeOpen'] = bool(body.get('storeOpen'))
             s['settings']['laborPrice'] = float(body.get('laborPrice') or 0)
+            if 'signedOut' in body:  # Portal shows its login page
+                s['settings']['signedOut'] = bool(body.get('signedOut'))
             if 'failRfp' in body:  # fail the next N moves to Ready for pickup like Portal did (tests Swiftcast's retry)
                 s['settings']['failRfp'] = int(body.get('failRfp') or 0)
             api.save()

@@ -130,7 +130,7 @@ def header(version: str) -> str:
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
-// @run-at       document-idle
+// @run-at       document-start
 // @updateURL    {raw}/{META_FILENAME}
 // @downloadURL  {raw}/{FILENAME}
 // ==/UserScript==
@@ -146,7 +146,7 @@ def header(version: str) -> str:
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
-// @run-at       document-idle
+// @run-at       document-start
 // @updateURL    {raw}/{META_FILENAME}
 // @downloadURL  {raw}/{FILENAME}
 // ==/UserScript==
@@ -287,7 +287,7 @@ def build(root: Path, version: str = VERSION) -> Path:
         for k, v in stamps.items():
             text = text.replace(k, v)
         parts.append(text)
-    parts.append("\nAE.start();\n};\n" + ("AE.boot();" if demo else "AE.gate();") + "\n})();\n")
+    parts.append("\nAE.start();\n};\n" + ("AE.whenReady(AE.boot);" if demo else "AE.whenReady(AE.gate);") + "\n})();\n")
     dist = root / (DEV["dist"] if dev else DEMO["dist"] if demo else "dist")
     dist.mkdir(exist_ok=True)
     readable = "".join(parts)

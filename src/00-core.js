@@ -243,7 +243,7 @@ const AE = (() => {
     const s = document.createElement('script');
     s.id = 'ae-portal-hook';
     s.textContent = code;
-    (document.head || document.documentElement).append(s);
+    addEarly(s);
   }
   function portal(op, args) {
     let result = { error: 'no answer' };
@@ -386,12 +386,20 @@ const AE = (() => {
     background:var(--aui-surface, #fff); box-shadow:2px 2px 3px rgba(12,14,17,.08); }
   @keyframes sg-flash { 0%,100% { box-shadow:0 8px 28px rgba(12,14,17,.18); } 50% { box-shadow:0 0 0 3px var(--aui-primary, #8223d2); } }
   `;
+  // Put a <style>/<script> in the page, even at page start, when <html> may not exist yet.
+  function addEarly(node) {
+    const at = document.head || document.documentElement;
+    if (at) return at.appendChild(node);
+    new MutationObserver((_, o) => { if (document.documentElement) { o.disconnect(); (document.head || document.documentElement).appendChild(node); } })
+      .observe(document, { childList: true });
+  }
+
   function ensureCss() {
     if (document.getElementById('sg-core-css')) return;
     const s = document.createElement('style');
     s.id = 'sg-core-css';
     s.textContent = CSS;
-    (document.head || document.documentElement).appendChild(s);
+    addEarly(s);
   }
 
   // Minimal element builder: h('div', {class:'x', onclick}, child, 'text')
@@ -840,6 +848,41 @@ const AE = (() => {
     }
   }
 
+  /*
+    Run fn whenever Portal adds or removes elements, in the same frame,
+    before the browser draws it (MutationObserver callbacks run before
+    paint), so a change can land before anything is seen: a box collapsed as
+    it's inserted, Portal's login photo swapped before it shows. Since 2.23.
+    One observer for every caller; fns must be idempotent (our own changes
+    come back as another batch). At most 8 runs a frame: a page that never
+    settles falls back to once a frame. Shadow roots and frame documents
+    aren't seen from the page: watchDom(root) adds one (Appcues draws in both).
+    AE.every stays alongside as the safety net.
+  */
+  const domFns = [];
+  let domObs = null, domRuns = 0, domFrame = 0, domBusy = false;
+  function runDom() {
+    if (domBusy) return;
+    if (++domRuns > 8) { if (!domFrame) domFrame = requestAnimationFrame(() => { domFrame = 0; domRuns = 0; runDom(); }); return; }
+    if (!domFrame) domFrame = requestAnimationFrame(() => { domFrame = 0; domRuns = 0; });
+    domBusy = true;
+    for (const fn of domFns) {
+      try { const r = fn(); if (r && r.catch) r.catch((e) => noteError('dom', e)); } catch (e) { noteError('dom', e); }
+    }
+    domBusy = false;
+  }
+  function watchDom(root) {
+    if (!domObs) domObs = new MutationObserver(runDom);
+    if (root && !(root.__aeWatched)) { root.__aeWatched = true; domObs.observe(root, { childList: true, subtree: true }); }
+  }
+  function onDom(fn) { domFns.push(fn); watchDom(document); try { fn(); } catch (e) { noteError('dom', e); } }
+
+  // When the page has a <body> (the script starts before Portal's HTML is parsed, @run-at document-start).
+  function whenReady(fn) {
+    if (document.body) return fn();
+    document.addEventListener('DOMContentLoaded', () => fn(), { once: true });
+  }
+
   // Poll a route/DOM check — Portal is a single-page app, so pages
   // change without a load and Portal re-renders often.
   function every(ms, fn) {
@@ -850,7 +893,7 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,

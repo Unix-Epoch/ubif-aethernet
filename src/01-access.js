@@ -65,6 +65,10 @@ AE.gate = (() => {
 
   return async function gate() {
     if (!AE_ON_PORTAL || AE_SANDBOX) return boot(); // the sandbox has no real store to check (and never calls the Worker)
+    // Fast start (2.23): this browser's last answer was "allowed", so start now instead of after
+    // /api/auth/user; the check below still runs and a store without access stops on the next load.
+    const last = GM_getValue(CACHE_KEY, null);
+    if (last && last.allowed && !(AE_DEV && GM_getValue(PREVIEW_KEY, false))) boot();
     let p;
     try { p = await AE.profile(); } catch (_) { p = null; }
     if (!p || !p.storeId) { setTimeout(gate, 30000); return; } // signed out (login page): check again later

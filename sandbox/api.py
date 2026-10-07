@@ -207,6 +207,8 @@ def route(method, path, body):
     W = lambda wid: s['wos'].get(str(wid))
 
     # ---- who's signed in, store, config
+    if p == 'auth/user' and s['settings'].get('signedOut'):  # test Portal's login page
+        return 401, {'isAuthenticated': False}
     if p == 'auth/user':
         st = fixture('store', {}) or {}
         st.update({'storeId': STORE_ID, 'storeName': 'Sandbox Store', 'address_1': '1 Sandbox Way', 'city': 'Testville', 'phone': '5555550100', 'email': 'sandbox@example.invalid'})

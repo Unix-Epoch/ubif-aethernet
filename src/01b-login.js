@@ -90,13 +90,25 @@ AE.loginPage = (() => {
       AE.h('span', { style: 'line-height:0', html: AE.wordmark(20) })));
   }
 
-  // Portal is a single-page app: /login comes and goes without a page load.
+  // Portal is a single-page app: /login comes and goes without a page load. The page watcher
+  // paints as Portal's photo is inserted, before it's drawn; the timer is the safety net.
   let timer = null;
+  const safePaint = () => { try { paint(); } catch (e) { console.warn('[' + AE_NAME + '] login page:', e); } };
   function watch() {
     if (timer) return;
-    timer = setInterval(() => { try { paint(); } catch (e) { console.warn('[' + AE_NAME + '] login page:', e); } }, 500);
-    paint();
+    timer = setInterval(safePaint, 500);
+    AE.onDom(safePaint);
   }
   watch();
+
+  // Glamour's colors at page start (2.23), from the CSS its last apply() saved: Portal's first
+  // frame is already themed instead of switching once Aethernet starts. Glamour replaces it.
+  (function early() {
+    const css = GM_getValue('ae_glamour_css', '');
+    if (!css || !allowed() || !(AE.settings.crystals && AE.settings.crystals.glamour) || document.getElementById('sg-glamour')) return;
+    const st = document.createElement('style');
+    st.id = 'sg-glamour'; st.textContent = css;
+    AE.addEarly(st);
+  })();
   return { paint, findPanel };
 })();
