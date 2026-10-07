@@ -8,7 +8,7 @@
   pushes them to the Worker (GET /v1/:store/sheets/leads|prices). Stores with
   no synced sheet see nothing.
 
-  Which message: Claim arrivals (arrivalTypeId 3) by program; Asurion Mobility
+  Which message: By program (the M1-M23 table below); Asurion Mobility
   ones are "ready" (iPhone message for Apple, the Samsung and Google one
   otherwise). Appointment arrivals (type 1) get the first OOP message, with the
   lowest screen price from the Price sheet when the device has an exact row
@@ -28,16 +28,22 @@ AE.crystal({
   run() {
     const { h } = AE;
     const BOX_ID = 'ae-provoke';
-    const CLAIM = 3, APPOINTMENT = 1, CONTACTED = 53;
-    const CLEANINGS = [11759, 9470, 11009, 9901, 10303];
-    const MOBILITY = [5062, 20004];
+    const APPOINTMENT = 1, CONTACTED = 53;
+    // Which message each program gets (Garrett, Oct 6, 2026: M1-M23).
+    const NO_BOX = [11759, 9470, 11009, 9901, 10303,  // cleanings
+      12532, 8857, 9258, 8088, 11289];                 // not repair leads: in-store pickup, retail, remote tech, screen protector
+    const MOBILITY = 5062;                              // the only "Reply ready" program
+    const OOP = [20001, 11913];                         // out of warranty (and Xbox OOW): priced first message + price match
+    const ASK = [6494, 10335, 10816, 12115, 10553, 11702, 10684, 12236, 11879, 11921, 11128, 11945, 9102, 9955, 8062, 8036,
+      6602, 11906, 5427, 12340, 9257, 8979, 9902];     // no sheet message of their own: the "few questions" one
+    const CALL = [6494, 20001, 11913];                  // Samsung IW and out of warranty: a call as well as the text
     const SMS = 'SMS', PRIMARY_CONTACT = 1, MANUAL_NOTE = 2;
     // Sheet titles, matched loosely so small edits to the doc don't break them.
     const T = {
       iphone: /^iphone$/i, android: /^samsung and google/i, home: /^atc|home\+/i, verizon: /^verizon$/i,
       oopPrice: /^first oop.*obvious/i, oopAsk: /^first oop.*(unclear|multi)/i, oopSecond: /^second oop/i,
     };
-    const BY_PROGRAM = { 8849: T.home, 20005: T.home, 8379: T.verizon };
+    const BY_PROGRAM = { 20004: 'mobility', 8849: T.home, 20005: T.home, 8379: T.verizon, 8367: /^servify/i, 8850: /^amazon buyout/i, 7384: /^element/i };
 
     document.head.append(h('style', null, `
       #${BOX_ID} { margin:20px 0 0; padding:14px; border:1.5px solid var(--aui-primary, #8223d2); border-radius:12px; font-size:14px; line-height:1.4; }
@@ -56,6 +62,7 @@ AE.crystal({
       #${BOX_ID} .ft { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px; }
       #${BOX_ID} .ft .sp { flex:1; }
       #${BOX_ID} label.chk { display:flex; gap:6px; align-items:center; font-size:13px; margin-top:8px; }
+      #${BOX_ID} .call { margin:0 0 10px; padding:8px 10px; border-radius:8px; background:var(--aui-warning-soft, #fff4cc); color:var(--aui-on-warning-soft, #3d2e00); font-size:13px; }
       #${BOX_ID} .hint { text-decoration:underline dotted; text-underline-offset:3px; cursor:help; }
     `));
 
@@ -127,14 +134,18 @@ AE.crystal({
     // What to send: { ready, item, second, prices }
     function pick(a, leads, prices) {
       const items = (leads && leads.items) || [], prog = programOf(a), dev = deviceOf(a);
-      if (typeOf(a) === CLAIM && MOBILITY.includes(prog)) return { ready: true, item: find(items, /iphone|ipad/i.test(dev) ? T.iphone : T.android) };
-      if (typeOf(a) === CLAIM) return { ready: false, item: find(items, BY_PROGRAM[prog]) };
-      if (typeOf(a) === APPOINTMENT) {
+      const call = CALL.includes(prog), mobility = find(items, /iphone|ipad/i.test(dev) ? T.iphone : T.android);
+      if (prog === MOBILITY) return { ready: true, item: mobility };
+      if (BY_PROGRAM[prog]) return { ready: false, call, item: BY_PROGRAM[prog] === 'mobility' ? mobility : find(items, BY_PROGRAM[prog]) };
+      if (ASK.includes(prog)) return { ready: false, call, item: find(items, T.oopAsk) };
+      if (OOP.includes(prog) || (typeOf(a) === APPOINTMENT && !CLAIM_ONLY(prog))) {
         const sp = prices ? screenPrices(pricesFor(dev, prices)) : [];
-        return { ready: false, item: find(items, sp.length ? T.oopPrice : T.oopAsk), second: find(items, T.oopSecond), prices: sp };
+        const pickPrice = sp.length && !sp[0].console; // consoles: no "obvious" repair, so no price until one is clicked
+        return { ready: false, call, item: find(items, pickPrice ? T.oopPrice : T.oopAsk), priced: find(items, T.oopPrice), second: find(items, T.oopSecond), prices: sp, price: pickPrice ? sp[0].price : null };
       }
-      return { ready: false, item: null };
+      return { ready: false, call, item: null };
     }
+    const CLAIM_ONLY = (prog) => !!BY_PROGRAM[prog] || prog === MOBILITY;
     const fill = (text, price) => price == null ? text : text.replace(/\$\s?price\b/gi, money(price));
 
     // ------------------------------------------------------------ sending
@@ -178,7 +189,7 @@ AE.crystal({
       try {
         old?.remove(); boxFor = id;
         const a = AE.unwrap(await AE.api('GET', '/api/arrivals/' + id));
-        if (!a || CLEANINGS.includes(programOf(a)) || contacted(a)) return;
+        if (!a || NO_BOX.includes(programOf(a)) || contacted(a)) return;
         const [leads, prices] = await Promise.all([sheet('leads'), sheet('prices')]);
         if (!leads || !leads.data || arrivalId() !== id) return;
         column.append(render(a, leads, prices));
@@ -188,7 +199,7 @@ AE.crystal({
     function render(a, leads, prices) {
       const items = leads.data.items || [];
       const p = pick(a, leads.data, prices && prices.data);
-      let price = p.prices && p.prices.length ? p.prices[0].price : null;
+      let price = p.price;
       const ta = h('textarea', { rows: 4 });
       const sel = h('select', { onchange: () => { p.item = items[Number(sel.value)] || null; setText(); } },
         h('option', { value: '' }, 'Choose a message from the lead sheet…'));
@@ -200,8 +211,10 @@ AE.crystal({
       const setText = () => { ta.value = p.item ? fill(p.item.texts[0], price) : ''; btn.disabled = !ta.value.trim(); };
       const chips = p.prices && p.prices.length
         ? h('div', { class: 'chips' }, h('span', { class: 'sg-soft' }, p.prices.every((x) => x.console) ? 'Prices:' : 'Screen:'),
-          p.prices.map((x) => { const c = h('button', { type: 'button', class: 'chip' + (x.price === price ? ' on' : ''), title: x.raw, onclick: () => {
-            price = x.price; c.parentElement.querySelectorAll('.chip').forEach((o) => o.classList.toggle('on', o === c)); setText();
+          p.prices.map((x, i) => { const c = h('button', { type: 'button', class: 'chip' + (i === 0 && price != null ? ' on' : ''), title: x.raw, onclick: () => {
+            price = x.price; c.parentElement.querySelectorAll('.chip').forEach((o) => o.classList.toggle('on', o === c));
+            if (p.priced && p.item !== p.priced) { p.item = p.priced; sel.value = String(items.indexOf(p.priced)); }
+            setText();
           } }, x.label + ' ' + money(x.price)); return c; }))
         : (typeOf(a) === APPOINTMENT && prices && prices.data ? h('div', { class: 'chips sg-soft' }, 'No Price sheet row for this device. Check the Price sheet.') : null);
       const second = p.second ? h('input', { type: 'checkbox', checked: true }) : null;
@@ -220,7 +233,7 @@ AE.crystal({
           }
           AE.track('leadReplies:send' + (p.ready ? 'Ready' : ''));
           root.remove();
-          AE.toast('Provoke', 'Texted ' + (a.customer.givenName || a.customer.fullName || 'the customer') + ' and marked the arrival contacted.', 'ok');
+          AE.toast('Provoke', 'Texted ' + (a.customer.givenName || a.customer.fullName || 'the customer') + ' and marked the arrival contacted.' + (p.call ? ' Remember to call them too.' : ''), 'ok', p.call ? 15000 : undefined);
         } catch (err) {
           msg.innerHTML = "Couldn't send this." + report('Sending lead reply for arrival ' + a.arrivalId, err);
           btn.disabled = false;
@@ -230,6 +243,7 @@ AE.crystal({
         h('div', { class: 'hd' }, h('span', { style: 'line-height:0', html: AE.actionIcon('leadReplies', 26) }),
           h('div', { class: 'txt' }, h('b', null, 'Provoke - Reply')),
           h('span', { class: 'pill' }, p.ready ? 'Reply ready' : 'Needs a reply')),
+        p.call ? h('div', { class: 'call' }, h('b', null, 'Call this customer too.'), ' ' + (programOf(a) === 6494 ? 'Samsung In-Warranty' : 'Out-of-warranty') + ' leads need a call as well as a text.') : null,
         sel, chips, ta,
         second ? h('label', { class: 'chk' }, second, h('span', { class: 'hint', title: p.second.texts[0] }, 'Send secondary price match message?')) : null,
         h('div', { class: 'ft' }, msg, h('span', { class: 'sp' }), btn),

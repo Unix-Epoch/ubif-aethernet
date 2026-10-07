@@ -39,7 +39,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><title>Portal sandbo
   <div class="soft">One arrival waiting to be answered, not contacted yet.</div>
   <label>Customer <input type="text" id="lname" placeholder="random"></label>
   <label>Device <input type="text" id="ldevice" placeholder="random"></label>
-  <div class="row"><button onclick="lead('mobility')">Asurion Mobility claim</button><button onclick="lead('oow')">Out-of-warranty appointment</button><button onclick="lead('home')">Home+ claim</button></div>
+  <div class="row"><button onclick="lead('mobility')">Asurion Mobility claim</button><button onclick="lead('oow')">Out-of-warranty appointment</button><button onclick="lead('home')">Home+ claim</button><button onclick="lead('samsungiw')">Samsung IW claim</button></div>
   <div id="lmade" class="soft"></div>
  </div>
  <div class="card"><h2>Sandbox settings</h2>
@@ -116,7 +116,7 @@ def handle(h, method, log):
                 out.append('done WO ' + str(w['workorderId']))
             if body.get('lead'):  # Provoke: one lead (claim or appointment) for this customer
                 kind = body['lead']
-                prog, typ = {'mobility': (5062, 3), 'home': (8849, 3), 'oow': (20001, 1)}[kind]
+                prog, typ = {'mobility': (5062, 3), 'home': (8849, 3), 'oow': (20001, 1), 'samsungiw': (6494, 3)}[kind]
                 a = api.new_arrival(cust, dev, prog, appointment_h=2, arrival_type=typ)
                 out.append('lead arrival ' + str(a['arrivalId']))
             for i, prog in enumerate(body.get('programs') or []):

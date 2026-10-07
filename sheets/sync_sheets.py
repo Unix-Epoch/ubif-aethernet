@@ -7,7 +7,7 @@ parses both and pushes them to the Worker (POST /v1/sheets/<store>/<kind>).
 Aethernet reads them from there, so staff need no SharePoint access and the
 script needs no new permissions.
 
-Every tab of the Price sheet is sent (Garrett, Oct 6): as raw rows, plus device
+Every tab of the Price sheet is sent except Eagle of Va (Garrett, Oct 6): as raw rows, plus device
 rows ({name, cells: {column: raw}}) for tabs laid out as a device-by-repair grid.
 
 Key: the SHEETS_KEY Worker secret, read from the macOS Keychain
@@ -105,6 +105,8 @@ def parse_prices(xlsx_path):
     wb = load_workbook(xlsx_path, read_only=True, data_only=True)
     tabs = []
     for ws in wb.worksheets:
+        if ws.title.strip().lower().startswith("eagle"):  # contract customer tab: ignored (Garrett, Oct 6)
+            continue
         rows, header, raw = {}, None, []
         for r in ws.iter_rows(values_only=True):
             c = [cell(v) for v in r]

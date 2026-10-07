@@ -16,7 +16,7 @@ STATE_FILE = HERE / 'state.json'
 LOCK = threading.RLock()
 STORE_ID = 914  # what the sandbox calls itself; none of the store's real data is used
 
-PROGRAMS = {8849: 'Asurion Home+ Repairs', 5062: 'Asurion Mobility', 11759: 'VZ Device Refresh', 9470: 'VZ Sanitization', 11009: 'AT&T Enhanced Cleaning',
+PROGRAMS = {6494: 'Samsung In Warranty Repair', 8849: 'Asurion Home+ Repairs', 5062: 'Asurion Mobility', 11759: 'VZ Device Refresh', 9470: 'VZ Sanitization', 11009: 'AT&T Enhanced Cleaning',
             9901: 'AT&T Device Diagnostic', 10303: 'AT&T Performance Check', 20001: 'Out Of Warranty'}
 CLEANINGS = [11759, 9470, 11009, 9901, 10303]
 STATUS = {1: 'Initial check-in', 2: 'Need to order', 3: 'Awaiting item', 7: 'Awaiting callback', 8: 'Ready for work', 9: 'Diagnostics',
