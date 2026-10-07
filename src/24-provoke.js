@@ -71,7 +71,9 @@ AE.crystal({
     const find = (items, re) => re && (items || []).find((i) => re.test(i.title));
 
     // ------------------------------------------------------------ prices
-    const DROP = new Set(['apple', 'samsung', 'google', 'galaxy', '5g', 'motorola']);
+    const DROP = new Set(['apple', 'samsung', 'google', 'galaxy', '5g', 'motorola', 'nintendo', 'microsoft', 'sony']);
+    // Retail tabs only: Eagle of Va (contract prices), Refurb, BER, etc. are synced but never quoted from.
+    const QUOTE_TABS = new Set(['Apple', 'Samsung', 'Google', 'ipad', 'Game Console']);
     const QUAL = new Set(['pro', 'max', 'plus', 'ultra', 'fe', 'xl', 'mini', 'e', 'fold', 'flip', 'edge', 'lite', 'air', 'se', 'a', 's', 'note']);
     const toks = (s) => String(s || '').toLowerCase().replace(/\+/g, ' plus ').replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9/ ]/g, ' ')
       .split(/\s+/).filter((t) => t && !DROP.has(t));
@@ -82,7 +84,7 @@ AE.crystal({
     function indexPrices(p) {
       if (priceFor === p) return priceIndex;
       const idx = {};
-      for (const tab of (p && p.tabs) || []) for (const row of tab.rows) {
+      for (const tab of (p && p.tabs) || []) if (QUOTE_TABS.has(tab.name)) for (const row of tab.rows || []) {
         const t = toks(String(row.name).split(/\s{3,}|inform customer/i)[0]);
         let variant = '';
         if (/^(inner|outer)$/.test(t[t.length - 1])) variant = t.pop();
@@ -103,13 +105,14 @@ AE.crystal({
       }
       return null;
     }
-    // Screen prices for the chips: [{label, price, raw}], lowest first.
+    // Prices for the chips: [{label, price, raw}], lowest first. Phones and tablets: screen
+    // columns only ("always quote the lowest screen price"); consoles: every repair.
     function screenPrices(rows) {
-      const out = [];
+      const out = [], consoles = (rows || []).every((r) => r.tab === 'Game Console');
       for (const r of rows || []) for (const [col, raw] of Object.entries(r.cells)) {
-        if (!SCREEN.test(col) || NOT_SCREEN.test(col)) continue;
+        if (col === 'Notes' || (!consoles && (!SCREEN.test(col) || NOT_SCREEN.test(col)))) continue;
         const n = num(raw);
-        if (n != null) out.push({ label: (r.variant ? r.variant[0].toUpperCase() + r.variant.slice(1) + ' ' : '') + col.replace(/screen repair/i, 'Screen'), price: n, raw });
+        if (n != null) out.push({ console: consoles, label: (r.variant ? r.variant[0].toUpperCase() + r.variant.slice(1) + ' ' : '') + col.replace(/screen repair/i, 'Screen'), price: n, raw });
       }
       return out.sort((a, b) => a.price - b.price);
     }
@@ -196,7 +199,7 @@ AE.crystal({
       });
       const setText = () => { ta.value = p.item ? fill(p.item.texts[0], price) : ''; btn.disabled = !ta.value.trim(); };
       const chips = p.prices && p.prices.length
-        ? h('div', { class: 'chips' }, h('span', { class: 'sg-soft' }, 'Screen:'),
+        ? h('div', { class: 'chips' }, h('span', { class: 'sg-soft' }, p.prices.every((x) => x.console) ? 'Prices:' : 'Screen:'),
           p.prices.map((x) => { const c = h('button', { type: 'button', class: 'chip' + (x.price === price ? ' on' : ''), title: x.raw, onclick: () => {
             price = x.price; c.parentElement.querySelectorAll('.chip').forEach((o) => o.classList.toggle('on', o === c)); setText();
           } }, x.label + ' ' + money(x.price)); return c; }))

@@ -7,8 +7,8 @@ parses both and pushes them to the Worker (POST /v1/sheets/<store>/<kind>).
 Aethernet reads them from there, so staff need no SharePoint access and the
 script needs no new permissions.
 
-Only the phone/tablet tabs of the Price sheet are sent (Apple, Samsung, Google,
-ipad): the other tabs carry contacts and billing notes that don't belong on the Worker.
+Every tab of the Price sheet is sent (Garrett, Oct 6): as raw rows, plus device
+rows ({name, cells: {column: raw}}) for tabs laid out as a device-by-repair grid.
 
 Key: the SHEETS_KEY Worker secret, read from the macOS Keychain
 (service "aethernet-sheets"). Runs from launchd every 15 minutes; outside
@@ -36,7 +36,6 @@ LEADS_URL = ("https://ubreakifix-my.sharepoint.com/personal/c_boyd_ubreakifix_co
              "_layouts/15/download.aspx?UniqueId=02F051BD-D255-4E00-BC98-F621D65F3284")
 HERE = Path(__file__).resolve().parent
 LEADS_FILE = HERE / "lead-sheet.docx"
-PRICE_TABS = ("Apple", "Samsung", "Google", "ipad")
 
 
 def keychain():
@@ -91,28 +90,35 @@ def cell(v):
     return "" if v is None else re.sub(r"\s+", " ", str(v)).strip()
 
 
+def is_header(c):
+    """A row of column names: 3+ labels after the first cell and no prices (the console
+    tab starts a new one per brand: "Sony Play Station | | HDMI / RETIMER | HDD 500GB ...")."""
+    rest = [v for v in c[1:] if v]
+    return len(rest) >= 3 and not any(re.match(r"\$?\s*\d", v) or NOT_PRICE.match(v) for v in rest)
+
+
 def parse_prices(xlsx_path):
-    """{tabs: [{name, rows: [{name, cells: {column: raw text}}]}]}. Raw text is kept
-    ("$190 (MS)", "N/A", "Apple self repair"); Aethernet reads the number from it.
+    """{tabs: [{name, raw: [[cells]], rows: [{name, cells: {column: raw text}}]}]}. Raw text is
+    kept ("$190 (MS)", "N/A", "Apple self repair"); Aethernet reads the number from it.
     The Google tab also has a long layout (device | repair | price, sometimes two side by side)."""
     from openpyxl import load_workbook
     wb = load_workbook(xlsx_path, read_only=True, data_only=True)
     tabs = []
     for ws in wb.worksheets:
-        if ws.title not in PRICE_TABS:
-            continue
-        rows, header = {}, None
+        rows, header, raw = {}, None, []
         for r in ws.iter_rows(values_only=True):
             c = [cell(v) for v in r]
             while c and not c[-1]:
                 c.pop()
+            if c:
+                raw.append(c)
             if not c or not c[0]:
                 continue
-            if header is None:
+            if header is None or is_header(c):
                 header = c
                 continue
             # long layout: name | repair | price (repeated in threes)
-            if len(c) >= 2 and c[1] and not PRICE_RE.search(c[1]) and not NOT_PRICE.match(c[1]) and (len(c) < 3 or PRICE_RE.search(c[2])):
+            if len(header) > 1 and header[1] and len(c) >= 2 and c[1] and not PRICE_RE.search(c[1]) and not NOT_PRICE.match(c[1]) and (len(c) < 3 or PRICE_RE.search(c[2])):
                 c += [""] * (-len(c) % 3)
                 for i in range(0, len(c), 3):
                     name, repair, price = c[i], c[i + 1], c[i + 2]
@@ -120,10 +126,11 @@ def parse_prices(xlsx_path):
                         rows.setdefault(name, {"name": name, "cells": {}})["cells"][repair] = price
                 continue
             row = rows.setdefault(c[0], {"name": c[0], "cells": {}})
-            for col, v in zip(header[1:], c[1:]):
+            for i, v in enumerate(c[1:], 1):
+                col = header[i] if i < len(header) and header[i] else ("Notes" if i == 1 else "")
                 if col and v:
                     row["cells"][col] = v
-        tabs.append({"name": ws.title, "rows": list(rows.values())})
+        tabs.append({"name": ws.title, "raw": raw, "rows": list(rows.values())})
     return {"tabs": tabs}
 
 
