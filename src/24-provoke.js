@@ -20,6 +20,11 @@
   dialog (POST /api/note tagged contacted, then PUT /api/arrivals/:id
   contacted: true). Before sending it reads the customer's thread: a text sent
   since the arrival was created stops it ("already texted").
+
+  Work orders (Oct 10, 2026): in Portal's Customer Chat panel on a WO page, a row
+  of the sheet's Special Circumstances texts (+ Parts Arrived) above Portal's own
+  quick replies; the one that fits the WO's status goes first (Ready for pickup ->
+  PICK UP). A click only fills Portal's message box; Portal's Send sends it.
 */
 AE.crystal({
   id: 'leadReplies',
@@ -255,12 +260,141 @@ AE.crystal({
       return root;
     }
 
+    // ------------------------------------------------------------ WO chat panel
+    // On a WO page, a row of lead-sheet texts above Portal's own quick replies in its
+    // Customer Chat panel. A click only fills Portal's message box: Portal's Send arrow
+    // sends it (so Recitation and Auto-Waymark see an ordinary send).
+    const CHAT_ID = 'ae-provoke-chat';
+    const WO_TOP = ['pickup', 'partsArrived', 'partsOrdered', 'update', 'fmip']; // the chips; the rest of Special Circumstances go under More
+    const WO_T = { pickup: /^pick ?up/i, partsArrived: /^parts arrived/i, partsOrdered: /^parts ordered/i, update: /^update$/i, fmip: /^turn off fmip/i };
+    const WO_GROUPS = /special circumstances/i;
+    // The WO status → the message that goes first (Garrett, Oct 10, 2026). Name first, id as a fallback.
+    const byStatus = (name, id) => /ready for pickup/i.test(name) || id === 13 ? 'pickup'
+      : /awaiting item|parts on order|ordered/i.test(name) || id === 3 ? 'partsOrdered'
+        : /parts (received|arrived)/i.test(name) ? 'partsArrived' : null;
+    const woIdNow = () => (location.pathname.match(/^\/repair\/workorder\/(\d+)/) || [])[1] || null;
+    const msgBox = () => [...document.querySelectorAll('textarea[placeholder], input[placeholder]')]
+      .find((el) => /^Message .*\.\.\.$|^Message .*…$/.test(el.getAttribute('placeholder')) && el.offsetParent) || null;
+    const PORTAL_CHIPS = /^(Need to Order|Parts on Order|Parts Arrived|Awaiting Device|Awaiting Approval|Repair Delayed)$/i;
+
+    document.head.append(h('style', null, `
+      #${CHAT_ID} { margin:0 0 14px; padding:10px 10px 12px; border:1.5px solid var(--aui-primary, #8223d2); border-radius:10px; font-size:14px; line-height:1.3; }
+      #${CHAT_ID} .hd { display:flex; gap:8px; align-items:center; font-size:13px; font-weight:600; margin-bottom:9px; }
+      #${CHAT_ID} .hd .sp { flex:1; }
+      #${CHAT_ID} .cs { display:flex; flex-wrap:wrap; gap:8px; position:relative; }
+      #${CHAT_ID} .c { font:inherit; font-size:14px; padding:5px 12px; border-radius:10000px; cursor:pointer; white-space:nowrap;
+        border:1px solid var(--aui-outline-variant, #c9c6cf); background:transparent; color:inherit; }
+      #${CHAT_ID} .c.top { background:var(--aui-primary, #8223d2); border-color:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); font-weight:600; }
+      #${CHAT_ID} .c.top small { font-weight:400; opacity:.85; margin-left:4px; }
+      #${CHAT_ID} .c.on { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; }
+      #${CHAT_ID} .c.more { border-style:dashed; }
+      #${CHAT_ID} .menu { position:absolute; z-index:5; left:0; right:0; bottom:calc(100% + 34px); max-height:320px; overflow:auto; padding:6px 0;
+        background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1b1b1f); border:1px solid var(--aui-outline-variant, #c9c6cf); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.3); }
+      #${CHAT_ID} .menu button { display:block; width:100%; text-align:left; font:inherit; font-size:14px; padding:7px 14px; border:0; background:transparent; color:inherit; cursor:pointer; }
+      #${CHAT_ID} .menu button:hover { background:var(--aui-primary-soft, #f3e8fc); }
+      #${CHAT_ID} .menu .g { font-size:11.5px; text-transform:uppercase; letter-spacing:.6px; padding:8px 14px 4px; opacity:.7; }
+    `));
+
+    // Put text in Portal's (React) message box the way typing would.
+    function fillBox(box, text) {
+      const proto = box.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(box, text);
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      box.focus();
+      try { box.setSelectionRange(text.length, text.length); } catch (_) { /* some inputs don't allow it */ }
+    }
+
+    // Where the row goes: before Portal's quick replies, else right above the message box.
+    function chatSpot(box) {
+      const scope = box.closest('[role="dialog"], aside') || box.parentElement.parentElement.parentElement || document.body;
+      const chips = [...scope.querySelectorAll('button')].filter((b) => PORTAL_CHIPS.test(b.textContent.trim()));
+      if (chips.length) {
+        let c = chips[0].parentElement;
+        while (c && !chips.every((b) => c.contains(b))) c = c.parentElement;
+        if (c && c.contains(box)) { // the chips and the box share a wrapper: go before the chips' own row
+          let row = chips[0];
+          while (row.parentElement !== c) row = row.parentElement;
+          return { parent: c, before: row };
+        }
+        if (c) return { parent: c.parentElement, before: c };
+      }
+      let row = box;
+      while (row.parentElement && row.parentElement !== scope && row.parentElement.children.length === 1) row = row.parentElement;
+      return { parent: row.parentElement, before: row };
+    }
+
+    // Built each time the panel opens, so the status is current (a WO just set to Ready for pickup).
+    let chatStatus = null, chatBuilding = false;
+    async function chat() {
+      const old = document.getElementById(CHAT_ID), woId = woIdNow(), box = woId && msgBox();
+      if (!box) { old?.remove(); return; }
+      if (old && old.dataset.wo === woId) return;
+      if (chatBuilding) return;
+      chatBuilding = true;
+      try {
+        const [leads, j] = await Promise.all([sheet('leads'), AE.api('GET', '/api/workorder/' + woId).catch(() => null)]);
+        const items = (leads && leads.data && leads.data.items) || [];
+        const b2 = msgBox();
+        if (!items.length || !b2 || woIdNow() !== woId) return;
+        const wo = (j && j.workorder) || AE.unwrap(j) || {};
+        const name = wo.workorderStatusName || (wo.WorkorderStatus && wo.WorkorderStatus.name) || (wo.workorderStatus && wo.workorderStatus.name) || '';
+        chatStatus = { key: byStatus(name, Number(wo.workorderStatusId)), name };
+        const spot = chatSpot(b2);
+        if (!spot.parent) return;
+        document.getElementById(CHAT_ID)?.remove();
+        spot.parent.insertBefore(renderChat(items, leads, woId), spot.before);
+      } catch (_) { /* no row rather than a broken one */ } finally { chatBuilding = false; }
+    }
+
+    function renderChat(items, leads, woId) {
+      const named = {};
+      for (const [k, re] of Object.entries(WO_T)) named[k] = find(items, re);
+      const top = (chatStatus && chatStatus.key && named[chatStatus.key]) ? chatStatus.key : null;
+      const order = (top ? [top] : []).concat(WO_TOP.filter((k) => k !== top)).filter((k) => named[k]);
+      const shown = new Set(order.map((k) => named[k]));
+      const rest = items.filter((it) => WO_GROUPS.test(it.group || '') && !shown.has(it));
+      const turns = new Map(); // a message with more than one text (Turn Off FMIP): each click fills the next one
+      let menu = null;
+      const use = (it, chip) => {
+        const box = msgBox();
+        if (!box) return;
+        const n = turns.has(it) ? (turns.get(it) + 1) % it.texts.length : 0;
+        turns.set(it, n);
+        fillBox(box, it.texts[n]);
+        root.querySelectorAll('.c').forEach((c) => c.classList.toggle('on', c === chip));
+        AE.track('leadReplies:woFill');
+      };
+      const chip = (it, isTop) => {
+        const c = h('button', { type: 'button', class: 'c' + (isTop ? ' top' : ''), title: it.texts.join('\n\n— or —\n\n'), onclick: () => use(it, c) },
+          it.title.replace(/\s*\(.*\)\s*$/, ''), isTop && chatStatus && chatStatus.name ? h('small', null, '· ' + chatStatus.name) : null);
+        return c;
+      };
+      const more = rest.length ? h('button', { type: 'button', class: 'c more', onclick: (e) => {
+        e.stopPropagation();
+        if (menu) { menu.remove(); menu = null; more.classList.remove('on'); return; }
+        menu = h('div', { class: 'menu' }, h('div', { class: 'g' }, rest[0].group || 'More'),
+          rest.map((it) => h('button', { type: 'button', title: it.texts[0], onclick: () => { menu.remove(); menu = null; use(it, more); } }, it.title)));
+        cs.append(menu);
+        more.classList.add('on');
+        const off = (ev) => { if (menu && !menu.contains(ev.target) && ev.target !== more) { menu.remove(); menu = null; more.classList.remove('on'); } if (!menu) removeEventListener('click', off, true); };
+        addEventListener('click', off, true);
+      } }, 'More ▾') : null;
+      const cs = h('div', { class: 'cs' }, order.map((k) => chip(named[k], k === top)), more);
+      const root = h('div', { id: CHAT_ID, class: 'sg', 'data-wo': woId },
+        h('div', { class: 'hd' }, h('span', { style: 'line-height:0', html: AE.actionIcon('leadReplies', 22) }), h('span', null, 'Provoke'),
+          h('span', { class: 'sp' }), h('span', { class: 'sg-soft', style: 'font-weight:400' }, 'Lead sheet' + edited(leads))),
+        cs);
+      return root;
+    }
+
     AE.every(1000, box);
+    AE.every(1000, chat);
     AE.onDom(() => { // the drawer's column, the frame it appears (2.23); box() keeps its own "decided" state
+      if (woIdNow()) { if (!document.getElementById(CHAT_ID)) chat(); } else document.getElementById(CHAT_ID)?.remove();
       if (!arrivalId()) { document.getElementById(BOX_ID)?.remove(); return; }
       const b = document.getElementById(BOX_ID);
       if (!b || !b.isConnected) box();
     });
-    AE.leadReplies = { pick, pricesFor, screenPrices };
+    AE.leadReplies = { pick, pricesFor, screenPrices, byStatus };
   },
 });

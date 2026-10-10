@@ -20,7 +20,7 @@
     ['autoClose', 'Swiftcast', 'Your new favorite tool. Auto-close cleanings in one click - even multiple at once.'],
     ...(AE_DEMO ? [] : [
     ['checkinDrafts', 'Return', 'Saves an incomplete check-in so you can create cleanings once the device is functional. Goodbye, paper slips!'],
-    ['leadReplies', 'Provoke', 'Pre-loads your responses to leads/Arrivals, then sends and marks contacted with one click.'],
+    ['leadReplies', 'Provoke', 'Pre-loads your responses to leads/Arrivals, then sends and marks contacted with one click. In a work order\'s customer chat, puts the store\'s texts (pickup, parts, updates) one click away.'],
     ]),
     ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],
