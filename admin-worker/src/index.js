@@ -11,9 +11,12 @@
     GET  /            the admin app (one page)
     *    /api/…       the shared admin routes (worker/src/index.js adminApi): feedback,
                       usage, stores, auto-rules, store/:store
+    *    /api/tracker/…  the work order tracker (tracker-worker/src/index.js trackerAdmin),
+                      as the signed-in Access user; needs the TR binding
   Local testing only: `wrangler dev --var LOCAL_TEST:1` lets requests to localhost in.
 */
 import { adminApi } from '../../worker/src/index.js';
+import { trackerAdmin } from '../../tracker-worker/src/index.js';
 import { PAGE } from './page.js';
 
 const b64url = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
@@ -61,6 +64,11 @@ export default {
         const [x, y] = String(st.latest.version).split('.').map(Number);
         return new Response(JSON.stringify({ latest: st.latest.version, next: x + '.' + (y + 1) + '.0' }), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
       } catch (e) { return new Response(JSON.stringify({ next: '' }), { headers: { 'content-type': 'application/json' } }); }
+    }
+    if (url.pathname.startsWith('/api/tracker/')) {
+      if (!env.TR) return new Response(JSON.stringify({ error: 'tracker database not bound' }), { status: 503, headers: { 'content-type': 'application/json' } });
+      try { return await trackerAdmin(req, env, url, url.pathname.replace(/^\/api\/tracker/, ''), who.email); }
+      catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: e.status || 500, headers: { 'content-type': 'application/json' } }); }
     }
     if (url.pathname.startsWith('/api/')) {
       try {
