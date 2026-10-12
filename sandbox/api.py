@@ -319,6 +319,13 @@ def route(method, path, body):
                 w['workorderStatusId'] = int(body['workorderStatusId'])
             w['updatedAt'] = now()
             return 200, {'workorder': wo_row(w)}
+    m = re.fullmatch(r'workorder-audit-trail/(\d+)', p)  # status history (the tracker reads it)
+    if m:
+        w = W(m.group(1))
+        if not w:
+            return 404, {'message': 'Work order not found'}
+        return 200, [{'workorderStatusAuditTrailId': 1, 'workorderId': w['workorderId'], 'workorderStatusId': w['workorderStatusId'],
+                      'createdAt': w.get('createdAt'), 'createdBy': USER['userId'], 'completed': False}]
     m = re.fullmatch(r'workorder/(\d+)/status', p)
     if m:
         w = W(m.group(1))

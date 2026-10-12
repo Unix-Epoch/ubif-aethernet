@@ -1,0 +1,198 @@
+/*
+  Work order tracker (collection). Not a crystal: it runs in the background for every
+  store with Aethernet access, once the tracker Worker is deployed (__TRACKER_API__).
+
+  Every 10 minutes (one tab per browser; the Worker hands each WO to one browser at a time):
+    1. Portal's open-WO list → POST /scan with plain fields only (WO, status, program,
+       device model, dates). The Worker answers which WOs to fetch in full.
+    2. For each: the same detail the Mac tracker kept (workorder, status audit trail,
+       customer data, every note, cart). Device passcodes are removed first.
+    3. Split it: a plain part (status, program, dates, bin, status history, cart lines and
+       totals: no customer details) and the whole detail sealed with the store's public
+       key, plus a sealed search card (name, phones, emails, IMEI/serial, claim number).
+       Sealed values can only be opened on the admin site, with a key copy.
+  The store's key is created here the first time any install at the store needs it (its
+  private half leaves sealed to the master key and is forgotten).
+*/
+AE.tracker = (() => {
+  const API = '__TRACKER_API__';
+  const KEY = '__WAYMARK_KEY__';
+  const C = (() => { /*__TRACKER_CRYPTO__*/ })();
+  const SCAN_KEY = 'ae_tracker_scan_at', LAST_KEY = 'ae_tracker_last';
+  const SCAN_MS = 10 * 60 * 1000, GAP_MS = 300, NOTE_PAGE = 30, NOTE_PAGES = 20;
+  const configured = () => (AE_SANDBOX ? /^http:\/\/localhost[:/]/.test(API) : /^(https:\/\/|http:\/\/localhost[:/])/.test(API));
+
+  async function call(method, path, body) {
+    const res = await fetch(API + path, { method, credentials: 'omit', headers: { 'content-type': 'application/json', 'x-aethernet-key': KEY }, body: body ? JSON.stringify(body) : undefined });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(j.error || 'HTTP ' + res.status), { status: res.status });
+    return j;
+  }
+
+  // The store's public key: from the Worker, or made here (needs the master public key).
+  let storeKey = null;
+  async function keyFor(store) {
+    if (storeKey && storeKey.store === store) return storeKey.jwk;
+    let jwk;
+    try { jwk = (await call('GET', '/v1/' + store + '/tracker/key')).publicJwk; }
+    catch (e) {
+      if (e.status !== 404) throw e;
+      const master = (await call('GET', '/v1/tracker/master')).publicJwk; // 404 = tracker not set up yet
+      jwk = (await call('POST', '/v1/' + store + '/tracker/key', await C.newStoreKey(store, master))).publicJwk;
+    }
+    storeKey = { store, jwk };
+    return jwk;
+  }
+
+  // ---------------------------------------------------------------- shaping
+  const scanRow = (r) => ({ wo: r.workorderId, statusId: r.workorderStatusId, status: r.workorderStatusName, programId: r.programId, program: r.programName,
+    device: (r.deviceCatalog && r.deviceCatalog.name) || null, createdAt: r.createdAt, updatedAt: r.updatedAt });
+
+  // Passcodes don't belong in a history: removed wherever they appear.
+  function scrub(v) {
+    if (Array.isArray(v)) return v.map(scrub);
+    if (v && typeof v === 'object') {
+      const out = {};
+      for (const [k, x] of Object.entries(v)) out[k] = (/passcode|password/i.test(k) || /^pin$/i.test(k)) && x != null && typeof x !== 'object' ? '[removed]' : scrub(x);
+      return out;
+    }
+    return v;
+  }
+  const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o && o[k] !== undefined).map((k) => [k, o[k]]));
+
+  function plainPart(d, listRow) {
+    const w = (d.workorder && d.workorder.workorder) || {};
+    const bin = w.WorkorderBinDeviceLocation && w.WorkorderBinDeviceLocation.WorkorderBin;
+    const cd = w.CustomerDevice || {};
+    return {
+      workorder: {
+        workorderId: w.workorderId, storeId: w.storeId, statusId: w.workorderStatusId, status: (w.WorkorderStatus && w.WorkorderStatus.name) || (listRow && listRow.workorderStatusName) || null,
+        programId: w.programId, program: (w.Program && w.Program.name) || (listRow && listRow.programName) || null,
+        device: (cd.DeviceCatalog && cd.DeviceCatalog.name) || (listRow && listRow.deviceCatalog && listRow.deviceCatalog.name) || cd.name || null,
+        bin: (bin && (bin.name || bin.binName || bin.label)) || (listRow && listRow.locationBin) || null,
+        rfpAt: (listRow && listRow.rfpWorkorderStatusDate) || null, total: listRow ? listRow.workorderTotal : null,
+        ...pick(w, ['createdAt', 'updatedAt', 'nextUpdate', 'slaEndTime', 'createdBy', 'updatedBy', 'arrivalId', 'clientId', 'crossStoreRefWorkorderId', 'warrantyWorkorderId', 'iqcComplete', 'csuCartId', 'csuSalesOrderId']),
+      },
+      auditTrail: (Array.isArray(d.audit_trail) ? d.audit_trail : []).map((a) => ({ statusId: a.workorderStatusId, createdAt: a.createdAt, createdBy: a.createdBy, completed: a.completed })),
+      notes: { total: d.notes ? d.notes.total : null }, // the notes themselves are sealed
+      cart: d.cart ? {
+        items: (d.cart.cartItems || []).map((i) => pick(i, ['lineId', 'parentLineId', 'name', 'sku', 'quantity', 'price', 'netPrice', 'totalPrice', 'originalPrice', 'discount', 'program', 'itemTypeId', 'itemCategoryId', 'productLineType', 'isRework', 'isRMA', 'reasonCode'])),
+        payment: d.cart.payment || null, salesId: d.cart.salesId || null, isCanceled: !!d.cart.isCanceled,
+      } : null,
+    };
+  }
+
+  // What search needs, sealed: who the customer is and which device.
+  function cardOf(d, listRow) {
+    const w = (d.workorder && d.workorder.workorder) || {}, cd = d.customer_data || {}, c = (listRow && listRow.customer) || {}, dev = w.CustomerDevice || (listRow && listRow.customerDevice) || {};
+    const strings = (arr) => JSON.stringify(arr || []).match(/"[^"]*"/g) || [];
+    const phones = new Set(), emails = new Set();
+    for (const s of strings(cd.CustomerDataPhones).concat(c.primaryPhoneNumber ? ['"' + c.primaryPhoneNumber + '"'] : [])) { const x = s.slice(1, -1).replace(/\D/g, ''); if (x.length >= 10 && x.length <= 11) phones.add(x.slice(-10)); }
+    for (const s of strings(cd.CustomerDataEmails).concat(c.email ? ['"' + c.email + '"'] : [])) { const x = s.slice(1, -1).trim().toLowerCase(); if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x)) emails.add(x); }
+    const datum = cd.CustomerDatum || {};
+    return {
+      name: datum.fullName || [datum.givenName, datum.familyName].filter(Boolean).join(' ') || c.fullName || [c.givenName, c.familyName].filter(Boolean).join(' ') || null,
+      customerId: cd.customerId || c.customerId || null, phones: [...phones], emails: [...emails],
+      imei: dev.imei || null, serial: dev.serial || null, claim: w.claimNumber || (listRow && listRow.claimNumber) || null,
+    };
+  }
+
+  // ---------------------------------------------------------------- Portal fetches
+  async function notesOf(wo) {
+    const all = []; let total = null, latest = null;
+    for (let off = 0, i = 0; i < NOTE_PAGES; i++) {
+      const p = await AE.api('GET', '/api/note?workorderId=' + wo + '&offset=' + off + '&limit=' + NOTE_PAGE);
+      const rows = (p && p.notes) || [];
+      all.push(...rows);
+      if (total == null) { total = p && Number.isInteger(p.total) ? p.total : rows.length; latest = (p && p.latestManualNote) || null; }
+      off += rows.length;
+      if (!rows.length || off >= total) break;
+      await AE.sleep(GAP_MS);
+    }
+    return { notes: all, total, latestManualNote: latest };
+  }
+  async function detailOf(wo) {
+    let core;
+    try { core = await AE.api('GET', '/api/workorder/' + wo); }
+    catch (e) { if (/HTTP 404/.test(e.message || '')) e.gone = true; throw e; }
+    await AE.sleep(GAP_MS);
+    const w = (core && core.workorder) || {};
+    const audit = await AE.api('GET', '/api/workorder-audit-trail/' + wo).catch(() => null); await AE.sleep(GAP_MS);
+    const customer = await AE.api('GET', '/api/v1/workorder/' + wo + '/demographic/customer-data').catch(() => null); await AE.sleep(GAP_MS);
+    const notes = await notesOf(wo).catch(() => null); await AE.sleep(GAP_MS);
+    const cart = w.csuCartId ? await AE.api('GET', '/api/get-cart/' + w.csuCartId + '?includePartStatus=true').catch(() => null) : null;
+    return scrub({ workorder: core, audit_trail: audit, customer_data: customer, notes, cart });
+  }
+
+  // One WO, ready to send (or to look at, for the dev tools' dry run).
+  async function prepare(store, wo, listRow, jwk) {
+    const d = await detailOf(wo);
+    if (listRow) d.list_row = scrub(listRow);
+    const plain = plainPart(d, listRow), card = cardOf(d, listRow);
+    const out = { plain, card, hash: await C.hashJson([plain, d]), detailBytes: JSON.stringify(d).length };
+    if (jwk) { out.sealed = await C.sealJson(d, jwk, C.aad.snapshot(store, wo)); out.cardSealed = await C.sealJson(card, jwk, C.aad.card(store, wo)); }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- the scan
+  let running = false;
+  async function scan(opts = {}) {
+    if (!configured() || running || AE.status.paused('tracker')) return null;
+    if (!opts.force && Date.now() - GM_getValue(SCAN_KEY, 0) < SCAN_MS - 30000) return null;
+    running = true;
+    GM_setValue(SCAN_KEY, Date.now());
+    const result = { at: new Date().toISOString(), sent: 0, same: 0, gone: 0, failed: 0, errors: [] };
+    try {
+      const p = await AE.profile();
+      if (!p.storeId) throw new Error('No current store');
+      const store = p.storeId;
+      let jwk;
+      try { jwk = await keyFor(store); }
+      catch (e) { if (e.status === 404) { result.note = 'tracker not set up yet'; return result; } throw e; }
+      const rows = await AE.data.workorders(Date.now(), 0);
+      const byId = new Map(rows.map((r) => [Number(r.workorderId), r]));
+      const s = await call('POST', '/v1/' + store + '/tracker/scan', { rows: rows.map(scanRow), storeName: p.storeName, by: p.name });
+      Object.assign(result, { open: rows.length, need: s.need.length, note: s.note || null });
+      for (const n of s.need) {
+        try {
+          const x = await prepare(store, n.wo, byId.get(n.wo) || null, jwk);
+          const j = await call('POST', '/v1/' + store + '/tracker/wo/' + n.wo, { hash: x.hash, trigger: n.why, plain: x.plain, sealed: x.sealed, card: x.cardSealed, by: p.name });
+          if (j.same) result.same++; else result.sent++;
+        } catch (e) {
+          if (/session expired/i.test(e.message || '')) throw e; // signed out: stop, try again next time
+          if (e.gone) { // Portal no longer has it
+            try { await call('POST', '/v1/' + store + '/tracker/wo/' + n.wo + '/gone', { by: p.name }); result.gone++; continue; } catch (_) {}
+          }
+          result.failed++; if (result.errors.length < 5) result.errors.push(n.wo + ': ' + (e.message || e));
+        }
+        await AE.sleep(GAP_MS);
+      }
+      return result;
+    } catch (e) {
+      result.errors.push(e.message || String(e));
+      AE.noteError('tracker', e);
+      return result;
+    } finally {
+      running = false;
+      GM_setValue(LAST_KEY, result);
+    }
+  }
+
+  // Dev tools: what one WO would send, without sending it.
+  async function dryRun(wo) {
+    const p = await AE.profile();
+    const rows = await AE.data.workorders(Date.now(), 0);
+    const row = rows.find((r) => Number(r.workorderId) === Number(wo)) || null;
+    const master = configured() ? await call('GET', '/v1/tracker/master').then((j) => j.publicJwk).catch(() => null) : null;
+    const jwk = master || (await C.newKeyPair()).publicJwk; // no Worker yet: a throwaway key, only to measure
+    const x = await prepare(p.storeId, wo, row, jwk);
+    return { wo: Number(wo), inList: !!row, plain: x.plain, card: x.card, hash: x.hash, detailBytes: x.detailBytes, sealedBytes: x.sealed.length, cardBytes: x.cardSealed.length };
+  }
+
+  return { configured, scan, dryRun, last: () => GM_getValue(LAST_KEY, null), plainPart, cardOf, scrub, crypto: C };
+})();
+
+if (AE.tracker.configured()) {
+  setTimeout(() => AE.tracker.scan().catch(() => {}), 20000);
+  setInterval(() => AE.tracker.scan().catch(() => {}), 60 * 1000); // scan() waits out the 10 minutes
+}
