@@ -2,4 +2,4 @@ node_modules/
 .wrangler/
 .wrangler-test/
 .wrangler-e2e/
-*.sql
+mac-import*.sql

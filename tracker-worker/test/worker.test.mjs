@@ -155,7 +155,7 @@ assert.equal((await admin('owner@x.com', 'GET', '/wos?store=914&status=13&outcom
 assert.equal((await admin('owner@x.com', 'GET', '/wos?store=914&status=13&outcome=complete')).j.wos.length, 0);
 // the migration's SQL gives the same value
 await env.TR.prepare('UPDATE workorders SET cart_value = NULL WHERE wo = 5003').run();
-const mig = readFileSync('migrations-2026-10-12.sql', 'utf8').split(';').map((x) => x.replace(/--[^\n]*/g, '').trim()).filter((x) => x.startsWith('UPDATE'))[0];
+const mig = readFileSync('migrations/2026-10-12.sql', 'utf8').split(';').map((x) => x.replace(/--[^\n]*/g, '').trim()).filter((x) => x.startsWith('UPDATE'))[0];
 await env.TR.prepare(mig).run();
 assert.equal((await env.TR.prepare('SELECT cart_value FROM workorders WHERE wo = 5003').first()).cart_value, 282);
 
