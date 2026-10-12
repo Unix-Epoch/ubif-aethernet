@@ -303,7 +303,11 @@ AE.crystal({
         border-top:1px dashed var(--aui-status-success, #136d31); border-bottom:1px dashed var(--aui-status-success, #136d31); pointer-events:none; z-index:1; }
       #${RP} .axis .tgt { display:inline-flex; align-items:center; gap:6px; color:var(--aui-status-success, #136d31); font-weight:600; }
       #${RP} .axis .tgt i { width:18px; height:9px; border:1px dashed currentColor; border-width:1px 0; background:color-mix(in srgb, currentColor 12%, transparent); }
-      #${RP} .col { flex:1; height:100%; display:flex; align-items:flex-end; min-width:2px; }
+      #${RP} .col { flex:1; height:100%; display:flex; align-items:flex-end; min-width:2px; position:relative; }
+      #${RP} .ghost { position:absolute; left:0; right:0; bottom:0; border-radius:3px 3px 0 0; border:1.5px dashed var(--aui-primary, #8223d2); border-bottom:0;
+        background:color-mix(in srgb, var(--aui-primary, #8223d2) 14%, transparent); pointer-events:none; }
+      #${RP} .bar { position:relative; }
+      #${RP} .ghoststat .big { color:color-mix(in srgb, var(--aui-primary, #8223d2) 70%, var(--aui-on-surface, #1a1c1e)); }
       #${RP} .bar { width:100%; border-radius:3px 3px 0 0; background:var(--aui-primary, #8223d2); }
       #${RP} .bar.est { background:repeating-linear-gradient(-45deg, var(--aui-primary, #8223d2) 0 5px, transparent 5px 9px); opacity:.7; }
       #${RP} .bar.none { background:var(--aui-outline, #c6c6ca); }
@@ -322,10 +326,12 @@ AE.crystal({
     async function loadSplh() {
       const [f, t] = rangeDates(range), from = T.ymd(f), to = T.ymd(t);
       const p = await AE.profile(), store = Number(p.storeId);
-      const [sd, ps, gm] = await Promise.all([AE.tracker.call('GET', '/v1/' + store + '/tracker/sales/days?from=' + from + '&to=' + to), T.punches(from, to), T.gmIds()]);
+      const [sd, ps, gm, rd] = await Promise.all([AE.tracker.call('GET', '/v1/' + store + '/tracker/sales/days?from=' + from + '&to=' + to), T.punches(from, to), T.gmIds(),
+        AE.tracker.call('GET', '/v1/' + store + '/tracker/rfp/days?from=' + from + '&to=' + to).catch(() => ({ days: [] }))]);
       const today = T.ymd(new Date()), days = new Map();
-      for (let d = new Date(f); T.ymd(d) <= to; d.setDate(d.getDate() + 1)) days.set(T.ymd(d), { day: T.ymd(d), sales: null, source: null, hours: 0, gmHours: 0, open: 0 });
+      for (let d = new Date(f); T.ymd(d) <= to; d.setDate(d.getDate() + 1)) days.set(T.ymd(d), { day: T.ymd(d), sales: null, source: null, hours: 0, gmHours: 0, open: 0, rfp: 0, rfpCount: 0 });
       for (const x of sd.days) if (days.has(x.day)) Object.assign(days.get(x.day), { sales: x.total, source: x.source });
+      for (const x of rd.days || []) if (days.has(x.day)) Object.assign(days.get(x.day), { rfp: x.value || 0, rfpCount: x.count || 0 }); // the RFP table at the end of the day
       for (const pu of ps) {
         if (pu.s !== store || pu.c === 2 || !pu.i) continue;
         const day = T.ymd(new Date(pu.i)), d = days.get(day);
@@ -345,10 +351,12 @@ AE.crystal({
       card.append(head, ranges);
       if (err) { card.append(h('p', { class: 'sg-soft' }, err)); return card; }
       if (!data) { card.append(h('p', { class: 'sg-soft' }, 'Loading sales and hours…')); return card; }
-      const rows = data.rows.map((r) => { const hrs = r.hours + (leaveOut ? 0 : r.gmHours); return Object.assign({}, r, { hrs, splh: r.sales != null && hrs > 0 ? r.sales / hrs : null }); });
+      const rows = data.rows.map((r) => { const hrs = r.hours + (leaveOut ? 0 : r.gmHours); return Object.assign({}, r, { hrs, splh: r.sales != null && hrs > 0 ? r.sales / hrs : null, ghost: r.sales != null && hrs > 0 && r.rfp ? (r.sales + r.rfp) / hrs : null }); });
       const withBoth = rows.filter((r) => r.splh != null), tS = withBoth.reduce((n, r) => n + r.sales, 0), tH = withBoth.reduce((n, r) => n + r.hrs, 0);
       const gmOut = leaveOut ? rows.reduce((n, r) => n + r.gmHours, 0) : 0, best = withBoth.slice().sort((a, b) => b.splh - a.splh)[0];
-      const [tLo, tHi] = leaveOut ? TARGET.withoutGm : TARGET.withGm, max = Math.max(best ? best.splh : 0, tHi * 1.1); // room for the target band
+      const [tLo, tHi] = leaveOut ? TARGET.withoutGm : TARGET.withGm, max = Math.max(best ? best.splh : 0, ...withBoth.map((r) => r.ghost || 0), tHi * 1.1); // room for the target band and ghosts
+      const lastRfp = rows.slice().reverse().find((r) => r.rfp || r.rfpCount) || null; // the RFP table at the end of the range
+      const ghostAll = lastRfp && tH ? (tS + lastRfp.rfp) / tH : null;
       const atTarget = withBoth.filter((r) => r.splh >= tLo).length;
       const fmtDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
       card.append(
@@ -357,18 +365,21 @@ AE.crystal({
           h('div', null, h('div', { class: 'big' }, money(tS)), h('div', { class: 'sg-soft' }, 'sales')),
           h('div', null, h('div', { class: 'big' }, tH.toFixed(1) + 'h'), h('div', { class: 'sg-soft' }, 'labor' + (leaveOut ? (data.gmSet ? ' (general managers left out: ' + gmOut.toFixed(1) + 'h)' : ' (no general manager set: Settings → Tactician)') : ''))),
           best ? h('div', null, h('div', { class: 'big' }, money(best.splh)), h('div', { class: 'sg-soft' }, 'best day · ' + fmtDay(best.day))) : null,
+          ghostAll ? h('div', { class: 'ghoststat' }, h('div', { class: 'big' }, money(ghostAll)), h('div', { class: 'sg-soft' }, 'if the RFP table were picked up (' + lastRfp.rfpCount + ' devices, ' + money(lastRfp.rfp) + ')')) : null,
           h('div', null, h('div', { class: 'big' }, atTarget + ' of ' + withBoth.length), h('div', { class: 'sg-soft' }, 'days at target ($' + tLo + '–$' + tHi + (leaveOut ? ', without GM' : ', with GM') + ')'))),
-        h('div', { class: 'chart' }, h('div', { class: 'band', style: 'bottom:' + (tLo / max * 100) + '%;height:' + ((tHi - tLo) / max * 100) + '%', title: 'Target: $' + tLo + '–$' + tHi + ' per labor hour' }), ...rows.map((r) => h('div', { class: 'col', title: fmtDay(r.day) + ': ' + (r.splh != null ? money(r.splh) + '/h · ' + money(r.sales) + ' · ' + r.hrs.toFixed(2) + 'h' + (r.source === 'estimated' ? ' (sales estimated)' : '') : r.sales ? money(r.sales) + ', no hours' : 'no sales or hours') },
+        h('div', { class: 'chart' }, h('div', { class: 'band', style: 'bottom:' + (tLo / max * 100) + '%;height:' + ((tHi - tLo) / max * 100) + '%', title: 'Target: $' + tLo + '–$' + tHi + ' per labor hour' }), ...rows.map((r) => h('div', { class: 'col', title: fmtDay(r.day) + ': ' + (r.splh != null ? money(r.splh) + '/h · ' + money(r.sales) + ' · ' + r.hrs.toFixed(2) + 'h' + (r.source === 'estimated' ? ' (sales estimated)' : '') + (r.ghost ? '\nIf the RFP table (' + r.rfpCount + ' devices, ' + money(r.rfp) + ') were picked up: ' + money(r.ghost) + '/h' : '') : r.sales ? money(r.sales) + ', no hours' : 'no sales or hours') },
+          r.ghost ? h('div', { class: 'ghost', style: 'height:' + Math.round(r.ghost / max * 100) + '%' }) : null,
           h('div', { class: 'bar' + (r.splh == null ? ' none' : r.source === 'estimated' ? ' est' : ''), style: 'height:' + (r.splh != null ? Math.max(2, Math.round(r.splh / max * 100)) : 2) + '%' })))),
         h('div', { class: 'axis sg-soft' }, h('span', null, fmtDay(data.from)), h('span', { class: 'tgt' }, h('i'), 'Target $' + tLo + '–$' + tHi + (leaveOut ? ' without GM' : ' with GM')), h('span', null, fmtDay(data.to))),
         h('details', { class: 'days' }, h('summary', null, 'Days'),
-          h('table', null, h('tr', null, ['Day', 'Sales', 'Labor hours', 'Per labor hour', ''].map((x) => h('th', null, x))),
+          h('table', null, h('tr', null, ['Day', 'Sales', 'Labor hours', 'Per labor hour', 'If RFP picked up', ''].map((x) => h('th', null, x))),
             ...rows.slice().reverse().map((r) => h('tr', null, h('td', null, fmtDay(r.day)), h('td', null, r.sales != null ? money(r.sales) : '—'), h('td', null, r.hrs ? r.hrs.toFixed(2) + 'h' : '—'),
               h('td', null, h('b', null, r.splh != null ? money(r.splh) : '—')),
+              h('td', { class: 'sg-soft', title: r.rfpCount ? r.rfpCount + ' devices on the RFP table at the end of the day, ' + money(r.rfp) : null }, r.ghost ? money(r.ghost) : '—'),
               h('td', { class: 'sg-soft' }, [r.source === 'estimated' ? 'Sales estimated from work orders' : null, leaveOut && r.gmHours ? 'GM ' + r.gmHours.toFixed(2) + 'h left out' : null,
                 r.open ? r.open + ' punch' + (r.open === 1 ? '' : 'es') + ' without a clock-out not counted' : null, r.sales == null && !r.hrs ? 'Closed or no data' : null].filter(Boolean).join(' · ')))),
-            h('tr', { class: 'tot' }, h('td', null, 'Total'), h('td', null, money(tS)), h('td', null, tH.toFixed(2) + 'h'), h('td', null, tH ? money(tS / tH) : '—'), h('td'))),
-          h('p', { class: 'sg-soft', style: 'font-size:12px;margin:8px 0 0' }, 'Sales = Portal\'s daily sales (partner credits included; striped days are estimated from work orders). Labor = hours clocked in at this store, breaks not counted, from the Store time sheet. Days without both aren\'t in the totals.')));
+            h('tr', { class: 'tot' }, h('td', null, 'Total'), h('td', null, money(tS)), h('td', null, tH.toFixed(2) + 'h'), h('td', null, tH ? money(tS / tH) : '—'), h('td', null, ghostAll ? money(ghostAll) : '—'), h('td'))),
+          h('p', { class: 'sg-soft', style: 'font-size:12px;margin:8px 0 0' }, 'Sales = Portal\'s daily sales (partner credits included; striped days are estimated from work orders). Labor = hours clocked in at this store, breaks not counted, from the Store time sheet. Days without both aren\'t in the totals. Ghost bars = that day\'s sales plus everything on the RFP table at the end of the day (value before tax, partner credits ignored), as if it had all been picked up; for the range, the RFP table at its end.')));
       return card;
     }
     function showSplh() {

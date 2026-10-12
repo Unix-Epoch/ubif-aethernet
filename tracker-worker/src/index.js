@@ -22,6 +22,7 @@
     GET  /v1/:store/tracker/rfp                  the store's RFP total (count, value, complete/incomplete split, last scan)
     POST /v1/:store/tracker/sales { day, rows }  Portal's sales history for one business day (see the route)
     GET  /v1/:store/tracker/sales/days?from&to   daily sales totals (Tactician)
+    GET  /v1/:store/tracker/rfp/days?from&to     the RFP table's value at the end of each day (Tactician)
     GET  /v1/:store/tracker/settings             store settings (general managers, …); PUT …/settings/gm
 
   `plain` (readable on the server; never customer details):
@@ -152,6 +153,45 @@ async function salesDays(env, visible, from, to) {
   }
   out.sort((a, b) => (a.day === b.day ? a.store - b.store : a.day < b.day ? 1 : -1));
   return { days: out, sales: sales.results.filter((x) => visible(x.store)), estimated: est };
+}
+
+/*
+  RFP periods: when a WO reached Ready for pickup (status 13) and when it left, with its value while
+  there. Kept from each changed snapshot: in RFP → open a period (start = Portal's rfpAt, else the WO's
+  updatedAt, else now) or update its value; anything else → close the open one (end = updatedAt / now).
+*/
+async function rfpPeriodStmts(T, store, wo, plain, at) {
+  const w = (plain && plain.workorder) || {}, inRfp = Number(w.statusId) === 13;
+  const open = await T.prepare('SELECT start_at FROM rfp_periods WHERE store = ? AND wo = ? AND end_at IS NULL').bind(store, wo).first();
+  if (inRfp) {
+    const value = cartValue(plain);
+    if (open) return value == null ? [] : [T.prepare('UPDATE rfp_periods SET value = ? WHERE store = ? AND wo = ? AND start_at = ?').bind(value, store, wo, open.start_at)];
+    const start = iso(w.rfpAt) || iso(w.updatedAt) || at;
+    return [T.prepare('INSERT INTO rfp_periods (store, wo, start_at, value) VALUES (?, ?, ?, ?) ON CONFLICT (store, wo, start_at) DO UPDATE SET end_at = NULL, value = COALESCE(excluded.value, value)').bind(store, wo, start, value)];
+  }
+  if (open) return [T.prepare('UPDATE rfp_periods SET end_at = ? WHERE store = ? AND wo = ? AND start_at = ?').bind(iso(w.updatedAt) && iso(w.updatedAt) > open.start_at ? iso(w.updatedAt) : at, store, wo, open.start_at)];
+  return [];
+}
+// UTC instant of a local day's end (23:59:59.999 in tz).
+function dayEnd(day, tz) {
+  const guess = Date.parse(day + 'T23:59:59.999Z');
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(guess));
+  const g = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  const asLocal = Date.parse(g.year + '-' + g.month + '-' + g.day + 'T' + g.hour + ':' + g.minute + ':' + g.second + '.999Z');
+  return new Date(guess + (guess - asLocal)).toISOString();
+}
+// The RFP table's value at the end of each day in [from, to] (today: now). [{ day, count, value }]
+async function rfpDays(env, store, from, to) {
+  const tz = env.STORE_TZ || 'America/New_York', today = localDay(new Date().toISOString(), tz);
+  const r = await env.TR.prepare('SELECT wo, start_at, end_at, value FROM rfp_periods WHERE store = ? AND start_at <= ? AND (end_at IS NULL OR end_at >= ?)')
+    .bind(store, dayEnd(to, tz), from + 'T00:00:00Z').all();
+  const out = [];
+  for (let d = new Date(from + 'T12:00:00Z'); d.toISOString().slice(0, 10) <= to; d.setUTCDate(d.getUTCDate() + 1)) {
+    const day = d.toISOString().slice(0, 10), at = day === today ? new Date().toISOString() : dayEnd(day, tz);
+    const on = r.results.filter((p) => p.start_at <= at && (!p.end_at || p.end_at > at));
+    out.push({ day, count: on.length, value: Math.round(on.reduce((n, p) => n + (p.value || 0), 0) * 100) / 100 });
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------ plain-part diff
@@ -316,6 +356,12 @@ async function storeApi(req, env, url, store) {
     return json({ ok: true, count: rows.length, written, removed, total });
   }
 
+  // The RFP table's value at the end of each day (Tactician: "if every RFP device were picked up").
+  if (path === '/rfp/days' && req.method === 'GET') {
+    const from = clean(url.searchParams.get('from'), 10), to = clean(url.searchParams.get('to'), 10);
+    if (!DAY_RE.test(from) || !DAY_RE.test(to) || to < from || (Date.parse(to) - Date.parse(from)) > 400 * 86400000) return fail(400, 'from/to required');
+    return json({ days: await rfpDays(env, store, from, to) });
+  }
   // Daily sales totals for this store (Tactician's sales per labor hour): no customers, no line items.
   if (path === '/sales/days' && req.method === 'GET') {
     const from = clean(url.searchParams.get('from'), 10), to = clean(url.searchParams.get('to'), 10);
@@ -415,6 +461,7 @@ async function storeApi(req, env, url, store) {
       .bind(store, wo, statusId, clean(w.status, 60) || null, int(w.programId), clean(w.program, 80) || null, clean(w.device, 80) || null, iso(w.createdAt), iso(w.updatedAt),
         closed ? 0 : 1, at, at, hash, closed ? at : null, closed ? (clean(w.status, 60) || 'closed') : null, num(pay.total), num(pay.amountPaid), num(pay.amountDue), value, clean(w.outcome, 40) || null, plainText, b.card || null,
         hasItems ? value : null, hasItems ? num(pay.tax) : null, iso(soldAt)));
+    stmts.push(...(await rfpPeriodStmts(T, store, wo, plain, at)));
     for (let i = 0; i < stmts.length; i += 100) await T.batch(stmts.slice(i, i + 100));
     return json({ ok: true, snapshot: snap.id, changes: changes.length });
   }
@@ -610,6 +657,7 @@ async function gz(text) {
   return new Response(new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
 }
 // Moves rows older than the cutoff to R2 (when bound) in chunks, then deletes them.
+export { dayEnd };
 export async function trim(env, { keepDays = KEEP_DAYS, chunk = 500, rounds = 20 } = {}) {
   const T = env.TR, cutoff = new Date(Date.now() - keepDays * 86400000).toISOString(), run = now().replace(/[:.]/g, '');
   const out = { snapshots: 0, changes: 0, archived: !!env.ARCHIVE };

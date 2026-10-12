@@ -225,6 +225,22 @@ ok(await call('PUT', '/v1/914/tracker/settings/gm', { userIds: [33256, '33256', 
 const gm = (await call('GET', '/v1/914/tracker/settings')).j.gm;
 assert.deepEqual(gm.userIds, [33256]); assert.equal(gm.names[33256], 'casey.mgr'); assert.equal(gm.by, 'Tech A');
 assert.deepEqual((await call('GET', '/v1/326/tracker/settings')).j, {}, 'per store');
+// RFP periods: 5003 has been in RFP since its first upload; a WO leaving RFP closes its period
+const { dayEnd } = await import('../src/index.js');
+assert.equal(dayEnd('2026-10-12', 'America/New_York'), '2026-10-13T03:59:59.999Z'); // EDT
+assert.equal(dayEnd('2026-12-01', 'America/New_York'), '2026-12-02T04:59:59.999Z'); // EST
+const per = (await env.TR.prepare('SELECT * FROM rfp_periods WHERE wo = 5003').all()).results;
+assert.equal(per.length, 1); assert.equal(per[0].end_at, null); assert.equal(per[0].value, 282, 'value follows the cart while in RFP');
+const today = new Date().toISOString().slice(0, 10);
+let rd = (await call('GET', '/v1/914/tracker/rfp/days?from=' + today + '&to=' + today)).j.days;
+assert.ok(rd.length >= 1);
+const picked = plain(5003, 14, 'Sale complete', 0); picked.workorder.updatedAt = '2099-01-01T00:00:00Z';
+ok(await call('POST', '/v1/914/tracker/wo/5003', { hash: 'sold', plain: picked, sealed: await C.sealJson({}, sk, C.aad.snapshot(914, 5003)) }), 'picked up');
+const per2 = (await env.TR.prepare('SELECT * FROM rfp_periods WHERE wo = 5003').first());
+assert.ok(per2.end_at, 'period closed');
+await env.TR.prepare("INSERT INTO rfp_periods (store, wo, start_at, end_at, value) VALUES (914, 1, '2026-10-05T15:00:00Z', '2026-10-07T18:00:00Z', 100), (914, 2, '2026-10-06T20:00:00Z', NULL, 50), (914, 3, '2026-10-07T02:00:00Z', '2026-10-07T03:00:00Z', 999)").run();
+rd = (await call('GET', '/v1/914/tracker/rfp/days?from=2026-10-05&to=2026-10-08')).j.days;
+assert.deepEqual(rd.map((d) => d.day + ':' + d.value), ['2026-10-05:100', '2026-10-06:150', '2026-10-07:50', '2026-10-08:50']); // WO 3 came and went in the evening of Oct 6 (local)
 // localDay: evening sales stay on the store's day
 const { localDay } = await import('../src/index.js');
 assert.equal(localDay('2026-10-13T02:30:00Z'), '2026-10-12'); assert.equal(localDay('2026-12-01T04:30:00Z'), '2026-11-30');
