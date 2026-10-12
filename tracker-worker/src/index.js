@@ -234,7 +234,8 @@ async function log(env, email, action, store = null, wo = null, detail = null) {
   PUT  /me/keys { keys }         replace your own copies (new passphrase / redeeming an invite)
   GET  /store-keys               full access: every store's { store, publicJwk, wrappedPrivate }
   GET  /stores                   stores you can see, with counts
-  GET  /wos?store=&open=&status=&since=&limit=&offset=     WO rows (plain + sealed card)
+  GET  /wos?store=&open=&status=&since=&limit=&offset=&detail=1   WO rows (plain + sealed card;
+                                 detail=1 adds the latest sealed snapshot, for searching note text)
   GET  /wo/:store/:wo            one WO: row, snapshots (plain + sealed), changes
   GET  /people                   full access: everyone + their key copies' kinds
   POST /people { email, name, scope, stores, keys }        full access: add/update, keys = invite copies
@@ -305,7 +306,7 @@ export async function trackerAdmin(req, env, url, path, email) {
     if (q.get('since')) { where.push('COALESCE(api_updated_at, first_seen_at) >= ?'); args.push(clean(q.get('since'), 40)); }
     const limit = Math.min(int(q.get('limit')) || 500, 5000), offset = int(q.get('offset')) || 0;
     const r = await T.prepare(`SELECT store, wo, store_name, status_id, status_name, program_id, program_name, device, created_at, api_updated_at, is_open, first_seen_at,
-        last_detail_at, closed_at, closed_reason, cart_total, cart_paid, cart_due, card FROM workorders ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+        last_detail_at, closed_at, closed_reason, cart_total, cart_paid, cart_due, card${q.get('detail') === '1' ? ', (SELECT sealed FROM snapshots s WHERE s.store = workorders.store AND s.wo = workorders.wo ORDER BY id DESC LIMIT 1) AS sealed' : ''} FROM workorders ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
         ORDER BY COALESCE(api_updated_at, first_seen_at) DESC LIMIT ? OFFSET ?`).bind(...args, limit, offset).all();
     await log(env, email, 'list', store, null, url.search.slice(0, 200));
     return json({ wos: r.results }, 200, false);
@@ -336,7 +337,8 @@ export async function trackerAdmin(req, env, url, path, email) {
     if (scope === 'stores' && !stores.length) return fail(400, 'pick at least one store', false);
     const stmts = [T.prepare('INSERT INTO people (email, name, scope, stores, added_by, added_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (email) DO UPDATE SET name = COALESCE(excluded.name, name), scope = excluded.scope, stores = excluded.stores')
       .bind(who, clean(b.name, 60) || null, scope, JSON.stringify(stores), email, now())];
-    // Copies they no longer qualify for go; new ones (locked with an invite code) come in.
+    // A new invite replaces all their copies (they set a passphrase again); otherwise copies they no longer qualify for go.
+    if ((b.keys || []).length) stmts.push(T.prepare('DELETE FROM person_keys WHERE email = ?').bind(who));
     if (scope === 'stores') stmts.push(T.prepare("DELETE FROM person_keys WHERE email = ? AND (kind = 'master' OR store NOT IN (" + stores.map(() => '?').join(',') + '))').bind(who, ...stores));
     for (const k of b.keys || []) {
       const st = k.kind === 'store' ? int(k.store) : 0;

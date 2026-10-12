@@ -10,7 +10,21 @@ binding = "DB"
 database_name = "aethernet-waymark"
 database_id = "59394e23-6903-4b1b-bb41-43abf19f3915"
 
+# The work order tracker's database (tracker-worker/). Same id as in tracker-worker/wrangler.toml once created.
+[[d1_databases]]
+binding = "TR"
+database_name = "aethernet-tracker"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+# Served to the page as text: the tracker's encryption (shared with Aethernet) and the passphrase word list (EFF large list).
+[[rules]]
+type = "Text"
+globs = ["**/*.txt", "**/tracker-ui.js", "**/crypto.js"]
+fallthrough = true
+
 [vars]
+# People who may do the tracker's first setup (create the master key).
+TRACKER_OWNERS = "green.trimar@gmail.com"
 # Cloudflare Access (Zero Trust). Until both are set, every request is refused.
 # TEAM_DOMAIN: "<team>.cloudflareaccess.com"; POLICY_AUD: the Access application's Audience (AUD) tag.
 TEAM_DOMAIN = "ancient-river-3aec.cloudflareaccess.com"

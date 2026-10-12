@@ -54,11 +54,11 @@ const fmt = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocal
 const fmtDay = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' });
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const woLink = (id) => h('a', { href: 'https://portal.ubreakifix.net/repair/workorder/' + id, target: '_blank', rel: 'noopener' }, id + ' ↗');
-const TABS = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data']];
+const TABS = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['people', 'People']];
 let tab = (location.hash.slice(1) || 'reports');
 function nav() { $('#tabs').replaceChildren(...TABS.map(([k, l]) => h('button', { class: k === tab ? 'on' : null, onclick: () => { tab = k; location.hash = k; draw(); } }, l))); }
 async function draw() { nav(); const m = $('#main'); m.replaceChildren(h('div', { class: 'soft' }, 'Loading…'));
-  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData }[tab] || drawReports)(m); }
+  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, wos: (x) => drawTracker('wos', x), people: (x) => drawTracker('people', x) }[tab] || drawReports)(m); }
   catch (e) { m.replaceChildren(h('div', { class: 'err' }, "Couldn't load: " + e.message)); } }
 function toast(t) { const el = h('div', { style: 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;z-index:9' }, t); document.body.append(el); setTimeout(() => el.remove(), 3500); }
 
@@ -191,6 +191,11 @@ async function drawData(m) {
       h('div', { class: 'card' }, h('h3', null, 'Store tag list'), d.list.length ? d.list.map((x) => tag(x.name)) : h('div', { class: 'soft' }, 'No store tags set up.')),
       h('div', { class: 'card' }, h('h3', null, 'Divination: manual cleaning links'), d.links.length ? h('table', null, h('tr', null, h('th', null, 'Day'), h('th', null, 'Phone'), h('th', null, 'Counted for WO'), h('th', null, 'By')),
         d.links.map((x) => h('tr', null, h('td', null, fmtDay(x.day)), h('td', { class: 'soft' }, x.device.length > 12 ? x.device.slice(0, 8) + '…' + x.device.slice(-6) : x.device), h('td', null, woLink(x.parent)), h('td', null, x.by || '')))) : h('div', { class: 'soft' }, 'No manual links in the last 30 days.'))));
+}
+// Work orders + People: the tracker UI (tracker-ui.js), loaded on first use. Unlocking happens there, in this browser.
+async function drawTracker(which, m) {
+  const mod = await import('/tracker-ui.js');
+  await mod.draw(which, m, { h, api, toast, fmt, woLink, tab: () => tab, redraw: draw });
 }
 addEventListener('hashchange', () => { const t = location.hash.slice(1); if (t && t !== tab) { tab = t; draw(); } });
 draw();
