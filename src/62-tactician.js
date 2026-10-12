@@ -276,6 +276,8 @@ AE.crystal({
       remembered in this browser. Needs Store time sheet access and the work order tracker.
     */
     const RP = 'ae-splh', GM_KEY = 'ae_splh_gm', RANGE_KEY = 'ae_splh_range';
+    // Target ranges (Garrett, Oct 12, 2026): ~$160–180 per labor hour leaving out general managers, ~$145–165 counting them.
+    const TARGET = { withoutGm: [160, 180], withGm: [145, 165] };
     const RANGES = [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month'], ['90', 'Last 90 days']];
     const rangeDates = (r) => {
       const t = new Date(); t.setHours(0, 0, 0, 0);
@@ -297,6 +299,10 @@ AE.crystal({
       #${RP} .sum { display:flex; flex-wrap:wrap; gap:28px; margin:16px 0 14px; }
       #${RP} .big { font-size:24px; font-weight:700; font-variant-numeric:tabular-nums; }
       #${RP} .chart { position:relative; height:140px; border-bottom:1px solid var(--aui-outline, #c6c6ca); display:flex; align-items:flex-end; gap:2px; }
+      #${RP} .band { position:absolute; left:0; right:0; background:color-mix(in srgb, var(--aui-status-success, #136d31) 12%, transparent);
+        border-top:1px dashed var(--aui-status-success, #136d31); border-bottom:1px dashed var(--aui-status-success, #136d31); pointer-events:none; z-index:1; }
+      #${RP} .axis .tgt { display:inline-flex; align-items:center; gap:6px; color:var(--aui-status-success, #136d31); font-weight:600; }
+      #${RP} .axis .tgt i { width:18px; height:9px; border:1px dashed currentColor; border-width:1px 0; background:color-mix(in srgb, currentColor 12%, transparent); }
       #${RP} .col { flex:1; height:100%; display:flex; align-items:flex-end; min-width:2px; }
       #${RP} .bar { width:100%; border-radius:3px 3px 0 0; background:var(--aui-primary, #8223d2); }
       #${RP} .bar.est { background:repeating-linear-gradient(-45deg, var(--aui-primary, #8223d2) 0 5px, transparent 5px 9px); opacity:.7; }
@@ -341,17 +347,20 @@ AE.crystal({
       if (!data) { card.append(h('p', { class: 'sg-soft' }, 'Loading sales and hours…')); return card; }
       const rows = data.rows.map((r) => { const hrs = r.hours + (leaveOut ? 0 : r.gmHours); return Object.assign({}, r, { hrs, splh: r.sales != null && hrs > 0 ? r.sales / hrs : null }); });
       const withBoth = rows.filter((r) => r.splh != null), tS = withBoth.reduce((n, r) => n + r.sales, 0), tH = withBoth.reduce((n, r) => n + r.hrs, 0);
-      const gmOut = leaveOut ? rows.reduce((n, r) => n + r.gmHours, 0) : 0, best = withBoth.slice().sort((a, b) => b.splh - a.splh)[0], max = best ? best.splh : 1;
+      const gmOut = leaveOut ? rows.reduce((n, r) => n + r.gmHours, 0) : 0, best = withBoth.slice().sort((a, b) => b.splh - a.splh)[0];
+      const [tLo, tHi] = leaveOut ? TARGET.withoutGm : TARGET.withGm, max = Math.max(best ? best.splh : 0, tHi * 1.1); // room for the target band
+      const atTarget = withBoth.filter((r) => r.splh >= tLo).length;
       const fmtDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
       card.append(
         h('div', { class: 'sum' },
           h('div', null, h('div', { class: 'big' }, tH ? money(tS / tH) : '—'), h('div', { class: 'sg-soft' }, 'per labor hour')),
           h('div', null, h('div', { class: 'big' }, money(tS)), h('div', { class: 'sg-soft' }, 'sales')),
           h('div', null, h('div', { class: 'big' }, tH.toFixed(1) + 'h'), h('div', { class: 'sg-soft' }, 'labor' + (leaveOut ? (data.gmSet ? ' (general managers left out: ' + gmOut.toFixed(1) + 'h)' : ' (no general manager set: Settings → Tactician)') : ''))),
-          best ? h('div', null, h('div', { class: 'big' }, money(best.splh)), h('div', { class: 'sg-soft' }, 'best day · ' + fmtDay(best.day))) : null),
-        h('div', { class: 'chart' }, ...rows.map((r) => h('div', { class: 'col', title: fmtDay(r.day) + ': ' + (r.splh != null ? money(r.splh) + '/h · ' + money(r.sales) + ' · ' + r.hrs.toFixed(2) + 'h' + (r.source === 'estimated' ? ' (sales estimated)' : '') : r.sales ? money(r.sales) + ', no hours' : 'no sales or hours') },
+          best ? h('div', null, h('div', { class: 'big' }, money(best.splh)), h('div', { class: 'sg-soft' }, 'best day · ' + fmtDay(best.day))) : null,
+          h('div', null, h('div', { class: 'big' }, atTarget + ' of ' + withBoth.length), h('div', { class: 'sg-soft' }, 'days at target ($' + tLo + '–$' + tHi + (leaveOut ? ', without GM' : ', with GM') + ')'))),
+        h('div', { class: 'chart' }, h('div', { class: 'band', style: 'bottom:' + (tLo / max * 100) + '%;height:' + ((tHi - tLo) / max * 100) + '%', title: 'Target: $' + tLo + '–$' + tHi + ' per labor hour' }), ...rows.map((r) => h('div', { class: 'col', title: fmtDay(r.day) + ': ' + (r.splh != null ? money(r.splh) + '/h · ' + money(r.sales) + ' · ' + r.hrs.toFixed(2) + 'h' + (r.source === 'estimated' ? ' (sales estimated)' : '') : r.sales ? money(r.sales) + ', no hours' : 'no sales or hours') },
           h('div', { class: 'bar' + (r.splh == null ? ' none' : r.source === 'estimated' ? ' est' : ''), style: 'height:' + (r.splh != null ? Math.max(2, Math.round(r.splh / max * 100)) : 2) + '%' })))),
-        h('div', { class: 'axis sg-soft' }, h('span', null, fmtDay(data.from)), h('span', null, fmtDay(data.to))),
+        h('div', { class: 'axis sg-soft' }, h('span', null, fmtDay(data.from)), h('span', { class: 'tgt' }, h('i'), 'Target $' + tLo + '–$' + tHi + (leaveOut ? ' without GM' : ' with GM')), h('span', null, fmtDay(data.to))),
         h('details', { class: 'days' }, h('summary', null, 'Days'),
           h('table', null, h('tr', null, ['Day', 'Sales', 'Labor hours', 'Per labor hour', ''].map((x) => h('th', null, x))),
             ...rows.slice().reverse().map((r) => h('tr', null, h('td', null, fmtDay(r.day)), h('td', null, r.sales != null ? money(r.sales) : '—'), h('td', null, r.hrs ? r.hrs.toFixed(2) + 'h' : '—'),
