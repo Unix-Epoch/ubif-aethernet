@@ -319,7 +319,6 @@ AE.crystal({
       #${RP}-tip::after { content:''; position:absolute; left:50%; bottom:-7px; margin-left:-7px; border:7px solid transparent; border-bottom:0; border-top-color:#1a1c1e; } /* the bubble's tail, down to the bar */
       #${RP}-tip .t { font-weight:700; margin-bottom:2px; } #${RP}-tip .s { opacity:.75; font-size:12px; margin-bottom:6px; }
       #${RP}-tip table { width:100%; border-collapse:collapse; margin:0; } #${RP}-tip td { padding:2px 0; border:0; font-variant-numeric:tabular-nums; } #${RP}-tip td + td { text-align:right; padding-left:12px; white-space:nowrap; }
-      #${RP}-tip .otb { display:inline-block; background:#b91a24; color:#fff; border-radius:4px; padding:0 5px; font-size:11px; font-weight:700; margin-left:6px; }
       #${RP}-tip .gmt { opacity:.6; font-size:11px; margin-left:4px; } #${RP}-tip .n { opacity:.7; font-size:12px; margin-top:6px; }
       #${RP} .bar.none { background:var(--aui-outline, #c6c6ca); }
       #${RP} .col:hover .bar { filter:brightness(1.15); }
@@ -343,26 +342,21 @@ AE.crystal({
       for (let d = new Date(f); T.ymd(d) <= to; d.setDate(d.getDate() + 1)) days.set(T.ymd(d), { day: T.ymd(d), sales: null, source: null, hours: 0, gmHours: 0, open: 0, rfp: 0, rfpCount: 0, people: new Map() });
       for (const x of sd.days) if (days.has(x.day)) Object.assign(days.get(x.day), { sales: x.total, source: x.source });
       for (const x of rd.days || []) if (days.has(x.day)) Object.assign(days.get(x.day), { rfp: x.value || 0, rfpCount: x.count || 0 }); // the RFP table at the end of the day
-      // Each person's hours in order through the week (every store; punches come in whole Mon–Sun weeks), so the
-      // overtime in a day's hours is the part past 40 for the week so far.
-      const cum = new Map();
-      for (const pu of ps.filter((x) => x.c !== 2 && x.i).sort((a, b) => Date.parse(a.i) - Date.parse(b.i))) {
+      for (const pu of ps) {
+        if (pu.s !== store || pu.c === 2 || !pu.i) continue;
         const day = T.ymd(new Date(pu.i)), d = days.get(day);
-        if (!pu.o && day !== today) { if (d && pu.s === store) d.open++; continue; } // a forgotten clock-out on a past day
+        if (!d) continue;
+        if (!pu.o && day !== today) { d.open++; continue; } // a forgotten clock-out on a past day
         const hrs = Math.max(0, ((pu.o ? Date.parse(pu.o) : Date.now()) - Date.parse(pu.i)) / 3600000);
-        const wk = pu.u + '|' + T.ymd(T.monday(new Date(pu.i))), before = cum.get(wk) || 0, after = before + hrs;
-        cum.set(wk, after);
-        if (!d || pu.s !== store) continue;
-        const ot = Math.max(0, after - 40) - Math.max(0, before - 40);
         if (gm.has(pu.u)) d.gmHours += hrs; else d.hours += hrs;
-        const who = d.people.get(pu.u) || d.people.set(pu.u, { name: pu.n || 'User ' + pu.u, hrs: 0, ot: 0, gm: gm.has(pu.u), open: !pu.o }).get(pu.u);
-        who.hrs += hrs; who.ot += ot; if (!pu.o) who.open = true;
+        const who = d.people.get(pu.u) || d.people.set(pu.u, { name: pu.n || 'User ' + pu.u, hrs: 0, gm: gm.has(pu.u), open: false }).get(pu.u); // who worked it (hover)
+        who.hrs += hrs; if (!pu.o) who.open = true;
       }
       return { from, to, rows: [...days.values()], gmSet: gm.size > 0 };
     }
     // Bar color: at/over the target's low end = good; within 10% below, or over it with the RFP table picked up = near; else miss.
     const grade = (r, lo) => (r.splh >= lo ? 'good' : r.splh >= lo * 0.9 || (r.ghost && r.ghost >= lo) ? 'near' : 'miss');
-    // Hover a day: a speech bubble with who worked it (this store), their hours, and overtime in that day's hours.
+    // Hover a day: a speech bubble with who worked it (this store) and their hours. (No overtime here: Garrett, Oct 12, 2026.)
     function bubble(col, r, leaveOut) {
       document.getElementById(RP + '-tip')?.remove();
       const fmtD = new Date(r.day + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
@@ -373,7 +367,7 @@ AE.crystal({
           r.splh != null ? money(r.splh) + '/h' : null, r.ghost ? money(r.ghost) + '/h with the RFP table (' + r.rfpCount + ')' : null].filter(Boolean).join(' · ')),
         people.length ? h('table', null, ...people.map((p) => h('tr', null,
           h('td', null, p.name, p.gm ? h('span', { class: 'gmt' }, leaveOut ? 'GM, left out' : 'GM') : null, p.open ? h('span', { class: 'gmt' }, 'still clocked in') : null),
-          h('td', null, p.hrs.toFixed(2) + 'h', p.ot > 0.004 ? h('span', { class: 'otb' }, fmtOt(p.ot) + ' OT') : null))))
+          h('td', null, p.hrs.toFixed(2) + 'h'))))
           : h('div', { class: 'n' }, 'Nobody clocked in here.'),
         r.open ? h('div', { class: 'n' }, r.open + ' punch' + (r.open === 1 ? '' : 'es') + ' without a clock-out not counted') : null);
       document.body.append(tip);
@@ -381,7 +375,6 @@ AE.crystal({
       const left = Math.min(Math.max(rc.left + rc.width / 2, tip.offsetWidth / 2 + 8), innerWidth - tip.offsetWidth / 2 - 8);
       tip.style.left = left + 'px'; tip.style.top = Math.max(top, tip.offsetHeight + 20) + 'px'; // above the taller of the bar and its ghost
     }
-    const fmtOt = (x) => { const hh = Math.floor(x), mm = Math.round((x - hh) * 60); return (hh ? hh + 'h ' : '') + (mm || !hh ? mm + 'm' : ''); };
     function splhCard() {
       const leaveOut = !!GM_getValue(GM_KEY, false);
       const card = h('div', { id: RP, class: 'sg' });
