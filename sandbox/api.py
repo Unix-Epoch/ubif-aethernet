@@ -251,6 +251,8 @@ def route(method, path, body):
         return 200, fixture('partner-downtime', [])
     if p == 'store-time-sheet/access':
         return 200, dict(fixture('timesheet-access', {}), allowed=True)
+    if p == 'reporting/metrics':  # Reports page: Portal's Power BI embed config (made up; only needs to exist for the page to draw)
+        return 200, {'url': 'https://example.invalid/reports', 'ctid': 'sandbox', 'reports': [], 'reportsFranchise': [], 'viewAllReports': 'https://example.invalid/reports'}
     if p == 'reporting/sales-history':  # fake Sales tab: a few made-up sales on each day asked for
         import datetime as dt
         day = dt.date.fromisoformat((q.get('sale_complete_start_date') or now())[:10])
