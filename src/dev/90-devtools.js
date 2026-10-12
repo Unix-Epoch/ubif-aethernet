@@ -234,6 +234,63 @@
       note(recording ? 'Recording: add the item in Portal\'s cart by hand, then copy the request below.' : 'Off.'),
       recOut);
 
+    // SharePoint download test: can this browser fetch Provoke's sheets itself (its own
+    // Microsoft sign-in, through Tampermonkey), so the sync can move off Garrett's Mac?
+    const SP = 'https://ubreakifix-my.sharepoint.com/personal/';
+    const SP_FILES = [['Lead texts (914)', 'c_boyd_ubreakifix_com', '02F051BD-D255-4E00-BC98-F621D65F3284'],
+      ['Price sheet (regional)', 'b_bauer_ubreakifix_com', '0D091B56-0D5D-4C6E-9C71-CC40C1132F5A']];
+    const gmGet = (url, opts = {}) => new Promise((resolve) => {
+      if (typeof GM_xmlhttpRequest !== 'function') { resolve({ error: 'GM_xmlhttpRequest not granted' }); return; }
+      const t0 = performance.now();
+      GM_xmlhttpRequest({ method: 'GET', url, headers: opts.headers || {}, responseType: opts.binary ? 'arraybuffer' : 'text', timeout: 30000,
+        onload: (r) => resolve({ status: r.status, finalUrl: r.finalUrl, ms: Math.round(performance.now() - t0), body: r.response }),
+        onerror: (r) => resolve({ error: 'network error' + (r && r.error ? ': ' + r.error : '') }),
+        ontimeout: () => resolve({ error: 'timed out after 30 s' }) });
+    });
+    const spOut = h('div', { class: 'out' });
+    let spResult = null;
+    async function spTest() {
+      spOut.replaceChildren(note('Testing…'));
+      const res = { version: AE_VERSION, at: new Date().toISOString(), browser: navigator.userAgent, files: [] };
+      for (const [label, owner, uid] of SP_FILES) {
+        const f = { label };
+        const v = await gmGet(SP + owner + "/_api/web/GetFileById('" + uid + "')?$select=ETag,TimeLastModified,Name", { headers: { accept: 'application/json;odata=nometadata' } });
+        f.versionCheck = { status: v.status, error: v.error, ms: v.ms, signIn: /login\.microsoftonline|\/_forms\//i.test(v.finalUrl || '') || undefined };
+        if (v.status === 200) try { const j = JSON.parse(v.body); Object.assign(f.versionCheck, { name: j.Name, modified: j.TimeLastModified }); } catch (_) { f.versionCheck.note = 'not JSON: ' + String(v.body).slice(0, 80); }
+        for (const [k, url] of [['download', SP + owner + '/_layouts/15/download.aspx?UniqueId=' + uid], ['downloadApi', SP + owner + "/_api/web/GetFileById('" + uid + "')/$value"]]) {
+          const d = await gmGet(url, { binary: true });
+          const b = d.body ? new Uint8Array(d.body) : null;
+          f[k] = { status: d.status, error: d.error, ms: d.ms, bytes: b ? b.length : undefined, isFile: b ? b[0] === 0x50 && b[1] === 0x4b : undefined,
+            signIn: /login\.microsoftonline|\/_forms\//i.test(d.finalUrl || '') || undefined };
+        }
+        try { // the page's own fetch, for comparison: expected to be blocked (CORS), which is why the grant is needed
+          const r = await fetch(SP + owner + "/_api/web/GetFileById('" + uid + "')?$select=ETag", { credentials: 'include', headers: { accept: 'application/json;odata=nometadata' } });
+          f.pageFetch = { status: r.status };
+        } catch (e) { f.pageFetch = { error: (e && e.message) || String(e) }; }
+        f.ok = f.versionCheck.status === 200 && ((f.download.status === 200 && f.download.isFile) || (f.downloadApi.status === 200 && f.downloadApi.isFile));
+        res.files.push(f);
+      }
+      res.ok = res.files.every((f) => f.ok);
+      spResult = res;
+      const line = (f) => {
+        const st = (x) => x.error ? x.error : 'HTTP ' + x.status + (x.signIn ? ' (sent to sign-in)' : '') + (x.bytes != null ? ' · ' + (x.bytes / 1024).toFixed(0) + ' KB' + (x.isFile ? '' : ' · not the file') : '') + (x.ms != null ? ' · ' + x.ms + ' ms' : '');
+        return h('div', { style: 'margin:6px 0' }, h('b', null, (f.ok ? '✓ ' : '✗ ') + f.label),
+          h('div', { class: 'note' }, 'Version check: ' + st(f.versionCheck) + (f.versionCheck.modified ? ' · edited ' + new Date(f.versionCheck.modified).toLocaleString() : '')),
+          h('div', { class: 'note' }, 'Download: ' + st(f.download) + ' | API download: ' + st(f.downloadApi)),
+          h('div', { class: 'note' }, 'Plain page fetch (expected to fail): ' + st(f.pageFetch)));
+      };
+      spOut.replaceChildren(h('div', { style: 'font-weight:600;color:' + (res.ok ? '#1d7a3a' : '#b42318') }, res.ok ? 'This browser can sync both sheets.' : "This browser can't download everything; send Garrett the results."), ...res.files.map(line));
+      AE.track('dev:spTest:' + (res.ok ? 'ok' : 'fail'));
+    }
+    const sharepoint = section('SharePoint download test',
+      row(btn('Test SharePoint access', spTest, { title: 'Checks and downloads the lead texts document and the Price sheet with this browser\'s Microsoft sign-in. Reads only.' }),
+        btn('Copy results', async () => {
+          if (!spResult) throw new Error('Run the test first.');
+          await navigator.clipboard.writeText(JSON.stringify(spResult, null, 1)); AE.toast('Copied', 'The test results are on the clipboard.', 'ok');
+        })),
+      note("Can this browser download Provoke's sheets by itself? Needed to move the sheet sync off Garrett's Mac. Reads only; nothing is changed or sent anywhere."),
+      spOut);
+
     const perf = section('Performance',
       row(btn('Page watcher cost', () => {
         const st = AE.domStats, secs = (performance.now() - st.since) / 1000;
@@ -262,7 +319,7 @@
     const card = h('div', { class: 'sg sg-card sg-dev', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' dev tools' },
       h('div', { class: 'head' }, h('span', { style: 'color:#e0761a;line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Dev tools'), h('span', { class: 'tag' }, 'DEV v' + AE_VERSION),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
-      h('div', { class: 'scroll' }, updates, notices, access, settings, macro, waymark, rows, scans, recorder, perf, general));
+      h('div', { class: 'scroll' }, updates, sharepoint, notices, access, settings, macro, waymark, rows, scans, recorder, perf, general));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-dev', onclick: (e) => { if (e.target === scrim) close(); } }, card);
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }

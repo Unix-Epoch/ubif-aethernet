@@ -116,6 +116,12 @@ def channel_raw() -> str:
     return gist_raw(DEV["gist_id"]) if CHANNEL == "dev" else gist_raw(DEMO["gist_id"]) if CHANNEL == "demo" else GIST_RAW
 
 
+# Dev builds only: the SharePoint download test in the dev tools (Provoke's sheets, off this Mac).
+DEV_GRANTS = """
+// @grant        GM_xmlhttpRequest
+// @connect      ubreakifix-my.sharepoint.com"""
+
+
 def header(version: str) -> str:
     dev = CHANNEL == "dev"
     raw = channel_raw()
@@ -145,7 +151,7 @@ def header(version: str) -> str:
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
-// @grant        GM_registerMenuCommand
+// @grant        GM_registerMenuCommand{DEV_GRANTS if dev else ""}
 // @run-at       document-start
 // @updateURL    {raw}/{META_FILENAME}
 // @downloadURL  {raw}/{FILENAME}
