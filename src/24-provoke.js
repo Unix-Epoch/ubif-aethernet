@@ -22,8 +22,8 @@
   since the arrival was created stops it ("already texted").
 
   Work orders (Oct 10, 2026): in Portal's Customer Chat panel on a WO page, a row
-  of the sheet's Special Circumstances texts (+ Parts Arrived) above Portal's own
-  quick replies; the one that fits the WO's status goes first (Ready for pickup ->
+  of the sheet's Special Circumstances texts (+ Parts Arrived) in place of Portal's
+  own quick replies; the one that fits the WO's status goes first (Ready for pickup ->
   PICK UP). A click only fills Portal's message box; Portal's Send sends it.
 */
 AE.crystal({
@@ -261,9 +261,14 @@ AE.crystal({
     }
 
     // ------------------------------------------------------------ WO chat panel
-    // On a WO page, a row of lead-sheet texts above Portal's own quick replies in its
-    // Customer Chat panel. A click only fills Portal's message box: Portal's Send arrow
-    // sends it (so Recitation and Auto-Waymark see an ordinary send).
+    // On a WO page, a row of lead-sheet texts in Portal's Customer Chat panel, in place of
+    // Portal's own quick replies (hidden while it's there; Garrett, Oct 12, 2026). A click
+    // only fills Portal's message box: Portal's Send arrow sends it (so Recitation and
+    // Auto-Waymark see an ordinary send).
+    // Portal's panel (ubif-components ChatPanel): a flex column of header, Recent jobs,
+    // messages, the quick replies (only once the customer has an active WO, so they can
+    // appear after the panel does), then a <form> around the message box. The row always
+    // sits right before that form.
     const CHAT_ID = 'ae-provoke-chat';
     const WO_TOP = ['pickup', 'partsArrived', 'partsOrdered', 'update', 'fmip']; // the chips; the rest of Special Circumstances go under More
     const WO_T = { pickup: /^pick ?up/i, partsArrived: /^parts arrived/i, partsOrdered: /^parts ordered/i, update: /^update$/i, fmip: /^turn off fmip/i };
@@ -278,7 +283,8 @@ AE.crystal({
     const PORTAL_CHIPS = /^(Need to Order|Parts on Order|Parts Arrived|Awaiting Device|Awaiting Approval|Repair Delayed)$/i;
 
     document.head.append(h('style', null, `
-      #${CHAT_ID} { margin:0 0 14px; padding:10px 10px 12px; border:1.5px solid var(--aui-primary, #8223d2); border-radius:10px; font-size:14px; line-height:1.3; }
+      [data-ae-provoke-hid] { display:none !important; }
+      #${CHAT_ID} { flex-shrink:0; margin:8px 1rem; padding:10px 10px 12px; border:1.5px solid var(--aui-primary, #8223d2); border-radius:10px; font-size:14px; line-height:1.3; }
       #${CHAT_ID} .hd { display:flex; gap:8px; align-items:center; font-size:13px; font-weight:600; margin-bottom:9px; }
       #${CHAT_ID} .hd .sp { flex:1; }
       #${CHAT_ID} .cs { display:flex; flex-wrap:wrap; gap:8px; position:relative; }
@@ -304,31 +310,31 @@ AE.crystal({
       try { box.setSelectionRange(text.length, text.length); } catch (_) { /* some inputs don't allow it */ }
     }
 
-    // Where the row goes: before Portal's quick replies, else right above the message box.
-    function chatSpot(box) {
-      const scope = box.closest('[role="dialog"], aside') || box.parentElement.parentElement.parentElement || document.body;
-      const chips = [...scope.querySelectorAll('button')].filter((b) => PORTAL_CHIPS.test(b.textContent.trim()));
-      if (chips.length) {
-        let c = chips[0].parentElement;
-        while (c && !chips.every((b) => c.contains(b))) c = c.parentElement;
-        if (c && c.contains(box)) { // the chips and the box share a wrapper: go before the chips' own row
-          let row = chips[0];
-          while (row.parentElement !== c) row = row.parentElement;
-          return { parent: c, before: row };
-        }
-        if (c) return { parent: c.parentElement, before: c };
+    // Keep the row right before Portal's message form, and Portal's quick replies hidden while it's there.
+    function place(row, box) {
+      const form = box.closest('form');
+      if (!form || !form.parentElement) return false;
+      const panel = form.parentElement;
+      if (row.parentElement !== panel || row.nextElementSibling !== form) panel.insertBefore(row, form);
+      // Portal's quick replies end up just before the row (React adds them before the form, the row then moves below them).
+      const el = row.previousElementSibling;
+      if (el && !el.hasAttribute('data-ae-provoke-hid')) {
+        const bs = el.querySelectorAll('button');
+        if (bs.length && [...bs].every((b) => PORTAL_CHIPS.test(b.textContent.trim()))) el.setAttribute('data-ae-provoke-hid', '');
       }
-      let row = box;
-      while (row.parentElement && row.parentElement !== scope && row.parentElement.children.length === 1) row = row.parentElement;
-      return { parent: row.parentElement, before: row };
+      return true;
+    }
+    function unplace() {
+      document.getElementById(CHAT_ID)?.remove();
+      document.querySelectorAll('[data-ae-provoke-hid]').forEach((el) => el.removeAttribute('data-ae-provoke-hid'));
     }
 
     // Built each time the panel opens, so the status is current (a WO just set to Ready for pickup).
     let chatStatus = null, chatBuilding = false;
     async function chat() {
       const old = document.getElementById(CHAT_ID), woId = woIdNow(), box = woId && msgBox();
-      if (!box) { old?.remove(); return; }
-      if (old && old.dataset.wo === woId) return;
+      if (!box || box.disabled || box.readOnly) { if (old) unplace(); return; } // texting off for this customer: Portal's own message shows
+      if (old && old.dataset.wo === woId) { place(old, box); return; }
       if (chatBuilding) return;
       chatBuilding = true;
       try {
@@ -339,10 +345,9 @@ AE.crystal({
         const wo = (j && j.workorder) || AE.unwrap(j) || {};
         const name = wo.workorderStatusName || (wo.WorkorderStatus && wo.WorkorderStatus.name) || (wo.workorderStatus && wo.workorderStatus.name) || '';
         chatStatus = { key: byStatus(name, Number(wo.workorderStatusId)), name };
-        const spot = chatSpot(b2);
-        if (!spot.parent) return;
-        document.getElementById(CHAT_ID)?.remove();
-        spot.parent.insertBefore(renderChat(items, leads, woId), spot.before);
+        unplace();
+        const row = renderChat(items, leads, woId);
+        if (!place(row, b2)) row.remove();
       } catch (_) { /* no row rather than a broken one */ } finally { chatBuilding = false; }
     }
 
@@ -390,7 +395,7 @@ AE.crystal({
     AE.every(1000, box);
     AE.every(1000, chat);
     AE.onDom(() => { // the drawer's column, the frame it appears (2.23); box() keeps its own "decided" state
-      if (woIdNow()) { if (!document.getElementById(CHAT_ID)) chat(); } else document.getElementById(CHAT_ID)?.remove();
+      if (woIdNow()) chat(); else if (document.getElementById(CHAT_ID)) unplace();
       if (!arrivalId()) { document.getElementById(BOX_ID)?.remove(); return; }
       const b = document.getElementById(BOX_ID);
       if (!b || !b.isConnected) box();
