@@ -220,7 +220,9 @@ def route(method, path, body):
     if p == 'auth/store-options':
         return 200, fixture('store-options', {'stores': []})
     if p == 'features':
-        return 200, fixture('features', {})
+        f = fixture('features', {})
+        f.setdefault('layout', {})['reports_metrics_enabled'] = True  # Dashboard's metrics cards (Sales, Completed repairs), on at stores since the fixture was captured
+        return 200, f
     if p == 'notification/get-partner-downtime':
         return 200, fixture('partner-downtime', [])
     if p == 'store-time-sheet/access':
@@ -444,7 +446,11 @@ def route(method, path, body):
         return 200, {'salesOrder': {'salesId': so}}
 
     # ---- harmless empties for the dashboard and header
-    EMPTY = {'store-metrics/overview': {}, 'twilio/unread-count': {'count': 0}, 'training/assigned': [], 'store-metrics/reporting': {}}
+    if p in ('store-metrics/overview', 'store-metrics/reporting'):  # fake KPI tiles (Dashboard + Reports)
+        m = s['settings'].get('metrics') or {'todaysSales': {'actual': 1234.5, 'goal': 2500}, 'mtdSales': {'actual': 21840, 'goal': 52000},
+                                            'dropOffs': {'actual': 9, 'goal': 12}, 'completedRepairs': {'actual': 7, 'goal': 10}}
+        return 200, dict(m, asOf=now())
+    EMPTY = {'twilio/unread-count': {'count': 0}, 'training/assigned': []}
     if p in EMPTY:
         return 200, EMPTY[p]
     if re.fullmatch(r'notifications/stores/\d+', p):
