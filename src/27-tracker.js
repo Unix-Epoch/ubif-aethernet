@@ -141,7 +141,18 @@ AE.tracker = (() => {
     return { wo: Number(wo), inList: !!row, plain: x.plain, card: x.card, sealedParts, hash: x.hash, detailBytes: x.detailBytes, sealedBytes: x.sealed.length, cardBytes: x.cardSealed.length };
   }
 
-  return { configured, scan, dryRun, last: () => GM_getValue(LAST_KEY, null), plainPart, cardOf, scrub, crypto: C };
+  // The store's RFP total, cached 2 minutes (Master's Mend → RFP total).
+  let rfpCache = null;
+  async function rfp() {
+    if (!configured()) return null;
+    if (rfpCache && Date.now() - rfpCache.at < 120000) return rfpCache.data;
+    const p = await AE.profile();
+    const data = await call('GET', '/v1/' + p.storeId + '/tracker/rfp');
+    rfpCache = { at: Date.now(), data };
+    return data;
+  }
+
+  return { configured, scan, dryRun, rfp, last: () => GM_getValue(LAST_KEY, null), plainPart, cardOf, scrub, crypto: C };
 })();
 
 if (AE.tracker.configured()) {

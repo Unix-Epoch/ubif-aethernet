@@ -18,7 +18,8 @@
                                                  (new / changed / stale / missing), claimed for
                                                  5 minutes so other browsers skip them.
     POST /v1/:store/tracker/wo/:wo { hash, trigger, plain, sealed, card, by }   one WO's detail
-    POST /v1/:store/tracker/wo/:wo/gone { by }   Portal answers 404 for it: recorded closed.
+    POST /v1/:store/tracker/wo/:wo/gone { by }   Portal answers 404 for it: recorded closed after a second 404.
+    GET  /v1/:store/tracker/rfp                  the store's RFP total (count, value, complete/incomplete split, last scan)
 
   `plain` (readable on the server; never customer details):
     { workorder: { workorderId, storeId, statusId, status, programId, program, device,
@@ -186,6 +187,19 @@ async function storeApi(req, env, url, store) {
       .bind(store, at, by, rows.length, fresh, changed, out.length, note));
     for (let i = 0; i < stmts.length; i += 100) await T.batch(stmts.slice(i, i + 100));
     return json({ need: out, more: need.length > out.length, note });
+  }
+
+  // The store's RFP total (Master's Mend → RFP total on the Sales card): one sum, no WO details.
+  if (path === '/rfp' && req.method === 'GET') {
+    const r = await T.prepare(`SELECT COUNT(*) AS count, ROUND(COALESCE(SUM(cart_value), 0), 2) AS value,
+        SUM(CASE WHEN service_outcome = 'Completed' THEN 1 ELSE 0 END) AS complete, ROUND(COALESCE(SUM(CASE WHEN service_outcome = 'Completed' THEN cart_value END), 0), 2) AS complete_value,
+        SUM(CASE WHEN service_outcome IS NOT NULL AND service_outcome != 'Completed' THEN 1 ELSE 0 END) AS incomplete,
+        ROUND(COALESCE(SUM(CASE WHEN service_outcome IS NOT NULL AND service_outcome != 'Completed' THEN cart_value END), 0), 2) AS incomplete_value,
+        SUM(CASE WHEN service_outcome IS NULL THEN 1 ELSE 0 END) AS unknown
+      FROM workorders WHERE store = ? AND is_open = 1 AND status_id = 13`).bind(store).first();
+    const sc = await T.prepare('SELECT MAX(at) AS at FROM scans WHERE store = ?').bind(store).first();
+    return json({ count: r.count || 0, value: r.value || 0, complete: { count: r.complete || 0, value: r.complete_value || 0 },
+      incomplete: { count: r.incomplete || 0, value: r.incomplete_value || 0 }, unknown: r.unknown || 0, updatedAt: (sc && sc.at) || null });
   }
 
   const wm = path.match(/^\/wo\/(\d{1,12})(\/gone)?$/);

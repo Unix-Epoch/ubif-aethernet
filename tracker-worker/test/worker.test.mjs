@@ -168,6 +168,12 @@ const mig = readFileSync('migrations/2026-10-12.sql', 'utf8').split(';').map((x)
 await env.TR.prepare(mig).run();
 assert.equal((await env.TR.prepare('SELECT cart_value FROM workorders WHERE wo = 5003').first()).cart_value, 282);
 
+// --- the store's RFP total (Sales card): one sum, no WO details
+const rt = (await call('GET', '/v1/914/tracker/rfp')).j;
+assert.equal(rt.count, 1); assert.equal(rt.value, 282); assert.equal(rt.incomplete.count, 1); assert.equal(rt.complete.count, 0); assert.ok(rt.updatedAt);
+assert.ok(!JSON.stringify(rt).includes('v1.'), 'no sealed data in the total');
+assert.equal((await call('GET', '/v1/326/tracker/rfp')).j.count, 0);
+
 // --- retention: nothing trimmed without cold storage; with TRIM_WITHOUT_ARCHIVE the latest snapshot per WO stays
 await env.TR.prepare("UPDATE snapshots SET fetched_at = '2026-01-01T00:00:00Z'").run();
 await env.TR.prepare("UPDATE changes SET changed_at = '2026-01-01T00:00:00Z'").run();

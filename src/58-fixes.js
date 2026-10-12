@@ -148,6 +148,7 @@ AE.fixesInfo = [
       paint();
       return box;
     }],
+  ['rfpTotal', 'RFP total on Today\'s sales', 'The Today\'s sales card (Dashboard and Reports) also shows the store\'s RFP total: in parentheses after the sales figure, and as a striped section on its bar. Hover the stripes for the breakdown.'],
   ['reportsRetry', 'Reports page help', 'If Portal\'s Reports page is stuck loading, a warning explains the usual cause (an ad blocker like uBlock Origin) and how to fix it. The details are included if you send a bug report.'],
   ['woSort', 'Sort by any column', 'Every column of the Work orders list can be sorted. Most sort across all pages; a few that Portal can\'t sort (like Customer) sort the page you\'re on.'],
   ['appcuesBoxes', 'Collapse announcement boxes', 'Adds the ability to collapse or dismiss the large white boxes that show up on certain WOs; they\'ll either be dismissed for the day or indefinitely, but they can always be restored with the icon on the bottom left of your screen.'],
@@ -691,6 +692,76 @@ AE.crystal({
         setInterval(() => { if (on) paint(); }, 30000);
         paint();
       },
+      /*
+        rfpTotal: Portal's Today's sales card (component VT in ubif-check-in: SimpleCard > [title row,
+        [data-aui="progress-bar"] > [label "$cur / $goal", track > 2 absolutely placed bars]]) on the
+        Dashboard's Metrics overview and the Reports KPIs. Adds the store's RFP total (work order tracker:
+        RFP WOs' cart lines before tax, Partner Credit Tax Exempt ignored): "($1,050)" after the sales
+        figure, and a striped section after Portal's own fill. React owns the label's text node, so it's
+        hidden (font-size 0) and an Aethernet copy is shown instead, re-read from React's text every time;
+        Portal's styled rule paints the track's *last* child solid, so the stripes go before it.
+      */
+      rfpTotal() {
+        if (!AE.tracker || !AE.tracker.configured()) return;
+        const L = 'ae-rfp-label', HATCH = 'ae-rfp-hatch', TIP = 'ae-rfp-tip';
+        document.head.append(AE.h('style', null, `
+          .${HATCH} { position:absolute; top:0; bottom:0; z-index:1; border-radius:0 999px 999px 0; opacity:.6; cursor:help;
+            background:repeating-linear-gradient(-45deg, var(--aui-primary, #8223d2) 0 5px, transparent 5px 10px); background-color:transparent !important; }
+          .${L} .ae-rfp-amt { color:var(--aui-primary, #8223d2); }
+          #${TIP} { position:fixed; z-index:2147483646; transform:translateX(-50%); background:#1a1c1e; color:#fff; font:13px/1.45 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif;
+            padding:9px 12px; border-radius:8px; white-space:nowrap; box-shadow:0 4px 14px #0004; pointer-events:none; }
+        `));
+        const money = (n) => '$' + Math.round(n).toLocaleString();
+        let data = null, loading = false;
+        const load = () => { if (loading) return; loading = true; AE.tracker.rfp().then((d) => { data = d; paint(); }).catch((e) => console.warn('[' + AE_NAME + '] RFP total:', e.message || e)).finally(() => { loading = false; }); };
+        const salesBars = () => [...document.querySelectorAll('[data-aui="progress-bar"]')].filter((bar) => {
+          const card = bar.parentElement && bar.parentElement.parentElement;
+          const title = card && card.firstElementChild;
+          return title && /today.?s sales/i.test(title.textContent || '');
+        });
+        function tip(show, hatch) {
+          document.getElementById(TIP)?.remove();
+          if (!show || !data) return;
+          const r = hatch.getBoundingClientRect(), ago = data.updatedAt ? Math.max(0, Math.round((Date.now() - Date.parse(data.updatedAt)) / 60000)) : null;
+          const t = AE.h('div', { id: TIP, role: 'tooltip' },
+            AE.h('b', null, 'RFP total: ' + money(data.value)), AE.h('br'),
+            data.count + ' ready for pickup · ' + data.complete.count + ' complete (' + money(data.complete.value) + ') · ' + data.incomplete.count + ' incomplete (' + money(data.incomplete.value) + ')'
+              + (data.unknown ? ' · ' + data.unknown + ' not known yet' : ''), AE.h('br'),
+            AE.h('span', { style: 'opacity:.7' }, 'Before tax, partner credits ignored' + (ago != null ? ' · updated ' + (ago < 1 ? 'just now' : ago + ' min ago') : '')));
+          t.style.left = (r.left + r.width / 2) + 'px'; t.style.top = (r.bottom + 10) + 'px';
+          document.body.append(t);
+        }
+        function paint() {
+          for (const bar of salesBars()) {
+            const label = bar.firstElementChild, track = bar.children[1];
+            if (!label || !track) continue;
+            // React's own text (everything in the label but our copy).
+            const portalText = [...label.childNodes].filter((n) => !(n.nodeType === 1 && n.classList.contains(L))).map((n) => n.textContent).join('').trim();
+            const m = portalText.match(/^(\$[\d,.]+)\s*\/\s*(.+)$/);
+            if (!m || !data) continue;
+            if (!label.dataset.aeRfpSize) { label.dataset.aeRfpSize = getComputedStyle(label).fontSize; label.style.fontSize = '0'; label.style.justifyContent = 'flex-start'; label.style.gap = '0'; } // the label is a space-between flex row
+            let copy = label.querySelector('.' + L);
+            if (!copy) { copy = AE.h('span', { class: L }); label.append(copy); }
+            copy.style.fontSize = label.dataset.aeRfpSize;
+            const want = m[1] + ' (' + money(data.value) + ') / ' + m[2];
+            if (copy.textContent !== want) { copy.replaceChildren(m[1] + ' ', AE.h('span', { class: 'ae-rfp-amt' }, '(' + money(data.value) + ')'), ' / ' + m[2]); }
+            // Stripes: from the end of Portal's fill, as long as the RFP total (stopping at the bar's end).
+            const cur = Number(m[1].replace(/[^\d.]/g, '')), goal = Number(m[2].replace(/[^\d.]/g, ''));
+            let h = track.querySelector('.' + HATCH);
+            if (!(goal > 0) || !(data.value > 0)) { h && h.remove(); continue; }
+            const p = Math.min(1, cur / goal), q = Math.max(0, Math.min(1 - p, data.value / goal));
+            if (!h) { h = AE.h('div', { class: HATCH, onmouseenter: (e) => tip(true, e.currentTarget), onmouseleave: () => tip(false) }); }
+            const fill = [...track.children].filter((c) => c !== h).pop(); // Portal's sales fill (its last child)
+            if (fill && (h.parentElement !== track || h.nextElementSibling !== fill)) track.insertBefore(h, fill);
+            const left = (p * 100).toFixed(2) + '%', width = (q * 100).toFixed(2) + '%'; // only when changed: no extra page mutations
+            if (h.style.left !== left) h.style.left = left;
+            if (h.style.width !== width) h.style.width = width;
+          }
+        }
+        AE.onDom(() => { if (salesBars().length) { if (!data) load(); else paint(); } });
+        AE.every(120000, () => { if (salesBars().length) load(); });
+      },
+
       reportsRetry() {
         const PATH = /^\/reporting\/metrics\/?$/, WAIT = 8000, CARD = 'ae-reports-warn';
         let timer = null, lastPath = '';
