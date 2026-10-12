@@ -34,7 +34,7 @@ const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
     crystals: AE_DEMO ? { cleaningRate: true, autoClose: true, glamour: true }
-      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, checkinDrafts: true, leadReplies: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, fixes: true },
+      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, checkinDrafts: true, leadReplies: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, timeSheet: true, fixes: true },
     // Swiftcast: offer Dualcast (all of a device's cleanings at once); refreshLabor: null = follow
     // AE.REFRESH_LABOR_DEFAULT (only a user's own choice is stored, so the default can change in a release).
     autoClose: { dualcast: true, refreshLabor: null },

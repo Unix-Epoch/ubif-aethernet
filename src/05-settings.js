@@ -24,6 +24,7 @@
     ]),
     ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],
+    ['timeSheet', 'Tactician', 'The Store time sheet, one store at a time: pick a store to filter Portal\'s punches, and see a weekly breakdown of everyone\'s hours with overtime (over 40 a week, counting every store they worked at).'],
     ['buybacks', 'Bountiful Yield', 'Set of handy "add all" buttons for setting up your Buybacks and RMAs.'],
     ['printLabels', 'Quick Synthesis', '\'Print All\' for your Receiving. No longer shall you have to manually print 20+ generic SKU labels!'],
     ]),
