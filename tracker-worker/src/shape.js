@@ -8,7 +8,7 @@
     cardOf     the sealed search card: name, customer id, phones, emails, IMEI, serial, claim
 */
 export const scanRow = (r) => ({ wo: r.workorderId, statusId: r.workorderStatusId, status: r.workorderStatusName, programId: r.programId, program: r.programName,
-  device: (r.deviceCatalog && r.deviceCatalog.name) || null, outcome: r.serviceOutcome || null, createdAt: r.createdAt, updatedAt: r.updatedAt });
+  device: (r.deviceCatalog && r.deviceCatalog.name) || null, outcome: OUTCOMES.includes(r.serviceOutcome) ? r.serviceOutcome : null, createdAt: r.createdAt, updatedAt: r.updatedAt });
 
 // Passcodes don't belong in a history: removed wherever they appear.
 export function scrub(v) {
@@ -22,6 +22,20 @@ export function scrub(v) {
 }
 export const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o && o[k] !== undefined).map((k) => [k, o[k]]));
 
+/*
+  The repair's outcome. Authoritative: the WO's outcome attribute (WorkorderAttributes type 22), set when
+  the repair is marked Completed / Incomplete / Declined / No issue found; a second type-22 value is the
+  reason ("Failed post-repair diagnostics", "Parts aren't available", ...). Portal's list field
+  serviceOutcome is often blank (54 Completed repairs in the Mac history), so it's only a fallback.
+*/
+const OUTCOMES = ['Completed', 'Incomplete', 'Declined', 'No issue found'];
+export function outcomeOf(w, listRow) {
+  const vals = ((w && w.WorkorderAttributes) || []).filter((a) => Number(a.workorderAttributeTypeId) === 22).map((a) => String(a.value || '').trim()).filter(Boolean);
+  const outcome = vals.find((v) => OUTCOMES.includes(v)) || (listRow && OUTCOMES.includes(listRow.serviceOutcome) ? listRow.serviceOutcome : null);
+  const reason = vals.find((v) => !OUTCOMES.includes(v)) || null;
+  return { outcome, outcomeReason: reason ? reason.slice(0, 120) : null };
+}
+
 export function plainPart(d, listRow) {
   const w = (d.workorder && d.workorder.workorder) || {};
   const bin = w.WorkorderBinDeviceLocation && w.WorkorderBinDeviceLocation.WorkorderBin;
@@ -32,7 +46,7 @@ export function plainPart(d, listRow) {
       programId: w.programId, program: (w.Program && w.Program.name) || (listRow && listRow.programName) || null,
       device: (cd.DeviceCatalog && cd.DeviceCatalog.name) || (listRow && listRow.deviceCatalog && listRow.deviceCatalog.name) || cd.name || null,
       bin: (bin && (bin.name || bin.binName || bin.label)) || (listRow && listRow.locationBin) || null,
-      rfpAt: (listRow && listRow.rfpWorkorderStatusDate) || null, outcome: (listRow && listRow.serviceOutcome) || null, total: listRow ? listRow.workorderTotal : null,
+      rfpAt: (listRow && listRow.rfpWorkorderStatusDate) || null, ...outcomeOf(w, listRow), total: listRow ? listRow.workorderTotal : null,
       ...pick(w, ['createdAt', 'updatedAt', 'nextUpdate', 'slaEndTime', 'createdBy', 'updatedBy', 'arrivalId', 'clientId', 'crossStoreRefWorkorderId', 'warrantyWorkorderId', 'iqcComplete', 'csuCartId', 'csuSalesOrderId']),
     },
     auditTrail: (Array.isArray(d.audit_trail) ? d.audit_trail : []).map((a) => ({ statusId: a.workorderStatusId, createdAt: a.createdAt, createdBy: a.createdBy, completed: a.completed })),

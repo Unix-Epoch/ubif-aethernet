@@ -150,9 +150,18 @@ ok(await call('POST', '/v1/914/tracker/wo/5003', { hash: 'pc1', plain: pp, seale
 const v = await env.TR.prepare('SELECT cart_value, service_outcome FROM workorders WHERE wo = 5003').first();
 assert.equal(v.cart_value, 282); assert.equal(v.service_outcome, 'Incomplete');
 const st2 = (await admin('owner@x.com', 'GET', '/stores')).j.stores[0];
-assert.equal(st2.rfp_value, 282); assert.equal(st2.rfp_other, 1); assert.equal(st2.rfp_complete, 0);
+assert.equal(st2.rfp_value, 282); assert.equal(st2.rfp_other, 1); assert.equal(st2.rfp_complete, 0); assert.equal(st2.rfp_unknown, 0);
 assert.equal((await admin('owner@x.com', 'GET', '/wos?store=914&status=13&outcome=other')).j.wos.length, 1);
 assert.equal((await admin('owner@x.com', 'GET', '/wos?store=914&status=13&outcome=complete')).j.wos.length, 0);
+// the outcome comes from the WO's own attribute; a blank list field doesn't count as incomplete
+const S = await import('../src/shape.js');
+assert.deepEqual(S.outcomeOf({ WorkorderAttributes: [{ workorderAttributeTypeId: 17, value: '0' }, { workorderAttributeTypeId: 22, value: 'Completed' }] }, { serviceOutcome: '' }), { outcome: 'Completed', outcomeReason: null });
+assert.deepEqual(S.outcomeOf({ WorkorderAttributes: [{ workorderAttributeTypeId: 22, value: 'Failed post-repair diagnostics' }, { workorderAttributeTypeId: 22, value: 'Incomplete' }] }, null), { outcome: 'Incomplete', outcomeReason: 'Failed post-repair diagnostics' });
+assert.deepEqual(S.outcomeOf({}, { serviceOutcome: '' }), { outcome: null, outcomeReason: null });
+// a scan's list value never overwrites the outcome from the WO's detail
+await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
+await call('POST', '/v1/914/tracker/scan', { rows: [Object.assign({}, rows[2], { outcome: 'Completed' })].concat(rows2.slice(0, 1)) });
+assert.equal((await env.TR.prepare('SELECT service_outcome FROM workorders WHERE wo = 5003').first()).service_outcome, 'Incomplete');
 // the migration's SQL gives the same value
 await env.TR.prepare('UPDATE workorders SET cart_value = NULL WHERE wo = 5003').run();
 const mig = readFileSync('migrations/2026-10-12.sql', 'utf8').split(';').map((x) => x.replace(/--[^\n]*/g, '').trim()).filter((x) => x.startsWith('UPDATE'))[0];

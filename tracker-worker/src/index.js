@@ -158,7 +158,7 @@ async function storeApi(req, env, url, store) {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
           ON CONFLICT (store, wo) DO UPDATE SET store_name = COALESCE(excluded.store_name, store_name), status_id = COALESCE(excluded.status_id, status_id),
             status_name = COALESCE(excluded.status_name, status_name), program_id = COALESCE(excluded.program_id, program_id), program_name = COALESCE(excluded.program_name, program_name),
-            device = COALESCE(excluded.device, device), service_outcome = COALESCE(excluded.service_outcome, service_outcome), created_at = COALESCE(excluded.created_at, created_at), api_updated_at = COALESCE(excluded.api_updated_at, api_updated_at),
+            device = COALESCE(excluded.device, device), service_outcome = COALESCE(service_outcome, excluded.service_outcome), created_at = COALESCE(excluded.created_at, created_at), api_updated_at = COALESCE(excluded.api_updated_at, api_updated_at),
             last_list_seen_at = excluded.last_list_seen_at, missing_since = NULL, gone_seen_at = NULL`)
         .bind(store, r.wo, storeName, r.statusId, r.status, r.programId, r.program, r.device, r.outcome, r.createdAt, r.updatedAt, at, at));
     }
@@ -328,8 +328,9 @@ export async function trackerAdmin(req, env, url, path, email) {
         SUM(CASE WHEN is_open = 1 AND status_id = 13 THEN COALESCE(cart_value, 0) ELSE 0 END) AS rfp_value,
         SUM(CASE WHEN is_open = 1 AND status_id = 13 AND service_outcome = 'Completed' THEN 1 ELSE 0 END) AS rfp_complete,
         SUM(CASE WHEN is_open = 1 AND status_id = 13 AND service_outcome = 'Completed' THEN COALESCE(cart_value, 0) ELSE 0 END) AS rfp_complete_value,
-        SUM(CASE WHEN is_open = 1 AND status_id = 13 AND COALESCE(service_outcome, '') != 'Completed' THEN 1 ELSE 0 END) AS rfp_other,
-        SUM(CASE WHEN is_open = 1 AND status_id = 13 AND COALESCE(service_outcome, '') != 'Completed' THEN COALESCE(cart_value, 0) ELSE 0 END) AS rfp_other_value, MAX(last_detail_at) AS last_detail_at FROM workorders GROUP BY store ORDER BY store`).all();
+        SUM(CASE WHEN is_open = 1 AND status_id = 13 AND service_outcome IS NOT NULL AND service_outcome != 'Completed' THEN 1 ELSE 0 END) AS rfp_other,
+        SUM(CASE WHEN is_open = 1 AND status_id = 13 AND service_outcome IS NOT NULL AND service_outcome != 'Completed' THEN COALESCE(cart_value, 0) ELSE 0 END) AS rfp_other_value,
+        SUM(CASE WHEN is_open = 1 AND status_id = 13 AND service_outcome IS NULL THEN 1 ELSE 0 END) AS rfp_unknown, MAX(last_detail_at) AS last_detail_at FROM workorders GROUP BY store ORDER BY store`).all();
     const scans = new Map((await T.prepare('SELECT store, MAX(at) AS at FROM scans GROUP BY store').all()).results.map((s) => [s.store, s.at]));
     return json({ stores: r.results.filter((s) => canSee(me, s.store)).map((s) => Object.assign(s, { last_scan_at: scans.get(s.store) || null })) }, 200, false);
   }
@@ -340,7 +341,7 @@ export async function trackerAdmin(req, env, url, path, email) {
     else if (!full) { if (!me.stores.length) return json({ wos: [] }, 200, false); where.push('store IN (' + me.stores.map(() => '?').join(',') + ')'); args.push(...me.stores); }
     if (q.get('open') === '1') where.push('is_open = 1'); else if (q.get('open') === '0') where.push('is_open = 0');
     if (q.get('status')) { where.push('status_id = ?'); args.push(int(q.get('status'))); }
-    if (q.get('outcome') === 'complete') where.push("service_outcome = 'Completed'"); else if (q.get('outcome') === 'other') where.push("COALESCE(service_outcome, '') != 'Completed'");
+    if (q.get('outcome') === 'complete') where.push("service_outcome = 'Completed'"); else if (q.get('outcome') === 'other') where.push("service_outcome IS NOT NULL AND service_outcome != 'Completed'"); else if (q.get('outcome') === 'unknown') where.push('service_outcome IS NULL');
     if (q.get('since')) { where.push('COALESCE(api_updated_at, first_seen_at) >= ?'); args.push(clean(q.get('since'), 40)); }
     const limit = Math.min(int(q.get('limit')) || 500, 5000), offset = int(q.get('offset')) || 0;
     const r = await T.prepare(`SELECT store, wo, store_name, status_id, status_name, program_id, program_name, device, created_at, api_updated_at, is_open, first_seen_at,
