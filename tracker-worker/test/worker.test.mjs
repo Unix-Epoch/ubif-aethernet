@@ -168,6 +168,20 @@ const mig = readFileSync('migrations/2026-10-12.sql', 'utf8').split(';').map((x)
 await env.TR.prepare(mig).run();
 assert.equal((await env.TR.prepare('SELECT cart_value FROM workorders WHERE wo = 5003').first()).cart_value, 282);
 
+// --- writes: a scan of an unchanged list rewrites nothing; a status change rewrites one row and asks for it
+await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
+const listNow = (await env.TR.prepare("SELECT wo, status_id, status_name, program_id, program_name, api_updated_at FROM workorders WHERE store = 914 AND is_open = 1").all()).results
+  .map((r) => ({ wo: r.wo, statusId: r.status_id, status: r.status_name, programId: r.program_id, program: r.program_name, updatedAt: r.api_updated_at }));
+await call('POST', '/v1/914/tracker/scan', { rows: listNow }); // clears any missing flags
+await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
+s = await call('POST', '/v1/914/tracker/scan', { rows: listNow });
+assert.equal(s.j.written, 0, 'unchanged list → no row writes');
+await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run(); // the scan above claimed stale WOs for their hourly refresh
+const moved = listNow.map((r, i) => (i === 0 ? Object.assign({}, r, { statusId: 13, status: 'Ready for pickup' }) : r));
+s = await call('POST', '/v1/914/tracker/scan', { rows: moved });
+assert.equal(s.j.written, 1); assert.ok(s.j.need.some((n) => n.wo === moved[0].wo && n.why === 'changed'), 'a status change alone asks for the detail');
+await env.TR.prepare('UPDATE workorders SET status_id = 2, status_name = ? WHERE store = 914 AND wo = ?').bind('Work in progress', moved[0].wo).run(); // put it back for the totals below
+
 // --- the store's RFP total (Sales card): one sum, no WO details
 const rt = (await call('GET', '/v1/914/tracker/rfp')).j;
 assert.equal(rt.count, 1); assert.equal(rt.value, 282); assert.equal(rt.incomplete.count, 1); assert.equal(rt.complete.count, 0); assert.ok(rt.updatedAt);

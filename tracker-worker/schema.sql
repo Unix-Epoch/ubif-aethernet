@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS workorders (
   device TEXT,                         -- model only (no IMEI/serial)
   created_at TEXT, api_updated_at TEXT,
   is_open INTEGER NOT NULL DEFAULT 1,
-  first_seen_at TEXT, last_list_seen_at TEXT, missing_since TEXT,
+  first_seen_at TEXT, last_list_seen_at TEXT, missing_since TEXT,   -- last_list_seen_at: last time the list changed it (not every scan)
   last_detail_at TEXT, last_hash TEXT,
   claimed_until TEXT,                  -- a browser is fetching this WO's detail (others skip it)
   closed_at TEXT, closed_reason TEXT,
