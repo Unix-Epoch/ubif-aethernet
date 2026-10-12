@@ -310,8 +310,17 @@ AE.crystal({
         background:color-mix(in srgb, var(--aui-primary, #8223d2) 14%, transparent); pointer-events:none; }
       #${RP} .bar { position:relative; }
       #${RP} .ghoststat .big { color:color-mix(in srgb, var(--aui-primary, #8223d2) 70%, var(--aui-on-surface, #1a1c1e)); }
-      #${RP} .bar { width:100%; border-radius:3px 3px 0 0; background:var(--aui-primary, #8223d2); }
-      #${RP} .bar.est { background:repeating-linear-gradient(-45deg, var(--aui-primary, #8223d2) 0 5px, transparent 5px 9px); opacity:.7; }
+      #${RP} .bar { width:100%; border-radius:3px 3px 0 0; color:var(--aui-primary, #8223d2); background:currentColor; }
+      /* At or over the target: green. Just below it (within 10%) or would have made it with the RFP table picked up: yellow. Otherwise red. */
+      #${RP} .bar.good { color:var(--aui-status-success, #136d31); } #${RP} .bar.near { color:#d6a000; } #${RP} .bar.miss { color:var(--aui-status-error, #b91a24); }
+      #${RP} .bar.est { background:repeating-linear-gradient(-45deg, currentColor 0 5px, transparent 5px 9px); opacity:.75; }
+      #${RP}-tip { position:fixed; z-index:2147483646; transform:translate(-50%, calc(-100% - 12px)); min-width:220px; max-width:340px; padding:10px 12px; border-radius:12px;
+        background:#1a1c1e; color:#fff; font:13px/1.45 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; box-shadow:0 6px 18px #0005; pointer-events:none; }
+      #${RP}-tip::after { content:''; position:absolute; left:50%; bottom:-7px; margin-left:-7px; border:7px solid transparent; border-bottom:0; border-top-color:#1a1c1e; } /* the bubble's tail, down to the bar */
+      #${RP}-tip .t { font-weight:700; margin-bottom:2px; } #${RP}-tip .s { opacity:.75; font-size:12px; margin-bottom:6px; }
+      #${RP}-tip table { width:100%; border-collapse:collapse; margin:0; } #${RP}-tip td { padding:2px 0; border:0; font-variant-numeric:tabular-nums; } #${RP}-tip td + td { text-align:right; padding-left:12px; white-space:nowrap; }
+      #${RP}-tip .otb { display:inline-block; background:#b91a24; color:#fff; border-radius:4px; padding:0 5px; font-size:11px; font-weight:700; margin-left:6px; }
+      #${RP}-tip .gmt { opacity:.6; font-size:11px; margin-left:4px; } #${RP}-tip .n { opacity:.7; font-size:12px; margin-top:6px; }
       #${RP} .bar.none { background:var(--aui-outline, #c6c6ca); }
       #${RP} .col:hover .bar { filter:brightness(1.15); }
       #${RP} .axis { display:flex; justify-content:space-between; font-size:12px; margin-top:4px; }
@@ -331,19 +340,48 @@ AE.crystal({
       const [sd, ps, gm, rd] = await Promise.all([AE.tracker.call('GET', '/v1/' + store + '/tracker/sales/days?from=' + from + '&to=' + to), T.punches(from, to, fresh), T.gmIds(),
         AE.tracker.call('GET', '/v1/' + store + '/tracker/rfp/days?from=' + from + '&to=' + to).catch(() => ({ days: [] }))]);
       const today = T.ymd(new Date()), days = new Map();
-      for (let d = new Date(f); T.ymd(d) <= to; d.setDate(d.getDate() + 1)) days.set(T.ymd(d), { day: T.ymd(d), sales: null, source: null, hours: 0, gmHours: 0, open: 0, rfp: 0, rfpCount: 0 });
+      for (let d = new Date(f); T.ymd(d) <= to; d.setDate(d.getDate() + 1)) days.set(T.ymd(d), { day: T.ymd(d), sales: null, source: null, hours: 0, gmHours: 0, open: 0, rfp: 0, rfpCount: 0, people: new Map() });
       for (const x of sd.days) if (days.has(x.day)) Object.assign(days.get(x.day), { sales: x.total, source: x.source });
       for (const x of rd.days || []) if (days.has(x.day)) Object.assign(days.get(x.day), { rfp: x.value || 0, rfpCount: x.count || 0 }); // the RFP table at the end of the day
-      for (const pu of ps) {
-        if (pu.s !== store || pu.c === 2 || !pu.i) continue;
+      // Each person's hours in order through the week (every store; punches come in whole Mon–Sun weeks), so the
+      // overtime in a day's hours is the part past 40 for the week so far.
+      const cum = new Map();
+      for (const pu of ps.filter((x) => x.c !== 2 && x.i).sort((a, b) => Date.parse(a.i) - Date.parse(b.i))) {
         const day = T.ymd(new Date(pu.i)), d = days.get(day);
-        if (!d) continue;
-        if (!pu.o && day !== today) { d.open++; continue; } // a forgotten clock-out on a past day
+        if (!pu.o && day !== today) { if (d && pu.s === store) d.open++; continue; } // a forgotten clock-out on a past day
         const hrs = Math.max(0, ((pu.o ? Date.parse(pu.o) : Date.now()) - Date.parse(pu.i)) / 3600000);
+        const wk = pu.u + '|' + T.ymd(T.monday(new Date(pu.i))), before = cum.get(wk) || 0, after = before + hrs;
+        cum.set(wk, after);
+        if (!d || pu.s !== store) continue;
+        const ot = Math.max(0, after - 40) - Math.max(0, before - 40);
         if (gm.has(pu.u)) d.gmHours += hrs; else d.hours += hrs;
+        const who = d.people.get(pu.u) || d.people.set(pu.u, { name: pu.n || 'User ' + pu.u, hrs: 0, ot: 0, gm: gm.has(pu.u), open: !pu.o }).get(pu.u);
+        who.hrs += hrs; who.ot += ot; if (!pu.o) who.open = true;
       }
       return { from, to, rows: [...days.values()], gmSet: gm.size > 0 };
     }
+    // Bar color: at/over the target's low end = good; within 10% below, or over it with the RFP table picked up = near; else miss.
+    const grade = (r, lo) => (r.splh >= lo ? 'good' : r.splh >= lo * 0.9 || (r.ghost && r.ghost >= lo) ? 'near' : 'miss');
+    // Hover a day: a speech bubble with who worked it (this store), their hours, and overtime in that day's hours.
+    function bubble(col, r, leaveOut) {
+      document.getElementById(RP + '-tip')?.remove();
+      const fmtD = new Date(r.day + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+      const people = [...r.people.values()].sort((a, b) => b.hrs - a.hrs);
+      const tip = h('div', { id: RP + '-tip', role: 'tooltip' },
+        h('div', { class: 't' }, fmtD),
+        h('div', { class: 's' }, [r.sales != null ? money(r.sales) + ' sales' + (r.source === 'estimated' ? ' (estimated)' : '') : 'No sales data', r.hrs ? r.hrs.toFixed(2) + 'h' : null,
+          r.splh != null ? money(r.splh) + '/h' : null, r.ghost ? money(r.ghost) + '/h with the RFP table (' + r.rfpCount + ')' : null].filter(Boolean).join(' · ')),
+        people.length ? h('table', null, ...people.map((p) => h('tr', null,
+          h('td', null, p.name, p.gm ? h('span', { class: 'gmt' }, leaveOut ? 'GM, left out' : 'GM') : null, p.open ? h('span', { class: 'gmt' }, 'still clocked in') : null),
+          h('td', null, p.hrs.toFixed(2) + 'h', p.ot > 0.004 ? h('span', { class: 'otb' }, fmtOt(p.ot) + ' OT') : null))))
+          : h('div', { class: 'n' }, 'Nobody clocked in here.'),
+        r.open ? h('div', { class: 'n' }, r.open + ' punch' + (r.open === 1 ? '' : 'es') + ' without a clock-out not counted') : null);
+      document.body.append(tip);
+      const rc = col.getBoundingClientRect(), top = Math.min(...[col.querySelector('.ghost'), col.querySelector('.bar')].filter(Boolean).map((x) => x.getBoundingClientRect().top));
+      const left = Math.min(Math.max(rc.left + rc.width / 2, tip.offsetWidth / 2 + 8), innerWidth - tip.offsetWidth / 2 - 8);
+      tip.style.left = left + 'px'; tip.style.top = Math.max(top, tip.offsetHeight + 20) + 'px'; // above the taller of the bar and its ghost
+    }
+    const fmtOt = (x) => { const hh = Math.floor(x), mm = Math.round((x - hh) * 60); return (hh ? hh + 'h ' : '') + (mm || !hh ? mm + 'm' : ''); };
     function splhCard() {
       const leaveOut = !!GM_getValue(GM_KEY, false);
       const card = h('div', { id: RP, class: 'sg' });
@@ -371,9 +409,9 @@ AE.crystal({
           best ? h('div', null, h('div', { class: 'big' }, money(best.splh)), h('div', { class: 'sg-soft' }, 'best day · ' + fmtDay(best.day))) : null,
           ghostAll ? h('div', { class: 'ghoststat' }, h('div', { class: 'big' }, money(ghostAll)), h('div', { class: 'sg-soft' }, 'if the RFP table were picked up (' + lastRfp.rfpCount + ' devices, ' + money(lastRfp.rfp) + ')')) : null,
           h('div', null, h('div', { class: 'big' }, atTarget + ' of ' + withBoth.length), h('div', { class: 'sg-soft' }, 'days at target ($' + tLo + '–$' + tHi + (leaveOut ? ', without GM' : ', with GM') + ')'))),
-        h('div', { class: 'chart' }, h('div', { class: 'band', style: 'bottom:' + (tLo / max * 100) + '%;height:' + ((tHi - tLo) / max * 100) + '%', title: 'Target: $' + tLo + '–$' + tHi + ' per labor hour' }), ...rows.map((r) => h('div', { class: 'col', title: fmtDay(r.day) + ': ' + (r.splh != null ? money(r.splh) + '/h · ' + money(r.sales) + ' · ' + r.hrs.toFixed(2) + 'h' + (r.source === 'estimated' ? ' (sales estimated)' : '') + (r.ghost ? '\nIf the RFP table (' + r.rfpCount + ' devices, ' + money(r.rfp) + ') were picked up: ' + money(r.ghost) + '/h' : '') : r.sales ? money(r.sales) + ', no hours' : 'no sales or hours') },
+        h('div', { class: 'chart' }, h('div', { class: 'band', style: 'bottom:' + (tLo / max * 100) + '%;height:' + ((tHi - tLo) / max * 100) + '%', title: 'Target: $' + tLo + '–$' + tHi + ' per labor hour' }), ...rows.map((r) => h('div', { class: 'col', onmouseenter: (e) => bubble(e.currentTarget, r, leaveOut), onmouseleave: () => document.getElementById(RP + '-tip')?.remove() },
           r.ghost ? h('div', { class: 'ghost', style: 'height:' + Math.round(r.ghost / max * 100) + '%' }) : null,
-          h('div', { class: 'bar' + (r.splh == null ? ' none' : r.source === 'estimated' ? ' est' : ''), style: 'height:' + (r.splh != null ? Math.max(2, Math.round(r.splh / max * 100)) : 2) + '%' })))),
+          h('div', { class: 'bar' + (r.splh == null ? ' none' : ' ' + grade(r, tLo)) + (r.splh != null && r.source === 'estimated' ? ' est' : ''), style: 'height:' + (r.splh != null ? Math.max(2, Math.round(r.splh / max * 100)) : 2) + '%' })))),
         h('div', { class: 'axis sg-soft' }, h('span', null, fmtDay(data.from)), h('span', { class: 'tgt' }, h('i'), 'Target $' + tLo + '–$' + tHi + (leaveOut ? ' without GM' : ' with GM')), h('span', null, fmtDay(data.to))),
         h('details', { class: 'days' }, h('summary', null, 'Days'),
           h('table', null, h('tr', null, ['Day', 'Sales', 'Labor hours', 'Per labor hour', 'If RFP picked up', ''].map((x) => h('th', null, x))),
