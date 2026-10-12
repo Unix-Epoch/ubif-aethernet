@@ -129,7 +129,7 @@ AE.tracker = (() => {
     const d = await detailOf(wo);
     if (listRow) d.list_row = scrub(listRow);
     const plain = plainPart(d, listRow), card = cardOf(d, listRow);
-    const out = { plain, card, hash: await C.hashJson([plain, d]), detailBytes: JSON.stringify(d).length };
+    const out = { plain, card, detail: d, hash: await C.hashJson([plain, d]), detailBytes: JSON.stringify(d).length };
     if (jwk) { out.sealed = await C.sealJson(d, jwk, C.aad.snapshot(store, wo)); out.cardSealed = await C.sealJson(card, jwk, C.aad.card(store, wo)); }
     return out;
   }
@@ -186,7 +186,10 @@ AE.tracker = (() => {
     const master = configured() ? await call('GET', '/v1/tracker/master').then((j) => j.publicJwk).catch(() => null) : null;
     const jwk = master || (await C.newKeyPair()).publicJwk; // no Worker yet: a throwaway key, only to measure
     const x = await prepare(p.storeId, wo, row, jwk);
-    return { wo: Number(wo), inList: !!row, plain: x.plain, card: x.card, hash: x.hash, detailBytes: x.detailBytes, sealedBytes: x.sealed.length, cardBytes: x.cardSealed.length };
+    const d = x.detail, notes = (d.notes && d.notes.notes) || [];
+    const sealedParts = { notes: notes.length, noteChars: notes.reduce((n, t) => n + String(t.noteText || '').length, 0), customerRecord: !!d.customer_data,
+      statusHistory: Array.isArray(d.audit_trail) ? d.audit_trail.length : 0, cartLines: d.cart ? (d.cart.cartItems || []).length : 0 };
+    return { wo: Number(wo), inList: !!row, plain: x.plain, card: x.card, sealedParts, hash: x.hash, detailBytes: x.detailBytes, sealedBytes: x.sealed.length, cardBytes: x.cardSealed.length };
   }
 
   return { configured, scan, dryRun, last: () => GM_getValue(LAST_KEY, null), plainPart, cardOf, scrub, crypto: C };

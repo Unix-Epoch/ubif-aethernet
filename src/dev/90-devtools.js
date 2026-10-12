@@ -312,6 +312,7 @@
         trOut.replaceChildren(
           h('div', { class: 'note' }, 'WO ' + r.wo + (r.inList ? '' : ' (not in the open list)') + ' · full detail ' + (r.detailBytes / 1024).toFixed(1) + ' KB → sealed ' + (r.sealedBytes / 1024).toFixed(1) + ' KB · card ' + r.cardBytes + ' B'),
           h('div', { class: 'note' }, 'Sealed search card (readable only on the admin site): name ' + (c.name ? '✓' : '—') + ' · ' + c.phones.length + ' phone(s) · ' + c.emails.length + ' email(s) · IMEI ' + (c.imei ? '✓' : '—') + ' · serial ' + (c.serial ? '✓' : '—') + ' · claim ' + (c.claim ? '✓' : '—')),
+          h('div', { class: 'note' }, 'Sealed with it: ' + r.sealedParts.notes + ' note(s) with their full text (' + r.sealedParts.noteChars.toLocaleString() + ' characters) · customer record ' + (r.sealedParts.customerRecord ? '✓' : '—') + ' · ' + r.sealedParts.statusHistory + ' status change(s) · ' + r.sealedParts.cartLines + ' cart line(s)'),
           h('div', { class: 'note', style: 'margin-top:6px;font-weight:600' }, 'Plain part (what the server can read). Check: no customer details.'),
           h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace;max-height:260px;overflow:auto' }, JSON.stringify(r.plain, null, 1)),
           row(btn('Copy plain part', async () => { await navigator.clipboard.writeText(JSON.stringify(r.plain, null, 1)); AE.toast('Copied', 'The plain part is on the clipboard.', 'ok'); })));
