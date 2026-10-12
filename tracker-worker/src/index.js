@@ -21,6 +21,8 @@
     POST /v1/:store/tracker/wo/:wo/gone { by }   Portal answers 404 for it: recorded closed after a second 404.
     GET  /v1/:store/tracker/rfp                  the store's RFP total (count, value, complete/incomplete split, last scan)
     POST /v1/:store/tracker/sales { day, rows }  Portal's sales history for one business day (see the route)
+    GET  /v1/:store/tracker/sales/days?from&to   daily sales totals (Tactician)
+    GET  /v1/:store/tracker/settings             store settings (general managers, …); PUT …/settings/gm
 
   `plain` (readable on the server; never customer details):
     { workorder: { workorderId, storeId, statusId, status, programId, program, device,
@@ -43,7 +45,7 @@ const MAX = { scan: 400000, wo: 2000000, plain: 400000, sealed: 1800000, card: 8
 
 const CORS = {
   'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
   'access-control-allow-headers': 'content-type, x-aethernet-key',
   'access-control-max-age': '86400',
 };
@@ -114,6 +116,43 @@ const soldAtOf = (plain) => {
   return ((plain && plain.auditTrail) || []).filter((a) => Number(a.statusId) === 14 && a.createdAt).map((a) => a.createdAt).sort().pop() || null;
 };
 const DAY_RE = /^\d{4}-\d\d-\d\d$/;
+
+/*
+  Daily sales per store and day: Portal's (source portal|mac) where the day was synced, else an estimate
+  from WOs that reached Sale complete that day (last cart value before tax + its tax). Shared by the
+  admin site and the store side (Tactician's sales per labor hour). visible(store) filters.
+*/
+async function salesDays(env, visible, from, to) {
+  const T = env.TR, tz = env.STORE_TZ || 'America/New_York';
+  const pad = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+  const [days, sales, sold] = await T.batch([
+    T.prepare('SELECT * FROM sales_days WHERE day BETWEEN ? AND ?').bind(from, to),
+    T.prepare('SELECT store, sale_id, wo, sale_day, sale_at, type, total, partner_credits, paid, completed_by, program, device, items, card, source FROM sales WHERE sale_day BETWEEN ? AND ? ORDER BY sale_at').bind(from, to),
+    T.prepare(`SELECT store, wo, store_name, program_name, device, last_cart_value, last_cart_tax, COALESCE(sold_at, closed_at) AS sold_at, card FROM workorders
+        WHERE status_id = 14 AND COALESCE(sold_at, closed_at) BETWEEN ? AND ?`).bind(pad(from, -1), pad(to, 2)),
+  ]);
+  const have = new Map(days.results.filter((d) => visible(d.store)).map((d) => [d.store + '|' + d.day, d]));
+  const est = new Map();
+  for (const w of sold.results) {
+    if (!visible(w.store)) continue;
+    const day = localDay(w.sold_at, tz);
+    if (!day || day < from || day > to || have.has(w.store + '|' + day)) continue;
+    const k = w.store + '|' + day;
+    (est.get(k) || est.set(k, []).get(k)).push(Object.assign(w, { day, estimate: Math.round(((w.last_cart_value || 0) + (w.last_cart_tax || 0)) * 100) / 100 }));
+  }
+  const out = [];
+  for (const d of have.values()) {
+    const list = sales.results.filter((x) => x.store === d.store && x.sale_day === d.day);
+    const sum = (f) => Math.round(list.reduce((n, x) => n + (x.type === 'Return' ? -Math.abs(x[f] || 0) : (x[f] || 0)), 0) * 100) / 100;
+    out.push({ store: d.store, day: d.day, source: d.source, count: list.length, total: sum('total'), partnerCredits: sum('partner_credits'), paid: sum('paid') });
+  }
+  for (const [k, v] of est) {
+    const [st, day] = k.split('|');
+    out.push({ store: Number(st), day, source: 'estimated', count: v.length, total: Math.round(v.reduce((n, w) => n + w.estimate, 0) * 100) / 100, partnerCredits: null, paid: null });
+  }
+  out.sort((a, b) => (a.day === b.day ? a.store - b.store : a.day < b.day ? 1 : -1));
+  return { days: out, sales: sales.results.filter((x) => visible(x.store)), estimated: est };
+}
 
 // ------------------------------------------------------------------ plain-part diff
 function flatten(v, path, out) {
@@ -275,6 +314,35 @@ async function storeApi(req, env, url, store) {
         ON CONFLICT (store, day) DO UPDATE SET source = 'portal', synced_at = excluded.synced_at, count = excluded.count, total = excluded.total`).bind(store, day, at, rows.length, total));
     for (let k = 0; k < stmts.length; k += 100) await T.batch(stmts.slice(k, k + 100));
     return json({ ok: true, count: rows.length, written, removed, total });
+  }
+
+  // Daily sales totals for this store (Tactician's sales per labor hour): no customers, no line items.
+  if (path === '/sales/days' && req.method === 'GET') {
+    const from = clean(url.searchParams.get('from'), 10), to = clean(url.searchParams.get('to'), 10);
+    if (!DAY_RE.test(from) || !DAY_RE.test(to) || to < from || (Date.parse(to) - Date.parse(from)) > 400 * 86400000) return fail(400, 'from/to (YYYY-MM-DD, at most ~13 months) required');
+    const r = await salesDays(env, (st) => st === store, from, to);
+    return json({ days: r.days.map(({ day, source, count, total }) => ({ day, source, count, total })) });
+  }
+  /*
+    The store's settings, set by managers in Aethernet (Settings, Store setup). The manager check is
+    Aethernet's (Portal roles), like Waymark's tag list: the server can't see Portal logins.
+      GET /settings                     { gm: { userIds: [..], names: { id: name }, by, at } }
+      PUT /settings/gm { userIds, names, by }
+  */
+  if (path === '/settings' && req.method === 'GET') {
+    const r = await T.prepare('SELECT key, value, updated_by, updated_at FROM store_settings WHERE store = ?').bind(store).all();
+    const out = {};
+    for (const x of r.results) { try { out[x.key] = Object.assign(JSON.parse(x.value), { by: x.updated_by, at: x.updated_at }); } catch (_) {} }
+    return json(out);
+  }
+  if (path === '/settings/gm' && req.method === 'PUT') {
+    const b = await readJson(req, 20000);
+    const ids = [...new Set((Array.isArray(b.userIds) ? b.userIds : []).map(int).filter(Boolean))].slice(0, 20);
+    const names = {};
+    for (const id of ids) names[id] = clean(b.names && b.names[id], 60) || null;
+    await T.prepare('INSERT INTO store_settings (store, key, value, updated_by, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (store, key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at')
+      .bind(store, 'gm', JSON.stringify({ userIds: ids, names }), clean(b.by, 60) || null, now()).run();
+    return json({ ok: true, gm: { userIds: ids, names } });
   }
 
   // The store's RFP total (Master's Mend → RFP total on the Sales card): one sum, no WO details.
@@ -483,41 +551,15 @@ export async function trackerAdmin(req, env, url, path, email) {
     const visible = (st) => canSee(me, st) && (!stores || stores.includes(st));
     const from = clean(q.get(path === '/sales/day' ? 'day' : 'from'), 10), to = clean(q.get(path === '/sales/day' ? 'day' : 'to'), 10);
     if (!DAY_RE.test(from) || !DAY_RE.test(to) || to < from) return fail(400, 'from/to (YYYY-MM-DD) required', false);
-    const pad = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-    const [days, sales, sold] = await T.batch([
-      T.prepare('SELECT * FROM sales_days WHERE day BETWEEN ? AND ?').bind(from, to),
-      T.prepare(`SELECT store, sale_id, wo, sale_day, sale_at, type, total, partner_credits, paid, completed_by, program, device, items, card, source FROM sales WHERE sale_day BETWEEN ? AND ? ORDER BY sale_at`).bind(from, to),
-      T.prepare(`SELECT store, wo, store_name, program_name, device, last_cart_value, last_cart_tax, COALESCE(sold_at, closed_at) AS sold_at, card FROM workorders
-          WHERE status_id = 14 AND COALESCE(sold_at, closed_at) BETWEEN ? AND ?`).bind(pad(from, -1) , pad(to, 2)),
-    ]);
-    const have = new Map(days.results.filter((d) => visible(d.store)).map((d) => [d.store + '|' + d.day, d]));
-    const est = new Map();
-    for (const w of sold.results) {
-      if (!visible(w.store)) continue;
-      const day = localDay(w.sold_at, tz);
-      if (!day || day < from || day > to || have.has(w.store + '|' + day)) continue;
-      const k = w.store + '|' + day;
-      (est.get(k) || est.set(k, []).get(k)).push(Object.assign(w, { day, estimate: Math.round(((w.last_cart_value || 0) + (w.last_cart_tax || 0)) * 100) / 100 }));
-    }
+    const r = await salesDays(env, visible, from, to);
     if (path === '/sales/day') {
       const st = stores ? stores[0] : null;
-      const list = sales.results.filter((x) => visible(x.store) && (!st || x.store === st));
       await log(env, email, 'sales:day', st, null, from);
-      return json({ day: from, sales: list.map((x) => Object.assign(x, { items: x.items ? JSON.parse(x.items) : [] })),
-        estimated: [...est.entries()].filter(([k]) => !st || k.startsWith(st + '|')).flatMap(([, v]) => v) }, 200, false);
-    }
-    const out = [];
-    for (const d of have.values()) {
-      const list = sales.results.filter((x) => x.store === d.store && x.sale_day === d.day);
-      const sum = (f) => Math.round(list.reduce((n, x) => n + (x.type === 'Return' ? -Math.abs(x[f] || 0) : (x[f] || 0)), 0) * 100) / 100;
-      out.push({ store: d.store, day: d.day, source: d.source, count: list.length, total: sum('total'), partnerCredits: sum('partner_credits'), paid: sum('paid') });
-    }
-    for (const [k, v] of est) {
-      const [st, day] = k.split('|');
-      out.push({ store: Number(st), day, source: 'estimated', count: v.length, total: Math.round(v.reduce((n, w) => n + w.estimate, 0) * 100) / 100, partnerCredits: null, paid: null });
+      return json({ day: from, sales: r.sales.filter((x) => !st || x.store === st).map((x) => Object.assign(x, { items: x.items ? JSON.parse(x.items) : [] })),
+        estimated: [...r.estimated.entries()].filter(([k]) => !st || k.startsWith(st + '|')).flatMap(([, v]) => v) }, 200, false);
     }
     await log(env, email, 'sales:days', stores ? stores[0] : null, null, from + '..' + to);
-    return json({ days: out.sort((a, b) => (a.day === b.day ? a.store - b.store : a.day < b.day ? 1 : -1)) }, 200, false);
+    return json({ days: r.days }, 200, false);
   }
 
   if (!full) return fail(403, 'full access only', false);

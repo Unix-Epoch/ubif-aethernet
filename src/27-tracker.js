@@ -187,7 +187,7 @@ AE.tracker = (() => {
     return data;
   }
 
-  return { configured, scan, dryRun, rfp, last: () => GM_getValue(LAST_KEY, null), plainPart, cardOf, scrub, crypto: C };
+  return { configured, scan, dryRun, rfp, call, last: () => GM_getValue(LAST_KEY, null), plainPart, cardOf, scrub, crypto: C };
 })();
 
 if (AE.tracker.configured()) {

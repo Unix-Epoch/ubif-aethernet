@@ -216,6 +216,15 @@ assert.equal(d10.source, 'estimated'); assert.equal(d10.total, 106);
 const dd = (await admin('owner@x.com', 'GET', '/sales/day?store=914&day=2026-10-10')).j;
 assert.equal(dd.estimated.length, 1); assert.equal(dd.sales.length, 0);
 assert.equal((await admin('mgr@x.com', 'GET', '/sales/days?store=326&from=2026-10-09&to=2026-10-12')).status, 403, 'store-limited person');
+// store side: daily totals (no customers) and the general-manager setting
+const sd = (await call('GET', '/v1/914/tracker/sales/days?from=2026-10-09&to=2026-10-12')).j.days;
+assert.deepEqual(sd.map((d) => d.day + ':' + d.source + ':' + d.total), ['2026-10-12:portal:303.19', '2026-10-10:estimated:106']);
+assert.ok(!JSON.stringify(sd).includes('v1.'));
+assert.deepEqual((await call('GET', '/v1/914/tracker/settings')).j, {});
+ok(await call('PUT', '/v1/914/tracker/settings/gm', { userIds: [33256, '33256', 'x'], names: { 33256: 'casey.mgr' }, by: 'Tech A' }), 'gm');
+const gm = (await call('GET', '/v1/914/tracker/settings')).j.gm;
+assert.deepEqual(gm.userIds, [33256]); assert.equal(gm.names[33256], 'casey.mgr'); assert.equal(gm.by, 'Tech A');
+assert.deepEqual((await call('GET', '/v1/326/tracker/settings')).j, {}, 'per store');
 // localDay: evening sales stay on the store's day
 const { localDay } = await import('../src/index.js');
 assert.equal(localDay('2026-10-13T02:30:00Z'), '2026-10-12'); assert.equal(localDay('2026-12-01T04:30:00Z'), '2026-11-30');
