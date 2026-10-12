@@ -115,6 +115,50 @@ assert.equal((await admin('owner@x.com', 'POST', '/people/owner%40x.com/remove')
 const lg = (await admin('owner@x.com', 'GET', '/log')).j.log;
 assert.ok(lg.some((l) => l.email === 'mgr@x.com' && l.action === 'list'));
 
+// --- safety: another store's WO is refused; "gone" needs two 404s 10+ min apart while missing from the list
+const other = plain(5001, 2, 'Work in progress'); other.workorder.storeId = 326;
+assert.equal((await call('POST', '/v1/914/tracker/wo/5001', { hash: 'h2', plain: other, sealed: await C.sealJson({}, sk, C.aad.snapshot(914, 5001)) })).status, 409, 'other store refused');
+assert.equal((await call('POST', '/v1/914/tracker/wo/5001/gone', {})).j.ignored, 'still in the list');
+await env.TR.prepare("UPDATE workorders SET missing_since = '2026-10-12T00:00:00Z' WHERE wo = 5001").run();
+assert.equal((await call('POST', '/v1/914/tracker/wo/5001/gone', {})).j.pending, 'confirm later');
+assert.equal((await call('POST', '/v1/914/tracker/wo/5001/gone', {})).j.pending, 'confirm later', 'second 404 too soon');
+assert.equal((await env.TR.prepare('SELECT is_open FROM workorders WHERE wo = 5001').first()).is_open, 1);
+await env.TR.prepare("UPDATE workorders SET gone_seen_at = '2026-10-12T00:00:00Z' WHERE wo = 5001").run();
+assert.equal((await call('POST', '/v1/914/tracker/wo/5001/gone', {})).j.closed, true);
+// back in the list → reopened by its next detail; gone flag cleared by the scan
+await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
+s = await call('POST', '/v1/914/tracker/scan', { rows: rows2.concat([Object.assign({}, rows[1], { updatedAt: '2026-10-12T12:00:00Z' })]) });
+assert.ok(s.j.need.some((n) => n.wo === 5001 && n.why === 'reopened'));
+assert.equal((await env.TR.prepare('SELECT gone_seen_at FROM workorders WHERE wo = 5001').first()).gone_seen_at, null);
+// a list with WOs that really closed isn't "short"; one under half of what's open is
+await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
+for (let i = 0; i < 12; i++) await env.TR.prepare("INSERT INTO workorders (store, wo, is_open, status_id, last_detail_at) VALUES (914, ?, 1, 2, '2026-10-12T00:00:00Z')").bind(6000 + i).run();
+s = await call('POST', '/v1/914/tracker/scan', { rows: rows2 });
+assert.ok(/short/.test(s.j.note || ''), 'under half → short');
+s = await call('POST', '/v1/914/tracker/scan', { rows: rows2.concat(Array.from({ length: 8 }, (_, i) => ({ wo: 6000 + i, statusId: 2, status: 'Work in progress', updatedAt: '2026-10-12T00:00:00Z' }))) });
+assert.ok(!s.j.note, 'more than half listed → missing WOs get checked: ' + s.j.note);
+assert.ok(s.j.need.filter((n) => n.why === 'missing').length >= 4);
+
+// --- RFP value ignores Partner Credit Tax Exempt lines; outcome splits complete / incomplete
+await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
+const pp = plain(5003, 13, 'Ready for pickup', 0);
+pp.workorder.outcome = 'Incomplete';
+pp.cart = { items: [{ name: 'Glass/LCD', sku: '176255', price: 199, netPrice: 199, totalPrice: 211.94, quantity: 1 }, { name: 'Labor', sku: '900003', price: 83, netPrice: 83, totalPrice: 83, quantity: 1 }, { name: 'Buyback', sku: 'BB0001', price: 0, netPrice: 0, totalPrice: 0, quantity: -1 },
+  { name: 'Partner Credit Tax Exempt', sku: 'PCEXEMPT', price: -199, netPrice: -199, totalPrice: -199, quantity: -1 }, { name: 'Partner Credit Tax Exempt', sku: 'PCEXEMPT', price: -83, netPrice: -83, totalPrice: -83, quantity: -1 }],
+  payment: { total: 0, amountPaid: 0, amountDue: 0 } };
+ok(await call('POST', '/v1/914/tracker/wo/5003', { hash: 'pc1', plain: pp, sealed: await C.sealJson({}, sk, C.aad.snapshot(914, 5003)) }), 'partner cart');
+const v = await env.TR.prepare('SELECT cart_value, service_outcome FROM workorders WHERE wo = 5003').first();
+assert.equal(v.cart_value, 282); assert.equal(v.service_outcome, 'Incomplete');
+const st2 = (await admin('owner@x.com', 'GET', '/stores')).j.stores[0];
+assert.equal(st2.rfp_value, 282); assert.equal(st2.rfp_other, 1); assert.equal(st2.rfp_complete, 0);
+assert.equal((await admin('owner@x.com', 'GET', '/wos?store=914&status=13&outcome=other')).j.wos.length, 1);
+assert.equal((await admin('owner@x.com', 'GET', '/wos?store=914&status=13&outcome=complete')).j.wos.length, 0);
+// the migration's SQL gives the same value
+await env.TR.prepare('UPDATE workorders SET cart_value = NULL WHERE wo = 5003').run();
+const mig = readFileSync('migrations-2026-10-12.sql', 'utf8').split(';').map((x) => x.replace(/--[^\n]*/g, '').trim()).filter((x) => x.startsWith('UPDATE'))[0];
+await env.TR.prepare(mig).run();
+assert.equal((await env.TR.prepare('SELECT cart_value FROM workorders WHERE wo = 5003').first()).cart_value, 282);
+
 // --- retention: nothing trimmed without cold storage; with TRIM_WITHOUT_ARCHIVE the latest snapshot per WO stays
 await env.TR.prepare("UPDATE snapshots SET fetched_at = '2026-01-01T00:00:00Z'").run();
 await env.TR.prepare("UPDATE changes SET changed_at = '2026-01-01T00:00:00Z'").run();

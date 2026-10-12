@@ -8,7 +8,7 @@
     cardOf     the sealed search card: name, customer id, phones, emails, IMEI, serial, claim
 */
 export const scanRow = (r) => ({ wo: r.workorderId, statusId: r.workorderStatusId, status: r.workorderStatusName, programId: r.programId, program: r.programName,
-  device: (r.deviceCatalog && r.deviceCatalog.name) || null, createdAt: r.createdAt, updatedAt: r.updatedAt });
+  device: (r.deviceCatalog && r.deviceCatalog.name) || null, outcome: r.serviceOutcome || null, createdAt: r.createdAt, updatedAt: r.updatedAt });
 
 // Passcodes don't belong in a history: removed wherever they appear.
 export function scrub(v) {
@@ -32,7 +32,7 @@ export function plainPart(d, listRow) {
       programId: w.programId, program: (w.Program && w.Program.name) || (listRow && listRow.programName) || null,
       device: (cd.DeviceCatalog && cd.DeviceCatalog.name) || (listRow && listRow.deviceCatalog && listRow.deviceCatalog.name) || cd.name || null,
       bin: (bin && (bin.name || bin.binName || bin.label)) || (listRow && listRow.locationBin) || null,
-      rfpAt: (listRow && listRow.rfpWorkorderStatusDate) || null, total: listRow ? listRow.workorderTotal : null,
+      rfpAt: (listRow && listRow.rfpWorkorderStatusDate) || null, outcome: (listRow && listRow.serviceOutcome) || null, total: listRow ? listRow.workorderTotal : null,
       ...pick(w, ['createdAt', 'updatedAt', 'nextUpdate', 'slaEndTime', 'createdBy', 'updatedBy', 'arrivalId', 'clientId', 'crossStoreRefWorkorderId', 'warrantyWorkorderId', 'iqcComplete', 'csuCartId', 'csuSalesOrderId']),
     },
     auditTrail: (Array.isArray(d.audit_trail) ? d.audit_trail : []).map((a) => ({ statusId: a.workorderStatusId, createdAt: a.createdAt, createdBy: a.createdBy, completed: a.completed })),

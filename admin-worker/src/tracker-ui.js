@@ -8,7 +8,7 @@ const CSS = '.unlocked{padding:3px 10px;border-radius:999px;background:var(--ps)
   + '.chk{display:inline-flex;gap:6px;align-items:center;font-size:13px;color:var(--soft)}.chk input{height:auto}'
   + '.res td{cursor:pointer}.res tr.sel td{background:var(--ps)}.hit{margin-top:3px;font-size:12px;color:var(--soft)}mark{background:#fff0a8;color:#1a1c1e;padding:0 2px;border-radius:3px}'
   + '.st{display:inline-flex;min-height:20px;align-items:center;padding:0 8px;border-radius:999px;font-size:11px;font-weight:700;background:var(--line);color:var(--fg)}'
-  + '.st.rfp{background:#c5ffc8;color:#062011}.st.done{color:var(--soft)}.st.wait{background:#fff0c0;color:#3a3000}.st.wip{background:#eef1ff;color:#2f47c9}'
+  + '.st.rfp{background:#c5ffc8;color:#062011}.st.rfpi{background:#ffe1c2;color:#4a2300}.st.done{color:var(--soft)}.st.wait{background:#fff0c0;color:#3a3000}.st.wip{background:#eef1ff;color:#2f47c9}'
   + '.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,520px);gap:14px;align-items:start}.drawer{position:sticky;top:76px;max-height:calc(100vh - 90px);overflow:auto}'
   + '.drawer h2{margin:0;font-size:20px}.kv{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;font-size:13px;margin:0}.kv dt{color:var(--soft)}.kv dd{margin:0;overflow-wrap:anywhere}'
   + '.tl{width:100%}.nt{border-left:3px solid var(--p);padding:6px 10px;margin:6px 0;background:var(--bg);border-radius:0 8px 8px 0;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.nt .by{font-size:11px;color:var(--soft);white-space:normal}'
@@ -85,7 +85,9 @@ async function openDetail(store, wo, sealed) {
 
 // ------------------------------------------------------------------ helpers
 const money = (n) => (n == null ? '—' : '$' + Number(n).toFixed(2));
-const stClass = (r) => (r.status_id === 13 ? 'rfp' : !r.is_open ? 'done' : [3, 7, 26, 27].includes(r.status_id) || /await/i.test(r.status_name || '') ? 'wait' : 'wip');
+const stClass = (r) => (r.status_id === 13 ? (r.service_outcome && r.service_outcome !== 'Completed' ? 'rfpi' : 'rfp') : !r.is_open ? 'done' : [3, 7, 26, 27].includes(r.status_id) || /await/i.test(r.status_name || '') ? 'wait' : 'wip');
+// RFP split by Portal's outcome: "Ready for pickup · Complete" / "· Incomplete" (Declined, No issue found shown as is).
+const statusText = (r) => (r.status_name || '') + (r.status_id === 13 && r.service_outcome ? ' · ' + (r.service_outcome === 'Completed' ? 'Complete' : r.service_outcome) : '');
 const fmtPhone = (p) => (p && p.length === 10 ? '(' + p.slice(0, 3) + ') ' + p.slice(3, 6) + '-' + p.slice(6) : p);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function excerpt(text, q) {
@@ -184,14 +186,15 @@ async function drawWos(m) {
   const newest = st.map((s) => s.last_scan_at).filter(Boolean).sort().pop();
   const totals = h('div', { class: 'sum' },
     h('div', { class: 'card k' }, h('div', { class: 'n' }, String(sum('open'))), h('div', { class: 'l' }, 'Open work orders · ' + st.length + ' store' + (st.length === 1 ? '' : 's'))),
-    h('div', { class: 'card k' }, h('div', { class: 'n' }, String(sum('rfp'))), h('div', { class: 'l' }, 'Ready for pickup')),
-    h('div', { class: 'card k' }, h('div', { class: 'n' }, money(sum('rfp_due'))), h('div', { class: 'l' }, 'Due on the RFP table')),
+    h('div', { class: 'card k' }, h('div', { class: 'n' }, String(sum('rfp'))), h('div', { class: 'l' }, 'Ready for pickup · ' + sum('rfp_complete') + ' complete · ' + sum('rfp_other') + ' incomplete')),
+    h('div', { class: 'card k', title: 'Cart lines before tax, with Partner Credit Tax Exempt (PCEXEMPT) lines ignored, so partner repairs count at their value' },
+      h('div', { class: 'n' }, money(sum('rfp_value'))), h('div', { class: 'l' }, 'Value on the RFP table · complete ' + money(sum('rfp_complete_value')) + ' · incomplete ' + money(sum('rfp_other_value')) + ' · ' + money(sum('rfp_due')) + ' due from customers')),
     h('div', { class: 'card k' }, h('div', { class: 'n' }, !newest ? '—' : Date.now() - Date.parse(newest) < 60000 ? 'Just now' : ago(newest) + ' ago'), h('div', { class: 'l' }, 'Last update · ' + st.map((s) => s.store + ' ' + ago(s.last_scan_at)).join(' · '))));
 
   const q = h('input', { class: 'qq', value: F.q, placeholder: 'Search name, phone, email, IMEI/serial, claim, WO #' + (F.notes ? ', or note text' : ''), oninput: (e) => { F.q = e.target.value; clearTimeout(q.t); q.t = setTimeout(run, 200); } });
   const sel1 = (val, opts, set) => { const s = h('select', { onchange: (e) => { set(e.target.value); run(true); } }, opts.map(([v, l]) => { const o = h('option', { value: v }, l); o.selected = String(v) === String(val); return o; })); return s; };
   const storeSel = sel1(F.store, [['', 'All stores']].concat(st.map((s) => [s.store, s.store + (s.name ? ' ' + s.name : '')])), (v) => { F.store = v; });
-  const statSel = sel1(F.status, [['', 'Any status'], ['13', 'Ready for pickup'], ['2', 'Work in progress'], ['1', 'Ready for work'], ['3', 'Awaiting item'], ['7', 'Awaiting callback'], ['14', 'Sale complete']], (v) => { F.status = v; });
+  const statSel = sel1(F.status, [['', 'Any status'], ['13', 'Ready for pickup'], ['13c', 'RFP complete'], ['13i', 'RFP incomplete'], ['2', 'Work in progress'], ['1', 'Ready for work'], ['3', 'Awaiting item'], ['7', 'Awaiting callback'], ['14', 'Sale complete']], (v) => { F.status = v; });
   const openSel = sel1(F.open, [['', 'Open and closed'], ['1', 'Open only'], ['0', 'Closed only']], (v) => { F.open = v; });
   const monSel = sel1(F.months, [['1', 'Last month'], ['3', 'Last 3 months'], ['6', 'Last 6 months']], (v) => { F.months = v; });
   const notesBox = h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: F.notes || null, onchange: (e) => { F.notes = e.target.checked; run(true); } }), 'Search note text');
@@ -206,7 +209,7 @@ async function drawWos(m) {
     const t0 = performance.now();
     if (reload || key !== loadedKey) {
       info.textContent = 'Loading…';
-      const qs = '?limit=5000&since=' + encodeURIComponent(since) + (F.store ? '&store=' + F.store : '') + (F.status ? '&status=' + F.status : '') + (F.open ? '&open=' + F.open : '') + (F.notes ? '&detail=1' : '');
+      const qs = '?limit=5000&since=' + encodeURIComponent(since) + (F.store ? '&store=' + F.store : '') + (F.status ? '&status=' + parseInt(F.status, 10) + (F.status === '13c' ? '&outcome=complete' : F.status === '13i' ? '&outcome=other' : '') : '') + (F.open ? '&open=' + F.open : '') + (F.notes ? '&detail=1' : '');
       rows = (await ui.api('GET', '/tracker/wos' + qs)).wos;
       loadedKey = key;
       info.textContent = 'Opening ' + rows.length + ' work orders…';
@@ -232,12 +235,12 @@ async function drawWos(m) {
     info.textContent = (term ? hits.length + ' match' + (hits.length === 1 ? '' : 'es') + ' · ' : '') + 'searched ' + rows.length + ' work orders in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s, in this browser'
       + (rows.some((r) => r.c && r.c.error) ? ' · some cards could not be opened' : '');
     const shown = hits.slice(0, 300);
-    tbl.replaceChildren(...(shown.length ? [h('table', null, h('tr', null, ['WO', 'Store', 'Customer', 'Device', 'Program', 'Status', 'Updated', 'Due'].map((x) => h('th', null, x))),
+    tbl.replaceChildren(...(shown.length ? [h('table', null, h('tr', null, ['WO', 'Store', 'Customer', 'Device', 'Program', 'Status', 'Updated', 'Value'].map((x) => h('th', null, x))),
       shown.map(({ r, why, noteHit }) => h('tr', { class: sel === r.store + '|' + r.wo ? 'sel' : null, onclick: (e) => { sel = r.store + '|' + r.wo; [...tbl.querySelectorAll('tr.sel')].forEach((x) => x.classList.remove('sel')); e.currentTarget.classList.add('sel'); showWo(drawer, r); } },
         h('td', null, h('b', null, String(r.wo))), h('td', null, String(r.store), ' ', h('span', { class: 'soft' }, r.store_name || '')),
         h('td', null, h('b', null, (r.c && r.c.name) || '—'), why || noteHit ? h('div', { class: 'hit', html: 'matched ' + esc(why) + (noteHit ? (why ? ' · ' : '') + 'note: “' + noteHit + '”' : '') }) : null),
-        h('td', null, r.device || ''), h('td', null, r.program_name || ''), h('td', null, h('span', { class: 'st ' + stClass(r) }, r.status_name || '')),
-        h('td', null, ui.fmt(r.api_updated_at || r.first_seen_at)), h('td', null, r.status_id === 13 ? money(r.cart_due) : '')))),
+        h('td', null, r.device || ''), h('td', null, r.program_name || ''), h('td', null, h('span', { class: 'st ' + stClass(r) }, statusText(r))),
+        h('td', null, ui.fmt(r.api_updated_at || r.first_seen_at)), h('td', null, r.cart_value != null ? money(r.cart_value) : '')))),
       hits.length > shown.length ? h('div', { class: 'soft', style: 'margin-top:8px' }, 'Showing the first 300. Narrow the search to see the rest.') : '']
       : [h('div', { class: 'soft' }, term ? 'No matches.' : 'No work orders yet.')]));
   }
@@ -271,12 +274,13 @@ async function showWo(drawer, r) {
   };
   drawTab();
   drawer.replaceChildren(
-    h('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap' }, h('h2', null, String(r.wo)), h('span', { class: 'st ' + stClass(r) }, r.status_name || ''), h('span', { style: 'margin-left:auto' }, ui.woLink(r.wo))),
+    h('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap' }, h('h2', null, String(r.wo)), h('span', { class: 'st ' + stClass(r) }, statusText(r)), h('span', { style: 'margin-left:auto' }, ui.woLink(r.wo))),
     h('div', { class: 'soft', style: 'margin:2px 0 10px' }, [r.store + ' ' + (r.store_name || ''), r.program_name, r.device, w.bin ? 'bin ' + w.bin : null, w.createdAt ? 'checked in ' + ui.fmt(w.createdAt) : null].filter(Boolean).join(' · ')),
     h('dl', { class: 'kv' }, h('dt', null, 'Customer'), h('dd', null, h('b', null, c.name || '—')),
       h('dt', null, 'Phone'), h('dd', null, (c.phones || []).map(fmtPhone).join(', ') || '—'), h('dt', null, 'Email'), h('dd', null, (c.emails || []).join(', ') || '—'),
       h('dt', null, 'IMEI / serial'), h('dd', null, [c.imei, c.serial].filter(Boolean).join(' · ') || '—'), c.claim ? [h('dt', null, 'Claim'), h('dd', null, c.claim)] : null,
-      h('dt', null, r.status_id === 13 ? 'Due at pickup' : 'Cart'), h('dd', null, h('b', null, money(pay.amountDue)), ' of ' + money(pay.total) + (pay.amountPaid ? ' · ' + money(pay.amountPaid) + ' paid' : ''))),
+      h('dt', null, 'Value'), h('dd', null, h('b', null, money(r.cart_value)), h('span', { class: 'soft' }, ' cart before tax, partner credits ignored')),
+      h('dt', null, r.status_id === 13 ? 'Due at pickup' : 'Customer owes'), h('dd', null, money(pay.amountDue) + ' of ' + money(pay.total) + (pay.amountPaid ? ' · ' + money(pay.amountPaid) + ' paid' : ''))),
     nav, body);
 }
 

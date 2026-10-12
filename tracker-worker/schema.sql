@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS workorders (
   claimed_until TEXT,                  -- a browser is fetching this WO's detail (others skip it)
   closed_at TEXT, closed_reason TEXT,
   cart_total REAL, cart_paid REAL, cart_due REAL,
+  cart_value REAL,                     -- cart lines pre-tax, Partner Credit Tax Exempt (PCEXEMPT) ignored
+  service_outcome TEXT,                -- Portal's outcome: Completed / Incomplete / Declined / No issue found (RFP complete vs incomplete)
+  gone_seen_at TEXT,                   -- Portal's first 404 for it (closed only after a second one)
   plain TEXT,                          -- latest plain part (JSON)
   card TEXT,                           -- sealed search card: name, phones, emails, IMEI/serial, claim
   PRIMARY KEY (store, wo)

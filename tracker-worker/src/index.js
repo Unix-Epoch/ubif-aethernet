@@ -34,7 +34,7 @@
   storage is set up) unless TRIM_WITHOUT_ARCHIVE is set.
 */
 
-const KEEP_DAYS = 183, LOG_DAYS = 400;
+const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
 const CLOSED_IDS = new Set([14, 15, 25]); // Sale complete, Cancelled, Repair summary
 const MAX = { scan: 400000, wo: 2000000, plain: 400000, sealed: 1800000, card: 8000 };
@@ -77,6 +77,26 @@ async function allowed(env, store) {
   accessCache.set(store, { ok, at: Date.now() });
   return ok;
 }
+
+/*
+  What a WO is worth: its cart lines before tax (netPrice × quantity), with Partner Credit Tax Exempt (sku PCEXEMPT) ignored.
+  Those lines cancel each part and labor line on partner jobs (Asurion etc.), which is why their cart
+  totals are $0; without them a partner repair counts at its real value. Same rule as VALUE_SQL below.
+*/
+export function cartValue(plain) {
+  const items = (plain && plain.cart && plain.cart.items) || [];
+  if (!plain || !plain.cart) return null;
+  let v = 0;
+  for (const i of items) {
+    if (String(i.sku || '').toUpperCase() === 'PCEXEMPT') continue;
+    // netPrice: before tax, after discounts (totalPrice includes tax). The sign is on the price, so quantity counts as a size.
+    const t = (typeof i.netPrice === 'number' ? i.netPrice : Number(i.price) || 0) * Math.abs(Number(i.quantity) || 1);
+    if (isFinite(t)) v += t;
+  }
+  return Math.round(v * 100) / 100;
+}
+export const VALUE_SQL = `(SELECT ROUND(SUM(COALESCE(json_extract(value, '$.netPrice'), json_extract(value, '$.price'), 0) * ABS(COALESCE(json_extract(value, '$.quantity'), 1))), 2)
+  FROM json_each(json_extract(plain, '$.cart.items')) WHERE UPPER(COALESCE(json_extract(value, '$.sku'), '')) != 'PCEXEMPT')`;
 
 // ------------------------------------------------------------------ plain-part diff
 function flatten(v, path, out) {
@@ -122,7 +142,7 @@ async function storeApi(req, env, url, store) {
       const wo = int(r && r.wo);
       if (!wo) continue;
       rows.push({ wo, statusId: int(r.statusId), status: clean(r.status, 60) || null, programId: int(r.programId), program: clean(r.program, 80) || null,
-        device: clean(r.device, 80) || null, createdAt: iso(r.createdAt), updatedAt: iso(r.updatedAt) });
+        device: clean(r.device, 80) || null, outcome: clean(r.outcome, 40) || null, createdAt: iso(r.createdAt), updatedAt: iso(r.updatedAt) });
     }
     const known = new Map((await T.prepare('SELECT wo, is_open, api_updated_at, last_detail_at, claimed_until, missing_since FROM workorders WHERE store = ?').bind(store).all()).results.map((r) => [r.wo, r]));
     const need = [], stmts = [];
@@ -134,20 +154,22 @@ async function storeApi(req, env, url, store) {
       if (!k) { fresh++; need.push({ wo: r.wo, why: 'new' }); }
       else if (r.updatedAt && r.updatedAt !== k.api_updated_at) { changed++; if (!claimed(k)) need.push({ wo: r.wo, why: 'changed' }); }
       else if (!k.is_open && !claimed(k)) need.push({ wo: r.wo, why: 'reopened' });
-      stmts.push(T.prepare(`INSERT INTO workorders (store, wo, store_name, status_id, status_name, program_id, program_name, device, created_at, api_updated_at, is_open, first_seen_at, last_list_seen_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      stmts.push(T.prepare(`INSERT INTO workorders (store, wo, store_name, status_id, status_name, program_id, program_name, device, service_outcome, created_at, api_updated_at, is_open, first_seen_at, last_list_seen_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
           ON CONFLICT (store, wo) DO UPDATE SET store_name = COALESCE(excluded.store_name, store_name), status_id = COALESCE(excluded.status_id, status_id),
             status_name = COALESCE(excluded.status_name, status_name), program_id = COALESCE(excluded.program_id, program_id), program_name = COALESCE(excluded.program_name, program_name),
-            device = COALESCE(excluded.device, device), created_at = COALESCE(excluded.created_at, created_at), api_updated_at = COALESCE(excluded.api_updated_at, api_updated_at),
-            last_list_seen_at = excluded.last_list_seen_at, missing_since = NULL`)
-        .bind(store, r.wo, storeName, r.statusId, r.status, r.programId, r.program, r.device, r.createdAt, r.updatedAt, at, at));
+            device = COALESCE(excluded.device, device), service_outcome = COALESCE(excluded.service_outcome, service_outcome), created_at = COALESCE(excluded.created_at, created_at), api_updated_at = COALESCE(excluded.api_updated_at, api_updated_at),
+            last_list_seen_at = excluded.last_list_seen_at, missing_since = NULL, gone_seen_at = NULL`)
+        .bind(store, r.wo, storeName, r.statusId, r.status, r.programId, r.program, r.device, r.outcome, r.createdAt, r.updatedAt, at, at));
     }
     // Open WOs missing from the list: fetched in full to see whether they really closed. A short or
     // failed list (Waymark saw one report 14 WOs closed at once) is ignored rather than trusted.
     const open = [...known.values()].filter((k) => k.is_open);
     const missing = open.filter((k) => !listed.has(k.wo));
     let note = null;
-    if (!rows.length || missing.length > Math.max(5, open.length / 2)) note = 'list looks short (' + rows.length + ' rows, ' + missing.length + ' missing): missing WOs not checked';
+    // Short = empty, or under half of what we have open (WOs that really closed are fine: each one is
+    // checked in Portal before it's recorded closed, so a list can only ever cause extra checks).
+    if (!rows.length || (open.length >= 10 && rows.length < open.length / 2)) note = 'list looks short (' + rows.length + ' rows, ' + open.length + ' open on record): missing WOs not checked';
     else for (const k of missing) {
       if (!k.missing_since) stmts.push(T.prepare('UPDATE workorders SET missing_since = ? WHERE store = ? AND wo = ?').bind(at, store, k.wo));
       if (!claimed(k)) need.push({ wo: k.wo, why: 'missing' });
@@ -172,15 +194,25 @@ async function storeApi(req, env, url, store) {
     const b = await readJson(req, MAX.wo);
     const by = clean(b.by, 60) || null;
     if (wm[2]) {
-      await T.prepare(`INSERT INTO workorders (store, wo, is_open, first_seen_at, closed_at, closed_reason, last_detail_at) VALUES (?, ?, 0, ?, ?, 'gone', ?)
-          ON CONFLICT (store, wo) DO UPDATE SET is_open = 0, closed_at = COALESCE(closed_at, excluded.closed_at), closed_reason = COALESCE(closed_reason, 'gone'), claimed_until = NULL, last_detail_at = excluded.last_detail_at`)
-        .bind(store, wo, at, at, at).run();
-      return json({ ok: true });
+      // Portal answered 404. Only recorded closed after a second 404 at least GONE_MIN later, and only for a
+      // WO that's also missing from the list (a WO from another store, or a Portal hiccup, is never closed).
+      const k = await T.prepare('SELECT is_open, missing_since, gone_seen_at FROM workorders WHERE store = ? AND wo = ?').bind(store, wo).first();
+      if (!k || !k.is_open) return json({ ok: true, ignored: 'not open' });
+      if (!k.missing_since) return json({ ok: true, ignored: 'still in the list' });
+      if (!k.gone_seen_at || Date.parse(at) - Date.parse(k.gone_seen_at) < GONE_MIN * 60000) {
+        if (!k.gone_seen_at) await T.prepare('UPDATE workorders SET gone_seen_at = ?, claimed_until = NULL WHERE store = ? AND wo = ?').bind(at, store, wo).run();
+        else await T.prepare('UPDATE workorders SET claimed_until = NULL WHERE store = ? AND wo = ?').bind(store, wo).run();
+        return json({ ok: true, pending: 'confirm later' });
+      }
+      await T.prepare("UPDATE workorders SET is_open = 0, closed_at = ?, closed_reason = 'gone', claimed_until = NULL, last_detail_at = ? WHERE store = ? AND wo = ?").bind(at, at, store, wo).run();
+      return json({ ok: true, closed: true });
     }
     const hash = clean(b.hash, 64), plain = b.plain;
     if (!hash || !plain || typeof plain !== 'object' || !plain.workorder || int(plain.workorder.workorderId) !== wo) return fail(400, 'hash and plain.workorder required');
     if (!isSealed(b.sealed, MAX.sealed)) return fail(400, 'sealed detail required');
     if (b.card != null && !isSealed(b.card, MAX.card)) return fail(400, 'bad card');
+    const own = int(plain.workorder.storeId);
+    if (own != null && own !== store) return fail(409, 'work order ' + wo + ' belongs to store ' + own); // a browser switched stores mid-scan
     const plainText = JSON.stringify(plain);
     if (plainText.length > MAX.plain) return fail(413, 'plain part too large');
     if (!(await T.prepare('SELECT 1 FROM store_keys WHERE store = ?').bind(store).first())) return fail(409, 'no store key yet');
@@ -189,7 +221,7 @@ async function storeApi(req, env, url, store) {
       await T.prepare('UPDATE workorders SET last_detail_at = ?, claimed_until = NULL WHERE store = ? AND wo = ?').bind(at, store, wo).run();
       return json({ ok: true, same: true });
     }
-    const w = plain.workorder, pay = (plain.cart && plain.cart.payment) || {};
+    const w = plain.workorder, pay = (plain.cart && plain.cart.payment) || {}, value = cartValue(plain);
     const statusId = int(w.statusId), closed = CLOSED_IDS.has(statusId);
     const snap = await T.prepare('INSERT INTO snapshots (store, wo, fetched_at, trigger, by_name, hash, plain, sealed) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id')
       .bind(store, wo, at, clean(b.trigger, 20) || null, by, hash, plainText, b.sealed).first();
@@ -197,8 +229,8 @@ async function storeApi(req, env, url, store) {
     const stmts = changes.slice(0, 1000).map(([field, o, n]) => T.prepare('INSERT INTO changes (store, wo, changed_at, field, old, new, snapshot_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind(store, wo, at, field.slice(0, 300), o == null ? null : String(o).slice(0, 4000), n == null ? null : String(n).slice(0, 4000), snap.id));
     stmts.push(T.prepare(`INSERT INTO workorders (store, wo, status_id, status_name, program_id, program_name, device, created_at, api_updated_at, is_open, first_seen_at,
-          last_detail_at, last_hash, closed_at, closed_reason, cart_total, cart_paid, cart_due, plain, card)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          last_detail_at, last_hash, closed_at, closed_reason, cart_total, cart_paid, cart_due, cart_value, service_outcome, plain, card)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (store, wo) DO UPDATE SET status_id = COALESCE(excluded.status_id, status_id), status_name = COALESCE(excluded.status_name, status_name),
           program_id = COALESCE(excluded.program_id, program_id), program_name = COALESCE(excluded.program_name, program_name), device = COALESCE(excluded.device, device),
           created_at = COALESCE(created_at, excluded.created_at), api_updated_at = COALESCE(api_updated_at, excluded.api_updated_at), -- the list's value drives change detection
@@ -206,9 +238,9 @@ async function storeApi(req, env, url, store) {
           closed_at = CASE WHEN excluded.is_open = 1 THEN NULL ELSE COALESCE(closed_at, excluded.closed_at) END,
           closed_reason = CASE WHEN excluded.is_open = 1 THEN NULL ELSE COALESCE(closed_reason, excluded.closed_reason) END,
           missing_since = CASE WHEN excluded.is_open = 1 THEN missing_since ELSE NULL END,
-          cart_total = excluded.cart_total, cart_paid = excluded.cart_paid, cart_due = excluded.cart_due, plain = excluded.plain, card = COALESCE(excluded.card, card)`)
+          cart_total = excluded.cart_total, cart_paid = excluded.cart_paid, cart_due = excluded.cart_due, cart_value = excluded.cart_value, service_outcome = COALESCE(excluded.service_outcome, service_outcome), plain = excluded.plain, card = COALESCE(excluded.card, card)`)
       .bind(store, wo, statusId, clean(w.status, 60) || null, int(w.programId), clean(w.program, 80) || null, clean(w.device, 80) || null, iso(w.createdAt), iso(w.updatedAt),
-        closed ? 0 : 1, at, at, hash, closed ? at : null, closed ? (clean(w.status, 60) || 'closed') : null, num(pay.total), num(pay.amountPaid), num(pay.amountDue), plainText, b.card || null));
+        closed ? 0 : 1, at, at, hash, closed ? at : null, closed ? (clean(w.status, 60) || 'closed') : null, num(pay.total), num(pay.amountPaid), num(pay.amountDue), value, clean(w.outcome, 40) || null, plainText, b.card || null));
     for (let i = 0; i < stmts.length; i += 100) await T.batch(stmts.slice(i, i + 100));
     return json({ ok: true, snapshot: snap.id, changes: changes.length });
   }
@@ -292,7 +324,12 @@ export async function trackerAdmin(req, env, url, path, email) {
   }
   if (req.method === 'GET' && path === '/stores') {
     const r = await T.prepare(`SELECT store, MAX(store_name) AS name, COUNT(*) AS total, SUM(is_open) AS open, SUM(CASE WHEN is_open = 1 AND status_id = 13 THEN 1 ELSE 0 END) AS rfp,
-        SUM(CASE WHEN is_open = 1 AND status_id = 13 THEN COALESCE(cart_due, 0) ELSE 0 END) AS rfp_due, MAX(last_detail_at) AS last_detail_at FROM workorders GROUP BY store ORDER BY store`).all();
+        SUM(CASE WHEN is_open = 1 AND status_id = 13 THEN COALESCE(cart_due, 0) ELSE 0 END) AS rfp_due,
+        SUM(CASE WHEN is_open = 1 AND status_id = 13 THEN COALESCE(cart_value, 0) ELSE 0 END) AS rfp_value,
+        SUM(CASE WHEN is_open = 1 AND status_id = 13 AND service_outcome = 'Completed' THEN 1 ELSE 0 END) AS rfp_complete,
+        SUM(CASE WHEN is_open = 1 AND status_id = 13 AND service_outcome = 'Completed' THEN COALESCE(cart_value, 0) ELSE 0 END) AS rfp_complete_value,
+        SUM(CASE WHEN is_open = 1 AND status_id = 13 AND COALESCE(service_outcome, '') != 'Completed' THEN 1 ELSE 0 END) AS rfp_other,
+        SUM(CASE WHEN is_open = 1 AND status_id = 13 AND COALESCE(service_outcome, '') != 'Completed' THEN COALESCE(cart_value, 0) ELSE 0 END) AS rfp_other_value, MAX(last_detail_at) AS last_detail_at FROM workorders GROUP BY store ORDER BY store`).all();
     const scans = new Map((await T.prepare('SELECT store, MAX(at) AS at FROM scans GROUP BY store').all()).results.map((s) => [s.store, s.at]));
     return json({ stores: r.results.filter((s) => canSee(me, s.store)).map((s) => Object.assign(s, { last_scan_at: scans.get(s.store) || null })) }, 200, false);
   }
@@ -303,10 +340,11 @@ export async function trackerAdmin(req, env, url, path, email) {
     else if (!full) { if (!me.stores.length) return json({ wos: [] }, 200, false); where.push('store IN (' + me.stores.map(() => '?').join(',') + ')'); args.push(...me.stores); }
     if (q.get('open') === '1') where.push('is_open = 1'); else if (q.get('open') === '0') where.push('is_open = 0');
     if (q.get('status')) { where.push('status_id = ?'); args.push(int(q.get('status'))); }
+    if (q.get('outcome') === 'complete') where.push("service_outcome = 'Completed'"); else if (q.get('outcome') === 'other') where.push("COALESCE(service_outcome, '') != 'Completed'");
     if (q.get('since')) { where.push('COALESCE(api_updated_at, first_seen_at) >= ?'); args.push(clean(q.get('since'), 40)); }
     const limit = Math.min(int(q.get('limit')) || 500, 5000), offset = int(q.get('offset')) || 0;
     const r = await T.prepare(`SELECT store, wo, store_name, status_id, status_name, program_id, program_name, device, created_at, api_updated_at, is_open, first_seen_at,
-        last_detail_at, closed_at, closed_reason, cart_total, cart_paid, cart_due, card${q.get('detail') === '1' ? ', (SELECT sealed FROM snapshots s WHERE s.store = workorders.store AND s.wo = workorders.wo ORDER BY id DESC LIMIT 1) AS sealed' : ''} FROM workorders ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+        last_detail_at, closed_at, closed_reason, cart_total, cart_paid, cart_due, cart_value, service_outcome, card${q.get('detail') === '1' ? ', (SELECT sealed FROM snapshots s WHERE s.store = workorders.store AND s.wo = workorders.wo ORDER BY id DESC LIMIT 1) AS sealed' : ''} FROM workorders ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
         ORDER BY COALESCE(api_updated_at, first_seen_at) DESC LIMIT ? OFFSET ?`).bind(...args, limit, offset).all();
     await log(env, email, 'list', store, null, url.search.slice(0, 200));
     return json({ wos: r.results }, 200, false);
