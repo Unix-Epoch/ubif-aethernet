@@ -55,15 +55,17 @@ AE.tactician = (() => {
 
   // Punches for [from, to] (YYYY-MM-DD), a week at a time; finished weeks are cached in this browser per store.
   const WEEK_KEY = 'ae_ts_weeks';
-  async function punches(from, to) {
+  async function punches(from, to, fresh) {
     const store = await storeId(), cache = GM_getValue(WEEK_KEY, {}), today = ymd(new Date()), out = [];
     const mine = cache[store] || (cache[store] = {});
     for (let w = monday(new Date(from + 'T12:00:00')); ymd(w) <= to; w.setDate(w.getDate() + 7)) {
       const start = ymd(w), endD = new Date(w); endD.setDate(endD.getDate() + 6); const end = ymd(endD);
       const done = end < today, hit = mine[start];
       let rows;
-      // This week: reused for 10 minutes. Finished weeks: re-read once a day (managers fix past punches).
-      if (hit && Date.now() - hit.at < (done && hit.done ? 24 * 3600000 : 10 * 60000)) rows = hit.rows;
+      // Reuse: this week and weeks that ended in the last 14 days (when punches get fixed) for 10 minutes,
+      // older weeks for a day. fresh = re-read everything (the card's Refresh).
+      const recent = !done || Date.now() - Date.parse(end + 'T23:59:59') < 14 * 86400000;
+      if (!fresh && hit && Date.now() - hit.at < (recent || !hit.done ? 10 * 60000 : 24 * 3600000)) rows = hit.rows;
       else {
         const j = await AE.api('GET', '/api/store-time-sheet?fromDate=' + start + '&toDate=' + end);
         rows = ((j && j.rows) || []).map((r) => ({ u: r.userId, n: r.username, s: r.storeId, c: r.clockTypeId, i: r.timeIn, o: r.timeOut })); // only what's needed
@@ -321,12 +323,12 @@ AE.crystal({
       .ae-splh-scroll { overflow-y:auto !important; }
     `));
     const money = (n) => (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    let range = GM_getValue(RANGE_KEY, '7'), dataFor = null, data = null, busy = null, err = null, shownFor = null, loadedAt = 0;
+    let range = GM_getValue(RANGE_KEY, '7'), dataFor = null, data = null, busy = null, err = null, shownFor = null, loadedAt = 0, fresh = false;
     const STALE_MS = 10 * 60000; // the card's numbers are refreshed when older than this (on the page or coming back to it)
-    async function loadSplh() {
+    async function loadSplh(fresh) {
       const [f, t] = rangeDates(range), from = T.ymd(f), to = T.ymd(t);
       const p = await AE.profile(), store = Number(p.storeId);
-      const [sd, ps, gm, rd] = await Promise.all([AE.tracker.call('GET', '/v1/' + store + '/tracker/sales/days?from=' + from + '&to=' + to), T.punches(from, to), T.gmIds(),
+      const [sd, ps, gm, rd] = await Promise.all([AE.tracker.call('GET', '/v1/' + store + '/tracker/sales/days?from=' + from + '&to=' + to), T.punches(from, to, fresh), T.gmIds(),
         AE.tracker.call('GET', '/v1/' + store + '/tracker/rfp/days?from=' + from + '&to=' + to).catch(() => ({ days: [] }))]);
       const today = T.ymd(new Date()), days = new Map();
       for (let d = new Date(f); T.ymd(d) <= to; d.setDate(d.getDate() + 1)) days.set(T.ymd(d), { day: T.ymd(d), sales: null, source: null, hours: 0, gmHours: 0, open: 0, rfp: 0, rfpCount: 0 });
@@ -345,7 +347,9 @@ AE.crystal({
     function splhCard() {
       const leaveOut = !!GM_getValue(GM_KEY, false);
       const card = h('div', { id: RP, class: 'sg' });
-      const head = h('div', { class: 'hd' }, h('span', { style: 'line-height:0', html: AE.actionIcon('timeSheet', 32) }), h('b', null, 'Sales per labor hour'), h('span', { class: 'sg-soft who' }, 'Tactician · ' + AE_NAME));
+      const refresh = h('button', { type: 'button', class: 'sg-btn', style: 'height:28px;font-size:12px;padding:0 10px;margin-left:auto', title: 'Read sales and the time sheet again (after fixing a punch)', disabled: !!busy || null,
+        onclick: () => { fresh = true; dataFor = null; data = null; AE.track('timeSheet:splhRefresh'); showSplh(); } }, busy ? 'Refreshing…' : 'Refresh');
+      const head = h('div', { class: 'hd' }, h('span', { style: 'line-height:0', html: AE.actionIcon('timeSheet', 32) }), h('b', null, 'Sales per labor hour'), refresh, h('span', { class: 'sg-soft', style: 'font-size:13px' }, 'Tactician · ' + AE_NAME));
       const gmToggle = h('label', { class: 'gm' }, h('input', { type: 'checkbox', class: 'sw', role: 'switch', checked: leaveOut || null, onchange: (e) => { GM_setValue(GM_KEY, e.target.checked); AE.track('timeSheet:splhGm'); showSplh(); } }), 'Leave out general managers');
       const ranges = h('div', { class: 'ranges' }, ...RANGES.map(([k, l]) => h('button', { type: 'button', class: 'sg-btn' + (k === range ? ' sg-primary' : ''), onclick: () => { range = k; GM_setValue(RANGE_KEY, k); dataFor = null; data = null; showSplh(); } }, l)), gmToggle); // no old numbers under a new range
       card.append(head, ranges);
@@ -392,7 +396,8 @@ AE.crystal({
       if (old) old.replaceWith(card); else if (after && after.parentElement === home) after.after(card); else home.append(card);
       const key = range;
       if (!busy && (dataFor !== key || Date.now() - loadedAt > STALE_MS)) {
-        busy = loadSplh().then((d) => { if (range === key) { data = d; err = null; } dataFor = key; loadedAt = Date.now(); }, (e) => { err = /session expired/i.test(e.message || '') ? 'Sales per labor hour needs Store time sheet access.' : "Couldn't load: " + (e.message || e); dataFor = key; loadedAt = Date.now(); })
+        const f = fresh; fresh = false;
+        busy = loadSplh(f).then((d) => { if (range === key) { data = d; err = null; } dataFor = key; loadedAt = Date.now(); }, (e) => { err = /session expired/i.test(e.message || '') ? 'Sales per labor hour needs Store time sheet access.' : "Couldn't load: " + (e.message || e); dataFor = key; loadedAt = Date.now(); })
           .finally(() => { busy = null; if (document.getElementById(RP)) showSplh(); }); // (a range picked meanwhile loads next)
       }
     }
