@@ -87,7 +87,7 @@ function flatten(v, path, out) {
   } else out[path] = v === undefined ? null : JSON.stringify(v);
   return out;
 }
-function diff(before, after) {
+export function diff(before, after) {
   const a = before ? flatten(before, '', {}) : {}, b = flatten(after, '', {});
   const out = [];
   for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (a[k] !== b[k]) out.push([k, a[k] ?? null, b[k] ?? null]);

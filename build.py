@@ -241,9 +241,9 @@ def stamp_release_date(root: Path) -> None:
         (root / NOTES_FILE).write_text(json.dumps(notes, indent=2, ensure_ascii=False) + "\n")
 
 
-def tracker_crypto(root: Path) -> str:
-    # The same file the Worker and the admin site use, minus its ES module syntax.
-    src = (root / "tracker-worker" / "src" / "crypto.js").read_text()
+def tracker_module(root: Path, name: str) -> str:
+    # The same file the Worker, the admin site and the import use, minus its ES module syntax.
+    src = (root / "tracker-worker" / "src" / name).read_text()
     names = re.findall(r"^export (?:async )?(?:const|function) (\w+)", src, flags=re.M)
     return re.sub(r"^export ", "", src, flags=re.M) + "\nreturn { " + ", ".join(names) + " };\n"
 
@@ -281,8 +281,9 @@ def build(root: Path, version: str = VERSION) -> Path:
         "__WAYMARK_API__": os.environ.get("WAYMARK_API", DEV["waymark_api"] if dev else WAYMARK_API),
         "__WAYMARK_KEY__": waymark_key(root),
         "__TRACKER_API__": os.environ.get("TRACKER_API", DEV["tracker_api"] if dev else TRACKER_API),
-        # The tracker's encryption (tracker-worker/src/crypto.js), as a plain function body.
-        "/*__TRACKER_CRYPTO__*/": tracker_crypto(root),
+        # The tracker's encryption and shaping (tracker-worker/src/crypto.js, shape.js), as plain function bodies.
+        "/*__TRACKER_CRYPTO__*/": tracker_module(root, "crypto.js"),
+        "/*__TRACKER_SHAPE__*/": tracker_module(root, "shape.js"),
         # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), plus
         # UI pieces (assets/ui/*.png), as data URIs
         "__ACTION_ICONS__": action_icons(root),
