@@ -188,6 +188,30 @@ def arrival_view(a):
 
 
 # ------------------------------------------------------------------ routes
+def fake_punches(frm, to):
+    """A week of made-up punches (no real people): 914 and 326, one worker at both, a long day, a missing clock-out."""
+    import datetime as dt
+    start = dt.date.fromisoformat((frm or '2026-10-05')[:10])
+    people = [(33254, 'avery.tech', 914), (33255, 'blake.lead', 914), (33256, 'casey.mgr', 914), (33257, 'drew.tech', 326), (33258, 'emery.tech', 326), (33259, 'finley.float', None)]
+    rows, n = [], 900000
+    def iso(d, h, m=0):
+        return (dt.datetime.combine(d, dt.time(0)) + dt.timedelta(hours=h, minutes=m) + dt.timedelta(hours=4)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    for day in range(7):
+        d = start + dt.timedelta(days=day)
+        if d.weekday() == 3:  # closed Thursdays
+            continue
+        for uid, name, store in people:
+            if (uid + day) % 5 == 0:
+                continue
+            st = store or (914 if day % 2 else 326)
+            sname = {914: 'Newport News', 326: 'Lynnhaven'}[st]
+            h_in, h_out = 9.75 + (uid % 3) * 0.25, 18.5 + (uid % 2) * 0.75 + (1.5 if name == 'blake.lead' else 0)
+            n += 1; rows.append({'timeclockId': n, 'userId': uid, 'username': name, 'storeId': st, 'storeName': sname, 'clockTypeId': 1,
+                                 'timeIn': iso(d, int(h_in), int(h_in % 1 * 60)), 'timeOut': None if (name == 'drew.tech' and day == 6) else iso(d, int(h_out), int(h_out % 1 * 60))})
+            n += 1; rows.append({'timeclockId': n, 'userId': uid, 'username': name, 'storeId': st, 'storeName': sname, 'clockTypeId': 2, 'timeIn': iso(d, 13), 'timeOut': iso(d, 13, 30)})
+    return rows
+
+
 def handle(method, path, body):
     with LOCK:
         try:
@@ -226,7 +250,9 @@ def route(method, path, body):
     if p == 'notification/get-partner-downtime':
         return 200, fixture('partner-downtime', [])
     if p == 'store-time-sheet/access':
-        return 200, fixture('timesheet-access', {})
+        return 200, dict(fixture('timesheet-access', {}), allowed=True)
+    if p == 'store-time-sheet' and method == 'GET':  # fake punches: two stores, one worker at both (Store time sheet page)
+        return 200, {'rows': fake_punches(q.get('fromDate'), q.get('toDate'))}
     if p == 'admin/stores/roletypes':
         return 200, fixture('roletypes', [])
     m = re.fullmatch(r'program-attributes/(\d+)', p)
