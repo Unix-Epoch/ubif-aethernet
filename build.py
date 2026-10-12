@@ -91,7 +91,7 @@ DEV = {
     "name": "Aethernet (dev)",
     "namespace": "garrett.ubif.dev",   # a separate script to Tampermonkey: own install + storage
     "waymark_api": "https://aethernet-waymark-dev.ubifaethernet.workers.dev",
-    "tracker_api": "",                 # empty until the tracker Worker is deployed
+    "tracker_api": "https://aethernet-tracker.ubifaethernet.workers.dev",  # dev collects (public: TRACKER_API, still empty)
     "dist": "dist-dev",
     "status_file": "status-dev.json",
     "counter": "dev-build.txt",       # last dev build number
