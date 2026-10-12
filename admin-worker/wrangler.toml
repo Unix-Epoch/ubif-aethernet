@@ -14,7 +14,7 @@ database_id = "59394e23-6903-4b1b-bb41-43abf19f3915"
 [[d1_databases]]
 binding = "TR"
 database_name = "aethernet-tracker"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "08abe72b-5ba4-4934-8013-1f8b6b1a8825"
 
 # Served to the page as text: the tracker's encryption (shared with Aethernet) and the passphrase word list (EFF large list).
 [[rules]]

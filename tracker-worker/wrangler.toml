@@ -1,15 +1,14 @@
-# Aethernet work order tracker → aethernet-tracker.ubifaethernet.workers.dev (not deployed yet).
+# Aethernet work order tracker → aethernet-tracker.ubifaethernet.workers.dev
 # Stores' browsers send work orders here; the admin site (admin-worker/) reads them behind Cloudflare Access.
 name = "aethernet-tracker"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 
-# The tracker's own database. Create with `npx wrangler d1 create aethernet-tracker`, put its id here,
-# then `npx wrangler d1 execute aethernet-tracker --remote --file schema.sql`.
+# The tracker's own database (created Oct 12, 2026; tables from schema.sql).
 [[d1_databases]]
 binding = "TR"
 database_name = "aethernet-tracker"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "08abe72b-5ba4-4934-8013-1f8b6b1a8825"
 
 # Waymark's database, read only for store_access (same access list as every other Aethernet call).
 [[d1_databases]]
