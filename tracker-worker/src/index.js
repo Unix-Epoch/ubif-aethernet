@@ -20,6 +20,7 @@
     POST /v1/:store/tracker/wo/:wo { hash, trigger, plain, sealed, card, by }   one WO's detail
     POST /v1/:store/tracker/wo/:wo/gone { by }   Portal answers 404 for it: recorded closed after a second 404.
     GET  /v1/:store/tracker/rfp                  the store's RFP total (count, value, complete/incomplete split, last scan)
+    POST /v1/:store/tracker/sales { day, rows }  Portal's sales history for one business day (see the route)
 
   `plain` (readable on the server; never customer details):
     { workorder: { workorderId, storeId, statusId, status, programId, program, device,
@@ -96,8 +97,23 @@ export function cartValue(plain) {
   }
   return Math.round(v * 100) / 100;
 }
-export const VALUE_SQL = `(SELECT ROUND(SUM(COALESCE(json_extract(value, '$.netPrice'), json_extract(value, '$.price'), 0) * ABS(COALESCE(json_extract(value, '$.quantity'), 1))), 2)
+const VALUE_SQL = `(SELECT ROUND(SUM(COALESCE(json_extract(value, '$.netPrice'), json_extract(value, '$.price'), 0) * ABS(COALESCE(json_extract(value, '$.quantity'), 1))), 2)
   FROM json_each(json_extract(plain, '$.cart.items')) WHERE UPPER(COALESCE(json_extract(value, '$.sku'), '')) != 'PCEXEMPT')`;
+
+// The store's business day for a UTC time (all stores are on Eastern time for now; env.STORE_TZ overrides).
+export function localDay(iso, tz = 'America/New_York') {
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); // YYYY-MM-DD
+}
+// When a WO reached Sale complete (status 14). Portal's status history stops before it, but the WO's own
+// updatedAt on its Sale complete version is the sale; the history is a fallback.
+const soldAtOf = (plain) => {
+  const w = (plain && plain.workorder) || {};
+  if (Number(w.statusId) === 14 && w.updatedAt) return w.updatedAt;
+  return ((plain && plain.auditTrail) || []).filter((a) => Number(a.statusId) === 14 && a.createdAt).map((a) => a.createdAt).sort().pop() || null;
+};
+const DAY_RE = /^\d{4}-\d\d-\d\d$/;
 
 // ------------------------------------------------------------------ plain-part diff
 function flatten(v, path, out) {
@@ -108,6 +124,11 @@ function flatten(v, path, out) {
   } else out[path] = v === undefined ? null : JSON.stringify(v);
   return out;
 }
+async function hashText(t) {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)));
+  return [...d.slice(0, 12)].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+
 export function diff(before, after) {
   const a = before ? flatten(before, '', {}) : {}, b = flatten(after, '', {});
   const out = [];
@@ -199,6 +220,63 @@ async function storeApi(req, env, url, store) {
     return json({ need: out, more: need.length > out.length, note, written });
   }
 
+  /*
+    Portal's sales history for one business day (Sales tab: GET /api/reporting/sales-history), sent by
+    Aethernet: { day, rows: [{ saleId, wo, saleAt, type, total, partnerCredits, paid, completedBy, card }] }
+    with the customer sealed in `card`. Items, program and device come from the WO's last cart here.
+    Only changed sales are written; sales Portal no longer lists for the day are removed (never on an
+    empty list, so a blip can't wipe a day).
+  */
+  if (path === '/sales' && req.method === 'POST') {
+    const b = await readJson(req, 600000), day = clean(b.day, 10);
+    if (!DAY_RE.test(day) || !Array.isArray(b.rows) || b.rows.length > 1000) return fail(400, 'day and rows required');
+    const at = now(), tz = env.STORE_TZ || 'America/New_York';
+    const rows = [];
+    for (const r of b.rows) {
+      const id = clean(r && r.saleId, 40);
+      if (!id) continue;
+      if (r.card != null && !isSealed(r.card, MAX.card)) return fail(400, 'bad card');
+      const saleAt = iso(r.saleAt);
+      if (saleAt && localDay(saleAt, tz) !== day) continue; // another day's sale (Portal's window runs into the next morning)
+      rows.push({ id, wo: int(r.wo), saleAt, type: clean(r.type, 20) || null, total: num(r.total), partner: num(r.partnerCredits), paid: num(r.paid), by: clean(r.completedBy, 60) || null, card: r.card || null });
+    }
+    const old = new Map((await T.prepare('SELECT sale_id, hash FROM sales WHERE store = ? AND sale_day = ?').bind(store, day).all()).results.map((x) => [x.sale_id, x.hash]));
+    const wos = [...new Set(rows.map((r) => r.wo).filter(Boolean))];
+    const info = new Map();
+    if (wos.length) {
+      const q = await T.prepare(`SELECT w.wo, w.program_name, w.device, (SELECT s.plain FROM snapshots s WHERE s.store = w.store AND s.wo = w.wo AND json_array_length(json_extract(s.plain, '$.cart.items')) > 0 ORDER BY s.id DESC LIMIT 1) AS cart
+          FROM workorders w WHERE w.store = ? AND w.wo IN (SELECT value FROM json_each(?))`).bind(store, JSON.stringify(wos)).all();
+      for (const x of q.results) info.set(x.wo, { program: x.program_name, device: x.device, items: x.cart ? (JSON.parse(x.cart).cart.items || []) : null });
+    }
+    const stmts = [];
+    let written = 0;
+    for (const r of rows) {
+      const i = (r.wo && info.get(r.wo)) || {};
+      const items = i.items ? JSON.stringify(i.items) : null;
+      const hash = await hashText([r.wo, r.saleAt, r.type, r.total, r.partner, r.paid, r.by, r.card, i.program, i.device, items].join('|'));
+      if (old.get(r.id) === hash) continue;
+      written++;
+      stmts.push(T.prepare(`INSERT INTO sales (store, sale_id, wo, sale_day, sale_at, type, total, partner_credits, paid, completed_by, program, device, items, card, source, hash, seen_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'portal', ?, ?)
+          ON CONFLICT (store, sale_id) DO UPDATE SET wo = excluded.wo, sale_day = excluded.sale_day, sale_at = excluded.sale_at, type = excluded.type, total = excluded.total,
+            partner_credits = excluded.partner_credits, paid = excluded.paid, completed_by = excluded.completed_by, program = COALESCE(excluded.program, program),
+            device = COALESCE(excluded.device, device), items = COALESCE(excluded.items, items), card = COALESCE(excluded.card, card), source = 'portal', hash = excluded.hash, seen_at = excluded.seen_at`)
+        .bind(store, r.id, r.wo, day, r.saleAt, r.type, r.total, r.partner, r.paid, r.by, i.program || null, i.device || null, items, r.card, hash, at));
+    }
+    let removed = 0;
+    if (rows.length) {
+      const keep = new Set(rows.map((r) => r.id));
+      const gone = [...old.keys()].filter((id) => !keep.has(id));
+      removed = gone.length;
+      if (gone.length) stmts.push(T.prepare("DELETE FROM sales WHERE store = ? AND sale_day = ? AND source = 'portal' AND sale_id IN (SELECT value FROM json_each(?))").bind(store, day, JSON.stringify(gone)));
+    }
+    const total = Math.round(rows.reduce((n, r) => n + (r.type === 'Return' ? -Math.abs(r.total || 0) : (r.total || 0)), 0) * 100) / 100;
+    stmts.push(T.prepare(`INSERT INTO sales_days (store, day, source, synced_at, count, total) VALUES (?, ?, 'portal', ?, ?, ?)
+        ON CONFLICT (store, day) DO UPDATE SET source = 'portal', synced_at = excluded.synced_at, count = excluded.count, total = excluded.total`).bind(store, day, at, rows.length, total));
+    for (let k = 0; k < stmts.length; k += 100) await T.batch(stmts.slice(k, k + 100));
+    return json({ ok: true, count: rows.length, written, removed, total });
+  }
+
   // The store's RFP total (Master's Mend → RFP total on the Sales card): one sum, no WO details.
   if (path === '/rfp' && req.method === 'GET') {
     const r = await T.prepare(`SELECT COUNT(*) AS count, ROUND(COALESCE(SUM(cart_value), 0), 2) AS value,
@@ -246,6 +324,8 @@ async function storeApi(req, env, url, store) {
       return json({ ok: true, same: true });
     }
     const w = plain.workorder, pay = (plain.cart && plain.cart.payment) || {}, value = cartValue(plain);
+    // Portal empties a WO's cart at Sale complete: keep the last non-empty one (sales items, estimates).
+    const hasItems = !!(plain.cart && plain.cart.items && plain.cart.items.length), soldAt = soldAtOf(plain);
     const statusId = int(w.statusId), closed = CLOSED_IDS.has(statusId);
     const snap = await T.prepare('INSERT INTO snapshots (store, wo, fetched_at, trigger, by_name, hash, plain, sealed) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id')
       .bind(store, wo, at, clean(b.trigger, 20) || null, by, hash, plainText, b.sealed).first();
@@ -253,8 +333,8 @@ async function storeApi(req, env, url, store) {
     const stmts = changes.slice(0, 1000).map(([field, o, n]) => T.prepare('INSERT INTO changes (store, wo, changed_at, field, old, new, snapshot_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind(store, wo, at, field.slice(0, 300), o == null ? null : String(o).slice(0, 4000), n == null ? null : String(n).slice(0, 4000), snap.id));
     stmts.push(T.prepare(`INSERT INTO workorders (store, wo, status_id, status_name, program_id, program_name, device, created_at, api_updated_at, is_open, first_seen_at,
-          last_detail_at, last_hash, closed_at, closed_reason, cart_total, cart_paid, cart_due, cart_value, service_outcome, plain, card)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          last_detail_at, last_hash, closed_at, closed_reason, cart_total, cart_paid, cart_due, cart_value, service_outcome, plain, card, last_cart_value, last_cart_tax, sold_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (store, wo) DO UPDATE SET status_id = COALESCE(excluded.status_id, status_id), status_name = COALESCE(excluded.status_name, status_name),
           program_id = COALESCE(excluded.program_id, program_id), program_name = COALESCE(excluded.program_name, program_name), device = COALESCE(excluded.device, device),
           created_at = COALESCE(created_at, excluded.created_at), api_updated_at = COALESCE(api_updated_at, excluded.api_updated_at), -- the list's value drives change detection
@@ -262,9 +342,11 @@ async function storeApi(req, env, url, store) {
           closed_at = CASE WHEN excluded.is_open = 1 THEN NULL ELSE COALESCE(closed_at, excluded.closed_at) END,
           closed_reason = CASE WHEN excluded.is_open = 1 THEN NULL ELSE COALESCE(closed_reason, excluded.closed_reason) END,
           missing_since = CASE WHEN excluded.is_open = 1 THEN missing_since ELSE NULL END,
-          cart_total = excluded.cart_total, cart_paid = excluded.cart_paid, cart_due = excluded.cart_due, cart_value = excluded.cart_value, service_outcome = COALESCE(excluded.service_outcome, service_outcome), plain = excluded.plain, card = COALESCE(excluded.card, card)`)
+          cart_total = excluded.cart_total, cart_paid = excluded.cart_paid, cart_due = excluded.cart_due, cart_value = excluded.cart_value, service_outcome = COALESCE(excluded.service_outcome, service_outcome), plain = excluded.plain,
+          last_cart_value = COALESCE(excluded.last_cart_value, last_cart_value), last_cart_tax = COALESCE(excluded.last_cart_tax, last_cart_tax), sold_at = COALESCE(excluded.sold_at, sold_at), card = COALESCE(excluded.card, card)`)
       .bind(store, wo, statusId, clean(w.status, 60) || null, int(w.programId), clean(w.program, 80) || null, clean(w.device, 80) || null, iso(w.createdAt), iso(w.updatedAt),
-        closed ? 0 : 1, at, at, hash, closed ? at : null, closed ? (clean(w.status, 60) || 'closed') : null, num(pay.total), num(pay.amountPaid), num(pay.amountDue), value, clean(w.outcome, 40) || null, plainText, b.card || null));
+        closed ? 0 : 1, at, at, hash, closed ? at : null, closed ? (clean(w.status, 60) || 'closed') : null, num(pay.total), num(pay.amountPaid), num(pay.amountDue), value, clean(w.outcome, 40) || null, plainText, b.card || null,
+        hasItems ? value : null, hasItems ? num(pay.tax) : null, iso(soldAt)));
     for (let i = 0; i < stmts.length; i += 100) await T.batch(stmts.slice(i, i + 100));
     return json({ ok: true, snapshot: snap.id, changes: changes.length });
   }
@@ -387,6 +469,57 @@ export async function trackerAdmin(req, env, url, path, email) {
     await log(env, email, 'open', store, wo);
     return json({ wo: row.results[0], snapshots: snaps.results, changes: chg.results }, 200, false);
   }
+  /*
+    GET /sales/days?store=&from=&to=   per store and day: Portal's sales (source portal|mac) or, for a day
+                                       without them, an estimate from WOs that reached Sale complete that day
+                                       (their last cart before checkout: value before tax + its tax; quick sales
+                                       can't be estimated). [{ store, day, source, count, total, partnerCredits, paid }]
+    GET /sales/day?store=&day=         that day's sales (customer sealed in card) or estimated WOs.
+  */
+  if (req.method === 'GET' && (path === '/sales/days' || path === '/sales/day')) {
+    const q = url.searchParams, tz = env.STORE_TZ || 'America/New_York';
+    const stores = q.get('store') ? [int(q.get('store'))] : null;
+    if (stores && !canSee(me, stores[0])) return fail(403, 'not your store', false);
+    const visible = (st) => canSee(me, st) && (!stores || stores.includes(st));
+    const from = clean(q.get(path === '/sales/day' ? 'day' : 'from'), 10), to = clean(q.get(path === '/sales/day' ? 'day' : 'to'), 10);
+    if (!DAY_RE.test(from) || !DAY_RE.test(to) || to < from) return fail(400, 'from/to (YYYY-MM-DD) required', false);
+    const pad = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+    const [days, sales, sold] = await T.batch([
+      T.prepare('SELECT * FROM sales_days WHERE day BETWEEN ? AND ?').bind(from, to),
+      T.prepare(`SELECT store, sale_id, wo, sale_day, sale_at, type, total, partner_credits, paid, completed_by, program, device, items, card, source FROM sales WHERE sale_day BETWEEN ? AND ? ORDER BY sale_at`).bind(from, to),
+      T.prepare(`SELECT store, wo, store_name, program_name, device, last_cart_value, last_cart_tax, COALESCE(sold_at, closed_at) AS sold_at, card FROM workorders
+          WHERE status_id = 14 AND COALESCE(sold_at, closed_at) BETWEEN ? AND ?`).bind(pad(from, -1) , pad(to, 2)),
+    ]);
+    const have = new Map(days.results.filter((d) => visible(d.store)).map((d) => [d.store + '|' + d.day, d]));
+    const est = new Map();
+    for (const w of sold.results) {
+      if (!visible(w.store)) continue;
+      const day = localDay(w.sold_at, tz);
+      if (!day || day < from || day > to || have.has(w.store + '|' + day)) continue;
+      const k = w.store + '|' + day;
+      (est.get(k) || est.set(k, []).get(k)).push(Object.assign(w, { day, estimate: Math.round(((w.last_cart_value || 0) + (w.last_cart_tax || 0)) * 100) / 100 }));
+    }
+    if (path === '/sales/day') {
+      const st = stores ? stores[0] : null;
+      const list = sales.results.filter((x) => visible(x.store) && (!st || x.store === st));
+      await log(env, email, 'sales:day', st, null, from);
+      return json({ day: from, sales: list.map((x) => Object.assign(x, { items: x.items ? JSON.parse(x.items) : [] })),
+        estimated: [...est.entries()].filter(([k]) => !st || k.startsWith(st + '|')).flatMap(([, v]) => v) }, 200, false);
+    }
+    const out = [];
+    for (const d of have.values()) {
+      const list = sales.results.filter((x) => x.store === d.store && x.sale_day === d.day);
+      const sum = (f) => Math.round(list.reduce((n, x) => n + (x.type === 'Return' ? -Math.abs(x[f] || 0) : (x[f] || 0)), 0) * 100) / 100;
+      out.push({ store: d.store, day: d.day, source: d.source, count: list.length, total: sum('total'), partnerCredits: sum('partner_credits'), paid: sum('paid') });
+    }
+    for (const [k, v] of est) {
+      const [st, day] = k.split('|');
+      out.push({ store: Number(st), day, source: 'estimated', count: v.length, total: Math.round(v.reduce((n, w) => n + w.estimate, 0) * 100) / 100, partnerCredits: null, paid: null });
+    }
+    await log(env, email, 'sales:days', stores ? stores[0] : null, null, from + '..' + to);
+    return json({ days: out.sort((a, b) => (a.day === b.day ? a.store - b.store : a.day < b.day ? 1 : -1)) }, 200, false);
+  }
+
   if (!full) return fail(403, 'full access only', false);
   if (req.method === 'GET' && path === '/people') {
     const [p, k] = await T.batch([T.prepare('SELECT * FROM people ORDER BY email'), T.prepare('SELECT email, kind, store, invite FROM person_keys')]);

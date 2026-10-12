@@ -19,6 +19,7 @@ AE.tracker = (() => {
   const KEY = '__WAYMARK_KEY__';
   const C = (() => { /*__TRACKER_CRYPTO__*/ })();
   const SCAN_KEY = 'ae_tracker_scan_at', LAST_KEY = 'ae_tracker_last';
+  const SALES_KEY = 'ae_tracker_sales_at', SALES_WEEK_KEY = 'ae_tracker_sales_week', SALES_MS = 30 * 60 * 1000;
   const SCAN_MS = 10 * 60 * 1000, GAP_MS = 300, NOTE_PAGE = 30, NOTE_PAGES = 20;
   const configured = () => (AE_SANDBOX ? /^http:\/\/localhost[:/]/.test(API) : /^(https:\/\/|http:\/\/localhost[:/])/.test(API));
 
@@ -116,6 +117,8 @@ AE.tracker = (() => {
         }
         await AE.sleep(GAP_MS);
       }
+      try { const sales = await salesSync(store, jwk, opts.force); if (sales) result.sales = Object.fromEntries(Object.entries(sales).map(([d, x]) => [d, x.count + ' sales, $' + x.total])); }
+      catch (e) { result.errors.push('sales: ' + (e.message || e)); }
       return result;
     } catch (e) {
       result.errors.push(e.message || String(e));
@@ -125,6 +128,38 @@ AE.tracker = (() => {
       running = false;
       GM_setValue(LAST_KEY, result);
     }
+  }
+
+  /*
+    Daily sales: Portal's sales history (the Sales tab's GET /api/reporting/sales-history) for a business
+    day, sent to the tracker. Today every 30 minutes; the 6 days before it once a day, since Portal only
+    keeps about a week. The window runs into the next morning (the API's dates carry no time zone) and
+    each sale is kept by its own local date. The customer (id, name) is sealed.
+  */
+  const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  async function salesDay(store, day, jwk) {
+    const next = new Date(day + 'T12:00:00'); next.setDate(next.getDate() + 1);
+    const j = await AE.api('GET', '/api/reporting/sales-history?sale_complete_start_date=' + day + 'T00:00:00.000&sale_complete_end_date=' + ymd(next) + 'T08:00:00.000');
+    const list = ((j && j.results) || []).filter((r) => !r.saleCompleteDateTime || ymd(new Date(r.saleCompleteDateTime)) === day);
+    const rows = [];
+    for (const r of list) {
+      if (!r.salesId) continue;
+      rows.push({ saleId: r.salesId, wo: r.workOrderId || null, saleAt: r.saleCompleteDateTime || null, type: r.transactionType || null,
+        total: r.total, partnerCredits: r.partnerCredits, paid: r.payments, completedBy: r.completedBy || null,
+        card: (r.customerId || r.customerName) ? await C.sealJson({ customerId: r.customerId || null, customerName: r.customerName || null }, jwk, C.aad.sale(store, r.salesId)) : null });
+    }
+    return call('POST', '/v1/' + store + '/tracker/sales', { day, rows });
+  }
+  async function salesSync(store, jwk, force) {
+    if (!force && Date.now() - GM_getValue(SALES_KEY, 0) < SALES_MS - 30000) return null;
+    GM_setValue(SALES_KEY, Date.now());
+    const today = ymd(new Date()), out = {};
+    out[today] = await salesDay(store, today, jwk);
+    if (force || GM_getValue(SALES_WEEK_KEY, '') !== today) {
+      for (let i = 1; i <= 6; i++) { const d = new Date(); d.setDate(d.getDate() - i); const day = ymd(d); out[day] = await salesDay(store, day, jwk); await AE.sleep(GAP_MS); }
+      GM_setValue(SALES_WEEK_KEY, today);
+    }
+    return out;
   }
 
   // Dev tools: what one WO would send, without sending it.

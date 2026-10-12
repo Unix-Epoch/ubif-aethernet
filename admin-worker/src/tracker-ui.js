@@ -84,7 +84,7 @@ async function openDetail(store, wo, sealed) {
 }
 
 // ------------------------------------------------------------------ helpers
-const money = (n) => (n == null ? '—' : '$' + Number(n).toFixed(2));
+const money = (n) => (n == null ? '—' : (Number(n) < 0 ? '-$' : '$') + Math.abs(Number(n)).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','));
 const stClass = (r) => (r.status_id === 13 ? (r.service_outcome && r.service_outcome !== 'Completed' ? 'rfpi' : 'rfp') : !r.is_open ? 'done' : [3, 7, 26, 27].includes(r.status_id) || /await/i.test(r.status_name || '') ? 'wait' : 'wip');
 // RFP split by Portal's outcome: "Ready for pickup · Complete" / "· Incomplete" (Declined, No issue found shown as is).
 const statusText = (r) => (r.status_name || '') + (r.status_id === 13 && r.service_outcome ? ' · ' + (r.service_outcome === 'Completed' ? 'Complete' : r.service_outcome) : '');
@@ -110,6 +110,7 @@ export async function draw(which, m, helpers) {
   if (!unlocked()) return m.replaceChildren(unlockCard(() => draw(which, m, helpers)));
   touch();
   if (which === 'people') return drawPeople(m);
+  if (which === 'sales') return drawSales(m);
   return drawWos(m);
 }
 
@@ -282,6 +283,60 @@ async function showWo(drawer, r) {
       h('dt', null, 'Value'), h('dd', null, h('b', null, money(r.cart_value)), h('span', { class: 'soft' }, ' cart before tax, partner credits ignored')),
       h('dt', null, r.status_id === 13 ? 'Due at pickup' : 'Customer owes'), h('dd', null, money(pay.amountDue) + ' of ' + money(pay.total) + (pay.amountPaid ? ' · ' + money(pay.amountPaid) + ' paid' : ''))),
     nav, body);
+}
+
+// ------------------------------------------------------------------ Sales
+const SF = { store: '', days: '30' };
+async function drawSales(m) {
+  const { h } = ui;
+  touch();
+  const st = (await ui.api('GET', '/tracker/stores')).stores;
+  const ymd = (d) => d.toISOString().slice(0, 10);
+  const to = new Date(), from = new Date(); from.setDate(from.getDate() - Number(SF.days) + 1);
+  const qs = '?from=' + ymd(from) + '&to=' + ymd(to) + (SF.store ? '&store=' + SF.store : '');
+  const days = (await ui.api('GET', '/tracker/sales/days' + qs)).days;
+  const sel = (val, opts, set) => h('select', { onchange: (e) => { set(e.target.value); drawSales(m); } }, opts.map(([v, l]) => { const o = h('option', { value: v }, l); o.selected = String(v) === String(val); return o; }));
+  const SRC = { portal: ['Portal', 'rfp'], mac: ['Mac history', 'wip'], estimated: ['Estimated', 'rfpi'] };
+  const sum = (k) => days.reduce((n, d) => n + (d[k] || 0), 0);
+  const detail = h('div', { class: 'card drawer' }, h('div', { class: 'soft' }, 'Pick a day to see its sales.'));
+  const fmtDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  m.replaceChildren(
+    h('div', { class: 'sum' },
+      h('div', { class: 'card k' }, h('div', { class: 'n' }, money(sum('total'))), h('div', { class: 'l' }, 'Sales, last ' + SF.days + ' days' + (days.some((d) => d.source === 'estimated') ? ' (includes estimates)' : ''))),
+      h('div', { class: 'card k' }, h('div', { class: 'n' }, String(days.filter((d) => d.source !== 'estimated').reduce((n, d) => n + d.count, 0))), h('div', { class: 'l' }, 'Transactions from Portal')),
+      h('div', { class: 'card k' }, h('div', { class: 'n' }, String(days.filter((d) => d.source === 'estimated').length)), h('div', { class: 'l' }, 'Days estimated from work orders'))),
+    h('div', { class: 'card' }, h('div', { class: 'srch' }, sel(SF.store, [['', 'All stores']].concat(st.map((x) => [x.store, x.store + (x.name ? ' ' + x.name : '')])), (v) => { SF.store = v; }),
+      sel(SF.days, [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['183', 'Last 6 months']], (v) => { SF.days = v; })),
+      h('div', { class: 'soft', style: 'margin-top:8px' }, 'Portal\'s sales history where we have it. Days without it are estimated from work orders that reached Sale complete (their last cart before checkout, with tax); quick sales without a work order can\'t be estimated.')),
+    h('div', { class: 'split' }, h('div', { class: 'card res' }, days.length ? h('table', null, h('tr', null, ['Day', 'Store', 'Source', 'Sales', 'Total', 'Partner credits', 'Customers paid'].map((x) => h('th', null, x))),
+      days.map((d) => h('tr', { onclick: (e) => { [...m.querySelectorAll('.res tr.sel')].forEach((x) => x.classList.remove('sel')); e.currentTarget.classList.add('sel'); showSalesDay(detail, d); } },
+        h('td', null, h('b', null, fmtDay(d.day))), h('td', null, String(d.store)), h('td', null, h('span', { class: 'st ' + SRC[d.source][1] }, SRC[d.source][0])),
+        h('td', null, String(d.count)), h('td', null, money(d.total)), h('td', null, d.partnerCredits == null ? '—' : money(d.partnerCredits)), h('td', null, d.paid == null ? '—' : money(d.paid))))) : h('div', { class: 'soft' }, 'No sales in this range yet.')),
+      detail));
+}
+async function showSalesDay(box, d) {
+  const { h } = ui;
+  touch();
+  box.replaceChildren(h('div', { class: 'soft' }, 'Opening…'));
+  const j = await ui.api('GET', '/tracker/sales/day?store=' + d.store + '&day=' + d.day);
+  const k = keys.stores.get(d.store);
+  const who = async (x, aad) => { if (!k || !x.card) return null; try { return await C.openJson(x.card, k, aad); } catch (_) { return null; } };
+  const head = h('div', null, h('h2', null, new Date(d.day + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }) + ' · ' + d.store),
+    h('div', { class: 'soft', style: 'margin:2px 0 10px' }, (d.source === 'estimated' ? 'Estimated from ' + d.count + ' work order(s): ' : d.count + ' sale(s): ') + money(d.total)));
+  if (d.source === 'estimated') {
+    const rows = [];
+    for (const w of j.estimated.filter((x) => x.store === d.store)) { const c = await who(w, C.aad.card(w.store, w.wo)); rows.push(h('tr', null, h('td', null, ui.woLink(w.wo)), h('td', null, (c && c.name) || '—'), h('td', null, w.program_name || ''), h('td', null, w.device || ''), h('td', null, money(w.estimate)))); }
+    return box.replaceChildren(head, h('table', { class: 'tl' }, h('tr', null, ['WO', 'Customer', 'Program', 'Device', 'Estimate'].map((x) => h('th', null, x))), rows));
+  }
+  const rows = [];
+  for (const x of j.sales.filter((y) => y.store === d.store)) {
+    const c = await who(x, C.aad.sale(x.store, x.sale_id));
+    rows.push(h('tr', null, h('td', { class: 'soft' }, x.sale_at ? new Date(x.sale_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''), h('td', null, x.wo ? ui.woLink(x.wo) : h('span', { class: 'soft' }, 'Quick sale')),
+      h('td', null, (c && c.customerName) || '—', x.type === 'Return' ? h('span', { class: 'st rfpi', style: 'margin-left:6px' }, 'Return') : null), h('td', null, x.program || ''),
+      h('td', null, money(x.total)), h('td', null, x.partner_credits ? money(x.partner_credits) : '—'), h('td', null, money(x.paid)), h('td', { class: 'soft' }, x.completed_by || ''),
+      h('td', { class: 'soft', title: (x.items || []).map((i) => i.name).join('\n') }, (x.items || []).filter((i) => String(i.sku || '').toUpperCase() !== 'PCEXEMPT').length + ' item(s)')));
+  }
+  box.replaceChildren(head, h('table', { class: 'tl' }, h('tr', null, ['Time', 'WO', 'Customer', 'Program', 'Total', 'Partner', 'Paid', 'By', 'Items'].map((x) => h('th', null, x))), rows));
 }
 
 // ------------------------------------------------------------------ People

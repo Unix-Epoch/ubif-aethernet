@@ -54,11 +54,11 @@ const fmt = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocal
 const fmtDay = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' });
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const woLink = (id) => h('a', { href: 'https://portal.ubreakifix.net/repair/workorder/' + id, target: '_blank', rel: 'noopener' }, id + ' ↗');
-const TABS = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['people', 'People']];
+const TABS = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['sales', 'Sales'], ['people', 'People']];
 let tab = (location.hash.slice(1) || 'reports');
 function nav() { $('#tabs').replaceChildren(...TABS.map(([k, l]) => h('button', { class: k === tab ? 'on' : null, onclick: () => { tab = k; location.hash = k; draw(); } }, l))); }
 async function draw() { nav(); const m = $('#main'); m.replaceChildren(h('div', { class: 'soft' }, 'Loading…'));
-  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, wos: (x) => drawTracker('wos', x), people: (x) => drawTracker('people', x) }[tab] || drawReports)(m); }
+  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, wos: (x) => drawTracker('wos', x), sales: (x) => drawTracker('sales', x), people: (x) => drawTracker('people', x) }[tab] || drawReports)(m); }
   catch (e) { m.replaceChildren(h('div', { class: 'err' }, "Couldn't load: " + e.message)); } }
 function toast(t) { const el = h('div', { style: 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;z-index:9' }, t); document.body.append(el); setTimeout(() => el.remove(), 3500); }
 

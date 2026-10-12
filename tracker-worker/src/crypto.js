@@ -81,6 +81,7 @@ export const aad = {
   storeKey: (store) => 'store-key|' + store,
   snapshot: (store, wo) => 'snapshot|' + store + '|' + wo,
   card: (store, wo) => 'card|' + store + '|' + wo,
+  sale: (store, saleId) => 'sale|' + store + '|' + saleId,
   person: (email, kind, store) => 'person|' + String(email).toLowerCase() + '|' + kind + '|' + (store || 0),
 };
 

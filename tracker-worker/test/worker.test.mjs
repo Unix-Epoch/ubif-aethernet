@@ -188,6 +188,38 @@ assert.equal(rt.count, 1); assert.equal(rt.value, 282); assert.equal(rt.incomple
 assert.ok(!JSON.stringify(rt).includes('v1.'), 'no sealed data in the total');
 assert.equal((await call('GET', '/v1/326/tracker/rfp')).j.count, 0);
 
+// --- daily sales: Portal's list per day, items from the WO's last cart, estimates for days without it
+const card = await C.sealJson({ customerId: 1, customerName: 'Jordan Reyes' }, sk, C.aad.sale(914, 'FSO1'));
+const saleRows = [
+  { saleId: 'FSO1', wo: 5003, saleAt: '2026-10-12T18:00:00Z', type: 'Sale', total: 282, partnerCredits: 282, paid: 0, completedBy: 'Tech A', card },
+  { saleId: 'FSO2', wo: null, saleAt: '2026-10-12T19:00:00Z', type: 'Sale', total: 21.19, partnerCredits: 0, paid: 21.19, completedBy: 'Tech B', card },
+  { saleId: 'FSO3', wo: null, saleAt: '2026-10-13T02:30:00Z', type: 'Return', total: -49.99, partnerCredits: 0, paid: -49.99, completedBy: 'Tech B', card }, // 10:30 PM local: still Oct 12
+  { saleId: 'FSO4', wo: null, saleAt: '2026-10-13T14:00:00Z', type: 'Sale', total: 10, partnerCredits: 0, paid: 10, completedBy: 'Tech B', card }, // next day: ignored
+];
+let sr = await call('POST', '/v1/914/tracker/sales', { day: '2026-10-12', rows: saleRows });
+ok(sr, 'sales'); assert.equal(sr.j.count, 3); assert.equal(sr.j.written, 3); assert.equal(sr.j.total, 253.2);
+const fso1 = await env.TR.prepare("SELECT items, program FROM sales WHERE sale_id = 'FSO1'").first();
+assert.ok(JSON.parse(fso1.items).some((i) => i.sku === 'PCEXEMPT'), 'items from the WO cart');
+assert.ok(!JSON.stringify(await env.TR.prepare('SELECT * FROM sales').all()).includes('Jordan'), 'customer sealed');
+sr = await call('POST', '/v1/914/tracker/sales', { day: '2026-10-12', rows: saleRows });
+assert.equal(sr.j.written, 0, 'unchanged day → no sale writes');
+sr = await call('POST', '/v1/914/tracker/sales', { day: '2026-10-12', rows: saleRows.slice(0, 2) });
+assert.equal(sr.j.removed, 1, 'a sale Portal no longer lists is removed');
+sr = await call('POST', '/v1/914/tracker/sales', { day: '2026-10-12', rows: [] });
+assert.equal((await env.TR.prepare("SELECT COUNT(*) AS n FROM sales WHERE sale_day = '2026-10-12'").first()).n, 2, 'an empty list never wipes a day');
+// an estimate for a day without Portal's list: WO 5002 reached Sale complete on Oct 10
+await env.TR.prepare("UPDATE workorders SET status_id = 14, sold_at = '2026-10-10T20:00:00Z', last_cart_value = 100, last_cart_tax = 6 WHERE wo = 5002").run();
+const days = (await admin('owner@x.com', 'GET', '/sales/days?store=914&from=2026-10-09&to=2026-10-12')).j.days;
+const d12 = days.find((d) => d.day === '2026-10-12'), d10 = days.find((d) => d.day === '2026-10-10');
+assert.equal(d12.source, 'portal'); assert.equal(d12.count, 2); assert.equal(d12.total, 303.19);
+assert.equal(d10.source, 'estimated'); assert.equal(d10.total, 106);
+const dd = (await admin('owner@x.com', 'GET', '/sales/day?store=914&day=2026-10-10')).j;
+assert.equal(dd.estimated.length, 1); assert.equal(dd.sales.length, 0);
+assert.equal((await admin('mgr@x.com', 'GET', '/sales/days?store=326&from=2026-10-09&to=2026-10-12')).status, 403, 'store-limited person');
+// localDay: evening sales stay on the store's day
+const { localDay } = await import('../src/index.js');
+assert.equal(localDay('2026-10-13T02:30:00Z'), '2026-10-12'); assert.equal(localDay('2026-12-01T04:30:00Z'), '2026-11-30');
+
 // --- retention: nothing trimmed without cold storage; with TRIM_WITHOUT_ARCHIVE the latest snapshot per WO stays
 await env.TR.prepare("UPDATE snapshots SET fetched_at = '2026-01-01T00:00:00Z'").run();
 await env.TR.prepare("UPDATE changes SET changed_at = '2026-01-01T00:00:00Z'").run();

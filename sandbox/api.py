@@ -251,6 +251,21 @@ def route(method, path, body):
         return 200, fixture('partner-downtime', [])
     if p == 'store-time-sheet/access':
         return 200, dict(fixture('timesheet-access', {}), allowed=True)
+    if p == 'reporting/sales-history':  # fake Sales tab: a few made-up sales on each day asked for
+        import datetime as dt
+        day = dt.date.fromisoformat((q.get('sale_complete_start_date') or now())[:10])
+        if day.weekday() == 6:
+            return 200, {'results': [], 'count': 0, 'next': None}
+        def at(h, m=0):
+            return (dt.datetime.combine(day, dt.time(h, m)) + dt.timedelta(hours=4)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        n = day.toordinal() % 1000
+        rows = [{'salesId': f'FSO9{n:03d}01', 'workOrderId': 700000001, 'saleCompleteDateTime': at(11, 20), 'transactionType': 'Sale', 'total': 199.0, 'partnerCredits': 199.0, 'payments': 0.0,
+                 'customerId': 770001, 'customerName': 'Taylor Diaz', 'completedBy': 'Sandbox Tech'},
+                {'salesId': f'FSO9{n:03d}02', 'workOrderId': None, 'saleCompleteDateTime': at(14, 5), 'transactionType': 'Sale', 'total': 21.19, 'partnerCredits': 0.0, 'payments': 21.19,
+                 'customerId': 770002, 'customerName': 'Morgan Lee', 'completedBy': 'Sandbox Tech'},
+                {'salesId': f'FSO9{n:03d}03', 'workOrderId': None, 'saleCompleteDateTime': at(19, 45), 'transactionType': 'Return', 'total': -49.99, 'partnerCredits': 0.0, 'payments': -49.99,
+                 'customerId': 770003, 'customerName': 'Riley Park', 'completedBy': 'Sandbox Lead'}]
+        return 200, {'results': rows, 'count': len(rows), 'next': None}
     if p == 'store-time-sheet' and method == 'GET':  # fake punches: two stores, one worker at both (Store time sheet page)
         return 200, {'rows': fake_punches(q.get('fromDate'), q.get('toDate'))}
     if p == 'admin/stores/roletypes':
