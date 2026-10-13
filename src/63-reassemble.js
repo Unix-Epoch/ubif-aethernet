@@ -1,5 +1,5 @@
 /*
-  Reassemble — Price Estimate: an out-of-warranty quote from the part cost, with the franchise owner's
+  Reassemble — Price estimate: an out-of-warranty quote from the part cost, with the franchise owner's
   pricing (his NextGen OOW Price Calculator v3.5.0, rebuilt here), and the Price sheet's own price when
   the repair is on it.
 
@@ -12,7 +12,7 @@
       $25/$50. Screen repairs: one price (Easy) + an optional extra, kept at .99.
   Profit (price × (1 − royalty) − part) shows only to the admin panel's profit list (the owner's managers
   and Garrett, Oct 13, 2026), matched on the Portal user's name or email.
-  Opens from the avatar menu ("Price estimate") and a Price Estimate button at the bottom left of the
+  Opens from the avatar menu ("Price estimate") and a Price estimate button at the bottom left of the
   Estimates page (/price-check) and of check-in's Repair estimate step (above Back). (A Dashboard tile was
   dropped, Garrett, Oct 13, 2026: "it doesn't need to exist".) Copy only: nothing is added to a cart.
 */
@@ -263,7 +263,7 @@ AE.crystal({
       settingsItem.before(item);
     }
 
-    // ------------------------------------------------------------ the Price Estimate button
+    // ------------------------------------------------------------ the Price estimate button
     // Check-in's Repair estimate step: bottom left of the step's empty space, just above Back.
     // The Estimates page (/price-check): bottom left, in the footer beside Save estimate / Check-in.
     const slice = (key) => { const r = AE.portal('select', { slice: 'checkInSlice', key }); return r && r.found ? r.value : undefined; };
@@ -303,7 +303,7 @@ AE.crystal({
         b = h('button', { type: 'button', id: BTN, title: 'Reassemble: price an out-of-warranty repair from the part cost', onclick: () => {
           const x = where(), model = x ? x.prefill() : '';
           open({ from: x ? x.from : 'button', model, device: R.typeOf(model) || undefined });
-        } }, icon(28), 'Price Estimate');
+        } }, icon(28), 'Price estimate');
         document.body.append(b);
       }
       const want = [Math.round(w.left) + 'px', Math.round(w.top) + 'px'];
