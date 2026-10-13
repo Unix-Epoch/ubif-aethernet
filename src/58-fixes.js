@@ -710,7 +710,7 @@ AE.crystal({
             AE.h('b', null, 'RFP total: ' + money(data.value)), AE.h('br'),
             data.count + ' ready for pickup · ' + data.complete.count + ' complete (' + money(data.complete.value) + ') · ' + data.incomplete.count + ' incomplete (' + money(data.incomplete.value) + ')'
               + (data.unknown ? ' · ' + data.unknown + ' not known yet' : ''), AE.h('br'),
-            AE.h('span', { style: 'opacity:.7' }, 'Before tax, partner credits ignored' + (ago != null ? ' · updated ' + (ago < 1 ? 'just now' : ago + ' min ago') : '')));
+            AE.h('span', { style: 'opacity:.7' }, 'Before tax, partner credits ignored' + (ago != null ? ' · updated ' + (ago < 1 ? 'just now' : ago < 60 ? ago + ' min ago' : ago < 2880 ? Math.round(ago / 60) + (Math.round(ago / 60) === 1 ? ' hour' : ' hours') + ' ago' : Math.round(ago / 1440) + ' days ago') : '')));
           t.style.left = (r.left + r.width / 2) + 'px'; t.style.top = (r.bottom + 10) + 'px';
           document.body.append(t);
         }

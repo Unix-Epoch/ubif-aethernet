@@ -360,7 +360,7 @@ AE.feedback = (() => {
       const box = 'width:76px;height:30px;padding:0 6px;border:1px solid var(--aui-outline,#c6c6ca);border-radius:6px;background:var(--aui-surface,#fff);color:var(--aui-on-surface,#1a1c1e)';
       const num = (val, step = 0.01) => h('input', { type: 'number', min: 0, step, value: val, style: box });
       const row = (label, ...els) => h('div', { class: 'bar', style: 'margin:4px 0;gap:8px' }, h('span', { style: 'flex:1' }, label), ...els);
-      const GROUPS = [['phone', 'Phone and wearable'], ['tablet', 'Tablet'], ['computer', 'Laptop / PC and MacBook'], ['console', 'Game console'], ['other', 'Other']];
+      const GROUPS = [['phone', 'Phone and wearable'], ['tablet', 'Tablet'], ['computer', 'Laptop / PC (non-Mac)'], ['console', 'Game console'], ['other', 'Other']];
       const bases = {}; for (const [g] of GROUPS) bases[g] = [num(v((base.bases || {})[g], D.bases[g])[0]), num(v((base.bases || {})[g], D.bases[g])[1])];
       const mLow = num(v((base.multipliers || {}).low, D.multipliers.low)), mHigh = num(v((base.multipliers || {}).high, D.multipliers.high));
       const macMin = num(v(base.macMin, D.macMin), 1), macMin24 = num(v(base.macMin2024, D.macMin2024), 1);
@@ -392,7 +392,7 @@ AE.feedback = (() => {
         row('Minimum profit, 2023 and older $', macMin), row('Minimum profit, 2024 and newer $', macMin24),
         row('Plus this % of the part cost…', rate), row('…above this part cost $', th),
         row('Medium adds $', addM), row('Hard adds $', addH),
-        h('h4', null, 'Both'),
+        h('h4', null, 'All devices'),
         row('Royalty %', roy),
         h('h4', null, 'Who sees profit'),
         h('div', { class: 'sub', style: 'margin-top:0' }, "One Portal name or email per line. Everyone else sees prices only."),
