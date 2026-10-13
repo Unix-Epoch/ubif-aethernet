@@ -265,13 +265,18 @@ AE.crystal({
     // Check-in's Repair estimate step: bottom left of the step's empty space, just above Back.
     // The Estimates page (/price-check): bottom left, in the footer beside Save estimate / Check-in.
     const slice = (key) => { const r = AE.portal('select', { slice: 'checkInSlice', key }); return r && r.found ? r.value : undefined; };
+    // Core's helpers where this build has them (dev's page watcher, 2.23); plain versions otherwise, so this file is the same on every branch.
+    const findButton = AE.findButton || ((test) => [...document.querySelectorAll('button')].find((x) => test(x.textContent.trim()) && x.offsetParent) || null);
+    const textEl = AE.textEl || ((text) => [...document.querySelectorAll('body *')].find((e) => !e.children.length && e.textContent.trim() === text) || null);
+    const onDom = AE.onDom || ((fn) => { let queued = false; new MutationObserver(() => { if (!queued) { queued = true; setTimeout(() => { queued = false; try { fn(); } catch (e) { AE.noteError('reassemble', e); } }, 150); } })
+      .observe(document.body, { childList: true, subtree: true }); fn(); });
     const leftOf = (el) => el && el.getBoundingClientRect().left;
     let stepAt = 0, onStep = false;
     function where() {
       const p = location.pathname;
       if (p === '/check-in') {
         if (performance.now() - stepAt > 300) { stepAt = performance.now(); onStep = slice('formStep') === 3; } // Portal's state, at most every 300 ms
-        const back = onStep && AE.findButton((t) => t === 'Back');
+        const back = onStep && findButton((t) => t === 'Back');
         if (!back) return null;
         const left = leftOf(document.querySelector('input[placeholder^="Search additional parts"]')) ?? leftOf(back);
         const foot = back.closest('div[class]') || back;
@@ -279,10 +284,10 @@ AE.crystal({
           prefill: () => { const d = slice('customerDeviceDetails') || {}; return d.deviceName || d.modelName || ''; } };
       }
       if (p === '/price-check') {
-        const save = AE.findButton((t) => /^save estimate$/i.test(t));
+        const save = findButton((t) => /^save estimate$/i.test(t));
         if (!save) return null;
-        const r = save.getBoundingClientRect(), head = AE.textEl('Device info') || AE.textEl('Estimates');
-        const model = () => { const lab = AE.textEl('Device make and model'), box = lab && lab.closest('div') && lab.closest('div').parentElement;
+        const r = save.getBoundingClientRect(), head = textEl('Device info') || textEl('Estimates');
+        const model = () => { const lab = textEl('Device make and model'), box = lab && lab.closest('div') && lab.closest('div').parentElement;
           const i = box && box.querySelector('input'); return (i && i.value) || ''; };
         return { from: 'estimates', left: leftOf(head) ?? r.left, top: r.top + (r.height - 40) / 2, prefill: model };
       }
@@ -304,7 +309,7 @@ AE.crystal({
       if (b.style.top !== want[1]) b.style.top = want[1];
     }
 
-    AE.onDom(() => { menuItem(); placeButton(); });
+    onDom(() => { menuItem(); placeButton(); });
     AE.every(1000, () => { menuItem(); placeButton(); });
     addEventListener('resize', placeButton);
   },
