@@ -82,52 +82,9 @@ AE.crystal({
     }
     const find = (items, re) => re && (items || []).find((i) => re.test(i.title));
 
-    // ------------------------------------------------------------ prices
-    const DROP = new Set(['apple', 'samsung', 'google', 'galaxy', '5g', 'motorola', 'nintendo', 'microsoft', 'sony']);
-    // Retail tabs only: Eagle of Va (contract prices), Refurb, BER, etc. are synced but never quoted from.
-    const QUOTE_TABS = new Set(['Apple', 'Samsung', 'Google', 'ipad', 'Game Console']);
-    const QUAL = new Set(['pro', 'max', 'plus', 'ultra', 'fe', 'xl', 'mini', 'e', 'fold', 'flip', 'edge', 'lite', 'air', 'se', 'a', 's', 'note']);
-    const toks = (s) => String(s || '').toLowerCase().replace(/\+/g, ' plus ').replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9/ ]/g, ' ')
-      .split(/\s+/).filter((t) => t && !DROP.has(t));
-    const SCREEN = /lcd|oled|oem|octa|ub screen|screen repair|^glass$|glass\/lcd/i, NOT_SCREEN = /back|camera|cam\b|housing/i;
-    const num = (raw) => { const m = String(raw).match(/(\d+(?:\.\d+)?)/); return m && !/n\/?a|self repair/i.test(raw) ? Number(m[1]) : null; };
+    // ------------------------------------------------------------ prices (matching: src/23-price-sheet.js, shared with Reassemble)
+    const { pricesFor, screenPrices } = AE.priceSheet;
     const money = (n) => '$' + (Number.isInteger(n) ? n : n.toFixed(2).replace(/\.00$/, ''));
-    let priceIndex = null, priceFor = null;
-    function indexPrices(p) {
-      if (priceFor === p) return priceIndex;
-      const idx = {};
-      for (const tab of (p && p.tabs) || []) if (QUOTE_TABS.has(tab.name)) for (const row of tab.rows || []) {
-        const t = toks(String(row.name).split(/\s{3,}|inform customer/i)[0]);
-        let variant = '';
-        if (/^(inner|outer)$/.test(t[t.length - 1])) variant = t.pop();
-        const last = t[t.length - 1] || '';
-        const keys = last.includes('/') ? last.split('/').map((a) => t.slice(0, -1).concat(a).join('')) : [t.join('')];
-        for (const k of keys) if (k) (idx[k] = idx[k] || []).push({ tab: tab.name, variant, name: row.name, cells: row.cells });
-      }
-      priceFor = p; priceIndex = idx;
-      return idx;
-    }
-    function pricesFor(device, p) {
-      const idx = indexPrices(p), t = toks(device).filter((x) => !x.includes('/'));
-      for (let k = t.length; k > 0; k--) {
-        const rows = idx[t.slice(0, k).join('')];
-        if (!rows) continue;
-        if (k < t.length && QUAL.has(t[k])) return null; // "15 Pro" row, "15 Pro Max" device: not the same phone
-        return rows;
-      }
-      return null;
-    }
-    // Prices for the chips: [{label, price, raw}], lowest first. Phones and tablets: screen
-    // columns only ("always quote the lowest screen price"); consoles: every repair.
-    function screenPrices(rows) {
-      const out = [], consoles = (rows || []).every((r) => r.tab === 'Game Console');
-      for (const r of rows || []) for (const [col, raw] of Object.entries(r.cells)) {
-        if (col === 'Notes' || (!consoles && (!SCREEN.test(col) || NOT_SCREEN.test(col)))) continue;
-        const n = num(raw);
-        if (n != null) out.push({ console: consoles, label: (r.variant ? r.variant[0].toUpperCase() + r.variant.slice(1) + ' ' : '') + col.replace(/screen repair/i, 'Screen'), price: n, raw });
-      }
-      return out.sort((a, b) => a.price - b.price);
-    }
 
     // ------------------------------------------------------------ the arrival
     const arrivalId = () => (location.pathname.match(/^\/check-in\/arrivals\/(\d+)/) || [])[1] || null;

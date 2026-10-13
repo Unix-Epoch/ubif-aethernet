@@ -350,7 +350,56 @@ AE.feedback = (() => {
       body.replaceChildren(h('div', { class: 'card', style: 'max-width:520px' },
         h('h3', null, 'Divination'),
         h('div', { class: 'bar', style: 'margin:0' }, h('span', null, 'Target cleaning rate'), target, h('span', null, '%'), save),
-        h('div', { class: 'sub' }, 'Colors the badge (below target: red; target to 99%: yellow; 100% or more: green) and sets the target line and "days at target" in the history. Applies to every store.')));
+        h('div', { class: 'sub' }, 'Colors the badge (below target: red; target to 99%: yellow; 100% or more: green) and sets the target line and "days at target" in the history. Applies to every store.')),
+        AE.reassemble ? reassembleCard(j.config.reassemble, me) : null);
+    }
+    // Reassemble's pricing and who sees profit: every store, from each install's next page load.
+    function reassembleCard(saved, me) {
+      const D = AE.reassemble.DEFAULTS, base = saved || D;
+      const v = (x, d) => (x == null ? d : x);
+      const box = 'width:76px;height:30px;padding:0 6px;border:1px solid var(--aui-outline,#c6c6ca);border-radius:6px;background:var(--aui-surface,#fff);color:var(--aui-on-surface,#1a1c1e)';
+      const num = (val, step = 0.01) => h('input', { type: 'number', min: 0, step, value: val, style: box });
+      const row = (label, ...els) => h('div', { class: 'bar', style: 'margin:4px 0;gap:8px' }, h('span', { style: 'flex:1' }, label), ...els);
+      const GROUPS = [['phone', 'Phone and wearable'], ['tablet', 'Tablet'], ['computer', 'Laptop / PC and MacBook'], ['console', 'Game console'], ['other', 'Other']];
+      const bases = {}; for (const [g] of GROUPS) bases[g] = [num(v((base.bases || {})[g], D.bases[g])[0]), num(v((base.bases || {})[g], D.bases[g])[1])];
+      const mLow = num(v((base.multipliers || {}).low, D.multipliers.low)), mHigh = num(v((base.multipliers || {}).high, D.multipliers.high));
+      const macMin = num(v(base.macMin, D.macMin), 1), macMin24 = num(v(base.macMin2024, D.macMin2024), 1);
+      const th = num(v((base.scale || {}).threshold, D.scale.threshold), 1), rate = num(Math.round(v((base.scale || {}).rate, D.scale.rate) * 100), 1);
+      const addM = num(v((base.macAddons || {}).medium, D.macAddons.medium), 1), addH = num(v((base.macAddons || {}).hard, D.macAddons.hard), 1);
+      const roy = num(Math.round(v(base.royalty, D.royalty) * 1000) / 10, 0.1);
+      const viewers = h('textarea', { rows: 5, style: 'width:100%;font:inherit;padding:8px;border:1px solid var(--aui-outline,#c6c6ca);border-radius:8px;background:var(--aui-surface,#fff);color:var(--aui-on-surface,#1a1c1e)' },
+        (base.profitViewers || D.profitViewers).join('\n'));
+      const n = (el) => Number(el.value);
+      const collect = () => ({
+        bases: Object.fromEntries(GROUPS.map(([g]) => [g, [n(bases[g][0]), n(bases[g][1])]])), multipliers: { low: n(mLow), high: n(mHigh) },
+        macMin: n(macMin), macMin2024: n(macMin24), scale: { threshold: n(th), rate: n(rate) / 100 }, macAddons: { medium: n(addM), hard: n(addH) }, royalty: n(roy) / 100,
+        profitViewers: viewers.value.split('\n').map((x) => x.trim()).filter(Boolean) });
+      const post = async (val, msg) => {
+        try {
+          const r = await call('POST', '/v1/admin/config', { reassemble: val, by: me.name }, key());
+          GM_setValue(AE.CONFIG_KEY, r.config); // this browser at once; other installs on their next page load
+          AE.toast('Saved', msg, 'ok'); drawSettings();
+        } catch (e) { AE.toast("Couldn't save", e.message || String(e), 'err'); }
+      };
+      return h('div', { class: 'card', style: 'max-width:520px;margin-top:14px' },
+        h('h3', { style: 'display:flex;align-items:center;gap:8px' }, h('span', { html: AE.actionIcon('reassemble', 22), style: 'line-height:0' }), 'Reassemble'),
+        h('div', { class: 'sub' }, saved ? 'Custom pricing, saved for every store.' : "The owner's pricing (the defaults). Change a number and save to set it for every store."),
+        h('h4', null, 'Everything but MacBooks'),
+        h('div', { class: 'sub', style: 'margin-top:0' }, 'Easy = low multiplier × part + low base; Hard = high multiplier × part + high base; Medium is halfway. Rounded up to .99.'),
+        row('Multipliers (low / high)', mLow, mHigh),
+        ...GROUPS.map(([g, l]) => row(l + ' base (low / high) $', bases[g][0], bases[g][1])),
+        h('h4', null, 'MacBooks'),
+        row('Minimum profit, 2023 and older $', macMin), row('Minimum profit, 2024 and newer $', macMin24),
+        row('Plus this % of the part cost…', rate), row('…above this part cost $', th),
+        row('Medium adds $', addM), row('Hard adds $', addH),
+        h('h4', null, 'Both'),
+        row('Royalty %', roy),
+        h('h4', null, 'Who sees profit'),
+        h('div', { class: 'sub', style: 'margin-top:0' }, "One Portal name or email per line. Everyone else sees prices only."),
+        viewers,
+        h('div', { class: 'bar', style: 'margin-top:10px;gap:8px' },
+          h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => post(collect(), 'Reassemble\'s pricing is saved for every store, from their next page load.') }, 'Save'),
+          saved ? h('button', { type: 'button', class: 'sg-btn', onclick: () => post(null, 'Reassemble is back on the owner\'s pricing.') }, "Back to the owner's pricing") : null));
     }
 
     async function drawStores() {
