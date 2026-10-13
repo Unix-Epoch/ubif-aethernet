@@ -41,7 +41,7 @@
 
 const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
-const CLOSED_IDS = new Set([14, 15, 25]); // Sale complete, Cancelled, Repair summary
+const CLOSED_IDS = new Set([14, 15, 25]); // Sale complete, Closed, Cancelled
 const MAX = { scan: 400000, wo: 2000000, plain: 400000, sealed: 1800000, card: 8000 };
 
 const CORS = {

@@ -85,9 +85,15 @@ async function openDetail(store, wo, sealed) {
 
 // ------------------------------------------------------------------ helpers
 const money = (n) => (n == null ? '—' : (Number(n) < 0 ? '-$' : '$') + Math.abs(Number(n)).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','));
+// Portal's work order statuses (its own status enum; the tracker's statuses table has the same list).
+const STATUS = { 1: 'Initial check-in', 2: 'Need to order', 3: 'Awaiting item', 4: 'Awaiting device', 5: 'Awaiting diagnostics', 6: 'Awaiting partner approval',
+  7: 'Awaiting callback', 8: 'Ready for work', 9: 'Diagnostics', 10: 'Work in progress', 11: 'Quality check', 12: 'Repair summary', 13: 'Ready for pickup',
+  14: 'Sale complete', 15: 'Closed', 17: 'Device abandoned', 22: 'Request buyout/replacement', 23: 'Transferred to depot', 24: 'Ready for Diag', 25: 'Cancelled',
+  26: 'Send to depot', 27: 'Shipped by depot' };
+const statusName = (id) => STATUS[id] || 'Status ' + id;
 const stClass = (r) => (r.status_id === 13 ? (r.service_outcome && r.service_outcome !== 'Completed' ? 'rfpi' : 'rfp') : !r.is_open ? 'done' : [3, 7, 26, 27].includes(r.status_id) || /await/i.test(r.status_name || '') ? 'wait' : 'wip');
 // RFP split by Portal's outcome: "Ready for pickup · Complete" / "· Incomplete" (Declined, No issue found shown as is).
-const statusText = (r) => (r.status_name || '') + (r.status_id === 13 && r.service_outcome ? ' · ' + (r.service_outcome === 'Completed' ? 'Complete' : r.service_outcome) : '');
+const statusText = (r) => (r.status_name || statusName(r.status_id)) + (r.status_id === 13 && r.service_outcome ? ' · ' + (r.service_outcome === 'Completed' ? 'Complete' : r.service_outcome) : '');
 const fmtPhone = (p) => (p && p.length === 10 ? '(' + p.slice(0, 3) + ') ' + p.slice(3, 6) + '-' + p.slice(6) : p);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function excerpt(text, q) {
@@ -177,7 +183,8 @@ function unlockCard(after) {
 
 // ------------------------------------------------------------------ Work orders
 const F = { q: '', store: '', status: '', open: '', months: '6', notes: false };
-let rows = [], loadedKey = '', sel = null;
+let rows = [], loadedKey = '', loadedAt = 0, sel = null;
+const LIST_MS = 5 * 60 * 1000; // the list is read again when it's older than this (statuses move all day)
 
 async function drawWos(m) {
   const { h } = ui;
@@ -195,7 +202,7 @@ async function drawWos(m) {
   const q = h('input', { class: 'qq', value: F.q, placeholder: 'Search name, phone, email, IMEI/serial, claim, WO #' + (F.notes ? ', or note text' : ''), oninput: (e) => { F.q = e.target.value; clearTimeout(q.t); q.t = setTimeout(run, 200); } });
   const sel1 = (val, opts, set) => { const s = h('select', { onchange: (e) => { set(e.target.value); run(true); } }, opts.map(([v, l]) => { const o = h('option', { value: v }, l); o.selected = String(v) === String(val); return o; })); return s; };
   const storeSel = sel1(F.store, [['', 'All stores']].concat(st.map((s) => [s.store, s.store + (s.name ? ' ' + s.name : '')])), (v) => { F.store = v; });
-  const statSel = sel1(F.status, [['', 'Any status'], ['13', 'Ready for pickup'], ['13c', 'RFP complete'], ['13i', 'RFP incomplete'], ['2', 'Work in progress'], ['1', 'Ready for work'], ['3', 'Awaiting item'], ['7', 'Awaiting callback'], ['14', 'Sale complete']], (v) => { F.status = v; });
+  const statSel = sel1(F.status, [['', 'Any status'], ['13', 'Ready for pickup'], ['13c', 'RFP complete'], ['13i', 'RFP incomplete'], ['8', 'Ready for work'], ['9', 'Diagnostics'], ['10', 'Work in progress'], ['2', 'Need to order'], ['3', 'Awaiting item'], ['4', 'Awaiting device'], ['7', 'Awaiting callback'], ['14', 'Sale complete'], ['25', 'Cancelled']], (v) => { F.status = v; });
   const openSel = sel1(F.open, [['', 'Open and closed'], ['1', 'Open only'], ['0', 'Closed only']], (v) => { F.open = v; });
   const monSel = sel1(F.months, [['1', 'Last month'], ['3', 'Last 3 months'], ['6', 'Last 6 months']], (v) => { F.months = v; });
   const notesBox = h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: F.notes || null, onchange: (e) => { F.notes = e.target.checked; run(true); } }), 'Search note text');
@@ -208,11 +215,11 @@ async function drawWos(m) {
     const since = new Date(Date.now() - Number(F.months) * 30 * 86400000).toISOString();
     const key = [F.store, F.status, F.open, F.months, F.notes].join('|');
     const t0 = performance.now();
-    if (reload || key !== loadedKey) {
+    if (reload || key !== loadedKey || Date.now() - loadedAt > LIST_MS) {
       info.textContent = 'Loading…';
       const qs = '?limit=5000&since=' + encodeURIComponent(since) + (F.store ? '&store=' + F.store : '') + (F.status ? '&status=' + parseInt(F.status, 10) + (F.status === '13c' ? '&outcome=complete' : F.status === '13i' ? '&outcome=other' : '') : '') + (F.open ? '&open=' + F.open : '') + (F.notes ? '&detail=1' : '');
       rows = (await ui.api('GET', '/tracker/wos' + qs)).wos;
-      loadedKey = key;
+      loadedKey = key; loadedAt = Date.now();
       info.textContent = 'Opening ' + rows.length + ' work orders…';
       for (const r of rows) { r.c = await openCard(r); if (F.notes && r.sealed) r.d = await openDetail(r.store, r.wo, r.sealed); }
     }
@@ -258,6 +265,7 @@ async function showWo(drawer, r) {
   const c = (await openCard(r)) || {};
   const plain = snaps[0] && snaps[0].plain ? JSON.parse(snaps[0].plain) : {};
   const w = plain.workorder || {}, pay = (plain.cart && plain.cart.payment) || {};
+  if (w.statusId != null) r = Object.assign({}, r, { status_id: w.statusId, status_name: w.status || null, service_outcome: w.outcome || r.service_outcome }); // newest snapshot beats the list
   const notes = notesOf(d);
   const tabs = [['notes', 'Notes (' + notes.length + ')'], ['history', 'Status history (' + (plain.auditTrail || []).length + ')'], ['cart', 'Cart (' + ((plain.cart && plain.cart.items) || []).length + ')'], ['changes', 'Changes (' + j.changes.length + ')'], ['snaps', 'Snapshots (' + snaps.length + ')']];
   let cur = 'notes';
@@ -267,7 +275,7 @@ async function showWo(drawer, r) {
     nav.replaceChildren(...tabs.map(([k, l]) => h('button', { class: k === cur ? 'on' : null, onclick: () => { cur = k; drawTab(); } }, l)));
     if (cur === 'notes') body.replaceChildren(...(notes.length ? notes.map((n) => h('div', { class: 'nt' }, String(n.noteText || ''), h('div', { class: 'by' },
       [n.UserDatum ? [n.UserDatum.givenName, n.UserDatum.familyName].filter(Boolean).join(' ') : n.createdBy, ui.fmt(n.createdAt), n.noteTag].filter(Boolean).join(' · ')))) : [h('div', { class: 'soft' }, d ? 'No notes.' : "Couldn't open this work order's detail.")]));
-    if (cur === 'history') body.replaceChildren(h('table', { class: 'tl' }, (plain.auditTrail || []).map((a) => h('tr', null, h('td', { class: 'soft' }, ui.fmt(a.createdAt)), h('td', null, 'Status ' + a.statusId), h('td', { class: 'soft' }, a.createdBy ? 'by ' + a.createdBy : '')))));
+    if (cur === 'history') body.replaceChildren(h('table', { class: 'tl' }, (plain.auditTrail || []).map((a) => h('tr', null, h('td', { class: 'soft' }, ui.fmt(a.createdAt)), h('td', null, statusName(a.statusId)), h('td', { class: 'soft' }, a.createdBy ? 'by ' + a.createdBy : '')))));
     if (cur === 'cart') body.replaceChildren(h('table', { class: 'tl' }, ((plain.cart && plain.cart.items) || []).map((i) => h('tr', null, h('td', null, i.name || ''), h('td', { class: 'soft' }, i.sku || ''), h('td', null, (i.quantity || 1) + ' × ' + money(i.price))))),
       h('div', { style: 'margin-top:8px' }, 'Total ' + money(pay.total) + ' · paid ' + money(pay.amountPaid) + ' · due ' + money(pay.amountDue)));
     if (cur === 'changes') body.replaceChildren(h('table', { class: 'tl' }, j.changes.slice(0, 300).map((x) => h('tr', null, h('td', { class: 'soft' }, ui.fmt(x.changed_at)), h('td', null, x.field), h('td', { class: 'soft' }, (x.old || '∅') + ' → ' + (x.new || '∅'))))));
