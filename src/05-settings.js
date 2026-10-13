@@ -20,7 +20,7 @@
     ['autoClose', 'Swiftcast', 'Your new favorite tool. Auto-close cleanings in one click - even multiple at once.'],
     ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],
-    ['reassemble', 'Reassemble', 'Price Estimate: an out-of-warranty quote from the part cost, using the owner\'s pricing, and the Price sheet\'s price when the repair is on it. Open it from the avatar menu, the Dashboard\'s Quick actions or the Repair estimate step of check-in.'],
+    ['reassemble', 'Reassemble', 'Price Estimate: an out-of-warranty quote from the part cost, using the owner\'s pricing, and the Price sheet\'s price when the repair is on it. Open it from the avatar menu, or the Price Estimate button on the Estimates page and the Repair estimate step of check-in.'],
     ['buybacks', 'Bountiful Yield', 'Set of handy "add all" buttons for setting up your Buybacks and RMAs.'],
     ['printLabels', 'Quick Synthesis', '\'Print All\' for your Receiving. No longer shall you have to manually print 20+ generic SKU labels!'],
     ]),

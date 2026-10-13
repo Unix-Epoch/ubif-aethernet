@@ -12,8 +12,9 @@
       $25/$50. Screen repairs: one price (Easy) + an optional extra, kept at .99.
   Profit (price × (1 − royalty) − part) shows only to the admin panel's profit list (the owner's managers
   and Garrett, Oct 13, 2026), matched on the Portal user's name or email.
-  Opens from the avatar menu, a Price Estimate tile in the Dashboard's Quick actions, and a Price Estimate
-  button on check-in's Repair estimate step (bottom left, above Back). Copy only: nothing is added to a cart.
+  Opens from the avatar menu ("Price estimate") and a Price Estimate button at the bottom left of the
+  Estimates page (/price-check) and of check-in's Repair estimate step (above Back). (A Dashboard tile was
+  dropped, Garrett, Oct 13, 2026: "it doesn't need to exist".) Copy only: nothing is added to a cart.
 */
 AE.reassemble = (() => {
   const DEFAULTS = {
@@ -100,8 +101,7 @@ AE.crystal({
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h } = AE, R = AE.reassemble;
-    const DLG = 'ae-reassemble', TILE = 'ae-ra-tile', BTN = 'ae-ra-btn', MENU = 'option-aethernet-reassemble';
-    const TILE_IMG = 'https://assets.asurion-ui.my.asurion53.com/images/illustrations/cake/tools.png'; // Portal's own illustration set
+    const DLG = 'ae-reassemble', BTN = 'ae-ra-btn', MENU = 'option-aethernet-reassemble';
     const HINTS = { easy: 'Plug-and-play or screws-out', medium: 'Glued battery or trackpad risk, extra disassembly', hard: 'Top case or keyboard, full transfer of components, high risk' };
     const LABEL = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
     const icon = (size) => h('span', { html: AE.actionIcon('reassemble', size), style: 'line-height:0;flex:none' });
@@ -138,7 +138,7 @@ AE.crystal({
       #${DLG} .foot { display:flex; gap:10px; align-items:center; margin-top:16px; border-top:1px solid var(--aui-outline-variant, #eee); padding-top:12px; }
       #${DLG} .foot .sp { flex:1; font-size:12px; opacity:.75; }
       #${DLG} .note { font-size:12px; opacity:.75; margin-top:8px; }
-      #${BTN} { position:fixed; z-index:20; display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 16px 0 6px; border-radius:999px; cursor:pointer;
+      #${BTN} { position:fixed; z-index:1000; /* over Portal's sticky footer (999), under its dialogs */ display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 16px 0 6px; border-radius:999px; cursor:pointer;
         border:1px solid var(--aui-on-surface, #1a1c1e); background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font:500 15px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif;
         box-shadow:0 2px 8px #0002; }
       #${BTN}:hover { background:var(--aui-neutral-soft, #f1f0f4); }
@@ -251,7 +251,7 @@ AE.crystal({
       const item = settingsItem.cloneNode(true);
       item.setAttribute('data-testid', MENU);
       const label = item.querySelector('[data-aui="text"]') || item;
-      label.textContent = 'Price Estimate';
+      label.textContent = 'Price estimate';
       item.addEventListener('click', (e) => {
         e.preventDefault(); e.stopPropagation();
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -261,48 +261,51 @@ AE.crystal({
       settingsItem.before(item);
     }
 
-    // ------------------------------------------------------------ Dashboard: a fifth Quick action
-    function tile() {
-      if (location.pathname !== '/') return;
-      const est = document.querySelector('a[href="/price-check"]');
-      if (!est || !est.parentElement || est.parentElement.querySelector('.' + TILE)) return;
-      const t = est.cloneNode(true); // Portal's own card: same look, both themes
-      t.classList.add(TILE); t.setAttribute('href', '#'); t.setAttribute('aria-label', 'Price Estimate');
-      const img = t.querySelector('img'); if (img) img.src = TILE_IMG;
-      const label = t.querySelector('[data-aui="text"]'); if (label) label.textContent = 'Price Estimate';
-      t.addEventListener('click', (e) => { e.preventDefault(); open({ from: 'dashboard' }); });
-      est.after(t);
-      const grid = est.parentElement;
-      if (getComputedStyle(grid).display === 'grid') grid.style.gridTemplateColumns = 'repeat(' + grid.children.length + ', minmax(0, 1fr))';
-    }
-
-    // ------------------------------------------------------------ check-in: Repair estimate step
+    // ------------------------------------------------------------ the Price Estimate button
+    // Check-in's Repair estimate step: bottom left of the step's empty space, just above Back.
+    // The Estimates page (/price-check): bottom left, in the footer beside Save estimate / Check-in.
     const slice = (key) => { const r = AE.portal('select', { slice: 'checkInSlice', key }); return r && r.found ? r.value : undefined; };
+    const leftOf = (el) => el && el.getBoundingClientRect().left;
     let stepAt = 0, onStep = false;
-    function checkinButton() {
+    function where() {
+      const p = location.pathname;
+      if (p === '/check-in') {
+        if (performance.now() - stepAt > 300) { stepAt = performance.now(); onStep = slice('formStep') === 3; } // Portal's state, at most every 300 ms
+        const back = onStep && AE.findButton((t) => t === 'Back');
+        if (!back) return null;
+        const left = leftOf(document.querySelector('input[placeholder^="Search additional parts"]')) ?? leftOf(back);
+        const foot = back.closest('div[class]') || back;
+        return { from: 'checkin', left, top: Math.min(back.getBoundingClientRect().top, foot.getBoundingClientRect().top) - 24 - 40,
+          prefill: () => { const d = slice('customerDeviceDetails') || {}; return d.deviceName || d.modelName || ''; } };
+      }
+      if (p === '/price-check') {
+        const save = AE.findButton((t) => /^save estimate$/i.test(t));
+        if (!save) return null;
+        const r = save.getBoundingClientRect(), head = AE.textEl('Device info') || AE.textEl('Estimates');
+        const model = () => { const lab = AE.textEl('Device make and model'), box = lab && lab.closest('div') && lab.closest('div').parentElement;
+          const i = box && box.querySelector('input'); return (i && i.value) || ''; };
+        return { from: 'estimates', left: leftOf(head) ?? r.left, top: r.top + (r.height - 40) / 2, prefill: model };
+      }
+      return null;
+    }
+    function placeButton() {
       let b = document.getElementById(BTN);
-      if (location.pathname !== '/check-in') { b?.remove(); onStep = false; return; }
-      if (performance.now() - stepAt > 300) { stepAt = performance.now(); onStep = slice('formStep') === 3; } // Portal's state, at most every 300 ms
-      const back = onStep && AE.findButton((t) => t === 'Back');
-      if (!back) { b?.remove(); return; }
+      const w = where();
+      if (!w) { b?.remove(); return; }
       if (!b) {
         b = h('button', { type: 'button', id: BTN, title: 'Reassemble: price an out-of-warranty repair from the part cost', onclick: () => {
-          const d = slice('customerDeviceDetails') || {}, model = d.deviceName || d.modelName || '';
-          open({ from: 'checkin', model, device: R.typeOf(model) || undefined });
+          const x = where(), model = x ? x.prefill() : '';
+          open({ from: x ? x.from : 'button', model, device: R.typeOf(model) || undefined });
         } }, icon(28), 'Price Estimate');
         document.body.append(b);
       }
-      // Bottom left of the step's empty space: lined up with the search box, just above the footer.
-      const search = document.querySelector('input[placeholder^="Search additional parts"]');
-      const left = (search || back).getBoundingClientRect().left, top = back.getBoundingClientRect().top;
-      const footTop = (back.closest('div[class]') || back).getBoundingClientRect().top;
-      const want = [Math.round(left) + 'px', Math.round(Math.min(top, footTop) - 24 - 40) + 'px'];
+      const want = [Math.round(w.left) + 'px', Math.round(w.top) + 'px'];
       if (b.style.left !== want[0]) b.style.left = want[0];
       if (b.style.top !== want[1]) b.style.top = want[1];
     }
 
-    AE.onDom(() => { menuItem(); tile(); checkinButton(); });
-    AE.every(1000, () => { menuItem(); tile(); checkinButton(); });
-    addEventListener('resize', checkinButton);
+    AE.onDom(() => { menuItem(); placeButton(); });
+    AE.every(1000, () => { menuItem(); placeButton(); });
+    addEventListener('resize', placeButton);
   },
 });
