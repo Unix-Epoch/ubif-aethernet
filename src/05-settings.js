@@ -310,8 +310,7 @@
   const flair = (text) => h('div', { class: 'sg-flair' }, h('span', { class: 'ic', html: HEART }), h('span', { html: noteHtml(text) }));
   function openPatchNotes(since) {
     if (AE_DEMO) return; // no patch notes in the demo build
-    AE.ensureCss();
-    if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
+    ensureModalCss();
     document.getElementById('sg-notes')?.remove();
     const CHEV_SVG = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
     const panels = PATCH_NOTES.map((n, i) => {
@@ -352,8 +351,7 @@
   // open('galaxy') opens straight to that crystal, with its settings expanded.
   function open(focus) {
     if (typeof focus !== 'string') focus = null; // menu commands pass an event
-    AE.ensureCss();
-    if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
+    ensureModalCss();
     document.getElementById('sg-settings')?.remove();
     AE.track('settings:open');
     const s = AE.merge(AE.DEFAULTS, AE.settings); // working copy
@@ -541,6 +539,13 @@
     }).catch((e) => { who.replaceChildren(h('dt', null, 'Error'), h('dd', null, esc(e.message))); });
   }
 
+  // The pop-over dialog styles (.sg-about-scrim, .sg-about…), for any crystal's dialog too (Reassemble).
+  function ensureModalCss() {
+    AE.ensureCss();
+    if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
+  }
+  AE.ensureModalCss = ensureModalCss;
+
   // Add our item to the avatar menu whenever Portal renders it: in the same frame (2.23), timer as backup.
   function menuItem() {
     const logout = document.querySelector('[data-testid="option-logout"]');
@@ -565,8 +570,7 @@
 
   function showUpdatedPill(fromVersion) {
     document.getElementById('sg-update-pill')?.remove();
-    AE.ensureCss();
-    if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
+    ensureModalCss();
     const x = h('span', { class: 'x', role: 'button', 'aria-label': 'Dismiss', title: 'Dismiss' }, '✕',
       h('span', { html: '<svg class="ring" viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="11"/></svg>', style: 'display:contents' }));
     const pill = h('button', { type: 'button', class: 'sg sg-update-pill', id: 'sg-update-pill', title: "See what's new" },
