@@ -16,7 +16,7 @@ STATE_FILE = HERE / 'state.json'
 LOCK = threading.RLock()
 STORE_ID = 914  # what the sandbox calls itself; none of the store's real data is used
 
-PROGRAMS = {5062: 'Asurion Mobility', 11759: 'VZ Device Refresh', 9470: 'VZ Sanitization', 11009: 'AT&T Enhanced Cleaning',
+PROGRAMS = {6494: 'Samsung In Warranty Repair', 8849: 'Asurion Home+ Repairs', 5062: 'Asurion Mobility', 11759: 'VZ Device Refresh', 9470: 'VZ Sanitization', 11009: 'AT&T Enhanced Cleaning',
             9901: 'AT&T Device Diagnostic', 10303: 'AT&T Performance Check', 20001: 'Out Of Warranty'}
 CLEANINGS = [11759, 9470, 11009, 9901, 10303]
 STATUS = {1: 'Initial check-in', 2: 'Need to order', 3: 'Awaiting item', 7: 'Awaiting callback', 8: 'Ready for work', 9: 'Diagnostics',
@@ -106,9 +106,9 @@ def new_wo(cust, dev, program, status=8, created=None):
     return w
 
 
-def new_arrival(cust, dev, program, appointment_h=1.0):
+def new_arrival(cust, dev, program, appointment_h=1.0, arrival_type=1):
     aid = nxt('arrival')
-    a = {'arrivalId': aid, 'programId': program, 'customerId': cust['customerId'], 'customerDeviceId': dev['customerDeviceId'],
+    a = {'arrivalId': aid, 'programId': program, 'arrivalTypeId': arrival_type, 'customerId': cust['customerId'], 'customerDeviceId': dev['customerDeviceId'],
          'createdAt': now(), 'appointment': now(appointment_h), 'statusId': 20, 'checkedIn': False, 'contacted': False, 'workorderId': None,
          'serviceJobId': 'SJ' + str(aid)}
     load()['arrivals'][str(aid)] = a
@@ -179,14 +179,39 @@ def wo_detail(w):
 def arrival_view(a):
     return {'arrivalId': a['arrivalId'], 'program': {'programId': a['programId'], 'name': PROGRAMS.get(a['programId'], 'Program')},
             'arrivalStatus': {'arrivalStatusId': a['statusId'], 'arrivalStatusName': 'Confirmed' if a['statusId'] == 21 else 'Not confirmed'},
-            'arrivalAttributes': [{'arrivalAttributeTypeId': 53, 'value': '1'}] if a.get('contacted') else [], 'arrivalTypeId': 1,
+            'arrivalAttributes': [{'arrivalAttributeTypeId': 53, 'value': '1'}] if a.get('contacted') else [], 'arrivalTypeId': a.get('arrivalTypeId', 1),
             'appointment': a['appointment'], 'createdAt': a['createdAt'], 'updatedAt': a['createdAt'], 'customer': cust_view(a['customerId']),
             'customerDevice': dev_view(a['customerDeviceId']), 'deviceIssues': [{'name': 'Cleaning'}], 'clientId': 1, 'clientName': 'Asurion',
-            'storeId': STORE_ID, 'isDepotStore': False, 'isMissed': False, 'matchedRules': [], 'notes': [], 'source': 'Appointment',
+            'storeId': STORE_ID, 'isDepotStore': False, 'isMissed': False, 'matchedRules': [], 'notes': [n for n in load()['notes'] if n.get('arrivalId') == a['arrivalId']],
+            'source': 'Claim' if a.get('arrivalTypeId') == 3 else 'Appointment',
             'csuCartId': None, 'csuSalesOrderId': None, 'partnerJobDetails': {'serviceJobId': a['serviceJobId']}}
 
 
 # ------------------------------------------------------------------ routes
+def fake_punches(frm, to):
+    """A week of made-up punches (no real people): 914 and 326, one worker at both, a long day, a missing clock-out."""
+    import datetime as dt
+    start = dt.date.fromisoformat((frm or '2026-10-05')[:10])
+    people = [(33254, 'avery.tech', 914), (33255, 'blake.lead', 914), (33256, 'casey.mgr', 914), (33257, 'drew.tech', 326), (33258, 'emery.tech', 326), (33259, 'finley.float', None)]
+    rows, n = [], 900000
+    def iso(d, h, m=0):
+        return (dt.datetime.combine(d, dt.time(0)) + dt.timedelta(hours=h, minutes=m) + dt.timedelta(hours=4)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    for day in range(7):
+        d = start + dt.timedelta(days=day)
+        if d.weekday() == 3:  # closed Thursdays
+            continue
+        for uid, name, store in people:
+            if (uid + day) % 5 == 0:
+                continue
+            st = store or (914 if day % 2 else 326)
+            sname = {914: 'Newport News', 326: 'Lynnhaven'}[st]
+            h_in, h_out = 9.75 + (uid % 3) * 0.25, 18.5 + (uid % 2) * 0.75 + (1.5 if name == 'blake.lead' else 0)
+            n += 1; rows.append({'timeclockId': n, 'userId': uid, 'username': name, 'storeId': st, 'storeName': sname, 'clockTypeId': 1,
+                                 'timeIn': iso(d, int(h_in), int(h_in % 1 * 60)), 'timeOut': None if (name == 'drew.tech' and day == 6) else iso(d, int(h_out), int(h_out % 1 * 60))})
+            n += 1; rows.append({'timeclockId': n, 'userId': uid, 'username': name, 'storeId': st, 'storeName': sname, 'clockTypeId': 2, 'timeIn': iso(d, 13), 'timeOut': iso(d, 13, 30)})
+    return rows
+
+
 def handle(method, path, body):
     with LOCK:
         try:
@@ -206,22 +231,45 @@ def route(method, path, body):
     W = lambda wid: s['wos'].get(str(wid))
 
     # ---- who's signed in, store, config
+    if p == 'auth/user' and s['settings'].get('signedOut'):  # test Portal's login page
+        return 401, {'isAuthenticated': False}
     if p == 'auth/user':
         st = fixture('store', {}) or {}
         st.update({'storeId': STORE_ID, 'storeName': 'Sandbox Store', 'address_1': '1 Sandbox Way', 'city': 'Testville', 'phone': '5555550100', 'email': 'sandbox@example.invalid'})
         # userAttributes: the Work orders list reads its page size from it (blank page without it)
         return 200, {'isAuthenticated': True, 'user': USER, 'currentStore': st, 'isStoreOpen': s['settings']['storeOpen'], 'abilities': fixture('abilities', []),
-                     'userAttributes': {'PageCount': 25}}
+                     'userAttributes': {'PageCount': 25}, 'storeTwilioPhoneNumber': '+15555550199', 'isOutboundCommunicationEnabled': True}
     if p == 'auth/user/stores':
         return 200, fixture('user-stores', [])
     if p == 'auth/store-options':
         return 200, fixture('store-options', {'stores': []})
     if p == 'features':
-        return 200, fixture('features', {})
+        f = fixture('features', {})
+        f.setdefault('layout', {})['reports_metrics_enabled'] = True  # Dashboard's metrics cards (Sales, Completed repairs), on at stores since the fixture was captured
+        return 200, f
     if p == 'notification/get-partner-downtime':
         return 200, fixture('partner-downtime', [])
     if p == 'store-time-sheet/access':
-        return 200, fixture('timesheet-access', {})
+        return 200, dict(fixture('timesheet-access', {}), allowed=True)
+    if p == 'reporting/metrics':  # Reports page: Portal's Power BI embed config (made up; only needs to exist for the page to draw)
+        return 200, {'url': 'https://example.invalid/reports', 'ctid': 'sandbox', 'reports': [], 'reportsFranchise': [], 'viewAllReports': 'https://example.invalid/reports'}
+    if p == 'reporting/sales-history':  # fake Sales tab: a few made-up sales on each day asked for
+        import datetime as dt
+        day = dt.date.fromisoformat((q.get('sale_complete_start_date') or now())[:10])
+        if day.weekday() == 6:
+            return 200, {'results': [], 'count': 0, 'next': None}
+        def at(h, m=0):
+            return (dt.datetime.combine(day, dt.time(h, m)) + dt.timedelta(hours=4)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        n = day.toordinal() % 1000
+        rows = [{'salesId': f'FSO9{n:03d}01', 'workOrderId': 700000001, 'saleCompleteDateTime': at(11, 20), 'transactionType': 'Sale', 'total': 199.0, 'partnerCredits': 199.0, 'payments': 0.0,
+                 'customerId': 770001, 'customerName': 'Taylor Diaz', 'completedBy': 'Sandbox Tech'},
+                {'salesId': f'FSO9{n:03d}02', 'workOrderId': None, 'saleCompleteDateTime': at(14, 5), 'transactionType': 'Sale', 'total': 21.19, 'partnerCredits': 0.0, 'payments': 21.19,
+                 'customerId': 770002, 'customerName': 'Morgan Lee', 'completedBy': 'Sandbox Tech'},
+                {'salesId': f'FSO9{n:03d}03', 'workOrderId': None, 'saleCompleteDateTime': at(19, 45), 'transactionType': 'Return', 'total': -49.99, 'partnerCredits': 0.0, 'payments': -49.99,
+                 'customerId': 770003, 'customerName': 'Riley Park', 'completedBy': 'Sandbox Lead'}]
+        return 200, {'results': rows, 'count': len(rows), 'next': None}
+    if p == 'store-time-sheet' and method == 'GET':  # fake punches: two stores, one worker at both (Store time sheet page)
+        return 200, {'rows': fake_punches(q.get('fromDate'), q.get('toDate'))}
     if p == 'admin/stores/roletypes':
         return 200, fixture('roletypes', [])
     m = re.fullmatch(r'program-attributes/(\d+)', p)
@@ -243,6 +291,13 @@ def route(method, path, body):
         page, size = int(q.get('page', 1)), int(q.get('pageSize', 10))
         return 200, {'data': rows[(page - 1) * size: page * size], 'rowCount': len(rows)}
     m = re.fullmatch(r'arrivals/(\d+)', p)
+    if m and method == 'PUT':  # Portal's "Contacted" dialog (and other arrival edits)
+        a = s['arrivals'].get(m.group(1))
+        if not a:
+            return 404, {'message': 'Arrival not found'}
+        if 'contacted' in body:
+            a['contacted'] = bool(body['contacted'])
+        return 200, arrival_view(a)
     if m:
         a = s['arrivals'].get(m.group(1))
         return (200, arrival_view(a)) if a else (404, {'message': 'Arrival not found'})
@@ -309,6 +364,13 @@ def route(method, path, body):
                 w['workorderStatusId'] = int(body['workorderStatusId'])
             w['updatedAt'] = now()
             return 200, {'workorder': wo_row(w)}
+    m = re.fullmatch(r'workorder-audit-trail/(\d+)', p)  # status history (the tracker reads it)
+    if m:
+        w = W(m.group(1))
+        if not w:
+            return 404, {'message': 'Work order not found'}
+        return 200, [{'workorderStatusAuditTrailId': 1, 'workorderId': w['workorderId'], 'workorderStatusId': w['workorderStatusId'],
+                      'createdAt': w.get('createdAt'), 'createdBy': USER['userId'], 'completed': False}]
     m = re.fullmatch(r'workorder/(\d+)/status', p)
     if m:
         w = W(m.group(1))
@@ -343,7 +405,30 @@ def route(method, path, body):
             d['name'] = body.get('name', d.get('name', ''))
         return 200, {'ok': True}
 
+    # ---- customer texts (Provoke): the chat panel's calls
+    m = re.fullmatch(r'customer/recent-jobs/(\d+)', p)
+    if m:
+        c = s['customers'].get(m.group(1), {})
+        return 200, {'customer': {'customerId': c.get('customerId'), 'fullName': c.get('fullName'), 'givenName': c.get('givenName'), 'familyName': c.get('familyName'),
+                                  'primaryPhoneNumber': c.get('phone'), 'contactPhoneNumber': c.get('phone'), 'canSms': True, 'canCall': True, 'canEmail': True},
+                     'arrivals': [], 'workorders': [], 'allowSMSForArrival': True}
+    m = re.fullmatch(r'messages/v1/customers/(\d+)', p)
+    if m:
+        rows = sorted([x for x in s.setdefault('messages', []) if x['customerId'] == m.group(1)], key=lambda x: x['contactDate'], reverse=True)
+        return 200, {'messages': rows[:int(q.get('pageSize', 10))], 'total': len(rows)}
+    if p == 'messages/v1/send' and method == 'POST':
+        x = {'messageId': str(nxt('note')), 'customerId': str(body.get('customerId')), 'content': body.get('message', ''), 'direction': 'OUTBOUND',
+             'contactDate': now(), 'status': 'sent', 'to': (body.get('messageDestination') or {}).get('smsPhoneNumber'),
+             'from': (body.get('messageSource') or {}).get('smsPhoneNumber'), 'senderId': USER['userId'], 'senderGivenName': USER['givenName'], 'senderFamilyName': USER['familyName']}
+        s.setdefault('messages', []).append(x)
+        return 200, x
+
     # ---- notes
+    if p == 'note' and method == 'POST' and body.get('arrivalId') and not body.get('workorderId'):  # a note on an arrival
+        n = {'noteId': str(nxt('note')), 'noteText': body.get('noteText', ''), 'arrivalId': int(body['arrivalId']), 'workorderId': None,
+             'noteType': body.get('noteType', 2), 'noteTag': body.get('noteTag'), 'createdBy': USER['userId'], 'createdAt': now()}
+        s['notes'].insert(0, n)
+        return 200, n
     if p in ('note', 'notes') and method == 'POST':
         items = body.get('notes') if p == 'notes' else [body]
         made = [add_note(n.get('workorderId'), n.get('noteText', ''), n.get('noteTag'), n.get('noteType', 2), n.get('customerId', '')) for n in items or []]
@@ -404,7 +489,11 @@ def route(method, path, body):
         return 200, {'salesOrder': {'salesId': so}}
 
     # ---- harmless empties for the dashboard and header
-    EMPTY = {'store-metrics/overview': {}, 'twilio/unread-count': {'count': 0}, 'training/assigned': [], 'store-metrics/reporting': {}}
+    if p in ('store-metrics/overview', 'store-metrics/reporting'):  # fake KPI tiles (Dashboard + Reports)
+        m = s['settings'].get('metrics') or {'todaysSales': {'actual': 1234.5, 'goal': 2500}, 'mtdSales': {'actual': 21840, 'goal': 52000},
+                                            'dropOffs': {'actual': 9, 'goal': 12}, 'completedRepairs': {'actual': 7, 'goal': 10}}
+        return 200, dict(m, asOf=now())
+    EMPTY = {'twilio/unread-count': {'count': 0}, 'training/assigned': []}
     if p in EMPTY:
         return 200, EMPTY[p]
     if re.fullmatch(r'notifications/stores/\d+', p):

@@ -35,6 +35,13 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><title>Portal sandbo
   <div class="chk"><label><input type="checkbox" id="contacted"> Mark the arrivals Contacted</label></div>
   <div class="row"><button onclick="make()">Create</button><span id="made" class="soft"></span></div>
  </div>
+ <div class="card"><h2>New lead (Provoke)</h2>
+  <div class="soft">One arrival waiting to be answered, not contacted yet.</div>
+  <label>Customer <input type="text" id="lname" placeholder="random"></label>
+  <label>Device <input type="text" id="ldevice" placeholder="random"></label>
+  <div class="row"><button onclick="lead('mobility')">Asurion Mobility claim</button><button onclick="lead('oow')">Out-of-warranty appointment</button><button onclick="lead('home')">Home+ claim</button><button onclick="lead('samsungiw')">Samsung IW claim</button></div>
+  <div id="lmade" class="soft"></div>
+ </div>
  <div class="card"><h2>Sandbox settings</h2>
   <div class="chk"><label><input type="checkbox" id="open" onchange="settings()"> Store is open (Swiftcast refuses while it's closed)</label></div>
   <label>Left to pay on the Verizon screen protector 101516 after Portal's credit <input type="number" id="labor" step="0.01" onchange="settings()"></label>
@@ -56,6 +63,10 @@ async function make() {
   const r = await post('/sandbox/device', { name: document.getElementById('name').value.trim(), device: document.getElementById('device').value.trim(), programs,
     parent: document.getElementById('parent').checked, contacted: document.getElementById('contacted').checked });
   document.getElementById('made').textContent = r.message || ''; refresh();
+}
+async function lead(kind) {
+  const r = await post('/sandbox/device', { name: document.getElementById('lname').value.trim(), device: document.getElementById('ldevice').value.trim(), programs: [], parent: false, lead: kind });
+  document.getElementById('lmade').textContent = r.message || ''; refresh();
 }
 async function settings() { await post('/sandbox/settings', { storeOpen: document.getElementById('open').checked, laborPrice: Number(document.getElementById('labor').value || 0) }); refresh(); }
 async function reset() { if (confirm('Delete every fake work order and arrival?')) { await post('/sandbox/reset'); refresh(); } }
@@ -103,6 +114,11 @@ def handle(h, method, log):
             for prog in body.get('done') or []:  # cleanings already sold for this device (status 14, Sale complete)
                 w = api.new_wo(cust, dev, int(prog), status=14)
                 out.append('done WO ' + str(w['workorderId']))
+            if body.get('lead'):  # Provoke: one lead (claim or appointment) for this customer
+                kind = body['lead']
+                prog, typ = {'mobility': (5062, 3), 'home': (8849, 3), 'oow': (20001, 1), 'samsungiw': (6494, 3)}[kind]
+                a = api.new_arrival(cust, dev, prog, appointment_h=2, arrival_type=typ)
+                out.append('lead arrival ' + str(a['arrivalId']))
             for i, prog in enumerate(body.get('programs') or []):
                 a = api.new_arrival(cust, dev, int(prog), appointment_h=0.5 + i * 0.25)
                 a['contacted'] = bool(body.get('contacted'))
@@ -112,6 +128,8 @@ def handle(h, method, log):
         if path == '/sandbox/settings' and method == 'POST':
             s['settings']['storeOpen'] = bool(body.get('storeOpen'))
             s['settings']['laborPrice'] = float(body.get('laborPrice') or 0)
+            if 'signedOut' in body:  # Portal shows its login page
+                s['settings']['signedOut'] = bool(body.get('signedOut'))
             if 'failRfp' in body:  # fail the next N moves to Ready for pickup like Portal did (tests Swiftcast's retry)
                 s['settings']['failRfp'] = int(body.get('failRfp') or 0)
             api.save()

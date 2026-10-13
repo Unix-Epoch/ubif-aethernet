@@ -26,6 +26,13 @@
     GET  /v1/:store/links?since=YYYY-MM-DD                       Divination's manual cleaning links since that day
     POST /v1/:store/links               { day, device, parent, by, byId }   link a phone's cleanings that day to WO `parent`
     POST /v1/:store/links/remove        { day, device, by, byId }           undo
+    GET  /v1/:store/checkins?arrival=ID                          Return: saved incomplete check-ins for an arrival (no contents)
+    GET  /v1/:store/checkins/:id                                 one saved check-in, contents included
+    POST /v1/:store/checkins            { id?, arrivalId?, woId?, step, label, data, by, byId }   save (new id, or update `id`)
+    POST /v1/:store/checkins/:id/remove                          finished or discarded: deleted
+    GET  /v1/:store/sheets/:kind                                 Provoke: the store's synced sheet (leads | prices) → { data, syncedAt }
+  Sheet sync (x-aethernet-sheets = the SHEETS_KEY secret; only Garrett's Mac job has it):
+    POST /v1/sheets/:store/:kind        { data }                 replace that store's sheet (leads: canned texts; prices: Price sheet tabs)
   Admin (x-aethernet-admin = the ADMIN_KEY secret; never shipped in the script):
     GET  /v1/admin/ping
     GET  /v1/admin/feedback?status=new|planned|fixed|wontfix|all
@@ -60,6 +67,9 @@ async function readConfig(env) {
 const FEATURE_RE = /^[a-zA-Z]{1,24}(:[a-zA-Z-]{1,24})?$/;
 const DEVICE_RE = /^[A-Za-z0-9:_-]{1,40}$/; // a cleaning's phone: its IMEI, or Aethernet's own key for one without
 const LINK_DAYS = 120;
+// Return: saved incomplete check-ins (customer details and passcode included) are kept 7 days at most.
+const CHECKIN_DAYS = 7, CHECKIN_ID_RE = /^[A-HJ-NP-Z2-9]{6}$/, CHECKIN_MAX = 14000;
+const newCheckinId = () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', b = crypto.getRandomValues(new Uint8Array(6)); return [...b].map((x) => a[x % a.length]).join(''); };
 const MARK_KINDS = ['rfp', 'callback'], RULE_STATES = ['off', 'staged', 'live'];
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
 
@@ -78,9 +88,9 @@ const clean = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u00
 const tagName = (v) => clean(v, 32);
 const who = (b) => ({ name: clean(b.by, 60) || 'Someone', id: Number.isInteger(b.byId) ? b.byId : null });
 
-async function body(req) {
+async function body(req, max = 16000) {
   const text = await req.text();
-  if (text.length > 16000) throw new Error('too large');
+  if (text.length > max) throw new Error('too large');
   return text ? JSON.parse(text) : {};
 }
 
@@ -217,7 +227,25 @@ async function route(req, env) {
     const r = await env.DB.prepare("SELECT id, kind, quote, credit, store_name AS store FROM feedback WHERE fixed_in = ? AND quote IS NOT NULL AND quote <> '' ORDER BY id").bind(v).all();
     return json({ version: v, reports: r.results });
   }
-  const m = url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|open|auto|feedback|usage|access|links|links\/remove)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark|end))?$/);
+  // Provoke's sheets, pushed by the sync job on Garrett's Mac (its own key, not the admin key).
+  const sy = url.pathname.match(/^\/v1\/sheets\/(\d{1,6})\/(leads|prices)$/);
+  if (sy && req.method === 'POST') {
+    if (!env.SHEETS_KEY || req.headers.get('x-aethernet-sheets') !== env.SHEETS_KEY) return fail(403, 'sheets key required');
+    const b = await body(req, 400000);
+    if (!b.data || typeof b.data !== 'object') return fail(400, 'data required');
+    await env.DB.prepare('INSERT INTO sheets (store, kind, data, synced_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, kind) DO UPDATE SET data = excluded.data, synced_at = excluded.synced_at')
+      .bind(Number(sy[1]), sy[2], JSON.stringify(b.data), now()).run();
+    return json({ ok: true });
+  }
+  const sh = url.pathname.match(/^\/v1\/(\d{1,6})\/sheets\/(leads|prices)$/);
+  if (sh && req.method === 'GET') {
+    if (!(await allowed(env, Number(sh[1])))) return fail(403, 'this store does not have access to Aethernet');
+    const r = await env.DB.prepare('SELECT data, synced_at FROM sheets WHERE store = ? AND kind = ?').bind(Number(sh[1]), sh[2]).first();
+    return r ? json({ data: JSON.parse(r.data), syncedAt: r.synced_at }) : json({ data: null, syncedAt: null });
+  }
+  const cm = url.pathname.match(/^\/v1\/(\d{1,6})\/checkins\/([A-Za-z0-9]{6})(\/remove)?$/);
+  const ci = cm ? { id: cm[2].toUpperCase(), remove: !!cm[3] } : null;
+  const m = cm ? [null, cm[1], 'checkin'] : url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|open|auto|feedback|usage|access|links|links\/remove|checkins)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark|end))?$/);
   if (!m) return fail(404, 'not found');
   const store = Number(m[1]);
   const wo = m[3] ? Number(m[3]) : null;
@@ -232,6 +260,9 @@ async function route(req, env) {
     return json(ok ? { allowed: true, config: await readConfig(env) } : { allowed: false });
   }
   if (!(await allowed(env, store))) return fail(403, 'this store does not have access to Aethernet');
+
+  // Return: incomplete check-ins.
+  if (what === 'checkins' || what === 'checkin') return checkins(req, env, url, store, ci);
 
   if (req.method === 'GET' && what === 'all') {
     const [list, tags, marks, rules, gone, closedRows] = await env.DB.batch([
@@ -407,6 +438,54 @@ async function route(req, env) {
   return fail(405, 'method not allowed');
 }
 
+async function checkins(req, env, url, store, ci) {
+  if (req.method === 'GET' && !ci) {
+    const arrival = Number(url.searchParams.get('arrival'));
+    if (!Number.isInteger(arrival) || arrival <= 0) return fail(400, 'arrival=ID required');
+    const r = await env.DB.prepare('SELECT id, arrival_id AS arrivalId, wo_id AS woId, step, label, by_name AS by, at, updated_at AS updatedAt FROM checkin_drafts WHERE store = ? AND arrival_id = ? ORDER BY updated_at DESC')
+      .bind(store, arrival).all();
+    return json({ checkins: r.results });
+  }
+  if (req.method === 'GET' && ci && !ci.remove) {
+    const r = await env.DB.prepare('SELECT id, arrival_id AS arrivalId, wo_id AS woId, step, label, data, by_name AS by, at, updated_at AS updatedAt FROM checkin_drafts WHERE store = ? AND id = ?').bind(store, ci.id).first();
+    if (!r) return fail(404, 'no saved check-in with that code');
+    let data = null; try { data = JSON.parse(r.data); } catch (_) { /* stays null */ }
+    return json({ checkin: { ...r, data } });
+  }
+  if (req.method === 'POST' && ci && ci.remove) {
+    await env.DB.prepare('DELETE FROM checkin_drafts WHERE store = ? AND id = ?').bind(store, ci.id).run();
+    return json({ ok: true });
+  }
+  if (req.method === 'POST' && !ci) {
+    const b = await body(req);
+    const data = JSON.stringify(b.data || null);
+    if (!b.data || typeof b.data !== 'object') return fail(400, 'data required');
+    if (data.length > CHECKIN_MAX) return fail(413, 'check-in too large to save');
+    const step = Number(b.step);
+    if (!Number.isInteger(step) || step < 0 || step > 9) return fail(400, 'step required');
+    const arrival = Number(b.arrivalId) > 0 ? Number(b.arrivalId) : null, woId = Number(b.woId) > 0 ? Number(b.woId) : null;
+    const by = who(b), t = now();
+    let id = typeof b.id === 'string' ? b.id.toUpperCase() : null;
+    if (id && !CHECKIN_ID_RE.test(id)) return fail(400, 'bad id');
+    if (id) {
+      const r = await env.DB.prepare('UPDATE checkin_drafts SET arrival_id = ?, wo_id = ?, step = ?, label = ?, data = ?, by_name = ?, by_id = ?, updated_at = ? WHERE store = ? AND id = ?')
+        .bind(arrival, woId, step, clean(b.label, 120), data, by.name, by.id, t, store, id).run();
+      if (!r.meta.changes) id = null; // gone (expired or finished): saved as a new one
+    }
+    if (!id) {
+      for (let i = 0; i < 5 && !id; i++) {
+        const tryId = newCheckinId();
+        const r = await env.DB.prepare('INSERT OR IGNORE INTO checkin_drafts (store, id, arrival_id, wo_id, step, label, data, by_name, by_id, at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(store, tryId, arrival, woId, step, clean(b.label, 120), data, by.name, by.id, t, t).run();
+        if (r.meta.changes) id = tryId;
+      }
+      if (!id) return fail(500, 'could not make a code');
+    }
+    return json({ ok: true, id, at: t });
+  }
+  return fail(405, 'method not allowed');
+}
+
 async function cleanup(env) {
   const cutoff = new Date(Date.now() - KEEP_DAYS * 86400000).toISOString();
   const expired = 'SELECT store, wo FROM wo_closed WHERE closed_at < ?';
@@ -419,6 +498,7 @@ async function cleanup(env) {
     // List-change history: keep 90 days.
     env.DB.prepare('DELETE FROM history WHERE wo IS NULL AND at < ?').bind(new Date(Date.now() - 90 * 86400000).toISOString()),
     env.DB.prepare('DELETE FROM cleaning_links WHERE day < ?').bind(new Date(Date.now() - LINK_DAYS * 86400000).toISOString().slice(0, 10)),
+    env.DB.prepare('DELETE FROM checkin_drafts WHERE at < ?').bind(new Date(Date.now() - CHECKIN_DAYS * 86400000).toISOString()),
   ]);
 }
 

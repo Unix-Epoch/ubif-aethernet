@@ -64,3 +64,13 @@ CREATE TABLE IF NOT EXISTS auto_rules (    -- Auto-Waymark rules beyond Ready fo
 CREATE TABLE IF NOT EXISTS config (        -- Aethernet-wide settings from the admin panel (e.g. cleaningTarget), JSON values
   key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS checkin_drafts (  -- Return: incomplete check-ins (customer details + passcode), deleted when finished or after 7 days
+  store INTEGER NOT NULL, id TEXT NOT NULL, arrival_id INTEGER, wo_id INTEGER, step INTEGER NOT NULL, label TEXT, data TEXT NOT NULL,
+  by_name TEXT, by_id INTEGER, at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY (store, id)
+);
+CREATE INDEX IF NOT EXISTS checkin_drafts_arrival ON checkin_drafts (store, arrival_id);
+CREATE TABLE IF NOT EXISTS sheets (          -- Provoke: a store's lead texts and Price sheet, pushed by the sync job (JSON)
+  store INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL, synced_at TEXT NOT NULL,
+  PRIMARY KEY (store, kind)
+);

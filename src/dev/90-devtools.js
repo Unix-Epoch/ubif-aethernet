@@ -253,10 +253,39 @@
       row(btn('Recent Aethernet errors', () => { out.replaceChildren(h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(AE.recentErrors, null, 1) || '[]')); waymark.scrollIntoView(); }),
         btn('Log a test error', () => { AE.noteError('dev tools', new Error('Test error from dev tools')); AE.toast('Dev tools', 'Logged; it shows in bug reports\' technical details.', 'ok'); })));
 
+    // Work order tracker: last scan, a scan now, and a dry run that shows what one WO would send.
+    const trOut = h('div', { class: 'out' });
+    const woInput = h('input', { type: 'text', inputmode: 'numeric', placeholder: 'WO #', style: 'width:110px', value: (location.pathname.match(/\/workorder\/(\d+)/) || [])[1] || '' });
+    const trLast = AE.tracker.last();
+    const tracker = section('Work order tracker',
+      note(AE.tracker.configured() ? 'On (Worker set). Last scan: ' + (trLast ? new Date(trLast.at).toLocaleString() + ' · open ' + (trLast.open ?? '—') + ' · sent ' + trLast.sent + ' · unchanged ' + trLast.same + ' · failed ' + trLast.failed + (trLast.note ? ' · ' + trLast.note : '') + (trLast.errors.length ? ' · ' + trLast.errors.join('; ') : '') : 'none yet')
+        : 'Off: no tracker Worker in this build. The dry run still works (it seals with a throwaway key).'),
+      row(btn('Scan now', async () => {
+        if (!AE.tracker.configured()) throw new Error('No tracker Worker in this build.');
+        trOut.replaceChildren(note('Scanning…'));
+        const r = await AE.tracker.scan({ force: true });
+        trOut.replaceChildren(h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(r, null, 1)));
+      }), woInput, btn('Dry run (nothing sent)', async () => {
+        const wo = (woInput.value || '').trim();
+        if (!/^\d+$/.test(wo)) throw new Error('Type a WO number.');
+        trOut.replaceChildren(note('Fetching WO ' + wo + ' from Portal…'));
+        const r = await AE.tracker.dryRun(wo);
+        const c = r.card;
+        trOut.replaceChildren(
+          h('div', { class: 'note' }, 'WO ' + r.wo + (r.inList ? '' : ' (not in the open list)') + ' · full detail ' + (r.detailBytes / 1024).toFixed(1) + ' KB → sealed ' + (r.sealedBytes / 1024).toFixed(1) + ' KB · card ' + r.cardBytes + ' B'),
+          h('div', { class: 'note' }, 'Sealed search card (readable only on the admin site): name ' + (c.name ? '✓' : '—') + ' · ' + c.phones.length + ' phone(s) · ' + c.emails.length + ' email(s) · IMEI ' + (c.imei ? '✓' : '—') + ' · serial ' + (c.serial ? '✓' : '—') + ' · claim ' + (c.claim ? '✓' : '—')),
+          h('div', { class: 'note' }, 'Sealed with it: ' + r.sealedParts.notes + ' note(s) with their full text (' + r.sealedParts.noteChars.toLocaleString() + ' characters) · customer record ' + (r.sealedParts.customerRecord ? '✓' : '—') + ' · ' + r.sealedParts.statusHistory + ' status change(s) · ' + r.sealedParts.cartLines + ' cart line(s)'),
+          h('div', { class: 'note', style: 'margin-top:6px;font-weight:600' }, 'Plain part (what the server can read). Check: no customer details.'),
+          h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace;max-height:260px;overflow:auto' }, JSON.stringify(r.plain, null, 1)),
+          row(btn('Copy plain part', async () => { await navigator.clipboard.writeText(JSON.stringify(r.plain, null, 1)); AE.toast('Copied', 'The plain part is on the clipboard.', 'ok'); })));
+      })),
+      note('The dry run reads the WO from Portal exactly as a scan would, then shows what would be sent, without sending anything.'),
+      trOut);
+
     const card = h('div', { class: 'sg sg-card sg-dev', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' dev tools' },
       h('div', { class: 'head' }, h('span', { style: 'color:#e0761a;line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Dev tools'), h('span', { class: 'tag' }, 'DEV v' + AE_VERSION),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
-      h('div', { class: 'scroll' }, updates, notices, access, settings, macro, waymark, rows, scans, recorder, general));
+      h('div', { class: 'scroll' }, updates, tracker, notices, access, settings, macro, waymark, rows, scans, recorder, general));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-dev', onclick: (e) => { if (e.target === scrim) close(); } }, card);
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
