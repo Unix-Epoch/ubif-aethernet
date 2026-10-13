@@ -102,7 +102,7 @@ AE.crystal({
   run() {
     const { h } = AE, R = AE.reassemble;
     const DLG = 'ae-reassemble', BTN = 'ae-ra-btn', MENU = 'option-aethernet-reassemble';
-    const HINTS = { easy: 'Plug-and-play or screws-out', medium: 'Glued battery or trackpad risk, extra disassembly', hard: 'Top case or keyboard, full transfer of components, high risk' };
+    const HINTS = { easy: 'Quick and easy repairs; screws only', medium: 'Trackpads, batteries, extra disassembly', hard: 'Top case or keyboard, full teardown, high risk' };
     const LABEL = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
     const icon = (size) => h('span', { html: AE.actionIcon('reassemble', size), style: 'line-height:0;flex:none' });
     document.head.append(h('style', null, `
@@ -166,7 +166,7 @@ AE.crystal({
       const footNote = h('span', { class: 'sp' });
       const card = h('div', { class: 'sg sg-card sg-about ra', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Price estimate' },
         h('div', { class: 'hd' }, icon(32), h('h2', null, 'Price estimate'), h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
-        h('div', { class: 'sg-soft' }, 'Out-of-warranty quote from the part cost. If the Price sheet has the repair, quote the sheet.'),
+        h('div', { class: 'sg-soft' }, "Enter a device and part; if it's on our price sheet, it'll auto-populate."),
         fields, result, h('div', { class: 'foot' }, footNote, copyBtn));
       const scrim = h('div', { class: 'sg sg-about-scrim', id: DLG, onclick: (e) => { if (e.target === scrim) close(); } }, card);
       const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
@@ -210,8 +210,8 @@ AE.crystal({
         } else if (q.single) {
           if (!st.pick) st.pick = { kind: 'single' };
           parts.push(h('div', { class: 'tiles one' }, h('button', { type: 'button', class: 'tile' + (st.pick.kind === 'single' ? ' on' : ''), onclick: () => { st.pick = { kind: 'single' }; drawResult(); } },
-            h('div', { class: 'l' }, 'MacBook screen · one price'), h('div', { class: 'p' }, money(q.single.price)),
-            h('div', { class: 'h' }, q.single.extra > 0 ? money(q.single.base) + ' + ' + money(q.single.extra) + ' extra' : 'No difficulty for MacBook screens'), pf(q.single.price))));
+            h('div', { class: 'l' }, 'MacBook screen'), h('div', { class: 'p' }, money(q.single.price)),
+            q.single.extra > 0 ? h('div', { class: 'h' }, money(q.single.base) + ' + ' + money(q.single.extra) + ' extra') : null, pf(q.single.price))));
           const ex = h('input', { type: 'text', inputmode: 'decimal', placeholder: '$0.00', value: st.extra, oninput: (e) => { st.extra = e.target.value; drawResult(); } });
           parts.push(h('div', { class: 'extra' }, h('button', { type: 'button', class: 'sg-btn', onclick: () => { st.extraOn = !st.extraOn; if (!st.extraOn) st.extra = ''; drawResult(); } }, st.extraOn ? '− Remove extra' : '+ Add extra'),
             st.extraOn ? ex : null, h('span', { class: 'sg-soft' }, 'Only when this screen job needs more work than a standard swap.')));
@@ -228,9 +228,7 @@ AE.crystal({
         }
         if (showProfit && part != null) parts.push(h('div', { class: 'note' }, 'Profit is after the ' + Math.round(s.royalty * 100) + '% royalty and the part. Only people on the profit list see it.'));
         result.replaceChildren(...parts.filter(Boolean));
-        const whole = (n) => (Number.isInteger(n) ? '$' + n : money(n));
         footNote.textContent = sheet && sheet.prices.length ? 'Quote the Price sheet price.'
-          : mac && q ? 'At least ' + whole(q.minProfit) + ' profit on ' + (st.newer ? '2024 and newer' : '2023 and older') + ' MacBooks.'
           : !mac && sheetData && !st.model.trim() ? 'Type the model to check the Price sheet.'
           : !mac && sheet && !sheet.rows ? 'Not on the Price sheet.' : '';
         copyBtn.disabled = pickPrice == null;
@@ -300,7 +298,7 @@ AE.crystal({
       const w = where();
       if (!w) { b?.remove(); return; }
       if (!b) {
-        b = h('button', { type: 'button', id: BTN, title: 'Reassemble: price an out-of-warranty repair from the part cost', onclick: () => {
+        b = h('button', { type: 'button', id: BTN, title: 'Reassemble: calculate a price quote', onclick: () => {
           const x = where(), model = x ? x.prefill() : '';
           open({ from: x ? x.from : 'button', model, device: R.typeOf(model) || undefined });
         } }, icon(28), 'Price estimate');
