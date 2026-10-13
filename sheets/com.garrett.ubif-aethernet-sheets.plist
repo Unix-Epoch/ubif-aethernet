@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.garrett.ubif-aethernet-sheets</string>
+
+    <!-- Provoke's sheet sync: every 15 minutes; the script itself does nothing
+         outside 8 AM-8 PM and only downloads a sheet when its SharePoint
+         version tag changed. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/unix/Scripts/ubif-daily-sales/.venv/bin/python3</string>
+        <string>/Users/unix/Scripts/ubif-portal-tools/sheets/sync_sheets.py</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/unix/Scripts/ubif-portal-tools/sheets/launchd_stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/unix/Scripts/ubif-portal-tools/sheets/launchd_stderr.log</string>
+</dict>
+</plist>

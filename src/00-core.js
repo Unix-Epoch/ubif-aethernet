@@ -34,7 +34,7 @@ const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
     crystals: AE_DEMO ? { cleaningRate: true, autoClose: true, glamour: true }
-      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, fixes: true },
+      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, reassemble: true, fixes: true },
     // Swiftcast: offer Dualcast (all of a device's cleanings at once); refreshLabor: null = follow
     // AE.REFRESH_LABOR_DEFAULT (only a user's own choice is stored, so the default can change in a release).
     autoClose: { dualcast: true, refreshLabor: null },
@@ -44,7 +44,7 @@ const AE = (() => {
       printLabels: { delayMs: 900 },
       // Waymark on Portal's Work orders list: one chip + N per order, clickable, optional tag filter (src/55-waymark.js)
       waymarkList: { chips: true, edit: true, filter: false },
-      fixes: { logoLink: true, appcuesButtons: true, appcuesBoxes: true, scanNav: true, scanDebug: false, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all', reportsRetry: true }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
+      fixes: { logoLink: true, appcuesButtons: true, appcuesBoxes: true, scanNav: true, scanDebug: false, woSort: true, autoNotes: true, notContacted: true, notContactedStatus: 'all', reportsRetry: true, rfpTotal: true }, // notContactedStatus: 'all' | 'notConfirmed' // Master's Mend: one switch per fix (src/58-fixes.js)
       // Blank = use the logged-in user / current store automatically.
       galaxy: { technicianName: '', email: '', location: '', storeEmail: '', toolVersion: 'Latest', description: 'ER' },
     }),
