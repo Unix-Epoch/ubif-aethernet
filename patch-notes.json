@@ -1,5 +1,17 @@
 [
   {
+    "version": "2.23.0",
+    "notes": [
+      "**Reassemble** is here! The price calculator you're used to, with a few new tricks. Pick the device type, repair and part cost, and you'll see the Easy, Medium and Hard prices side by side. Type in the model and it checks the price sheet for you: if the repair is on it, that's the price it shows. One click copies the price.",
+      "Find **Reassemble** under **Price estimate** in your avatar menu, at the bottom left of the **Estimates** page, or on the Repair estimate step during check-in, where it fills in the device for you.",
+      "**Master's Mend**: The Today's sales card on the Dashboard and Reports page now shows your store's **RFP total**, in parentheses next to your sales and as a striped section on the bar. Hover over the stripes to see how many devices are ready for pickup, and how many of those are complete or incomplete.",
+      "Thank you all for your support so far, and please, keep the bug reports and suggestions coming."
+    ],
+    "updated": [
+      "fixes"
+    ]
+  },
+  {
     "version": "2.22.0",
     "notes": [
       "**Swiftcast**: Swiftcast now adds the VZW Refresh screen protector SKU automatically at checkout. Enjoy the extra commission!",
