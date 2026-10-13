@@ -150,7 +150,7 @@ AE.crystal({
     let sheetData = null;
 
     async function open(prefill = {}) {
-      AE.ensureCss();
+      AE.ensureModalCss(); // the pop-over styles live with Settings' dialogs
       document.getElementById(DLG)?.remove();
       AE.track('reassemble:open' + (prefill.from ? ':' + prefill.from : ''));
       const st = { device: prefill.device || 'phone', model: prefill.model || '', newer: false, repair: 'Screen', part: '', risk: '', extra: '', extraOn: false, pick: null };
