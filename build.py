@@ -65,8 +65,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
-VERSION = "2.22.1"   # the public version (bump when bundling a public release)
-DEV_BASE = "2.23.0"  # the next public version, being built on dev
+VERSION = "2.23.0"   # the public version (bump when bundling a public release)
+DEV_BASE = "2.24.0"  # the next public version, being built on dev
 
 # Secret Gist that hosts the published script (account: Unix-Epoch).
 # The raw URL has no commit hash, so it always serves the latest revision.
@@ -82,8 +82,8 @@ READABLE_URL = f"{GIST_RAW}/{READABLE_FILENAME}"
 # deployed; WAYMARK_API in the environment overrides it (e.g. a local
 # `wrangler dev` for testing). The app key is read from worker/wrangler.toml.
 WAYMARK_API = "https://aethernet-waymark.ubifaethernet.workers.dev"
-# The work order tracker Worker (tracker-worker/). Empty = not deployed yet: Aethernet leaves the tracker off.
-TRACKER_API = ""
+# The work order tracker Worker (tracker-worker/). Empty = Aethernet leaves the tracker off. On for every store since 2.23.0.
+TRACKER_API = "https://aethernet-tracker.ubifaethernet.workers.dev"
 
 # The dev channel: everything that differs from the public build.
 DEV = {
@@ -91,7 +91,7 @@ DEV = {
     "name": "Aethernet (dev)",
     "namespace": "garrett.ubif.dev",   # a separate script to Tampermonkey: own install + storage
     "waymark_api": "https://aethernet-waymark-dev.ubifaethernet.workers.dev",
-    "tracker_api": "https://aethernet-tracker.ubifaethernet.workers.dev",  # dev collects (public: TRACKER_API, still empty)
+    "tracker_api": "https://aethernet-tracker.ubifaethernet.workers.dev",
     "dist": "dist-dev",
     "status_file": "status-dev.json",
     "counter": "dev-build.txt",       # last dev build number
