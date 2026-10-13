@@ -43,7 +43,7 @@
     POST /v1/admin/stores               { store, name, by }      grant access
     POST /v1/admin/stores/:store/remove                          revoke access
     GET  /v1/admin/config                                        Aethernet-wide settings (every store)
-    POST /v1/admin/config               { cleaningTarget, by }   change them (installs pick them up on their next page load)
+    POST /v1/admin/config               { cleaningTarget?, reassemble?, by }   change them (installs pick them up on their next page load)
     GET  /v1/admin/auto-rules                                    Auto-Waymark rules' states
     POST /v1/admin/auto-rules           { rule, state }          off | staged (new WOs only) | live (backfill too)
   Store access: GET /v1/:store/access?name=&user= answers { allowed, config } (and
@@ -57,7 +57,28 @@ const MAX_TAGS_PER_WO = 12, MAX_LIST = 40, KEEP_DAYS = 7;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const KINDS = ['bug', 'idea'], STATUSES = ['new', 'planned', 'fixed', 'wontfix'];
 // Aethernet-wide settings, set from the admin panel; sent with the access answer.
-const CONFIG_DEFAULTS = { cleaningTarget: 75 };
+const CONFIG_DEFAULTS = { cleaningTarget: 75, reassemble: null }; // reassemble null = the script's own defaults (src/63-reassemble.js)
+// Reassemble's pricing (admin panel → Settings): every number checked, nothing else kept.
+function reassembleConfig(x) {
+  if (!x || typeof x !== 'object') return { error: 'expected an object' };
+  const n = (v, lo, hi) => { const k = Number(v); return Number.isFinite(k) && k >= lo && k <= hi ? Math.round(k * 10000) / 10000 : null; };
+  const out = { bases: {}, multipliers: {}, macAddons: {} };
+  for (const g of ['phone', 'tablet', 'computer', 'console', 'other']) {
+    const pair = (x.bases || {})[g];
+    const lo = n(pair && pair[0], 0, 2000), hi = n(pair && pair[1], 0, 2000);
+    if (lo == null || hi == null) return { error: 'bases.' + g + ' must be two amounts from 0 to 2000' };
+    out.bases[g] = [lo, hi];
+  }
+  for (const k of ['low', 'high']) { const v = n((x.multipliers || {})[k], 0, 10); if (v == null) return { error: 'multipliers.' + k + ' must be from 0 to 10' }; out.multipliers[k] = v; }
+  for (const k of ['medium', 'hard']) { const v = n((x.macAddons || {})[k], 0, 2000); if (v == null) return { error: 'macAddons.' + k + ' must be from 0 to 2000' }; out.macAddons[k] = v; }
+  for (const [k, lo, hi] of [['macMin', 0, 5000], ['macMin2024', 0, 5000], ['royalty', 0, 0.5]]) { const v = n(x[k], lo, hi); if (v == null) return { error: k + ' must be from ' + lo + ' to ' + hi }; out[k] = v; }
+  const th = n((x.scale || {}).threshold, 0, 10000), rate = n((x.scale || {}).rate, 0, 5);
+  if (th == null || rate == null) return { error: 'scale needs a threshold (0 to 10000) and a rate (0 to 5)' };
+  out.scale = { threshold: th, rate };
+  if (!Array.isArray(x.profitViewers) || x.profitViewers.length > 40) return { error: 'profitViewers must be a list of up to 40 names or emails' };
+  out.profitViewers = x.profitViewers.map((v) => clean(v, 80)).filter(Boolean);
+  return out;
+}
 async function readConfig(env) {
   const r = await env.DB.prepare('SELECT key, value FROM config').all().catch(() => ({ results: [] }));
   const out = { ...CONFIG_DEFAULTS };
@@ -178,10 +199,20 @@ export async function adminApi(req, env, url, path) {
   }
   if (path === '/config') {
     if (req.method === 'POST') {
-      const b = await body(req), t = Number(b.cleaningTarget);
-      if (!Number.isInteger(t) || t < 1 || t > 200) return fail(400, 'cleaningTarget must be a whole number from 1 to 200');
-      await env.DB.prepare('INSERT INTO config (key, value, updated_by, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at')
-        .bind('cleaningTarget', JSON.stringify(t), clean(b.by, 60) || null, now()).run();
+      const b = await body(req), put = [];
+      if (b.cleaningTarget !== undefined) {
+        const t = Number(b.cleaningTarget);
+        if (!Number.isInteger(t) || t < 1 || t > 200) return fail(400, 'cleaningTarget must be a whole number from 1 to 200');
+        put.push(['cleaningTarget', t]);
+      }
+      if (b.reassemble !== undefined) {
+        const r = b.reassemble === null ? null : reassembleConfig(b.reassemble);
+        if (r && r.error) return fail(400, 'reassemble: ' + r.error);
+        put.push(['reassemble', r]);
+      }
+      if (!put.length) return fail(400, 'nothing to change');
+      await env.DB.batch(put.map(([k, v]) => env.DB.prepare('INSERT INTO config (key, value, updated_by, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at')
+        .bind(k, JSON.stringify(v), clean(b.by, 60) || null, now())));
     }
     return json({ config: await readConfig(env) });
   }
