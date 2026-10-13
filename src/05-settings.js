@@ -25,7 +25,7 @@
     ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],
     ['timeSheet', 'Tactician', 'The Store time sheet, one store at a time: pick a store to filter Portal\'s punches, and see a weekly breakdown of everyone\'s hours with overtime (over 40 a week, counting every store they worked at). Adds sales per labor hour to the Reports page.'],
-    ['reassemble', 'Reassemble', 'Prices out-of-warranty repairs from the part cost with the owner\'s pricing, or shows the Price sheet\'s price when the repair is on it. Open it from the avatar menu, the Estimates page or the Repair estimate step of check-in.'],
+    ['reassemble', 'Reassemble', 'The price calculator you\'re used to, with a few new tricks. Auto-checks the price sheet for you, if the device is on it, it\'ll show you that price. Find it in the avatar menu, on the Estimates page, or during check-in.'],
     ['buybacks', 'Bountiful Yield', 'Set of handy "add all" buttons for setting up your Buybacks and RMAs.'],
     ['printLabels', 'Quick Synthesis', '\'Print All\' for your Receiving. No longer shall you have to manually print 20+ generic SKU labels!'],
     ]),
