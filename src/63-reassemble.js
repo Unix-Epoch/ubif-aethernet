@@ -164,8 +164,8 @@ AE.crystal({
 
       const fields = h('div', { class: 'grid' }), result = h('div'), copyBtn = h('button', { type: 'button', class: 'sg-btn sg-primary', disabled: true }, 'Copy');
       const footNote = h('span', { class: 'sp' });
-      const card = h('div', { class: 'sg sg-card sg-about ra', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Price Estimate' },
-        h('div', { class: 'hd' }, icon(32), h('h2', null, 'Price Estimate'), h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
+      const card = h('div', { class: 'sg sg-card sg-about ra', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Price estimate' },
+        h('div', { class: 'hd' }, icon(32), h('h2', null, 'Price estimate'), h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
         h('div', { class: 'sg-soft' }, 'Out-of-warranty quote from the part cost. If the Price sheet has the repair, quote the sheet.'),
         fields, result, h('div', { class: 'foot' }, footNote, copyBtn));
       const scrim = h('div', { class: 'sg sg-about-scrim', id: DLG, onclick: (e) => { if (e.target === scrim) close(); } }, card);
@@ -182,7 +182,7 @@ AE.crystal({
             : field('Model', inp('model', 'e.g. iPhone 13'), true),
           field('Repair', sel(R.REPAIRS.map((x) => [x, x]), st.repair, (v) => { st.repair = v; })),
           field('Part cost (incl. shipping)', inp('part', '$0.00')),
-          ...(st.repair !== 'Screen' ? [field('Screen at risk', inp('risk', "The screen's part cost"), true)] : []));
+          ...(st.repair !== 'Screen' ? [field('Screen at risk', inp('risk', "The screen's part cost, if it could break"), true)] : []));
         drawResult();
       }
 
@@ -200,7 +200,7 @@ AE.crystal({
           parts.push(h('div', { class: 'sheet' }, '✓ On the Price sheet: ' + (sheet.rows[0].name.split(/\s{3,}|inform customer/i)[0].trim()) + ' · ' + st.repair,
             h('div', { class: 'chips' }, sheet.prices.map((x, i) => h('button', { type: 'button', class: 'chip' + (st.pick.i === i ? ' on' : ''), title: x.raw, onclick: () => { st.pick = { kind: 'sheet', i }; drawResult(); } },
               x.label + ' ' + money(x.price), showProfit && part != null ? h('small', null, 'Profit ' + money(r2(x.price * keep - part))) : null))),
-            h('div', { class: 's' }, r0.tab + ' tab · synced ' + new Date(sheetData.syncedAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) + '. Quote this price; the formula below is for reference.')));
+            h('div', { class: 's' }, r0.tab + ' tab · synced ' + new Date(sheetData.syncedAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) + '. Quote this price; the prices below are for reference.')));
           pickPrice = sheet.prices[st.pick.i].price;
         } else if (sheet && sheet.rows) {
           parts.push(h('div', { class: 'sheet miss' }, st.model.trim() + ' is on the Price sheet, but not for ' + st.repair.toLowerCase() + '. Quote the price below.'));
@@ -226,11 +226,13 @@ AE.crystal({
           if (st.pick.kind === 'level') pickPrice = q[st.pick.lvl].price;
           if (!mac && amount(st.risk) > 0) parts.push(h('div', { class: 'note' }, 'Screen at risk raises Easy so a broken screen is still covered.'));
         }
-        if (showProfit && part != null) parts.push(h('div', { class: 'note' }, 'Profit is after the ' + Math.round(s.royalty * 100) + '% royalty and the part. Only you and the profit list see it.'));
+        if (showProfit && part != null) parts.push(h('div', { class: 'note' }, 'Profit is after the ' + Math.round(s.royalty * 100) + '% royalty and the part. Only people on the profit list see it.'));
         result.replaceChildren(...parts.filter(Boolean));
-        footNote.textContent = sheet && sheet.prices.length ? 'Price sheet price · owner pricing for reference'
-          : mac && q ? 'Owner pricing: at least ' + money(q.minProfit) + ' profit on ' + (st.newer ? '2024 and newer' : '2023 and older') + ' MacBooks'
-          : 'Owner pricing · set in the ' + AE_NAME + ' admin panel';
+        const whole = (n) => (Number.isInteger(n) ? '$' + n : money(n));
+        footNote.textContent = sheet && sheet.prices.length ? 'Quote the Price sheet price.'
+          : mac && q ? 'At least ' + whole(q.minProfit) + ' profit on ' + (st.newer ? '2024 and newer' : '2023 and older') + ' MacBooks.'
+          : !mac && sheetData && !st.model.trim() ? 'Type the model to check the Price sheet.'
+          : !mac && sheet && !sheet.rows ? 'Not on the Price sheet.' : '';
         copyBtn.disabled = pickPrice == null;
         copyBtn.textContent = pickPrice == null ? 'Copy' : 'Copy ' + money(pickPrice);
         copyBtn.onclick = async () => {
