@@ -27,8 +27,10 @@
         (LIST_PAGES; anything else under /boh, /check-in or /check-out is blocked). Checked against
         Portal first.
       · item label (<item number>-<10+ digit serial>) → opens the item's
-        page, from the dashboard, WO list, customers, Arrivals, Sales and
-        those inventory list pages. On a WO, Portal adds it to the WO instead.
+        page as "All items" shows it (sold labels too), searches the label and
+        opens its View Item popup; from the dashboard, WO list, customers,
+        Arrivals, Sales and those inventory list pages. On a WO, Portal adds
+        it to the WO instead.
       · never while you're typing in a field or a dialog/drawer is open
         (the scan is meant for that field), and never acts on scans
         Portal's own pages consume.
@@ -992,9 +994,32 @@ AE.crystal({
             return 'opened WO ' + id + (why ? ' (' + why + ')' : '');
           }
           if (!itemPage()) return 'item scans belong to this page';
-          go('/boh/inventory/store-products/' + encodeURIComponent(item[1]));
+          const store = await AE.profile().then((p) => p.storeId).catch(() => null);
+          // location=All: the item page as Portal opens it from "All items". Without it, only in-store labels are listed,
+          // so a sold label never shows (Garrett, Oct 14, 2026).
+          go('/boh/inventory/store-products/' + encodeURIComponent(item[1]) + '?location=All' + (store ? '&warehouseId=' + store : ''));
           AE.track('fixes:scanItem');
+          openLabel(scan).catch(() => {});
           return 'opened item ' + item[1];
+        }
+
+        // On the item page: search the scanned label, then its Actions → View Item (the label's detail popup;
+        // it has no address of its own). Portal's steps, checked Oct 14, 2026.
+        async function openLabel(label) {
+          const t0 = Date.now(), want = label.toUpperCase();
+          const until = async (f) => { while (Date.now() - t0 < 15000) { const v = f(); if (v) return v; await AE.sleep(100); } return null; };
+          // The page's title is the item number once Portal has drawn it (until then the old page's search box is still there).
+          const itemNo = label.split('-')[0].toUpperCase();
+          const input = await until(() => document.title.toUpperCase().startsWith(itemNo + ' |') && document.querySelector('input[data-testid="search-field"]'));
+          if (!input) return;
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, label);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          const row = await until(() => { const rs = [...document.querySelectorAll('tbody tr')]; return rs.length === 1 && rs[0].cells[0].textContent.trim().toUpperCase() === want && rs[0]; });
+          const menu = row && row.querySelector('button');
+          if (!menu) { AE.toast('Scan', 'Label ' + label + " isn't on this item's list for this store.", 'err', 6000); return; }
+          menu.click();
+          const view = await until(() => [...document.querySelectorAll('button, [role="menuitem"]')].find((b) => b.textContent.trim() === 'View Item' && b.offsetParent));
+          if (view) view.click();
         }
 
         /*
