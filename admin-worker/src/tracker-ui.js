@@ -431,7 +431,8 @@ async function drawAgents(box) {
     const days = new Map(DAYS.map(([d]) => { const c = h('input', { type: 'checkbox' }); c.checked = s.days.includes(d); return [d, c]; }));
     let times = [...s.times];
     const timesBox = h('div', { class: 'srch' }), newTime = h('input', { type: 'time', step: '1800', value: '12:00', style: 'height:30px' });
-    const drawTimes = () => timesBox.replaceChildren(...times.map((t) => h('span', { class: 'st' }, t + ' ', h('a', { style: 'cursor:pointer', title: 'Take out', onclick: () => { times = times.filter((x) => x !== t); drawTimes(); } }, '✕'))),
+    const ampm = (t) => { const [hh, mm] = t.split(':').map(Number); return (hh % 12 || 12) + ':' + String(mm).padStart(2, '0') + (hh < 12 ? ' AM' : ' PM'); };
+    const drawTimes = () => timesBox.replaceChildren(...times.map((t) => h('span', { class: 'st' }, ampm(t) + ' ', h('a', { style: 'cursor:pointer', title: 'Take out', onclick: () => { times = times.filter((x) => x !== t); drawTimes(); } }, '✕'))),
       newTime, h('button', { class: 'btn', style: 'height:28px', onclick: () => {
         const v = newTime.value;
         if (!/^\d\d:(00|30)$/.test(v)) return ui.toast('Times go in 30-minute steps, like 10:00 or 10:30.');
