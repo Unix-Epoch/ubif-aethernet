@@ -25,6 +25,14 @@
     GET  /v1/:store/tracker/rfp/days?from&to     the RFP table's value at the end of each day (Tactician)
     GET  /v1/:store/tracker/settings             store settings (general managers, …); PUT …/settings/gm
 
+  Agents (programs with their own key, e.g. the Mac's work order audit; x-aethernet-key too):
+    POST /v1/agents/register { id, name, publicJwk, token }   → { id, fingerprint, status } (waits for approval)
+    then `authorization: Bearer <id>.<token>`:
+    GET  /v1/agents/me                           → { id, name, status, stores, fingerprint, keys: [{ store, publicJwk, wrapped }] }
+    POST /v1/agents/report { ranAt, ok, emailSent, note, usedRunNow }   after each audit run; usedRunNow clears "run now"
+    (/me also returns { settings, runNow, lastRun })
+    GET  /v1/agents/wos?store=&closedDays=       open WOs + ones closed within closedDays (max 14), latest sealed snapshot
+
   `plain` (readable on the server; never customer details):
     { workorder: { workorderId, storeId, statusId, status, programId, program, device,
                    createdAt, updatedAt, nextUpdate, slaEndTime, bin, ... },
@@ -213,6 +221,80 @@ export function diff(before, after) {
   const out = [];
   for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (a[k] !== b[k]) out.push([k, a[k] ?? null, b[k] ?? null]);
   return out;
+}
+
+// ------------------------------------------------------------------ agents (programs with their own key)
+const HEX32 = /^[0-9a-f]{32}$/, HEX64 = /^[0-9a-f]{64}$/;
+const sha256hex = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map((x) => x.toString(16).padStart(2, '0')).join('');
+// 16 hex chars of sha256({crv,kty,x,y}) in groups of 4, e.g. 3F2A-91C0-7B44-0DDE (shown on the program and the admin site)
+const fingerprint = async (k) => (await sha256hex(JSON.stringify({ crv: k.crv, kty: k.kty, x: k.x, y: k.y }))).slice(0, 16).toUpperCase().match(/.{4}/g).join('-');
+
+// Audit settings (set on the admin site, read by the program). Strict on write, defaults filled on read.
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/, AGENT_DEFAULTS = { paused: false, days: [1, 2, 3, 5, 6], times: ['10:00', '18:00'], emailTo: ['green.trimar@gmail.com'], closedDays: 3, staleMinutes: 45, openHours: { from: '10:00', to: '19:00' } };
+const isList = (v, min, max) => Array.isArray(v) && v.length >= min && v.length <= max;
+export function agentSettings(b) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+  const o = {}, has = (k) => b[k] !== undefined;
+  for (const k of Object.keys(b)) if (!(k in AGENT_DEFAULTS)) return null;
+  if (has('paused')) { if (typeof b.paused !== 'boolean') return null; o.paused = b.paused; }
+  if (has('days')) { if (!isList(b.days, 0, 7) || b.days.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) return null; o.days = [...new Set(b.days)].sort(); }
+  if (has('times')) { if (!isList(b.times, 1, 6) || b.times.some((t) => !HHMM.test(t) || !['00', '30'].includes(t.slice(3)))) return null; o.times = [...new Set(b.times)].sort(); }
+  if (has('emailTo')) { if (!isList(b.emailTo, 1, 3) || b.emailTo.some((e) => typeof e !== 'string' || !EMAIL_RE.test(e) || e.length > 254)) return null; o.emailTo = [...new Set(b.emailTo.map((e) => e.toLowerCase()))]; }
+  if (has('closedDays')) { if (!Number.isInteger(b.closedDays) || b.closedDays < 1 || b.closedDays > 14) return null; o.closedDays = b.closedDays; }
+  if (has('staleMinutes')) { if (!Number.isInteger(b.staleMinutes) || b.staleMinutes < 15 || b.staleMinutes > 240) return null; o.staleMinutes = b.staleMinutes; }
+  if (has('openHours')) { const h = b.openHours; if (!h || !HHMM.test(h.from) || !HHMM.test(h.to) || h.from >= h.to) return null; o.openHours = { from: h.from, to: h.to }; }
+  return o;
+}
+const withDefaults = (text) => { let s = {}; try { s = JSON.parse(text || '{}'); } catch (_) {} return Object.assign({}, AGENT_DEFAULTS, s); };
+const parseRun = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
+
+async function agentApi(req, env, url) {
+  const T = env.TR, path = url.pathname.replace(/^\/v1\/agents/, '');
+  if (path === '/register' && req.method === 'POST') {
+    const b = await readJson(req, 4000), name = clean(b.name, 60);
+    if (!HEX32.test(b.id) || !name || !isJwk(b.publicJwk) || !HEX64.test(b.token)) return fail(400, 'id, name, publicJwk and token required');
+    await T.prepare("DELETE FROM agents WHERE status = 'pending' AND created_at < ?").bind(new Date(Date.now() - 7 * 86400000).toISOString()).run();
+    if (await T.prepare('SELECT 1 FROM agents WHERE id = ?').bind(b.id).first()) return fail(409, 'already registered');
+    if ((await T.prepare("SELECT COUNT(*) AS n FROM agents WHERE status = 'pending'").first()).n >= 5) return fail(429, 'too many programs waiting for approval');
+    const jwk = pubJwk(b.publicJwk);
+    await T.prepare("INSERT INTO agents (id, name, public_jwk, token_hash, status, stores, created_at) VALUES (?, ?, ?, ?, 'pending', '[]', ?)")
+      .bind(b.id, name, JSON.stringify(jwk), await sha256hex(b.token), now()).run();
+    await log(env, 'agent:' + name, 'agent:register', null, null, b.id);
+    return json({ id: b.id, fingerprint: await fingerprint(jwk), status: 'pending' });
+  }
+  const m = /^Bearer ([0-9a-f]{32})\.([0-9a-f]{64})$/.exec(req.headers.get('authorization') || '');
+  const a = m && await T.prepare('SELECT * FROM agents WHERE id = ?').bind(m[1]).first();
+  if (!a || (await sha256hex(m[2])) !== a.token_hash) return fail(401, 'unknown program or wrong token');
+  await T.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').bind(now(), a.id).run();
+  const stores = JSON.parse(a.stores || '[]'), jwk = JSON.parse(a.public_jwk), active = a.status === 'active';
+
+  if (path === '/me' && req.method === 'GET') {
+    const keys = active ? (await T.prepare('SELECT k.store, s.public_jwk, k.wrapped FROM agent_keys k JOIN store_keys s ON s.store = k.store WHERE k.agent_id = ? ORDER BY k.store').bind(a.id).all()).results
+      .filter((k) => stores.includes(k.store)).map((k) => ({ store: k.store, publicJwk: JSON.parse(k.public_jwk), wrapped: k.wrapped })) : [];
+    return json({ id: a.id, name: a.name, status: a.status, stores, fingerprint: await fingerprint(jwk), keys, settings: withDefaults(a.settings), runNow: !!a.run_now, lastRun: parseRun(a.last_run) });
+  }
+  if (path === '/report' && req.method === 'POST') {
+    const b = await readJson(req, 4000), ranAt = iso(b.ranAt);
+    if (!ranAt || typeof b.ok !== 'boolean' || typeof b.emailSent !== 'boolean') return fail(400, 'ranAt, ok and emailSent required');
+    const run = { ranAt, ok: b.ok, emailSent: b.emailSent, note: clean(b.note, 300), usedRunNow: b.usedRunNow === true };
+    await T.prepare('UPDATE agents SET last_run = ?, last_note = ?' + (run.usedRunNow ? ', run_now = 0' : '') + ' WHERE id = ?').bind(JSON.stringify(run), run.note || null, a.id).run();
+    return json({ ok: true });
+  }
+  if (path === '/wos' && req.method === 'GET') {
+    const store = int(url.searchParams.get('store'));
+    if (!store || !active || !stores.includes(store)) return fail(403, 'not approved for this store');
+    const days = Math.min(Math.max(int(url.searchParams.get('closedDays')) ?? 3, 0), 14), since = new Date(Date.now() - days * 86400000).toISOString();
+    const [rows, scan] = await T.batch([
+      T.prepare(`SELECT w.wo, w.store_name, w.status_id, w.status_name, w.program_id, w.program_name, w.device, w.created_at, w.api_updated_at, w.is_open, w.first_seen_at, w.last_list_seen_at,
+          w.missing_since, w.last_detail_at, w.closed_at, w.closed_reason, w.service_outcome, w.plain, s.id AS snapshot_id, s.fetched_at AS snapshot_fetched_at, s.hash AS snapshot_hash, s.sealed
+        FROM workorders w LEFT JOIN snapshots s ON s.id = (SELECT MAX(id) FROM snapshots WHERE store = w.store AND wo = w.wo)
+        WHERE w.store = ? AND (w.is_open = 1 OR COALESCE(w.closed_at, w.api_updated_at, w.last_detail_at, '') >= ?) ORDER BY w.wo`).bind(store, since),
+      T.prepare('SELECT MAX(at) AS at FROM scans WHERE store = ?').bind(store),
+    ]);
+    await log(env, 'agent:' + a.name, 'agent:wos', store, null, rows.results.length + ' rows');
+    return json({ wos: rows.results, last_scan_at: scan.results[0].at || null });
+  }
+  return fail(404, 'not found');
 }
 
 // ------------------------------------------------------------------ store side
@@ -494,6 +576,11 @@ async function log(env, email, action, store = null, wo = null, detail = null) {
   POST /people { email, name, scope, stores, keys }        full access: add/update, keys = invite copies
   POST /people/:email/remove     full access
   GET  /log?limit=               full access: who looked at what
+  GET  /agents                   full access: connected programs
+  POST /agents/:id/approve { stores, keys: [{ store, wrapped }] }   full access: grant stores (replaces earlier grants)
+  POST /agents/:id/remove        full access
+  POST /agents/:id/settings { settings }   full access: audit settings (validated; see agentSettings)
+  POST /agents/:id/run-now       full access: the program runs its audit at its next check (within 30 minutes)
 */
 export async function trackerAdmin(req, env, url, path, email) {
   const T = env.TR;
@@ -645,6 +732,50 @@ export async function trackerAdmin(req, env, url, path, email) {
     await log(env, email, 'person:remove', null, null, who);
     return json({ ok: true }, 200, false);
   }
+  if (req.method === 'GET' && path === '/agents') {
+    const r = await T.prepare('SELECT * FROM agents ORDER BY created_at').all();
+    return json({ agents: await Promise.all(r.results.map(async (a) => ({ id: a.id, name: a.name, fingerprint: await fingerprint(JSON.parse(a.public_jwk)), status: a.status, stores: JSON.parse(a.stores || '[]'),
+      created_at: a.created_at, approved_by: a.approved_by, approved_at: a.approved_at, last_seen_at: a.last_seen_at, publicJwk: JSON.parse(a.public_jwk),
+      settings: withDefaults(a.settings), runNow: !!a.run_now, lastRun: parseRun(a.last_run) }))) }, 200, false);
+  }
+  const am = path.match(/^\/agents\/([0-9a-f]{32})\/(approve|remove|settings|run-now)$/);
+  if (req.method === 'POST' && am) {
+    const a = await T.prepare('SELECT id, name FROM agents WHERE id = ?').bind(am[1]).first();
+    if (!a) return fail(404, 'no such program', false);
+    if (am[2] === 'remove') {
+      await T.batch([T.prepare('DELETE FROM agent_keys WHERE agent_id = ?').bind(a.id), T.prepare('DELETE FROM agents WHERE id = ?').bind(a.id)]);
+      await log(env, email, 'agent:remove', null, null, a.name + ' ' + a.id);
+      return json({ ok: true }, 200, false);
+    }
+    if (am[2] === 'settings') {
+      const st = agentSettings((await body()).settings);
+      if (!st) return fail(400, 'bad settings', false);
+      await T.prepare('UPDATE agents SET settings = ? WHERE id = ?').bind(JSON.stringify(st), a.id).run();
+      await log(env, email, 'agent:settings', null, null, a.name + ' ' + JSON.stringify(st).slice(0, 300));
+      return json({ ok: true, settings: withDefaults(JSON.stringify(st)) }, 200, false);
+    }
+    if (am[2] === 'run-now') {
+      await T.prepare('UPDATE agents SET run_now = 1 WHERE id = ?').bind(a.id).run();
+      await log(env, email, 'agent:run-now', null, null, a.name);
+      return json({ ok: true }, 200, false);
+    }
+    const b = await body();
+    if (!Array.isArray(b.stores) || b.stores.length > 200 || !Array.isArray(b.keys) || b.keys.length > 200) return fail(400, 'stores and keys required', false);
+    const stores = [...new Set(b.stores.map(int))];
+    if (stores.some((s) => !s || s >= 1000000)) return fail(400, 'bad store', false);
+    const wrapped = new Map();
+    for (const k of b.keys) { const st = int(k && k.store); if (!stores.includes(st) || !isSealed(k.wrapped, 1000)) return fail(400, 'bad key', false); wrapped.set(st, k.wrapped); }
+    if (stores.some((s) => !wrapped.has(s))) return fail(400, 'a key is needed for every store', false);
+    const have = (await T.prepare('SELECT store FROM store_keys WHERE store IN (SELECT value FROM json_each(?))').bind(JSON.stringify(stores)).all()).results.length;
+    if (have !== stores.length) return fail(400, 'a store has no key yet', false);
+    await T.batch([
+      T.prepare('DELETE FROM agent_keys WHERE agent_id = ?').bind(a.id),
+      T.prepare("UPDATE agents SET status = 'active', stores = ?, approved_by = ?, approved_at = ? WHERE id = ?").bind(JSON.stringify(stores), email, now(), a.id),
+      ...stores.map((s) => T.prepare('INSERT INTO agent_keys (agent_id, store, wrapped, created_by, created_at) VALUES (?, ?, ?, ?, ?)').bind(a.id, s, wrapped.get(s), email, now())),
+    ]);
+    await log(env, email, 'agent:approve', null, null, a.name + ' ' + (stores.join(',') || 'no stores'));
+    return json({ ok: true }, 200, false);
+  }
   if (req.method === 'GET' && path === '/log') {
     const r = await T.prepare('SELECT * FROM access_log ORDER BY id DESC LIMIT ?').bind(Math.min(int(url.searchParams.get('limit')) || 200, 2000)).all();
     return json({ log: r.results }, 200, false);
@@ -693,6 +824,7 @@ export default {
         const r = await env.TR.prepare('SELECT public_jwk FROM master_key WHERE id = 1').first();
         return r ? json({ publicJwk: JSON.parse(r.public_jwk) }) : fail(404, 'tracker not set up');
       }
+      if (url.pathname.startsWith('/v1/agents/')) return await agentApi(req, env, url);
       const m = url.pathname.match(/^\/v1\/(\d{1,6})\/tracker\//);
       if (!m) return fail(404, 'not found');
       const store = Number(m[1]);

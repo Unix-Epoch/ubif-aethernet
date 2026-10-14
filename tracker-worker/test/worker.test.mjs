@@ -245,6 +245,100 @@ assert.deepEqual(rd.map((d) => d.day + ':' + d.value), ['2026-10-05:100', '2026-
 const { localDay } = await import('../src/index.js');
 assert.equal(localDay('2026-10-13T02:30:00Z'), '2026-10-12'); assert.equal(localDay('2026-12-01T04:30:00Z'), '2026-11-30');
 
+// --- agents: a program with its own key; approved by a full-access admin whose unlocked browser wraps the store key to it
+const ag = await C.newKeyPair(), agId = 'a1'.repeat(16), agTok = 'b2'.repeat(32), bearer = (id, tok) => ({ authorization: 'Bearer ' + id + '.' + tok });
+const acall = async (path, headers = {}) => { const r = await worker.fetch(new Request('https://t.test' + path, { headers: Object.assign({ 'x-aethernet-key': 'k' }, headers) }), E, {}); return { status: r.status, j: await r.json() }; };
+assert.equal((await call('POST', '/v1/agents/register', { id: agId, name: 'Audit', publicJwk: ag.publicJwk, token: 'short' })).status, 400);
+const reg = await call('POST', '/v1/agents/register', { id: agId, name: 'Work order audit', publicJwk: ag.publicJwk, token: agTok });
+ok(reg, 'register'); assert.equal(reg.j.status, 'pending'); assert.match(reg.j.fingerprint, /^[0-9A-F]{4}(-[0-9A-F]{4}){3}$/);
+const fp = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ crv: ag.publicJwk.crv, kty: ag.publicJwk.kty, x: ag.publicJwk.x, y: ag.publicJwk.y }))))].map((x) => x.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase().match(/.{4}/g).join('-');
+assert.equal(reg.j.fingerprint, fp, 'fingerprint follows the contract');
+assert.equal((await call('POST', '/v1/agents/register', { id: agId, name: 'x', publicJwk: ag.publicJwk, token: agTok })).status, 409, 'id taken');
+assert.equal((await call('POST', '/v1/agents/register', { id: agId, name: 'x', publicJwk: ag.publicJwk, token: agTok }, 'wrong')).status, 403, 'app key needed');
+assert.equal((await acall('/v1/agents/me')).status, 401, 'no token');
+assert.equal((await acall('/v1/agents/me', bearer(agId, 'c3'.repeat(32)))).status, 401, 'wrong token');
+assert.equal((await acall('/v1/agents/me', bearer('d4'.repeat(16), agTok))).status, 401, 'unknown agent');
+let am0 = await acall('/v1/agents/me', bearer(agId, agTok));
+assert.equal(am0.status, 200); assert.equal(am0.j.status, 'pending'); assert.deepEqual(am0.j.keys, []); assert.equal(am0.j.fingerprint, fp);
+assert.equal((await acall('/v1/agents/wos?store=914', bearer(agId, agTok))).status, 403, 'pending agent sees no WOs');
+// at most 5 waiting
+for (let i = 0; i < 4; i++) ok(await call('POST', '/v1/agents/register', { id: String(i).repeat(32), name: 'p' + i, publicJwk: ag.publicJwk, token: agTok }), 'pending ' + i);
+assert.equal((await call('POST', '/v1/agents/register', { id: '9'.repeat(32), name: 'p', publicJwk: ag.publicJwk, token: agTok })).status, 429);
+await env.TR.prepare("UPDATE agents SET created_at = '2026-01-01T00:00:00Z' WHERE id != ?").bind(agId).run();
+ok(await call('POST', '/v1/agents/register', { id: '9'.repeat(32), name: 'p', publicJwk: ag.publicJwk, token: agTok }), 'old pending ones are cleared first');
+await env.TR.prepare("DELETE FROM agents WHERE id != ?").bind(agId).run();
+// admin side
+assert.equal((await admin('someone@x.com', 'GET', '/agents')).status, 403);
+const lst = (await admin('owner@x.com', 'GET', '/agents')).j.agents;
+assert.equal(lst.length, 1); assert.equal(lst[0].status, 'pending'); assert.equal(lst[0].fingerprint, fp); assert.ok(!JSON.stringify(lst).includes(agTok) && !('token_hash' in lst[0]));
+const skBytes = await C.openStoreKeyBytes(914, k1.wrappedPrivate, master.privateKey);
+const wrappedFor = (id, st) => C.sealBytes(skBytes, ag.publicJwk, 'agentkey|' + id + '|' + st);
+const ap = '/agents/' + agId + '/approve';
+assert.equal((await admin('owner@x.com', 'POST', ap, { stores: [914], keys: [] })).status, 400, 'key needed for each store');
+assert.equal((await admin('owner@x.com', 'POST', ap, { stores: [326], keys: [{ store: 326, wrapped: await wrappedFor(agId, 326) }] })).status, 400, 'store without a key');
+assert.equal((await admin('owner@x.com', 'POST', ap, { stores: [914], keys: [{ store: 914, wrapped: 'nope' }] })).status, 400);
+assert.equal((await admin('owner@x.com', 'POST', '/agents/' + 'e5'.repeat(16) + '/approve', { stores: [], keys: [] })).status, 404);
+await env.TR.prepare("INSERT INTO people (email, scope, stores) VALUES ('amgr@x.com', 'stores', '[914]')").run();
+assert.equal((await admin('amgr@x.com', 'POST', ap, { stores: [914], keys: [{ store: 914, wrapped: await wrappedFor(agId, 914) }] })).status, 403, 'full access only');
+ok(await admin('owner@x.com', 'POST', ap, { stores: [914], keys: [{ store: 914, wrapped: await wrappedFor(agId, 914) }] }), 'approve');
+am0 = (await acall('/v1/agents/me', bearer(agId, agTok))).j;
+assert.equal(am0.status, 'active'); assert.deepEqual(am0.stores, [914]); assert.equal(am0.keys.length, 1); assert.equal(am0.keys[0].publicJwk.x, k1.publicJwk.x);
+// the agent opens its store key, then a sealed snapshot
+const myKey = await C.importPrivate(await C.openBytes(am0.keys[0].wrapped, ag.privateKey, 'agentkey|' + agId + '|914'));
+let aw = await acall('/v1/agents/wos?store=914&closedDays=3', bearer(agId, agTok));
+assert.equal(aw.status, 200); assert.ok(aw.j.last_scan_at);
+const w5001 = aw.j.wos.find((x) => x.wo === 5001);
+assert.ok(w5001 && w5001.snapshot_id && w5001.snapshot_hash && w5001.snapshot_fetched_at && w5001.plain, 'row carries its latest snapshot');
+assert.equal((await C.openJson(w5001.sealed, myKey, C.aad.snapshot(914, 5001))).workorder.workorder.customer.name, 'Jordan Reyes');
+assert.ok(!JSON.stringify(aw.j).includes('Jordan'), 'nothing readable');
+assert.equal((await acall('/v1/agents/wos?store=326', bearer(agId, agTok))).status, 403, 'store not granted');
+assert.equal((await acall('/v1/agents/wos', bearer(agId, agTok))).status, 403);
+assert.equal((await acall('/v1/agents/wos?store=914', bearer(agId, 'c3'.repeat(32)))).status, 401);
+// closed window: 5002 closed just now is in; closed 5 days ago it is out until closedDays reaches it
+assert.ok(aw.j.wos.some((x) => x.wo === 5002 && !x.is_open), 'recently closed WO included');
+await env.TR.prepare("UPDATE workorders SET closed_at = ? WHERE store = 914 AND wo = 5002").bind(new Date(Date.now() - 5 * 86400000).toISOString()).run();
+const has = async (q, wo) => (await acall('/v1/agents/wos?store=914' + q, bearer(agId, agTok))).j.wos.some((x) => x.wo === wo);
+assert.equal(await has('&closedDays=3', 5002), false); assert.equal(await has('&closedDays=7', 5002), true); assert.equal(await has('', 5002), false, 'default 3 days');
+await env.TR.prepare("UPDATE workorders SET closed_at = ? WHERE store = 914 AND wo = 5002").bind(new Date(Date.now() - 30 * 86400000).toISOString()).run();
+assert.equal(await has('&closedDays=99', 5002), false, 'capped at 14 days'); assert.equal(await has('&closedDays=99', 5001), true, 'open ones always');
+const alog = (await admin('owner@x.com', 'GET', '/log?limit=2000')).j.log;
+assert.ok(alog.some((x) => x.email === 'agent:Work order audit' && x.action === 'agent:wos' && x.store === 914), 'agent reads are logged');
+assert.ok(alog.some((x) => x.action === 'agent:approve'));
+// audit settings, report, run now
+const { agentSettings } = await import('../src/index.js');
+for (const bad of [{ paused: 'yes' }, { days: [7] }, { days: [1.5] }, { times: [] }, { times: ['10:15'] }, { times: ['25:00'] }, { times: ['00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00'] }, { emailTo: [] }, { emailTo: ['a@x.com', 'b@x.com', 'c@x.com', 'd@x.com'] }, { emailTo: ['nope'] },
+  { closedDays: 0 }, { closedDays: 15 }, { closedDays: 2.5 }, { staleMinutes: 14 }, { staleMinutes: 241 }, { openHours: { from: '19:00', to: '10:00' } }, { openHours: { from: '10:00' } }, { surprise: 1 }, [], null]) assert.equal(agentSettings(bad), null, JSON.stringify(bad));
+assert.deepEqual(agentSettings({ days: [6, 1, 1], times: ['18:00', '09:30'], emailTo: ['A@X.com'] }), { days: [1, 6], times: ['09:30', '18:00'], emailTo: ['a@x.com'] });
+let st0 = (await acall('/v1/agents/me', bearer(agId, agTok))).j;
+assert.deepEqual(st0.settings, { paused: false, days: [1, 2, 3, 5, 6], times: ['10:00', '18:00'], emailTo: ['green.trimar@gmail.com'], closedDays: 3, staleMinutes: 45, openHours: { from: '10:00', to: '19:00' } }, 'defaults');
+assert.equal(st0.runNow, false); assert.equal(st0.lastRun, null);
+const sp = '/agents/' + agId + '/settings';
+assert.equal((await admin('amgr@x.com', 'POST', sp, { settings: { paused: true } })).status, 403, 'full access only');
+assert.equal((await admin('owner@x.com', 'POST', sp, { settings: { closedDays: 99 } })).status, 400);
+assert.equal((await admin('owner@x.com', 'POST', '/agents/' + 'e5'.repeat(16) + '/settings', { settings: {} })).status, 404);
+ok(await admin('owner@x.com', 'POST', sp, { settings: { paused: true, times: ['07:30'], closedDays: 5 } }), 'settings');
+st0 = (await acall('/v1/agents/me', bearer(agId, agTok))).j;
+assert.equal(st0.settings.paused, true); assert.deepEqual(st0.settings.times, ['07:30']); assert.equal(st0.settings.closedDays, 5); assert.equal(st0.settings.staleMinutes, 45, 'unset ones keep defaults');
+ok(await admin('owner@x.com', 'POST', '/agents/' + agId + '/run-now'), 'run now');
+assert.equal((await acall('/v1/agents/me', bearer(agId, agTok))).j.runNow, true);
+const rep = (body, tok = agTok) => worker.fetch(new Request('https://t.test/v1/agents/report', { method: 'POST', headers: Object.assign({ 'x-aethernet-key': 'k' }, bearer(agId, tok)), body: JSON.stringify(body) }), E, {}).then(async (r) => ({ status: r.status, j: await r.json() }));
+assert.equal((await rep({ ranAt: '2026-10-14T14:00:00Z', ok: true, emailSent: true }, 'c3'.repeat(32))).status, 401);
+assert.equal((await rep({ ok: true })).status, 400);
+ok(await rep({ ranAt: '2026-10-14T14:00:00Z', ok: true, emailSent: false, note: 'scheduled', usedRunNow: false }), 'report');
+assert.equal((await acall('/v1/agents/me', bearer(agId, agTok))).j.runNow, true, 'a normal run leaves run now set');
+ok(await rep({ ranAt: '2026-10-14T14:30:00Z', ok: false, emailSent: false, note: 'x'.repeat(400), usedRunNow: true }), 'report with run now');
+st0 = (await acall('/v1/agents/me', bearer(agId, agTok))).j;
+assert.equal(st0.runNow, false, 'cleared'); assert.equal(st0.lastRun.ok, false); assert.equal(st0.lastRun.note.length, 300); assert.equal(st0.lastRun.usedRunNow, true);
+const al = (await admin('owner@x.com', 'GET', '/agents')).j.agents[0];
+assert.equal(al.runNow, false); assert.equal(al.lastRun.ranAt, '2026-10-14T14:30:00Z'); assert.equal(al.settings.paused, true);
+// changing stores replaces the keys; remove deletes everything
+ok(await admin('owner@x.com', 'POST', ap, { stores: [], keys: [] }), 'change to no stores');
+assert.deepEqual((await acall('/v1/agents/me', bearer(agId, agTok))).j.keys, []);
+assert.equal((await acall('/v1/agents/wos?store=914', bearer(agId, agTok))).status, 403);
+ok(await admin('owner@x.com', 'POST', '/agents/' + agId + '/remove'), 'remove');
+assert.equal((await acall('/v1/agents/me', bearer(agId, agTok))).status, 401, 'removed');
+assert.equal((await env.TR.prepare('SELECT COUNT(*) AS n FROM agent_keys').first()).n, 0);
+
 // --- retention: nothing trimmed without cold storage; with TRIM_WITHOUT_ARCHIVE the latest snapshot per WO stays
 await env.TR.prepare("UPDATE snapshots SET fetched_at = '2026-01-01T00:00:00Z'").run();
 await env.TR.prepare("UPDATE changes SET changed_at = '2026-01-01T00:00:00Z'").run();

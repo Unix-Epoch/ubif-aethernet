@@ -386,10 +386,111 @@ async function drawPeople(m) {
       h('div', { class: 'soft', style: 'margin-top:10px' }, "Each person also needs their email on the admin site's Cloudflare Access list."));
   }
   drawList(pp.people);
+  const progs = h('div', { class: 'card' });
+  drawAgents(progs);
   m.replaceChildren(h('div', { class: 'grid', style: 'grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)' }, list,
     h('div', { class: 'card' }, h('h3', null, 'Add a person'), h('div', { style: 'display:grid;gap:8px' }, form.email, form.name, form.scope, form.stores), create, out)),
+    progs,
     h('div', { class: 'card' }, h('h3', null, 'Recent activity'), h('table', null, h('tr', null, h('th', null, 'When'), h('th', null, 'Who'), h('th', null, 'What')),
       lg.log.map((x) => h('tr', null, h('td', null, ui.fmt(x.at)), h('td', null, x.email), h('td', null, [x.action, x.store, x.wo, x.detail].filter((v) => v != null && v !== '').join(' · ')))))));
+}
+
+// ------------------------------------------------------------------ Connected programs
+const DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']];
+async function drawAgents(box) {
+  const { h } = ui;
+  let agents, names = new Map();
+  try {
+    agents = (await ui.api('GET', '/tracker/agents')).agents;
+    (await ui.api('GET', '/tracker/stores')).stores.forEach((x) => names.set(x.store, x.name || ''));
+  } catch (e) { return box.replaceChildren(h('h3', null, 'Connected programs'), h('div', { class: 'soft' }, "Couldn't load: " + e.message)); }
+  const again = () => drawAgents(box);
+  const storeName = (n) => n + (names.get(n) ? ' ' + names.get(n) : '');
+  // Opens each chosen store key with the master key and seals it to the program's own key.
+  const grant = async (a, stores) => {
+    const wrapped = [];
+    for (const st of stores) wrapped.push({ store: st, wrapped: await C.sealBytes(await C.openStoreKeyBytes(st, keys.wrapped.get(st), keys.master), a.publicJwk, 'agentkey|' + a.id + '|' + st) });
+    await ui.api('POST', '/tracker/agents/' + a.id + '/approve', { stores, keys: wrapped });
+  };
+  const picker = (a, label) => {
+    const have = [...keys.wrapped.keys()].sort((x, y) => x - y), boxes = new Map(), msg = h('div', { class: 'soft' });
+    const go = h('button', { class: 'btn p', onclick: async () => {
+      const stores = have.filter((st) => boxes.get(st).checked);
+      if (a.status === 'pending' && !stores.length) return ui.toast('Pick at least one store.');
+      go.disabled = true;
+      try { await grant(a, stores); ui.toast('Saved.'); again(); } catch (e) { go.disabled = false; msg.textContent = "Couldn't save: " + e.message; }
+    } }, label);
+    return h('div', { class: 'inv' }, a.status === 'pending' ? h('div', null, 'Check that this code matches the one shown on the program: ', h('code', null, a.fingerprint)) : null,
+      h('div', { class: 'soft', style: 'margin:6px 0' }, 'Stores this program may read:'),
+      have.length ? have.map((st) => { const c = h('input', { type: 'checkbox' }); c.checked = a.stores.includes(st); boxes.set(st, c); return h('label', { class: 'chk', style: 'display:flex;margin:3px 0' }, c, storeName(st)); }) : h('div', { class: 'soft' }, 'No store has a key yet.'),
+      h('div', { style: 'margin-top:8px' }, go), msg);
+  };
+  const settingsPanel = (a) => {
+    const s = a.settings, panel = h('div', { class: 'inv' });
+    const paused = h('input', { type: 'checkbox' }); paused.checked = s.paused;
+    const days = new Map(DAYS.map(([d]) => { const c = h('input', { type: 'checkbox' }); c.checked = s.days.includes(d); return [d, c]; }));
+    let times = [...s.times];
+    const timesBox = h('div', { class: 'srch' }), newTime = h('input', { type: 'time', step: '1800', value: '12:00', style: 'height:30px' });
+    const drawTimes = () => timesBox.replaceChildren(...times.map((t) => h('span', { class: 'st' }, t + ' ', h('a', { style: 'cursor:pointer', title: 'Take out', onclick: () => { times = times.filter((x) => x !== t); drawTimes(); } }, '✕'))),
+      newTime, h('button', { class: 'btn', style: 'height:28px', onclick: () => {
+        const v = newTime.value;
+        if (!/^\d\d:(00|30)$/.test(v)) return ui.toast('Times go in 30-minute steps, like 10:00 or 10:30.');
+        if (times.length >= 6) return ui.toast('Six times at most.');
+        if (!times.includes(v)) times = [...times, v].sort();
+        drawTimes();
+      } }, 'Add time'));
+    drawTimes();
+    const mails = h('input', { type: 'text', value: s.emailTo.join(', '), placeholder: 'up to 3 email addresses, separated by commas', style: 'width:100%' });
+    const closed = h('input', { type: 'number', min: 1, max: 14, value: s.closedDays, style: 'width:70px' });
+    const stale = h('input', { type: 'number', min: 15, max: 240, value: s.staleMinutes, style: 'width:80px' });
+    const from = h('input', { type: 'time', value: s.openHours.from }), to = h('input', { type: 'time', value: s.openHours.to });
+    const msg = h('div', { class: 'soft' });
+    const save = h('button', { class: 'btn p', onclick: async () => {
+      const emailTo = mails.value.split(/[,;\s]+/).filter(Boolean);
+      if (!times.length) return ui.toast('Add at least one time.');
+      if (!emailTo.length || emailTo.length > 3) return ui.toast('Enter one to three email addresses.');
+      if (!from.value || !to.value || from.value >= to.value) return ui.toast('Open hours: the opening time must be before the closing time.');
+      save.disabled = true;
+      try {
+        await ui.api('POST', '/tracker/agents/' + a.id + '/settings', { settings: { paused: paused.checked, days: DAYS.map(([d]) => d).filter((d) => days.get(d).checked), times, emailTo,
+          closedDays: Number(closed.value), staleMinutes: Number(stale.value), openHours: { from: from.value, to: to.value } } });
+        ui.toast('Saved.'); again();
+      } catch (e) { save.disabled = false; msg.textContent = "Couldn't save: " + e.message; }
+    } }, 'Save');
+    const row = (label, ...c) => h('div', { style: 'margin:8px 0' }, h('div', { class: 'soft' }, label), h('div', { class: 'srch' }, ...c));
+    panel.replaceChildren(
+      h('label', { class: 'chk', style: 'font-weight:700;color:var(--fg)' }, paused, 'Paused (no audits run until you turn this off)'),
+      row('Run on', ...DAYS.map(([d, n]) => h('label', { class: 'chk' }, days.get(d), n))),
+      row('Run at (Eastern time)', timesBox),
+      row('Email the report to', mails),
+      row('Include orders closed in the last (days)', closed),
+      row('Say the tracker is down after (minutes without a scan)', stale),
+      row('Store open hours (only then is the tracker checked)', from, 'to', to),
+      h('div', { style: 'margin-top:8px' }, save), msg);
+    return panel;
+  };
+  const lastRun = (a) => !a.lastRun ? h('div', { class: 'soft' }, 'Has not reported a run yet.')
+    : h('div', { class: 'soft' }, 'Last run ' + ui.fmt(a.lastRun.ranAt) + ': ', h('b', null, a.lastRun.ok ? 'OK' : 'Failed'), a.lastRun.emailSent ? ', email sent' : ', no email sent', a.lastRun.note ? '. ' + a.lastRun.note : '');
+  const fail = (e) => ui.toast(e.message);
+  const rows = agents.map((a) => {
+    const slot = h('div'), toggle = (make) => () => { slot.firstChild ? slot.replaceChildren() : slot.replaceChildren(make()); };
+    const btn = (label, fn) => h('button', { class: 'btn' + (label === 'Approve…' ? ' p' : ''), style: 'height:28px', onclick: fn }, label);
+    const needUnlock = (make) => () => { if (!keys.master) return ui.toast('Unlock work orders with your passphrase first.'); toggle(make)(); };
+    const buttons = a.status === 'pending'
+      ? [btn('Approve…', needUnlock(() => picker(a, 'Approve')))]
+      : [btn('Change stores…', needUnlock(() => picker(a, 'Save stores'))), btn('Settings', toggle(() => settingsPanel(a))),
+        a.runNow ? h('span', { class: 'soft' }, 'Will run at its next check') : btn('Run now', async () => { try { await ui.api('POST', '/tracker/agents/' + a.id + '/run-now'); ui.toast('It will run within 30 minutes.'); again(); } catch (e) { fail(e); } })];
+    buttons.push(btn('Remove', async () => { if (!confirm('Remove ' + a.name + '? It will stop working until it is connected again.')) return; try { await ui.api('POST', '/tracker/agents/' + a.id + '/remove'); again(); } catch (e) { fail(e); } }));
+    return h('div', { style: 'padding:10px 0;border-top:1px solid var(--line)' },
+      h('div', { class: 'srch' }, h('b', null, a.name), h('span', { class: 'st ' + (a.status === 'active' ? 'rfp' : 'wait') }, a.status === 'active' ? 'Connected' : 'Waiting for approval'),
+        a.status === 'active' && a.settings.paused ? h('span', { class: 'st' }, 'Paused') : null),
+      h('div', { class: 'soft' }, 'Code ' + a.fingerprint + ' · ' + (a.status === 'active' ? 'Stores: ' + (a.stores.join(', ') || 'none') : 'Asked to connect ' + ui.fmt(a.created_at)) + ' · Last seen ' + (a.last_seen_at ? ui.fmt(a.last_seen_at) : 'never')),
+      a.status === 'active' ? lastRun(a) : null,
+      h('div', { style: 'margin-top:6px;display:flex;gap:6px;flex-wrap:wrap' }, ...buttons), slot);
+  });
+  box.replaceChildren(h('h3', null, 'Connected programs'),
+    h('div', { class: 'soft' }, 'Programs on your own computers that read work orders for you, like the automated audit. Approving one lets it open the stores you pick.'),
+    ...(rows.length ? rows : [h('div', { class: 'soft', style: 'margin-top:8px' }, 'None yet. A program shows up here after it asks to connect.')]));
 }
 
 addEventListener('beforeunload', () => lock());
