@@ -204,7 +204,7 @@ TACS = {
     '35231540': {(1573, 'Black Titanium'): ['iPhone 15 Pro', 'Apple', 4]},
 }
 # stands in for the Osmocom import (the Worker's osmocom_tac table)
-OSMOCOM = {'35926618': {'brand': 'Motorola', 'model': 'moto g 5G (2025)'}}
+OSMOCOM = {'35926618': {'brand': 'Motorola', 'model': 'moto g 5G (2025)'}, '99001200': {'brand': 'Motorola', 'model': 'moto g 5G (2025)'}}
 TAC_STORES = {'35684192': {914, 915}, '35092741': {914}, '35231540': {914}}
 
 

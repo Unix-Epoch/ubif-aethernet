@@ -142,6 +142,7 @@ AE.crystal({
       #${DLG} .chips { display:flex; flex-wrap:wrap; gap:6px; }
       #${DLG} .chip { font:inherit; font-size:12.5px; border:1px solid var(--aui-outline, #d9d9de); border-radius:999px; padding:3px 10px; cursor:pointer; background:none; color:inherit; }
       #${DLG} .chip.on { border:2px solid var(--aui-primary, #8223d2); padding:2px 9px; color:var(--aui-primary, #8223d2); font-weight:700; background:var(--aui-primary-soft, #faf5ff); }
+      #${DLG} .thanks { margin-top:12px; font-size:13.5px; font-weight:700; color:var(--aui-status-on-success-soft, #1d7a3a); background:var(--aui-status-success-soft, #e3f4e8); border-radius:10px; padding:8px 12px; }
       #${DLG} .note { font-size:12.5px; color:var(--aui-on-surface-soft, #777); margin-top:10px; }
       #${DLG} .unk { margin-top:16px; border-radius:12px; padding:12px 14px; font-size:14px; background:var(--aui-status-warning-soft, #fdf6e7); color:var(--aui-status-on-warning-soft, #3d2e00); border:1px solid #f0d9a8; }
       #${DLG} .unk b { font-size:15px; }
@@ -180,7 +181,8 @@ AE.crystal({
       AE.track('decipher:open' + (prefill.from ? ':' + prefill.from : ''));
       // st.state: 'idle' (not 15 digits yet) | 'typo' | 'junk' | 'meid' | 'loading' | 'known' | 'unknown' | 'error'
       // st.sv: a 16-digit IMEI/SV (no check digit; its first 8 digits are the TAC; no Apple serial/Find My).
-      const st = { key: '', sv: false, digits: '', tac: '', state: 'idle', data: null, color: '', apple: null, query: '', results: [], pick: null, searching: false, suggestion: null, popup: false, busy: false, run: 0 };
+      const st = { key: '', sv: false, digits: '', tac: '', state: 'idle', data: null, color: '', apple: null, query: '', results: [], pick: null, searching: false, suggestion: null, popup: false, busy: false, thanks: false, run: 0 };
+      let accepting = false, sugBtn = null, saveBtn = null;
 
       const input = h('input', { type: 'text', class: 't', inputmode: 'numeric', autocomplete: 'off', placeholder: '15 digits', 'aria-label': 'IMEI',
         oninput: () => { setDigits(input.value); }, onpaste: () => setTimeout(() => setDigits(input.value)) });
@@ -215,7 +217,7 @@ AE.crystal({
         const key = meid || hexTyping ? 'hex:' + compact : d;
         if (key === st.key && st.state !== 'idle') return;
         st.key = key; st.digits = d; st.run++;
-        Object.assign(st, { sv: false, data: null, apple: null, color: '', pick: null, results: [], query: '', suggestion: null, popup: false });
+        Object.assign(st, { sv: false, data: null, apple: null, color: '', pick: null, results: [], query: '', suggestion: null, popup: false, thanks: false });
         if (meid) { st.state = 'meid'; st.tac = ''; }
         else if (hexTyping || d.length < 15) { st.state = 'idle'; st.tac = ''; }
         else if (D.junk(d)) { st.state = 'junk'; st.tac = ''; }
@@ -266,6 +268,7 @@ AE.crystal({
       }
 
       // -------------------------------------------------------- known TAC
+      const THANKS = 'Thanks! Every store will know this one now.';
       function modelText() { const m = st.data.models[0]; return m.modelName + (st.color ? ' ' + st.color : ''); }
       function drawKnown() {
         const d = st.data, m = d.models[0], appleDevice = /^apple$/i.test(m.manufacturer || ''), apple = appleDevice && !st.sv;
@@ -276,6 +279,7 @@ AE.crystal({
           h('span', null, h('span', { class: 'mono' }, st.apple.serial), h('button', { type: 'button', class: 'cp', onclick: () => copy(st.apple.serial, 'serial') }, 'Copy')));
         if (apple && st.apple) rows.push(h('span', { class: 'k' }, 'Find My'), h('span', null, h('span', { class: 'tag ' + (st.apple.locked ? 'warn' : 'ok') }, st.apple.locked ? 'On' : 'Off')));
         body.replaceChildren(
+          ...(st.thanks ? [h('div', { class: 'thanks' }, THANKS)] : []),
           h('div', { class: 'res' }, h('div', { class: 'mk' }, m.manufacturer || ' '), h('div', { class: 'md' }, m.modelName),
             h('div', { class: 'src' }, 'Seen on ' + plural(d.workOrders, 'work order') + ' at ' + plural(d.stores, 'store')),
             rows.length ? h('div', { class: 'rows' }, rows) : null),
@@ -334,7 +338,8 @@ AE.crystal({
         drawUnknownFoot();
       }
       function drawUnknownFoot() {
-        foot.replaceChildren(h('span', { class: 'sp' }, "Models from Portal's device list"), btn('Save model', () => save(), 'sg-primary', !st.pick || st.busy));
+        saveBtn = btn('Save model', () => save(), 'sg-primary', !st.pick || st.busy || accepting);
+        foot.replaceChildren(h('span', { class: 'sp' }, "Models from Portal's device list"), saveBtn);
       }
       function drawUnknown() {
         const s = st.suggestion;
@@ -342,30 +347,38 @@ AE.crystal({
         body.replaceChildren(
           h('div', { class: 'unk' }, h('b', null, 'No store has seen this model yet.'), h('div', { class: 's' }, 'Confirm it once and every store gets it from then on.'),
             s ? h('div', { class: 'sug' }, h('div', { class: 't' }, sugText, h('div', { class: 's' }, 'Suggested by a community TAC list')),
-              btn("That's it", () => acceptSuggestion(sugText), 'sg-primary')) : null),
+              sugBtn = btn("That's it", () => acceptSuggestion(sugText), 'sg-primary', accepting || st.busy)) : null),
           h('label', { class: 'f' }, s ? 'Not it? Pick the model' : 'Pick the model'), h('div', { class: 'in' }, search), listWrap);
         listWrap.replaceChildren(list);
         drawList();
         setTimeout(() => { if (st.state === 'unknown' && !s) search.focus(); });
       }
+      // Both buttons are off while a save (or the search before it) is running, so a double click saves once.
+      const setButtons = () => { const off = accepting || st.busy; if (sugBtn) sugBtn.disabled = off; if (saveBtn) saveBtn.disabled = off || !st.pick; };
+      // "That's it": search Portal for the suggestion; a match is saved right away, no match leaves it in the box.
       async function acceptSuggestion(text) {
+        if (accepting || st.busy) return;
         AE.track('decipher:suggestion');
+        accepting = true; setButtons();
         search.value = text; st.query = text; st.pick = null;
         await runSearch(st.suggestion);
+        accepting = false;
+        if (st.pick) return save();
         // Nothing of that name in Portal: the suggestion stays in the box for the tech to adjust.
-        if (!st.pick) search.focus();
+        setButtons(); search.focus();
       }
       async function save() {
         const pick = st.pick;
-        st.busy = true; drawUnknownFoot();
+        if (!pick || st.busy) return;
+        st.busy = true; setButtons();
         try {
           const info = await D.modelDetails(pick.id);
           await D.record([{ tac: st.tac, deviceModelId: pick.id, modelName: pick.name, manufacturer: info.manufacturer, color: '' }]);
           AE.track('decipher:save');
-          AE.toast('Model saved', pick.name + ' for every store.', 'ok', 5000);
-          st.busy = false; st.run++; st.state = 'loading'; draw(); find(st.run);
+          AE.toast(THANKS, pick.name, 'ok', 5000);
+          st.busy = false; st.thanks = true; st.run++; st.state = 'loading'; draw(); find(st.run);
         } catch (e) {
-          st.busy = false; drawUnknownFoot();
+          st.busy = false; setButtons();
           AE.toast('Decipher', { html: AE.esc("Couldn't save the model.") + report('Saving TAC ' + st.tac, e).html }, 'err', 10000);
         }
       }
