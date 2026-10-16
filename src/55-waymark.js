@@ -63,6 +63,7 @@ AE.waymark = (() => {
   async function call(method, path, body) {
     if (!configured()) throw new Error("Waymark isn't set up yet");
     const p = await me();
+    if (method !== 'GET') await AE.assertSameStore(); // never write under this page's store once Portal has switched
     const res = await fetch(API + '/v1/' + p.storeId + path, {
       method, credentials: 'omit',
       headers: { 'content-type': 'application/json', 'x-aethernet-key': KEY },
@@ -154,6 +155,8 @@ AE.waymark = (() => {
     wo = wo || await woDetail(woId);
     const dev = wo && wo.CustomerDevice;
     if (!dev || !dev.customerDeviceId || Number(wo.workorderStatusId) !== RFP_STATUS) return false;
+    const p = await me();
+    if (wo.storeId != null && Number(wo.storeId) !== Number(p.storeId)) return false; // another store's WO: never rename it
     const name = nickDate(due);
     if ((dev.name || '').trim() === name) return false;
     await AE.api('PUT', '/api/customer-devices/' + dev.customerDeviceId, {
