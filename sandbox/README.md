@@ -28,3 +28,5 @@ python3 sandbox/server.py          # then open http://localhost:8790/sandbox
   responses (permissions, features, store options, program settings) and one WO
   template, copied read-only through the ubif-workorders tracker session with
   every personal/device value blanked. Re-run it if Portal changes shape.
+
+- **`shot.py`** is the Playwright harness for screenshots and tests: `async with portal_page('/repair/workorders') as pg:` loads the sandbox with a Tampermonkey stand-in and `dist-dev/aethernet.user.js`; helpers `shot`, `open_menu`, `inject_html`. CLI: `sandbox/shot.py /arrivals out.png`. Run it with `~/Scripts/ubif-daily-sales/.venv/bin/python` (Playwright lives there). Output goes in `sandbox/shots/` (git-ignored).
