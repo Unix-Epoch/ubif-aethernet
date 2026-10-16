@@ -34,8 +34,10 @@
     bubble from the icon if any were left open past their due day.
   - If the nickname already has a date in it when the mark is made
     ("PS5 SLIM (10/01)"), that date is the mark's date instead.
-  - While a WO is in a marked status, its device nickname is just the
-    Auto-Waymark date ("10/02", the store's usual M/DD) and is kept that way:
+  - While a WO is at Ready for pickup, its device nickname is just the
+    Auto-Waymark date ("10/02", the store's usual M/DD); at Awaiting callback or
+    device the tech's text stays and the date is replaced or added at the end
+    ("IPHONE 13 SCREEN 10/17"). Either way it's kept like that:
     pushes rewrite it, and the scan puts it back if it drifts. A later date
     typed into the nickname by hand moves the mark to match instead.
   - Texting the customer (calls go with a text) moves the mark to 3 days from
@@ -140,13 +142,13 @@ AE.waymark = (() => {
   // rfp is always live; the others: off | staged (WOs that newly enter the status) | live (backfill too), from the admin panel.
   const ruleState = (k, c) => (k === 'rfp' ? { state: 'live' } : ((c || cache || {}).rules || {})[k] || { state: 'off' });
   /*
-    A new mark's date. The nickname's date wins. Ready for pickup: 3 days after it got there.
+    A new mark's date. The nickname's date wins (for daily contact, only today or later). Ready for pickup: 3 days after it got there.
     Daily contact: the next day when marked after 7 PM; marked earlier than that (catching up on
     an evening nobody had Portal open), the same day.
   */
   function newDue(kind, since, nick) {
     const typed = parseNick(nick);
-    if (typed) return typed;
+    if (typed && (kind === 'rfp' || typed >= today())) return typed; // an old date in a daily-contact nickname doesn't count
     if (kind === 'rfp') return addDays(since, RULES.rfp.days);
     return afterEod() ? addDays(today(), RULES[kind].days) : today();
   }
@@ -180,34 +182,61 @@ AE.waymark = (() => {
     }
     return null;
   }
+  // Where the date parseNick reads sits in the nickname (the last one), or null.
+  function nickDateSpan(name) {
+    const found = [...String(name || '').matchAll(/(?:^|[^\d/])(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)(?![\d/])/g)].pop();
+    if (!found) return null;
+    const start = found.index + found[0].length - found[1].length;
+    return { start, end: start + found[1].length };
+  }
+  /*
+    The nickname a mark wants. Ready for pickup: just the date ("10/02"). Daily contact: the tech's
+    text stays; its date is replaced, or the date is added at the end ("IPHONE 13 SCREEN 10/17").
+  */
+  function nickFor(kind, name, due) {
+    if (kind === 'rfp') return nickDate(due);
+    const n = String(name || '').trim(), sp = nickDateSpan(n);
+    if (sp) return n.slice(0, sp.start) + nickDate(due) + n.slice(sp.end);
+    return (n ? n + ' ' : '') + nickDate(due);
+  }
+  // The nickname without its date (and the brackets or spaces around it): what's left when a daily-contact mark ends.
+  function stripNickDate(name) {
+    const n = String(name || '').trim(), sp = nickDateSpan(n);
+    if (!sp) return n;
+    return (n.slice(0, sp.start).replace(/[\s(\[-]*$/, '') + ' ' + n.slice(sp.end).replace(/^[\s)\]]*/, '')).trim();
+  }
+  const putNickname = (dev, name) => AE.api('PUT', '/api/customer-devices/' + dev.customerDeviceId, {
+    customerDeviceId: dev.customerDeviceId, customerId: dev.customerId, passcode: dev.passcode, serial: dev.serial,
+    imei: dev.imei, deviceCatalogId: dev.deviceCatalogId, name,
+  });
   const woDetail = async (woId) => { const j = await AE.api('GET', '/api/workorder/' + woId); return (j && j.workorder) || AE.unwrap(j); };
   // Set the nickname to the mark's date, only while the WO is in its mark's status.
   // Sends the device record back unchanged apart from `name`, as Portal's own edit does.
   async function syncNickname(woId, due, wo) {
     wo = wo || await woDetail(woId);
     const dev = wo && wo.CustomerDevice;
-    if (!dev || !dev.customerDeviceId || !kindOfStatus(wo.workorderStatusId)) return false;
-    const name = nickDate(due);
+    const kind = kindOfStatus(wo && wo.workorderStatusId);
+    if (!dev || !dev.customerDeviceId || !kind) return false;
+    const name = nickFor(kind, dev.name, due);
     if ((dev.name || '').trim() === name) return false;
-    await AE.api('PUT', '/api/customer-devices/' + dev.customerDeviceId, {
-      customerDeviceId: dev.customerDeviceId, customerId: dev.customerId, passcode: dev.passcode, serial: dev.serial,
-      imei: dev.imei, deviceCatalogId: dev.deviceCatalogId, name,
-    });
+    await putNickname(dev, name);
     if (location.pathname.indexOf('/repair/workorder/' + woId) === 0) AE.refreshView(); // show the new nickname
-    return true;
+    return name;
   }
 
-  // The WO left its mark's status: delete the mark and clear a date-only nickname (it starts fresh if it comes back).
-  async function endMark(woId, reason, wo) {
+  /*
+    The WO left its mark's status: delete the mark and take the mark's date out of the nickname, so
+    it starts fresh if it comes back. A Ready for pickup nickname that's only a date is cleared once
+    it's in no marked status; a daily-contact one loses just its date, whatever it moved to.
+  */
+  const clearsNick = (fromKind, kind, nick) => (fromKind === 'callback' ? !!nickDateSpan(nick) : !kind && isDateNick(nick));
+  async function endMark(woId, reason, wo, fromKind) {
     await call('POST', '/wo/' + woId + '/end', { reason });
     if (cache) { delete cache.auto[woId]; AE.emit('waymark-changed', cache); }
     wo = wo || await woDetail(woId);
     const dev = wo && wo.CustomerDevice;
-    if (dev && dev.customerDeviceId && isDateNick(dev.name) && !kindOfStatus(wo.workorderStatusId)) {
-      await AE.api('PUT', '/api/customer-devices/' + dev.customerDeviceId, {
-        customerDeviceId: dev.customerDeviceId, customerId: dev.customerId, passcode: dev.passcode, serial: dev.serial,
-        imei: dev.imei, deviceCatalogId: dev.deviceCatalogId, name: '',
-      });
+    if (dev && dev.customerDeviceId && clearsNick(fromKind, kindOfStatus(wo.workorderStatusId), dev.name)) {
+      await putNickname(dev, fromKind === 'callback' ? stripNickDate(dev.name) : '');
       if (location.pathname.indexOf('/repair/workorder/' + woId) === 0) AE.refreshView();
     }
   }
@@ -221,7 +250,8 @@ AE.waymark = (() => {
     AE.emit('waymark-changed', cache);
     const lead = opts.why ? opts.why + ': Auto-Waymark moved to ' : 'Moved to ';
     try {
-      if (await syncNickname(woId, j.auto.due)) AE.toast('Auto-Waymark', lead + fmtDate(j.auto.due) + '; nickname is now ' + nickDate(j.auto.due) + '.', 'ok');
+      const name = await syncNickname(woId, j.auto.due);
+      if (name) AE.toast('Auto-Waymark', lead + fmtDate(j.auto.due) + '; nickname is now ' + name + '.', 'ok');
       else if (opts.why) AE.toast('Auto-Waymark', lead + fmtDate(j.auto.due) + '.', 'ok');
     } catch (e) { fail('mark moved, but the nickname couldn\'t be updated', e); }
   }
@@ -248,7 +278,7 @@ AE.waymark = (() => {
     if (!wo) return;
     const kind = kindOfStatus(wo.workorderStatusId);
     let m = c.auto[woId];
-    if (m && markKind(m) !== kind) { await endMark(woId, 'left ' + RULES[markKind(m)].name, wo); m = null; wo = await woDetail(woId); }
+    if (m && markKind(m) !== kind) { await endMark(woId, 'left ' + RULES[markKind(m)].name, wo, markKind(m)); m = null; wo = await woDetail(woId); }
     if (!kind || ruleState(kind, c).state === 'off') return; // staged: this WO is newly entering, so it counts
     if (!m) {
       if (RULES[kind].eod && !afterEod()) return; // the evening scan (or tomorrow's first load) marks it
@@ -258,7 +288,8 @@ AE.waymark = (() => {
       await load(true);
       m = autoOf(woId);
     }
-    if (m && await syncNickname(woId, m.due, wo)) AE.toast('Auto-Waymark', 'Follow up by ' + fmtDate(m.due) + '; nickname set to ' + nickDate(m.due) + '.', 'ok');
+    const name = m && await syncNickname(woId, m.due, wo);
+    if (name) AE.toast('Auto-Waymark', 'Follow up by ' + fmtDate(m.due) + '; nickname set to ' + name + '.', 'ok');
   }
   async function unmark(woId) {
     if (AE.status.blocked('waymark')) return;
@@ -299,7 +330,8 @@ AE.waymark = (() => {
       const kind = kindOfStatus(r.workorderStatusId);
       // Left the status its mark belongs to (or one removed with × in another status): the mark ends.
       if ((c.auto[wo] && markKind(c.auto[wo]) !== kind) || (removed.has(wo) && removed.get(wo) !== kind)) {
-        plan.end.push({ wo, from: c.auto[wo] ? markKind(c.auto[wo]) : removed.get(wo), nick, clearNick: !kind && isDateNick(nick) });
+        const from = c.auto[wo] ? markKind(c.auto[wo]) : removed.get(wo);
+        plan.end.push({ wo, from, nick, clearNick: clearsNick(from, kind, nick) });
         continue;
       }
       if (!kind) continue;
@@ -312,10 +344,11 @@ AE.waymark = (() => {
         due = newDue(kind, rfpSince(r), nick);
         plan.create.push({ wo, due, kind, nick, from: parseNick(nick) ? 'nickname' : rule.name + ' + ' + rule.days });
       }
-      if (nick === nickDate(due)) continue;
+      if (nick === nickFor(kind, nick, due)) continue;
       const typed = parseNick(nick);
       if (typed && typed > due) { plan.follow.push({ wo, from: due, to: typed }); due = typed; } // a later date typed by hand: the mark follows
-      if (nick !== nickDate(due)) plan.rename.push({ wo, from: nick, to: nickDate(due), due });
+      const to = nickFor(kind, nick, due);
+      if (nick !== to) plan.rename.push({ wo, from: nick, to, due });
     }
     return plan;
   }
@@ -348,15 +381,17 @@ AE.waymark = (() => {
       for (const e of plan.end) {
         try {
           const reason = 'left ' + (RULES[e.from] || RULES.rfp).name;
-          if (e.clearNick) await endMark(e.wo, reason); // also clears the date-only nickname
+          if (e.clearNick) await endMark(e.wo, reason, null, e.from); // also takes the mark's date out of the nickname
           else await call('POST', '/wo/' + e.wo + '/end', { reason });
         } catch (err) { console.warn('[' + AE_NAME + '] Waymark end, WO ' + e.wo + ':', err.message || err); }
       }
-      if (plan.end.length) { c = await load(true); plan = Object.assign(planScan(rows, c), { end: plan.end }); }
+      // Ended WOs wait for the next scan: their list rows still carry the nickname from before.
+      let planRows = rows;
+      if (plan.end.length) { const ended = new Set(plan.end.map((e) => e.wo)); planRows = rows.filter((r) => !ended.has(Number(r.workorderId))); c = await load(true); plan = Object.assign(planScan(planRows, c), { end: plan.end }); }
       if (plan.create.length) {
         const j = await call('POST', '/auto', { marks: plan.create.map(({ wo, due, kind }) => ({ wo, due, kind })) }); // removed ones are ignored
         if (j.created && j.created.length) c = await load(true);
-        plan = planScan(rows, c, true);
+        plan = Object.assign(planScan(planRows, c, true), { end: plan.end });
       }
       for (const f of plan.follow) {
         try { await call('POST', '/wo/' + f.wo + '/push', { due: f.to, by: 'Nickname edit' }); } catch (e) { console.warn('[' + AE_NAME + '] Waymark follow, WO ' + f.wo + ':', e.message || e); }

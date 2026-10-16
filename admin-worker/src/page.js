@@ -152,7 +152,7 @@ async function drawStores(m) {
 
 // ---------------------------------------------------------------- Auto-Waymark rules
 const RULES = [['rfp', 'Ready for pickup', 'Follow up 3 days after · added after 7 PM · nickname mirrors the date · texting the customer → 3 days from then · push options start at +3 days'],
-  ['callback', 'Awaiting callback or device', 'Contact every day: Awaiting callback and Awaiting device · added after 7 PM, due the next day · nickname mirrors the date · texting the customer → tomorrow · push options start at +1 day']];
+  ['callback', 'Awaiting callback or device', 'Contact every day: Awaiting callback and Awaiting device · added after 7 PM, due the next day · nickname keeps its text, date replaced or added · texting the customer → tomorrow · push options start at +1 day']];
 async function drawAuto(m) {
   const j = await api('GET', '/auto-rules'), st = Object.fromEntries(j.rules.map((r) => [r.rule, r]));
   const stateOf = (k) => (k === 'rfp' ? 'live' : (st[k] && st[k].state) || 'off'), L = { live: 'Live', staged: 'Staged', off: 'Off' };

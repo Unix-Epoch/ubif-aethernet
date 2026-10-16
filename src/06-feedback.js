@@ -479,7 +479,7 @@ AE.feedback = (() => {
     */
     const RULE_TEXT = {
       rfp: 'Follow up 3 days after · added after 7 PM · nickname mirrors the date · texting the customer → 3 days from then · push options start at +3 days',
-      callback: 'Contact every day: Awaiting callback and Awaiting device · added after 7 PM, due the next day · nickname mirrors the date · texting the customer → tomorrow · push options start at +1 day',
+      callback: 'Contact every day: Awaiting callback and Awaiting device · added after 7 PM, due the next day · nickname keeps its text, date replaced or added · texting the customer → tomorrow · push options start at +1 day',
     };
     async function drawAuto() {
       const W = AE.waymark;
