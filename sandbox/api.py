@@ -19,7 +19,7 @@ STORE_ID = 999999  # scratch store: no Aethernet access, so the real Worker refu
 PROGRAMS = {6494: 'Samsung In Warranty Repair', 8849: 'Asurion Home+ Repairs', 5062: 'Asurion Mobility', 11759: 'VZ Device Refresh', 9470: 'VZ Sanitization', 11009: 'AT&T Enhanced Cleaning',
             9901: 'AT&T Device Diagnostic', 10303: 'AT&T Performance Check', 20001: 'Out Of Warranty'}
 CLEANINGS = [11759, 9470, 11009, 9901, 10303]
-STATUS = {1: 'Initial check-in', 2: 'Need to order', 3: 'Awaiting item', 7: 'Awaiting callback', 8: 'Ready for work', 9: 'Diagnostics',
+STATUS = {1: 'Initial check-in', 2: 'Need to order', 3: 'Awaiting item', 4: 'Awaiting device', 7: 'Awaiting callback', 8: 'Ready for work', 9: 'Diagnostics',
           10: 'Work in progress', 11: 'Quality check', 12: 'Repair summary', 13: 'Ready for pickup', 14: 'Sale complete', 25: 'Cancelled'}
 CLOSED = {14, 15, 25}
 FIRST = ['Jordan', 'Sam', 'Riley', 'Casey', 'Alex', 'Morgan', 'Taylor', 'Quinn', 'Avery', 'Drew']
@@ -152,11 +152,12 @@ def cart_view(cart_id):
 def wo_row(w):
     d = load()['devices'].get(str(w['customerDeviceId']), {})
     return {'workorderId': w['workorderId'], 'workorderStatusId': w['workorderStatusId'], 'workorderStatusName': STATUS.get(w['workorderStatusId'], 'Ready for work'),
-            'programId': w['programId'], 'programName': PROGRAMS.get(w['programId'], 'Program'), 'createdAt': w['createdAt'], 'updatedAt': w['updatedAt'],
+            'programId': w['programId'], 'programName': w.get('programName') or PROGRAMS.get(w['programId'], 'Program'), 'createdAt': w['createdAt'], 'updatedAt': w['updatedAt'],
             'nextUpdate': w['nextUpdate'], 'customer': cust_view(w['customerId']), 'customerDevice': dev_view(w['customerDeviceId']),
-            'customerDeviceId': w['customerDeviceId'], 'deviceCatalog': {'name': d.get('deviceName')}, 'deviceIssues': ['Cleaning'] if w['programId'] in CLEANINGS else ['Screen'],
+            'customerDeviceId': w['customerDeviceId'], 'deviceCatalog': {'name': d.get('deviceName')}, 'deviceIssues': w.get('issues') or (['Cleaning'] if w['programId'] in CLEANINGS else ['Screen']),
             'serviceOutcome': w.get('serviceOutcome', ''), 'workorderTotal': cart_view(w['csuCartId'])['payment']['total'], 'claimNumber': None, 'clientId': 1,
-            'matchedRules': [], 'itemswithdevice': ''}
+            'matchedRules': [], 'itemswithdevice': '', 'locationBin': w.get('binLocation', ''), 'rfpWorkorderStatusDate': w.get('rfpAt'),
+            'createdBy': {'givenName': (w.get('by') or USER)['givenName'], 'familyName': (w.get('by') or USER)['familyName']}}
 
 
 def wo_detail(w):
@@ -167,19 +168,36 @@ def wo_detail(w):
                   'createdAt': w['createdAt'], 'updatedAt': w['updatedAt'], 'nextUpdate': w['nextUpdate'], 'csuCartId': w['csuCartId'],
                   'csuSalesOrderId': w.get('csuSalesOrderId', ''), 'customerDeviceId': w['customerDeviceId'], 'clientId': 1, 'claimNumber': None,
                   'WorkorderStatus': {'name': STATUS.get(w['workorderStatusId'], ''), 'workorderStatusId': w['workorderStatusId']},
-                  'Program': {'name': PROGRAMS.get(w['programId'], 'Program'), 'programId': w['programId'], 'programTypeId': 4},
+                  'Program': {'name': w.get('programName') or PROGRAMS.get(w['programId'], 'Program'), 'programId': w['programId'], 'programTypeId': 4},
                   'Store': {'storeName': 'Sandbox Store', 'isDepot': None}})
     cd = inner.setdefault('CustomerDevice', {})
     cd.update({'customerDeviceId': w['customerDeviceId'], 'customerId': w['customerId'], 'imei': d.get('imei', ''), 'name': d.get('name', ''),
                'passcode': '', 'serial': ''})
     if isinstance(cd.get('DeviceCatalog'), dict):
         cd['DeviceCatalog']['name'] = d.get('deviceName', '')
-    inner['WorkorderAttributes'] = [{'workorderAttributeId': i + 1, 'workorderId': w['workorderId'], 'workorderAttributeTypeId': a.get('workorderAttributeTypeId'),
+        dm = cd['DeviceCatalog'].setdefault('DeviceModel', {})  # the type Assize reads; the template is always a Cell Phone
+        dm['DeviceType'] = {'name': d.get('deviceType') or device_type(d.get('deviceName', ''))}
+        dm['DeviceFamily'] = {'name': d.get('deviceFamily', '')}
+    inner['WorkorderBinDeviceLocation'] = {'WorkorderBin': {'name': w.get('binLocation', '')}} if w.get('binLocation') else None
+    if w.get('issues'):
+        inner['WorkorderDeviceIssueServiceOptions'] = [{'DeviceIssueCategoryTypeOption': {'DeviceIssue': {'name': x}}} for x in w['issues']]
+    inner['WorkorderAttributes'] = [{'workorderAttributeTypeId': 22, 'value': w['outcome']}] if w.get('outcome') else []
+    inner['WorkorderAttributes'] += [{'workorderAttributeId': i + 1, 'workorderId': w['workorderId'], 'workorderAttributeTypeId': a.get('workorderAttributeTypeId'),
                                      'key': a.get('key'), 'value': a.get('value'), 'createdAt': now(), 'updatedAt': now()} for i, a in enumerate(w.get('attributes', []))]
     if isinstance(inner.get('PartnerJob'), dict):
         inner['PartnerJob'].update({'workorderId': w['workorderId'], 'arrivalId': w.get('arrivalId'), 'customerDeviceId': w['customerDeviceId'], 'PartnerJobAttributes': []})
     inner['Customer'] = cust_view(w['customerId'])
     return tpl
+
+
+def device_type(name):
+    n = (name or '').lower()
+    if re.search(r'\btv\b|television', n): return 'Other'
+    if re.search(r'watch|airpods|buds', n): return 'Wearable'
+    if re.search(r'ipad|tab\b|tablet', n): return 'Tablet'
+    if re.search(r'ps5|playstation|xbox|switch', n): return 'Game Console'
+    if re.search(r'macbook|pavilion|laptop|desktop|\bpc\b|surface', n): return 'Computer'
+    return 'Cell Phone'
 
 
 def arrival_view(a):
@@ -423,8 +441,9 @@ def route(method, path, body):
         w = W(m.group(1))
         if not w:
             return 404, {'message': 'Work order not found'}
-        return 200, [{'workorderStatusAuditTrailId': 1, 'workorderId': w['workorderId'], 'workorderStatusId': w['workorderStatusId'],
-                      'createdAt': w.get('createdAt'), 'createdBy': USER['userId'], 'completed': False}]
+        hist = w.get('history') or [{'statusId': w['workorderStatusId'], 'at': w.get('createdAt'), 'by': USER['userId']}]
+        return 200, [{'workorderStatusAuditTrailId': i + 1, 'workorderId': w['workorderId'], 'workorderStatusId': x['statusId'],
+                      'createdAt': x['at'], 'createdBy': x.get('by', USER['userId']), 'completed': i < len(hist) - 1} for i, x in enumerate(hist)]
     m = re.fullmatch(r'workorder/(\d+)/status', p)
     if m:
         w = W(m.group(1))
