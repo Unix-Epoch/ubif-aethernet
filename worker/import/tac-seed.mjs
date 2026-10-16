@@ -35,6 +35,7 @@ for (const { raw_json } of rows) {
   if (!/^\d{15}$/.test(imei)) continue;
   withImei++;
   if (!luhn(imei)) { badCheck++; continue; }
+  if (/^(\d)\1{7}$/.test(imei.slice(0, 8)) || imei.startsWith('12345678')) { noModel++; continue; } // placeholder IMEIs (33333333…) aren't a model's TAC
   const dc = cd.DeviceCatalog || {}, dm = dc.DeviceModel || {};
   const id = Number(dc.deviceModelId), name = clean(dm.modelNumber || dc.name, 120);
   if (!Number.isInteger(id) || id < 1 || !name || /^other device/i.test(name)) { noModel++; continue; } // "Other Device" is a placeholder, not a model
