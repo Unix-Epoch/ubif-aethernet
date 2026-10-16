@@ -88,3 +88,9 @@ CREATE TABLE IF NOT EXISTS tac_stores (      -- which stores have recorded a TAC
 CREATE TABLE IF NOT EXISTS osmocom_tac (     -- Decipher: the Osmocom TAC database (CC BY-SA 3.0), imported once by import/osmocom.mjs; kept apart from tac_models, never merged into it
   tac TEXT PRIMARY KEY, brand TEXT, model TEXT
 );
+CREATE TABLE IF NOT EXISTS assize_dismissals (  -- Assize: findings a store dismissed as not applying; rule = the check's id, sig = the facts it was raised on (changed facts = it applies again). Cleaned 7 days after the WO closes, and after 60 days
+  store INTEGER NOT NULL, wo INTEGER NOT NULL, rule TEXT NOT NULL, sig TEXT NOT NULL,
+  reason TEXT NOT NULL,                      -- not-applicable | handled | rule-doesnt-fit
+  note TEXT, by_name TEXT, by_id INTEGER, at TEXT NOT NULL,
+  PRIMARY KEY (store, wo, rule, sig)
+);

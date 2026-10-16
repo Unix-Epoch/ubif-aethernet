@@ -33,6 +33,9 @@
     GET  /v1/:store/tac/:tac                                     Decipher: what a TAC (an IMEI's first 8 digits) is → { known, models, colors, workOrders, stores }
     POST /v1/:store/tac                 { tac, deviceModelId, modelName, manufacturer, color }  or { items: [up to 50 of those] }   record one
     GET  /v1/:store/sheets/:kind                                 Provoke: the store's synced sheet (leads | prices) → { data, syncedAt }
+    GET  /v1/:store/assize/dismissed                             Assize: findings the store dismissed as not applying → { dismissed: [{wo, rule, sig, reason, note, by, byId, at}] }
+    POST /v1/:store/assize/dismiss      { wo, rule, sig, reason, note, by, byId }   dismiss one (reason: not-applicable | handled | rule-doesnt-fit)
+    POST /v1/:store/assize/restore      { wo, rule, sig, by, byId }                 bring it back
   Sheet sync (x-aethernet-sheets = the SHEETS_KEY secret; only Garrett's Mac job has it):
     POST /v1/sheets/:store/:kind        { data }                 replace that store's sheet (leads: canned texts; prices: Price sheet tabs)
   Admin (x-aethernet-admin = the ADMIN_KEY secret; never shipped in the script):
@@ -51,8 +54,8 @@
   Store access: GET /v1/:store/access?name=&user= answers { allowed, config } (and
   records the store as seen). Every other /v1/:store/… call is refused (403)
   for stores without access.
-  Daily cron: drop tags + history for WOs closed more than 7 days ago; usage older than 180 days;
-  cleaning links older than 120 days.
+  Daily cron: drop tags + history + Assize dismissals for WOs closed more than 7 days ago; Assize dismissals
+  older than 60 days; usage older than 180 days; cleaning links older than 120 days.
 */
 const COLORS = ['purple', 'blue', 'teal', 'green', 'lime', 'yellow', 'orange', 'red', 'grey'];
 const MAX_TAGS_PER_WO = 12, MAX_LIST = 40, KEEP_DAYS = 7;
@@ -90,6 +93,9 @@ async function readConfig(env) {
 const FEATURE_RE = /^[a-zA-Z]{1,24}(:[a-zA-Z-]{1,24})?$/;
 const DEVICE_RE = /^[A-Za-z0-9:_-]{1,40}$/; // a cleaning's phone: its IMEI, or Aethernet's own key for one without
 const LINK_DAYS = 120;
+// Assize: dismissed findings. rule = the check's id (kebab-case), sig = the facts it was raised on (a dismissal stops applying when they change).
+const DISMISS_REASONS = ['not-applicable', 'handled', 'rule-doesnt-fit'], DISMISS_DAYS = 60, DISMISS_MAX = 3000;
+const RULE_RE = /^[a-z0-9-]{2,40}$/;
 // Return: saved incomplete check-ins (customer details and passcode included) are kept 7 days at most.
 const CHECKIN_DAYS = 7, CHECKIN_ID_RE = /^[A-HJ-NP-Z2-9]{6}$/, CHECKIN_MAX = 14000;
 const newCheckinId = () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', b = crypto.getRandomValues(new Uint8Array(6)); return [...b].map((x) => a[x % a.length]).join(''); };
@@ -287,7 +293,7 @@ async function route(req, env) {
   const cm = url.pathname.match(/^\/v1\/(\d{1,6})\/checkins\/([A-Za-z0-9]{6})(\/remove)?$/);
   const ci = cm ? { id: cm[2].toUpperCase(), remove: !!cm[3] } : null;
   const tm = url.pathname.match(/^\/v1\/(\d{1,6})\/tac(?:\/(\d{8}))?$/);
-  const m = tm ? [null, tm[1], 'tac'] : cm ? [null, cm[1], 'checkin'] : url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|open|auto|feedback|usage|access|links|links\/remove|checkins)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark|end))?$/);
+  const m = tm ? [null, tm[1], 'tac'] : cm ? [null, cm[1], 'checkin'] : url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|open|auto|feedback|usage|access|links|links\/remove|checkins|assize\/dismissed|assize\/dismiss|assize\/restore)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark|end))?$/);
   if (!m) return fail(404, 'not found');
   const store = Number(m[1]);
   const wo = m[3] ? Number(m[3]) : null;
@@ -325,6 +331,9 @@ async function route(req, env) {
     return json({ list: list.results, tags: byWo, auto, rules: ruleMap, removed: gone.results.map((r) => ({ wo: r.wo, kind: r.kind || 'rfp' })),
       closed: closedRows.results.map((r) => r.wo) });
   }
+
+  // Assize: findings dismissed for the whole store.
+  if (what === 'assize/dismissed' || what === 'assize/dismiss' || what === 'assize/restore') return dismissals(req, env, store, what);
 
   // Divination: cleanings a person linked to an order by hand (a phone's cleanings that day count for `parent`).
   if (req.method === 'GET' && what === 'links') {
@@ -473,13 +482,41 @@ async function route(req, env) {
     const wos = (Array.isArray(b.wos) ? b.wos : []).filter((w) => Number.isInteger(w) && w > 0).slice(0, 500);
     if (wos.length) {
       await env.DB.batch(wos.map((w) => env.DB.prepare(
-        'INSERT OR IGNORE INTO wo_closed (store, wo, closed_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM wo_tags WHERE store = ? AND wo = ?) OR EXISTS (SELECT 1 FROM auto_marks WHERE store = ? AND wo = ?)')
-        .bind(store, w, now(), store, w, store, w)));
+        'INSERT OR IGNORE INTO wo_closed (store, wo, closed_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM wo_tags WHERE store = ? AND wo = ?) OR EXISTS (SELECT 1 FROM auto_marks WHERE store = ? AND wo = ?) OR EXISTS (SELECT 1 FROM assize_dismissals WHERE store = ? AND wo = ?)')
+        .bind(store, w, now(), store, w, store, w, store, w)));
     }
     return json({ ok: true });
   }
 
   return fail(405, 'method not allowed');
+}
+
+// Assize: GET the store's dismissals; POST dismiss / restore one. Anyone may dismiss; who may restore is Aethernet's call (the person or a manager), like Waymark's list.
+async function dismissals(req, env, store, what) {
+  if (req.method === 'GET' && what === 'assize/dismissed') {
+    const r = await env.DB.prepare('SELECT wo, rule, sig, reason, note, by_name AS by, by_id AS byId, at FROM assize_dismissals WHERE store = ? ORDER BY at DESC LIMIT ?').bind(store, DISMISS_MAX).all();
+    return json({ dismissed: r.results });
+  }
+  if (req.method !== 'POST' || what === 'assize/dismissed') return fail(405, 'method not allowed');
+  const b = await body(req);
+  const wo = b.wo, rule = b.rule, sig = b.sig;
+  if (!Number.isInteger(wo) || wo < 10000 || wo > 999999999999) return fail(400, 'wo required');
+  if (typeof rule !== 'string' || !RULE_RE.test(rule)) return fail(400, 'rule required (a-z, 0-9, -)');
+  if (typeof sig !== 'string' || sig.length > 120) return fail(400, 'sig must be text up to 120 characters');
+  const by = who(b);
+  if (what === 'assize/restore') {
+    const r = await env.DB.prepare('DELETE FROM assize_dismissals WHERE store = ? AND wo = ? AND rule = ? AND sig = ?').bind(store, wo, rule, sig).run();
+    return json({ ok: true, restored: r.meta.changes });
+  }
+  if (!DISMISS_REASONS.includes(b.reason)) return fail(400, 'reason must be one of ' + DISMISS_REASONS.join(', '));
+  if (typeof b.note === 'string' && b.note.length > 200) return fail(400, 'note is up to 200 characters');
+  const note = clean(b.note, 200) || null;
+  const { n } = await env.DB.prepare('SELECT COUNT(*) AS n FROM assize_dismissals WHERE store = ?').bind(store).first();
+  if (n >= DISMISS_MAX) return fail(400, 'too many dismissed findings');
+  await env.DB.prepare('INSERT INTO assize_dismissals (store, wo, rule, sig, reason, note, by_name, by_id, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+    'ON CONFLICT (store, wo, rule, sig) DO UPDATE SET reason = excluded.reason, note = excluded.note, by_name = excluded.by_name, by_id = excluded.by_id, at = excluded.at')
+    .bind(store, wo, rule, sig, b.reason, note, by.name, by.id, now()).run();
+  return json({ ok: true });
 }
 
 async function checkins(req, env, url, store, ci) {
@@ -569,6 +606,8 @@ async function cleanup(env) {
     env.DB.prepare(`DELETE FROM wo_tags WHERE (store, wo) IN (${expired})`).bind(cutoff),
     env.DB.prepare(`DELETE FROM history WHERE wo IS NOT NULL AND (store, wo) IN (${expired})`).bind(cutoff),
     env.DB.prepare(`DELETE FROM auto_marks WHERE (store, wo) IN (${expired})`).bind(cutoff),
+    env.DB.prepare(`DELETE FROM assize_dismissals WHERE (store, wo) IN (${expired})`).bind(cutoff),
+    env.DB.prepare('DELETE FROM assize_dismissals WHERE at < ?').bind(new Date(Date.now() - DISMISS_DAYS * 86400000).toISOString()),
     env.DB.prepare('DELETE FROM wo_closed WHERE closed_at < ?').bind(cutoff),
     env.DB.prepare('DELETE FROM usage WHERE day < ?').bind(new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10)),
     // List-change history: keep 90 days.

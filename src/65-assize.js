@@ -17,8 +17,20 @@
   "Store" for missed contacts and Need to order, "Unassigned" for bins and anything not logged per
   person. Names come from the notes' authors (UserDatum), shown as initials.
 
-  Read-only. It never writes to Portal (the only POST is Portal's own work-order list read, through
-  AE.data) and sends nothing to Aethernet's Workers apart from usage counts (AE.track).
+  Dismissing: a finding that doesn't apply can be dismissed for the whole store ("Dismiss" on its row,
+  in the panel and the order's pill popover: a reason, an optional note). Every finding carries a stable
+  `rule` id (kebab-case, e.g. missed-contact, cart-not-offset) and a `sig`, a short hash of the facts it
+  was raised on (the nickname's date, the cart's lines, the status and the date it began...), so a
+  dismissal stops applying when those facts change. Dismissals live on the Waymark Worker
+  (assize_dismissals, GET /assize/dismissed, POST /assize/dismiss and /assize/restore), are loaded with
+  each scan and when the panel opens, and are applied outside the rules engine: a dismissed finding is
+  left out of the badge, header color, tiles, chips, the order's pill and the list markers. The panel's
+  "Dismissed (n)" lists them (who, when, why) with Restore, for whoever dismissed it or a manager.
+  The Worker drops them 7 days after the order closes, and after 60 days.
+
+  Read-only toward Portal: it never writes to Portal (the only POST is Portal's own work-order list
+  read, through AE.data). The only things it sends to Aethernet's Workers are usage counts (AE.track)
+  and dismissals / restores (through Waymark's call(), which checks the store first).
 
   Cost: Portal's open list once a pass (+1 page of closed orders, for 4b), then each in-scope open
   order's detail (GET /api/workorder/:id, /api/note?workorderId=… (30 a page), /api/workorder-audit-
@@ -30,7 +42,8 @@
   contact dates, ages) stay current between passes.
 
   Rules engine: AE.assizeRules, pure functions (list row + detail + now + store hours + price
-  lookup → findings), no DOM, no fetching, no AE helpers, so it also runs in Node for tests.
+  lookup → findings), no DOM, no fetching, no AE helpers, so it also runs in Node for tests. It never
+  knows about dismissals.
 
   Phone / TV / wearable / foldable: from the work order's catalog entry when its detail is loaded
   (DeviceModel.DeviceType.name: "Cell Phone", "Tablet", "Computer", "Game Console", "Wearable"...;
@@ -47,9 +60,9 @@ AE.assizeRules = (() => {
 
   // Checks, in the rules' order (section headings in the panel).
   const CHECKS = [
-    ['intake', '1 Intake note'], ['cart', '2 Cart and price'], ['quote', '3 Quote'], ['partner', '4 Partner rules'],
-    ['cleaning', '4b Cleaning rate'], ['contact', '5 Nickname and contact'], ['bin', '6 Bin'], ['start', '6 Start'],
-    ['age', '6 Age'], ['order', '6 Need to order'], ['remind', 'Reminders'],
+    ['intake', 'Intake note'], ['cart', 'Cart and price'], ['quote', 'Quote'], ['partner', 'Partner rules'],
+    ['cleaning', 'Cleaning rate'], ['contact', 'Nickname and contact'], ['bin', 'Bin'], ['start', 'Start'],
+    ['age', 'Age'], ['order', 'Need to order'], ['remind', 'Reminders'],
   ];
   const KINDS = ['fail', 'flag', 'note', 'remind'];
 
@@ -88,6 +101,16 @@ AE.assizeRules = (() => {
     const phone = type ? /cell ?phone|phone/i.test(type) : PHONE_RE.test(name) && !NOT_PHONE_RE.test(name);
     const foldable = /galaxy fold|z flip/i.test(fam) || FOLD_RE.test(name);
     return { phone: phone && !wearable, tv, wearable, foldable, from };
+  }
+
+  // ------------------------------------------------------------ signatures
+  // A short, stable hash (FNV-1a, base 36) of the facts a finding rests on. No facts = ''.
+  function sigOf(...parts) {
+    const s = parts.filter((p) => p != null && p !== '').map(String).join('\u241f');
+    if (!s) return '';
+    let x = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) { x ^= s.charCodeAt(i); x = Math.imul(x, 0x01000193) >>> 0; }
+    return x.toString(36).padStart(7, '0');
   }
 
   // ------------------------------------------------------------ time
@@ -221,12 +244,15 @@ AE.assizeRules = (() => {
     return { since, who };
   }
   const repairText = (f) => f.issues.join(', ');
+  const dayOf = (ms) => (ms ? dayKey(ms) : 'unknown');
 
   // ------------------------------------------------------------ cart
   const lines = (cart) => ((cart && cart.cartItems) || []).filter(Boolean);
   const price = (l) => Number(l.price) || 0;
   const isCredit = (l) => /pcexempt/i.test(l.sku || l.itemNumber || '') || l.lineType === 'trade_credit';
   const neverFlag = (l) => /miscellaneous labor/i.test(l.name || '') || /^bb\d|buyback/i.test((l.sku || '') + ' ' + (l.name || ''));
+  // The cart's lines as the rules see them (what, price, quantity, whether a child), so a changed cart is a new signature.
+  const cartSig = (cart) => sigOf(lines(cart).map((l) => [l.sku || l.itemNumber || l.name || '', price(l).toFixed(2), l.quantity == null ? 1 : l.quantity, l.parentLineId ? 'c' : ''].join(':')).sort().join('|') || 'empty');
   const money = (n) => '$' + (Math.round(n * 100) % 100 ? n.toFixed(2) : String(Math.round(n)));
   // Lines with a price that aren't offset by a PCEXEMPT credit (children by parentLineId; the cart total when credits carry no parent).
   function unoffset(cart) {
@@ -257,7 +283,8 @@ AE.assizeRules = (() => {
     const now = opts.now || Date.now(), hours = opts.hours || STORE_HOURS;
     const f = facts(row, detail);
     const out = [];
-    const add = (check, kind, title, evidence, who) => out.push({ wo: f.id, check, kind, title, evidence, who: who || UNASSIGNED, device: f.device, repair: repairText(f), program: f.programName, status: f.status });
+    // rule = the finding's stable id; sig = a short hash of the facts behind it (see the top comment), so a dismissal stops applying when they change.
+    const add = (check, kind, title, evidence, who, rule, ...basis) => out.push({ wo: f.id, check, kind, rule, sig: sigOf(...basis), title, evidence, who: who || UNASSIGNED, device: f.device, repair: repairText(f), program: f.programName, status: f.status });
     const st = f.status.toLowerCase();
     if (!f.id || /sale complete|cancel/.test(st) || /repair summary/.test(st)) return out; // closed, cancelled, closing: never audited
     if (/awaiting diag|partner approval/.test(st)) return out; // no rules
@@ -272,23 +299,23 @@ AE.assizeRules = (() => {
     // Awaiting item: a reminder, never a fail; nothing else is checked.
     if (st === 'awaiting item') {
       const e = statusEntry(f), since = e.since;
-      add('remind', 'remind', 'Awaiting item', since ? 'Waiting ' + plural(Math.max(0, daysBetween(since, now)), 'day') : 'Waiting for the part', e.who);
+      add('remind', 'remind', 'Awaiting item', since ? 'Waiting ' + plural(Math.max(0, daysBetween(since, now)), 'day') : 'Waiting for the part', e.who, 'awaiting-item', dayOf(since));
       return out;
     }
 
     // ---- 1 Intake note (Active)
     if (active && f.notes) {
       const intake = intakeNote(f), who = intakeAuthor(f);
-      if (!intake) add('intake', 'note', 'No intake note', 'No check-in note found', who);
+      if (!intake) add('intake', 'note', 'No intake note', 'No check-in note found', who, 'no-intake-note');
       else {
         const own = String(intake.noteText || '').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !CHECKLIST_LINE.test(l));
-        if (own.length < 3) add('intake', 'note', 'Short note', 'Intake note is under 3 lines', who);
+        if (own.length < 3) add('intake', 'note', 'Short note', 'Intake note is under 3 lines', who, 'short-intake-note', intake.noteText);
       }
       const agreed = manual.some((n) => AGREE_RE.test(n.noteText || ''));
       if (!agreed) {
-        for (const [re, title, what] of [[LIQUID_RE, 'Liquid, no agreement', 'liquid'], [DATA_RE, 'Data risk, no agreement', null]]) {
+        for (const [re, title, what, rule] of [[LIQUID_RE, 'Liquid, no agreement', 'liquid', 'liquid-no-agreement'], [DATA_RE, 'Data risk, no agreement', null, 'data-risk-no-agreement']]) {
           const n = manual.find((x) => mentions(x.noteText, re));
-          if (n) add('intake', 'note', title, 'Note says ' + (what || mentions(n.noteText, re).toLowerCase()) + '; no note says the customer agreed', person(n.UserDatum) || who);
+          if (n) add('intake', 'note', title, 'Note says ' + (what || mentions(n.noteText, re).toLowerCase()) + '; no note says the customer agreed', person(n.UserDatum) || who, rule, n.createdAt, mentions(n.noteText, re).toLowerCase());
         }
       }
     }
@@ -300,7 +327,7 @@ AE.assizeRules = (() => {
         const sum = cartSum(cart);
         if (sum <= 0.009) {
           const why = mentions(noteText, EXPLAIN_RE);
-          add('cart', 'note', 'OOP, $0 cart', why ? 'Cart is $0; a note mentions ' + why.toLowerCase() : DOLLAR_RE.test(noteText) ? 'Cart is $0; the notes have a price' : 'No price in the cart or in any note', who);
+          add('cart', 'note', 'OOP, $0 cart', why ? 'Cart is $0; a note mentions ' + why.toLowerCase() : DOLLAR_RE.test(noteText) ? 'Cart is $0; the notes have a price' : 'No price in the cart or in any note', who, 'oop-zero-cart', cartSig(cart), why ? why.toLowerCase() : DOLLAR_RE.test(noteText) ? 'priced-in-notes' : '');
         } else if (dev.phone && opts.priceFor && !OVERRIDE_RE.test(noteText)) {
           const repair = repairFrom(f.issues);
           const sheet = repair ? opts.priceFor(f.device, repair) : null;
@@ -308,56 +335,56 @@ AE.assizeRules = (() => {
             const charged = lines(cart).filter((l) => price(l) > 0 && !isCredit(l) && !neverFlag(l) && !/diagnostic|deposit/i.test(l.name || '')).reduce((s, l) => s + price(l), 0);
             if (charged > 0 && !sheet.some((p) => Math.abs(p - charged) <= 1.01)) {
               const near = sheet.slice().sort((a, b) => Math.abs(a - charged) - Math.abs(b - charged))[0];
-              add('cart', 'note', 'Price off the sheet', 'Cart ' + money(charged) + '; Price sheet ' + money(near) + ' for ' + f.device + ' ' + repair.toLowerCase(), who);
+              add('cart', 'note', 'Price off the sheet', 'Cart ' + money(charged) + '; Price sheet ' + money(near) + ' for ' + f.device + ' ' + repair.toLowerCase(), who, 'price-off-sheet', cartSig(cart), near);
             }
           }
         }
       } else if ((prog.key === 'asurion' && dev.phone) || prog.key === 'servify') {
         const bad = unoffset(cart);
-        if (bad.length) add('cart', 'fail', 'Line not offset', (prog.key === 'servify' ? prog.label : 'Asurion phone') + ': ' + (bad.length === 1 ? money(price(bad[0])) + ' line' : bad.length + ' lines (' + bad.map((l) => money(price(l))).join(', ') + ')') + ' with no PCEXEMPT offset', who);
+        if (bad.length) add('cart', 'fail', 'Line not offset', (prog.key === 'servify' ? prog.label : 'Asurion phone') + ': ' + (bad.length === 1 ? money(price(bad[0])) + ' line' : bad.length + ' lines (' + bad.map((l) => money(price(l))).join(', ') + ')') + ' with no PCEXEMPT offset', who, 'cart-not-offset', cartSig(cart));
       } else if (prog.key === 'asurion' && rfp && !/declined|incomplete/i.test(f.outcome)) {
         const ls = lines(cart);
         if (/no issue found/i.test(f.outcome)) {
           const labor = ls.filter((l) => !isCredit(l) && (l.lineType === 'labor' || /labor|asurion repair/i.test(l.name || '')));
-          if (!labor.length) add('cart', 'fail', 'NTF, no labor line', 'Asurion non-phone, no issue found: the cart needs the labor line plus its offset', who);
-          else if (unoffset({ cartItems: ls.filter((l) => isCredit(l) || labor.includes(l)) }).length) add('cart', 'fail', 'Line not offset', 'Asurion non-phone, no issue found: the labor line has no PCEXEMPT offset', who);
+          if (!labor.length) add('cart', 'fail', 'NTF, no labor line', 'Asurion non-phone, no issue found: the cart needs the labor line plus its offset', who, 'ntf-no-labor', cartSig(cart));
+          else if (unoffset({ cartItems: ls.filter((l) => isCredit(l) || labor.includes(l)) }).length) add('cart', 'fail', 'Line not offset', 'Asurion non-phone, no issue found: the labor line has no PCEXEMPT offset', who, 'cart-not-offset', cartSig(cart));
         } else if (!ls.some((l) => !isCredit(l) && !neverFlag(l) && l.lineType !== 'labor' && !/labor|diagnostic|asurion repair/i.test(l.name || ''))) {
-          add('cart', 'fail', 'No part line', 'Asurion non-phone at Ready for pickup with no part in the cart', who);
+          add('cart', 'fail', 'No part line', 'Asurion non-phone at Ready for pickup with no part in the cart', who, 'no-part-line', cartSig(cart));
         }
       } else if ((prog.key === 'samsungIW' || prog.key === 'google') && rfp) {
-        if (!lines(cart).some((l) => !isCredit(l) && price(l) > 0)) add('cart', 'note', 'No priced lines', (prog.key === 'google' ? 'Google' : 'Samsung in-warranty') + ' at Ready for pickup with no priced line (GSPN payments don\'t show here)', who);
+        if (!lines(cart).some((l) => !isCredit(l) && price(l) > 0)) add('cart', 'note', 'No priced lines', (prog.key === 'google' ? 'Google' : 'Samsung in-warranty') + ' at Ready for pickup with no priced line (GSPN payments don\'t show here)', who, 'no-priced-lines', cartSig(cart));
       } else if (prog.key === 'amazon') {
         const charged = lines(cart).filter((l) => !isCredit(l) && !neverFlag(l) && price(l) > 0.009);
         const total = cartTotal(cart);
-        if (charged.length || total > 0.009) add('cart', 'fail', 'Buyout has charges', 'Amazon Buyout: ' + money(Math.max(total, charged.reduce((s, l) => s + price(l), 0))) + ' in the cart; buyouts have no repair lines or charge', who);
+        if (charged.length || total > 0.009) add('cart', 'fail', 'Buyout has charges', 'Amazon Buyout: ' + money(Math.max(total, charged.reduce((s, l) => s + price(l), 0))) + ' in the cart; buyouts have no repair lines or charge', who, 'buyout-has-charges', cartSig(cart));
       } else if (prog.key === 'cci' && rfp) {
         const sum = cartSum(cart);
-        if (Math.abs(sum) <= 0.009) add('cart', 'note', 'CCI, $0 cart', 'Cart is $0; an incomplete service needs a reason', who);
-        else if (Math.abs(sum - 15) > 0.009) add('cart', 'fail', 'CCI not $15', 'Cart is ' + money(sum) + '; a CCI service is $15', who);
+        if (Math.abs(sum) <= 0.009) add('cart', 'note', 'CCI, $0 cart', 'Cart is $0; an incomplete service needs a reason', who, 'cci-zero-cart', cartSig(cart));
+        else if (Math.abs(sum - 15) > 0.009) add('cart', 'fail', 'CCI not $15', 'Cart is ' + money(sum) + '; a CCI service is $15', who, 'cci-not-15', cartSig(cart));
       }
     }
-    if (active && prog.key === 'oop' && f.notes && !DOLLAR_RE.test(noteText)) add('quote', 'note', 'No quote', 'OOP order; no dollar amount in any note', intakeAuthor(f));
+    if (active && prog.key === 'oop' && f.notes && !DOLLAR_RE.test(noteText)) add('quote', 'note', 'No quote', 'OOP order; no dollar amount in any note', intakeAuthor(f), 'no-quote');
 
     // ---- 4 Partner rules (Active)
     if (active && prog.key !== 'oop') {
       const who = f.notes ? intakeAuthor(f) : person(f.createdBy) || UNASSIGNED;
-      if (prog.key === 'unknown') add('partner', 'note', 'Unknown partner', prog.name + ': only the all-partner rules were checked', UNASSIGNED);
-      if (dev.wearable) add('partner', 'fail', 'Wearable checked in', f.device + ': partners don\'t take wearables or hearables', who);
+      if (prog.key === 'unknown') add('partner', 'note', 'Unknown partner', prog.name + ': only the all-partner rules were checked', UNASSIGNED, 'unknown-partner', prog.name);
+      if (dev.wearable) add('partner', 'fail', 'Wearable checked in', f.device + ': partners don\'t take wearables or hearables', who, 'wearable-checked-in', f.device);
       if (dev.tv && f.createdAt) {
         const close = closeAfter(f.createdAt, hours);
-        if (now >= close) add('partner', 'fail', 'TV open after close', 'Still open; the store closed at ' + clock(close) + ' ' + whenWord(close, now), who);
+        if (now >= close) add('partner', 'fail', 'TV open after close', 'Still open; the store closed at ' + clock(close) + ' ' + whenWord(close, now), who, 'tv-open-after-close', dayKey(close));
       }
-      if (prog.key === 'samsungIW' && dev.foldable) add('partner', 'fail', 'Foldable on Samsung IW', f.device + ': Samsung in-warranty takes no foldables', who);
+      if (prog.key === 'samsungIW' && dev.foldable) add('partner', 'fail', 'Foldable on Samsung IW', f.device + ': Samsung in-warranty takes no foldables', who, 'foldable-samsung-iw', f.device);
       if (prog.key === 'amazon') {
-        if (!dev.phone) add('partner', 'fail', 'Buyout not a phone', f.device + ': Amazon buyouts are phones only', who);
-        if (f.createdAt && dayKey(f.createdAt) < dayKey(now)) add('partner', 'fail', 'Buyout still open', 'Created ' + whenWord(f.createdAt, now) + '; buyouts finish the same day', who);
+        if (!dev.phone) add('partner', 'fail', 'Buyout not a phone', f.device + ': Amazon buyouts are phones only', who, 'buyout-not-phone', f.device);
+        if (f.createdAt && dayKey(f.createdAt) < dayKey(now)) add('partner', 'fail', 'Buyout still open', 'Created ' + whenWord(f.createdAt, now) + '; buyouts finish the same day', who, 'buyout-still-open', dayKey(f.createdAt));
       }
-      if (prog.homePlus && dev.phone) add('partner', 'fail', 'Phone on Home+', f.device + ': ' + (prog.name || 'Home+') + ' takes no phones', who);
+      if (prog.homePlus && dev.phone) add('partner', 'fail', 'Phone on Home+', f.device + ': ' + (prog.name || 'Home+') + ' takes no phones', who, 'phone-on-home-plus', prog.name, f.device);
       if (prog.key === 'vzew') {
-        if (!dev.phone) add('partner', 'fail', 'VZ EW not a phone', f.device + ': Verizon Extended Warranty is phones only', who);
+        if (!dev.phone) add('partner', 'fail', 'VZ EW not a phone', f.device + ': Verizon Extended Warranty is phones only', who, 'vzew-not-phone', f.device);
         const intake = f.notes && intakeNote(f);
         const m = intake && String(intake.noteText || '').match(/\*\*\s*Physical damage\s*:\s*\*\*\s*([^\n]+)/i);
-        if (m && !/^no issues\b/i.test(m[1].trim())) add('partner', 'fail', 'Damage on VZ EW', 'Intake checklist: Physical damage: ' + m[1].trim() + '. Close it as unrepairable', who);
+        if (m && !/^no issues\b/i.test(m[1].trim())) add('partner', 'fail', 'Damage on VZ EW', 'Intake checklist: Physical damage: ' + m[1].trim() + '. Close it as unrepairable', who, 'vzew-damage', m[1].trim());
       }
     }
 
@@ -369,13 +396,13 @@ AE.assizeRules = (() => {
       const label = f.status || 'This status';
       if (due == null) {
         const sameDay = e.since && dayKey(e.since) === dayKey(now);
-        if (e.since && !sameDay) add('contact', 'fail', 'No date', label + '; ' + (String(f.nickname || '').trim() ? 'nickname has no date' : 'nickname is blank'), e.who);
+        if (e.since && !sameDay) add('contact', 'fail', 'No date', label + '; ' + (String(f.nickname || '').trim() ? 'nickname has no date' : 'nickname is blank'), e.who, 'no-date', statusTag(f.status), dayOf(e.since));
       } else if (dayKey(due) <= dayKey(now)) {
         const dueStart = at(due, 0);
         const contact = f.notes ? manual.filter((n) => t(n) >= dueStart && (n.noteTag === 'contacted' || CONTACT_RE.test(n.noteText || ''))).sort((a, b) => t(b) - t(a))[0] : null;
-        if (contact) add('contact', 'flag', 'Date not updated', 'Contact noted ' + md(t(contact)) + '; nickname still says ' + md(due), person(contact.UserDatum) || e.who);
-        else if (dayKey(due) === dayKey(now)) add('contact', 'flag', 'Contact due', label + '; date is today', e.who);
-        else if (f.notes) add('contact', 'fail', 'Missed contact', label + '; due ' + md(due) + ', no contact note since', STORE);
+        if (contact) add('contact', 'flag', 'Date not updated', 'Contact noted ' + md(t(contact)) + '; nickname still says ' + md(due), person(contact.UserDatum) || e.who, 'date-not-updated', dayKey(due), t(contact));
+        else if (dayKey(due) === dayKey(now)) add('contact', 'flag', 'Contact due', label + '; date is today', e.who, 'contact-due', dayKey(due));
+        else if (f.notes) add('contact', 'fail', 'Missed contact', label + '; due ' + md(due) + ', no contact note since', STORE, 'missed-contact', dayKey(due));
       }
     }
 
@@ -383,10 +410,11 @@ AE.assizeRules = (() => {
     if (!/^(ready for work|awaiting device)$/.test(st)) {
       const blank = !String(f.bin || '').trim() || String(f.bin).trim() === '.';
       if (blank) {
-        if (rfp) add('bin', 'fail', 'No bin', 'Ready for pickup, bin is blank', UNASSIGNED);
+        const be = statusEntry(f), bsig = [statusTag(f.status), dayOf(be.since)];
+        if (rfp) add('bin', 'fail', 'No bin', 'Ready for pickup, bin is blank', UNASSIGNED, 'no-bin', ...bsig);
         else {
           const last = Math.max(f.updatedAt || 0, ...(f.notes || []).map(t), ...(f.audit || []).map(t));
-          if (last && now - last >= HOUR) add('bin', 'fail', 'No bin', label2(f.status) + ' for ' + ago(now - last) + ' with no bin', UNASSIGNED);
+          if (last && now - last >= HOUR) add('bin', 'fail', 'No bin', label2(f.status) + ' for ' + ago(now - last) + ' with no bin', UNASSIGNED, 'no-bin', ...bsig);
         }
       }
     }
@@ -396,17 +424,17 @@ AE.assizeRules = (() => {
       if (dev.phone && f.nextUpdate) {
         let by = f.nextUpdate - HOUR;
         if (new Date(f.createdAt).getHours() >= 17) by = Math.max(by, openAfter(at(addDays(f.createdAt, 1), 0), hours) + HOUR); // checked in after 5 PM: the next business day
-        if (now > by) add('start', 'fail', 'Not started', 'Still Ready for work; start by ' + clock(by) + (dayKey(by) === dayKey(now) ? '' : ' ' + md(by)) + ' (1 h before pickup)', UNASSIGNED);
+        if (now > by) add('start', 'fail', 'Not started', 'Still Ready for work; start by ' + clock(by) + (dayKey(by) === dayKey(now) ? '' : ' ' + md(by)) + ' (1 h before pickup)', UNASSIGNED, 'not-started', dayKey(f.createdAt), dayKey(f.nextUpdate));
       } else if (!dev.phone && now - f.createdAt >= 3 * DAY) {
         const later = manual.some((n) => n.noteTag !== 'initial_checkin');
-        add('start', later ? 'note' : 'fail', 'Not started in 3 days', 'Still Ready for work ' + plural(Math.floor((now - f.createdAt) / DAY), 'day') + ' after check-in' + (later ? '; a note may say why' : ''), UNASSIGNED);
+        add('start', later ? 'note' : 'fail', 'Not started in 3 days', 'Still Ready for work ' + plural(Math.floor((now - f.createdAt) / DAY), 'day') + ' after check-in' + (later ? '; a note may say why' : ''), UNASSIGNED, 'not-started-3-days', dayKey(f.createdAt));
       }
     }
 
     // ---- 6 Age (Awaiting callback / device: 14 days or more)
     if (/awaiting (callback|device)/.test(st)) {
       const e = statusEntry(f);
-      if (e.since) { const days = daysBetween(e.since, now); if (days >= 14) add('age', 'flag', 'Unresponsive', f.status + ' for ' + days + ' days. Decide what to do', e.who); }
+      if (e.since) { const days = daysBetween(e.since, now); if (days >= 14) add('age', 'flag', 'Unresponsive', f.status + ' for ' + days + ' days. Decide what to do', e.who, 'unresponsive', statusTag(f.status), dayOf(e.since)); }
     }
 
     // ---- 6 Need to order: entered before the last business night's close = not ordered (Store)
@@ -414,7 +442,7 @@ AE.assizeRules = (() => {
       const e = statusEntry(f);
       const ref = Math.min(now, at(now, MORNING_ENDS)); // the morning audit's view: last night's close
       const lastClose = closeBefore(ref, hours);
-      if (e.since && e.since < lastClose) add('order', 'fail', 'Not ordered', 'In Need to order since ' + md(e.since) + '; not ordered ' + (dayKey(lastClose) === dayKey(addDays(now, -1)) ? 'last night' : 'by close on ' + md(lastClose)), STORE);
+      if (e.since && e.since < lastClose) add('order', 'fail', 'Not ordered', 'In Need to order since ' + md(e.since) + '; not ordered ' + (dayKey(lastClose) === dayKey(addDays(now, -1)) ? 'last night' : 'by close on ' + md(lastClose)), STORE, 'not-ordered', dayOf(e.since));
     }
     return out;
   }
@@ -430,7 +458,7 @@ AE.assizeRules = (() => {
       if (programOf(c.programId, c.programName).key !== 'cleaning') continue;
       const ct = Date.parse(c.createdAt) || 0;
       const p = (closedRows || []).find((r) => Number(r.programId) === 5062 && /sale complete/i.test(r.workorderStatusName || '') && Math.abs((Date.parse(r.createdAt) || 0) - ct) < 2 * DAY && belongs(c, r));
-      if (p) out.push({ wo: String(c.workorderId), check: 'cleaning', kind: 'fail', title: 'Parent closed, cleaning open', evidence: 'Parent ' + p.workorderId + ' is closed; this cleaning is still ' + (c.workorderStatusName || 'open'), who: UNASSIGNED,
+      if (p) out.push({ wo: String(c.workorderId), check: 'cleaning', kind: 'fail', rule: 'parent-closed-cleaning-open', sig: sigOf(p.workorderId), title: 'Parent closed, cleaning open', evidence: 'Parent ' + p.workorderId + ' is closed; this cleaning is still ' + (c.workorderStatusName || 'open'), who: UNASSIGNED,
         device: (c.deviceCatalog && c.deviceCatalog.name) || '', repair: c.programName || 'Cleaning', program: c.programName || '', status: c.workorderStatusName || '' });
     }
     return out;
@@ -440,6 +468,8 @@ AE.assizeRules = (() => {
   const ago = (ms) => (ms < DAY ? plural(Math.floor(ms / HOUR), 'hour') : plural(Math.floor(ms / DAY), 'day'));
   const label2 = (s) => s || 'Open';
 
+  // A finding's identity for dismissals: the order, the rule and the facts behind it.
+  const dismissKey = (wo, rule, sig) => wo + '|' + rule + '|' + sig;
   const order = (x) => CHECKS.findIndex(([k]) => k === x.check) * 10 + KINDS.indexOf(x.kind);
   const sort = (list) => list.slice().sort((a, b) => order(a) - order(b) || String(a.wo).localeCompare(String(b.wo)));
   function summarize(list) {
@@ -448,7 +478,7 @@ AE.assizeRules = (() => {
     const worst = n.fail ? 'fail' : n.flag ? 'flag' : n.note ? 'note' : n.remind ? 'remind' : 'ok';
     return Object.assign(n, { worst, act: n.fail + n.flag });
   }
-  return { STORE_HOURS, MORNING_ENDS, CHECKS, KINDS, programOf, deviceOf, nickDate, closeAfter, closeBefore, facts, audit, orphanCleanings, summarize, sort, unoffset };
+  return { STORE_HOURS, MORNING_ENDS, CHECKS, KINDS, programOf, deviceOf, nickDate, closeAfter, closeBefore, facts, audit, orphanCleanings, summarize, sort, unoffset, sigOf, dismissKey };
 })();
 
 AE.crystal({
@@ -535,6 +565,7 @@ AE.crystal({
       if (!force && Date.now() - GM_getValue(lock, 0) < SCAN_MS - 30000) return;
       GM_setValue(lock, Date.now());
       busy = true; render();
+      loadDismissed(true);
       try {
         const y = new Date(); y.setDate(y.getDate() - 1); y.setHours(0, 0, 0, 0);
         const all = await AE.data.workorders(y.getTime(), 1); // every open order + one page of recent closed ones (4b)
@@ -595,6 +626,47 @@ AE.crystal({
       finally { woLoading.delete(woId); }
     }
 
+    // ------------------------------------------------------------ dismissals (shared per store, on the Waymark Worker)
+    let dismissed = [], dismissedAt = 0, me = null, isManager = false, showDismissed = false, actErr = null;
+    let dp = null; // the open Dismiss form: { key, x, where: 'panel' | 'pop', reason, note, err, busy }
+    const canDismiss = () => !!(storeId && AE.waymark && AE.waymark.configured() && !AE.status.blocked('waymark'));
+    const REASONS = [['not-applicable', 'Not applicable'], ['handled', 'Already handled'], ['rule-doesnt-fit', "Rule doesn't fit"]];
+    const REASON_NAME = Object.fromEntries(REASONS);
+    async function loadDismissed(force) {
+      if (!canDismiss() || (!force && Date.now() - dismissedAt < 30000)) return;
+      try {
+        const j = await AE.waymark.call('GET', '/assize/dismissed');
+        dismissed = Array.isArray(j.dismissed) ? j.dismissed : [];
+        dismissedAt = Date.now();
+        compute(); render();
+      } catch (e) { if (!e.storeChanged) AE.noteError('Assize dismissals', e); }
+    }
+    async function submitDismiss() {
+      if (!dp || !dp.reason || dp.busy) return;
+      const f = dp, x = f.x;
+      f.busy = true; f.err = null; render();
+      try {
+        await AE.waymark.call('POST', '/assize/dismiss', { wo: Number(x.wo), rule: x.rule, sig: x.sig, reason: f.reason, note: f.note.trim() });
+        AE.track('assize:dismiss');
+        if (dp === f) dp = null;
+        await loadDismissed(true);
+      } catch (e) {
+        f.busy = false; f.err = e.storeChanged ? 'Portal switched stores, so nothing was saved.' : "Couldn't dismiss this just now."; f.errRaw = e.message || String(e);
+        if (!e.storeChanged) AE.noteError('Assize dismiss', e);
+        render();
+      }
+    }
+    async function restore(d) {
+      actErr = null;
+      try {
+        await AE.waymark.call('POST', '/assize/restore', { wo: Number(d.wo), rule: d.rule, sig: d.sig });
+        AE.track('assize:restore');
+        await loadDismissed(true);
+      } catch (e) { actErr = { text: e.storeChanged ? 'Portal switched stores, so nothing was changed.' : "Couldn't restore this just now.", raw: e.message || String(e) }; if (!e.storeChanged) AE.noteError('Assize restore', e); render(); }
+    }
+    // Restore: whoever dismissed it, or a manager (Waymark's role check).
+    const canRestore = (d) => isManager || (d.byId != null && me && Number(d.byId) === Number(me.userId));
+
     // ------------------------------------------------------------ findings
     let result = null; // { at, open, findings, byWo, sum }
     let sheet = null;
@@ -614,9 +686,13 @@ AE.crystal({
       for (const [id, x] of Object.entries(details)) if (!seen.has(String(id))) list.push(...R.audit(null, x.d, { now, hours: R.STORE_HOURS, priceFor }));
       list.push(...R.orphanCleanings(rows.rows, rows.closed || [], AE.data.belongs));
       list = R.sort(list);
+      // Dismissed for the store (the rules stay pure; this is where a dismissal applies): out of every count, chip, pill and marker.
+      const dm = new Map(dismissed.map((d) => [R.dismissKey(String(d.wo), d.rule, d.sig), d]));
+      const gone = [];
+      list = list.filter((x) => { const d = dm.get(R.dismissKey(x.wo, x.rule, x.sig)); if (d) gone.push({ x, d }); return !d; });
       const byWo = new Map();
       for (const x of list) { if (!byWo.has(x.wo)) byWo.set(x.wo, []); byWo.get(x.wo).push(x); }
-      result = { at: rows.at, open: rows.rows.length, findings: list, byWo, sum: R.summarize(list) };
+      result = { at: rows.at, open: rows.rows.length, findings: list, byWo, sum: R.summarize(list), dismissed: gone };
     }
 
     // ------------------------------------------------------------ styles
@@ -663,6 +739,20 @@ AE.crystal({
       #${PANEL_ID} .ft, #${POP_ID} .ft { margin-top:8px; padding-top:8px; border-top:1px solid var(--aui-outline-soft,#eeedf1); display:flex; gap:8px; align-items:center; }
       #${PANEL_ID} .ft .sg-soft, #${POP_ID} .ft .sg-soft { flex:1; }
       .ae-as-empty { text-align:center; padding:22px 10px 16px; } .ae-as-empty h3 { margin:10px 0 2px; font-size:18px; } .ae-as-empty p { margin:0; }
+      .ae-as-r .dm { margin-left:auto; flex:none; border:0; background:transparent; padding:0 4px; height:20px; border-radius:6px; cursor:pointer; opacity:0;
+        font:400 12px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; color:var(--aui-on-surface-soft,#5d5e61); text-decoration:underline; }
+      .ae-as-r:hover .dm, .ae-as-r:focus-within .dm, .ae-as-r .dm[aria-expanded="true"] { opacity:1; }
+      @media (hover:none) { .ae-as-r .dm { opacity:1; } }
+      .ae-as-r .dm:hover { color:var(--aui-on-surface,#1a1c1e); } .ae-as-r .dm:focus-visible { outline:2px solid var(--aui-primary,#8223d2); outline-offset:1px; }
+      .ae-as-dp { grid-column:2 / 4; margin:6px 0 2px; padding:8px 10px 10px; border-radius:12px; background:var(--aui-neutral-soft,#f1f0f4); display:flex; flex-direction:column; gap:8px; }
+      .ae-as-dp .q { font-size:12px; font-weight:700; color:var(--aui-on-surface-soft,#5d5e61); }
+      .ae-as-dp .dpc { display:flex; flex-wrap:wrap; gap:6px; }
+      .ae-as-dp input { box-sizing:border-box; width:100%; height:30px; padding:0 10px; border-radius:8px; border:1px solid var(--aui-outline,#c6c6ca); background:var(--aui-surface,#fff); color:inherit; font:400 13px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+      .ae-as-dp input:focus-visible { outline:2px solid var(--aui-primary,#8223d2); outline-offset:1px; }
+      .ae-as-dp .act { display:flex; gap:8px; justify-content:flex-end; }
+      .ae-as-dp .ae-as-err { margin:0; }
+      .ae-as-r.dis .bar { opacity:.5; } .ae-as-r.dis .k { text-decoration:line-through; color:var(--aui-on-surface-soft,#5d5e61); }
+      .ae-as-r.dis .who { display:flex; }
       .ae-as-err { margin:8px 0; color:var(--as-fail); font-size:13px; } .ae-as-err a { color:inherit; font-weight:700; }
       #${PILL_ID} { display:inline-flex; align-items:center; gap:6px; height:28px; margin-left:8px; padding:0 12px 0 5px; border-radius:10000rem; border:1px solid transparent; cursor:pointer;
         font:600 14px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; white-space:nowrap; flex:none; align-self:center; }
@@ -682,15 +772,56 @@ AE.crystal({
 
     // ------------------------------------------------------------ pieces
     const whoChip = (w) => h('span', { class: 'ae-as-who ' + (w.key === 'store' || w.key === 'unassigned' ? w.key : ''), title: w.name }, w.label);
+    // The Dismiss form under a finding: why (three chips), an optional note, Dismiss / Cancel.
+    function dismissForm() {
+      const f = dp;
+      const chips = h('div', { class: 'dpc', role: 'radiogroup', 'aria-label': 'Why does this not apply?' }, ...REASONS.map(([k, label]) =>
+        h('button', { type: 'button', role: 'radio', 'aria-checked': String(f.reason === k), class: 'ae-as-f' + (f.reason === k ? ' on' : ''), 'data-fk': 'dr:' + k,
+          onclick: (e) => { e.stopPropagation(); f.reason = k; f.err = null; render(); } }, label)));
+      const note = h('input', { type: 'text', maxlength: '200', placeholder: 'Note (optional)', 'aria-label': 'Note (optional)', 'data-fk': 'dn', value: f.note,
+        oninput: (e) => { f.note = e.target.value; },
+        onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); submitDismiss(); } else if (e.key === 'Escape') { e.stopPropagation(); dp = null; render(); } } });
+      return h('div', { class: 'ae-as-dp', role: 'group', 'aria-label': 'Dismiss this finding' },
+        h('span', { class: 'q' }, "Why doesn't this apply?"), chips, note,
+        f.err ? h('div', { class: 'ae-as-err' }, f.err + ' Try again, and if it keeps happening, ', AE.bugLinkEl('report a bug', { where: 'Assize dismiss', error: f.errRaw })) : null,
+        h('div', { class: 'act' },
+          h('button', { type: 'button', class: 'sg-btn', 'data-fk': 'dc', onclick: (e) => { e.stopPropagation(); dp = null; render(); } }, 'Cancel'),
+          h('button', { type: 'button', class: 'sg-btn sg-primary', 'data-fk': 'dd', disabled: !f.reason || f.busy || null, title: f.reason ? null : 'Pick a reason first', onclick: (e) => { e.stopPropagation(); submitDismiss(); } }, f.busy ? 'Dismissing…' : 'Dismiss')));
+    }
     function rowEl(x, here) {
+      const key = R.dismissKey(x.wo, x.rule, x.sig), open = !!dp && dp.key === key && dp.where === (here ? 'pop' : 'panel');
+      const dm = canDismiss() ? h('button', { type: 'button', class: 'dm', 'data-fk': 'dm:' + key, 'aria-expanded': String(open), title: "Dismiss: this doesn't apply",
+        onclick: (e) => { e.stopPropagation(); dp = open ? null : { key, x, where: here ? 'pop' : 'panel', reason: null, note: '', err: null, busy: false }; actErr = null; render(); } }, 'Dismiss') : null;
       return h('div', { class: 'ae-as-r ' + x.kind },
         h('span', { class: 'bar' }),
         h('div', { class: 't' }, h('span', { class: 'k' }, x.title),
           here ? h('span', { class: 'dv' }, CHECK_NAME[x.check]) : h('a', { href: '/repair/workorder/' + x.wo }, x.wo),
-          here ? null : h('span', { class: 'dv' }, [x.device, x.repair].filter(Boolean).join(' · '))),
+          here ? null : h('span', { class: 'dv' }, [x.device, x.repair].filter(Boolean).join(' · ')), dm),
         h('div', { class: 'ev' }, x.evidence),
-        h('div', { class: 'who' }, whoChip(x.who)));
+        h('div', { class: 'who' }, whoChip(x.who)),
+        open ? dismissForm() : null);
     }
+    const whenShort = (iso) => { const ms = Date.parse(iso); if (!ms) return ''; return new Date(ms).toDateString() === new Date(AE.now()).toDateString() ? 'today ' + fmtTime(ms) : new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' }); };
+    // A dismissed finding, in the Dismissed list.
+    function dismissedRow({ x, d }) {
+      const note = [d.by || 'Someone', whenShort(d.at), REASON_NAME[d.reason] || d.reason].filter(Boolean).join(' · ') + (d.note ? '. Note: ' + d.note : '');
+      return h('div', { class: 'ae-as-r dis ' + x.kind },
+        h('span', { class: 'bar' }),
+        h('div', { class: 't' }, h('span', { class: 'k' }, x.title), h('a', { href: '/repair/workorder/' + x.wo }, x.wo), h('span', { class: 'dv' }, [x.device, x.repair].filter(Boolean).join(' · '))),
+        h('div', { class: 'ev' }, note),
+        h('div', { class: 'who' }, canRestore(d)
+          ? h('button', { type: 'button', class: 'sg-btn', 'data-fk': 'rs:' + R.dismissKey(x.wo, x.rule, x.sig), title: 'Bring this finding back', onclick: (e) => { e.stopPropagation(); restore(d); } }, 'Restore')
+          : h('span', { class: 'sg-soft', title: 'Only ' + (d.by || 'the person who dismissed it') + ' or a manager can restore this' }, '')));
+    }
+    // Rebuilding the panel on a timer mustn't drop the keyboard: put focus back on the same control.
+    function keepFocus(fn) {
+      const a = document.activeElement, fk = a && a.dataset && a.dataset.fk, pos = a && a.selectionStart;
+      fn();
+      if (!fk) return;
+      const el = [...document.querySelectorAll('[data-fk]')].find((n) => n.dataset.fk === fk && n.closest('#' + PANEL_ID + ', #' + POP_ID));
+      if (el) { el.focus({ preventScroll: true }); if (pos != null && el.setSelectionRange) try { el.setSelectionRange(pos, pos); } catch (_) { /* not a text field */ } }
+    }
+    const actErrLine = () => (actErr ? h('div', { class: 'ae-as-err' }, actErr.text + ' Try again, and if it keeps happening, ', AE.bugLinkEl('report a bug', { where: 'Assize', error: actErr.raw })) : null);
     const kindWords = (s) => [s.fail && s.fail + (s.fail === 1 ? ' fail' : ' fails'), s.flag && s.flag + (s.flag === 1 ? ' flag' : ' flags'), s.note && s.note + ' to check in notes'].filter(Boolean).join(', ');
     const errLine = (prefix) => h('div', { class: 'ae-as-err' }, prefix + ' Try again, and if it keeps happening, ', AE.bugLinkEl('report a bug', { where: 'Assize', error: lastError }));
 
@@ -713,7 +844,8 @@ AE.crystal({
 
     // ------------------------------------------------------------ panel
     let filter = 'all';
-    function renderPanel() {
+    function renderPanel() { keepFocus(drawPanel); }
+    function drawPanel() {
       const p = document.getElementById(PANEL_ID);
       if (!p) return;
       const box = AE.headerIconBox('assize'), r = box && box.rect;
@@ -725,13 +857,25 @@ AE.crystal({
       const sub = result ? 'Checked ' + fmtTime(result.at) + ' · ' + orders(result.open) : '';
       const head = h('div', { class: 'hd' }, h('span', { html: AE.actionIcon('assize', 26), style: 'line-height:0' }), h('b', null, 'Assize'), h('span', { class: 'sg-soft' }, busy ? (progress && progress.total ? 'Checking orders… ' + progress.done + '/' + progress.total : 'Checking orders…') : sub), close);
       const refresh = h('button', { type: 'button', class: 'sg-btn', disabled: busy || null, onclick: (e) => { e.stopPropagation(); AE.track('assize:refresh'); pass(true); } }, 'Refresh');
-      const foot = h('div', { class: 'ft' }, h('span', { class: 'sg-soft' }, 'Check notes need a person. A note may explain it.'), refresh);
+      const nGone = result ? result.dismissed.length : 0;
+      const toggle = canDismiss() ? h('button', { type: 'button', class: 'sg-btn', 'aria-pressed': String(showDismissed), 'data-fk': 'dt', title: 'Findings dismissed as not applying, for this store',
+        onclick: (e) => { e.stopPropagation(); showDismissed = !showDismissed; actErr = null; dp = null; if (showDismissed) loadDismissed(true); renderPanel(); } }, showDismissed ? 'Back to findings' : 'Dismissed (' + nGone + ')') : null;
+      const foot = h('div', { class: 'ft' }, h('span', { class: 'sg-soft' }, showDismissed ? 'Dismissed for everyone at this store.' : 'Check notes need a person. A note may explain it.'), toggle, refresh);
       if (!result) { p.replaceChildren(head, lastError ? errLine("Couldn't check orders just now.") : h('p', { class: 'sg-soft' }, 'Checking orders…'), foot); return; }
       const s = result.sum, all = result.findings;
       const tile = (k, name) => h('div', { class: 'ae-as-tile ' + k + (s[k] ? '' : ' zero') }, h('span', { class: 'n' }, String(s[k])), h('span', { class: 'l' }, name));
       const tiles = h('div', { class: 'sum' }, tile('fail', 'Fails'), tile('flag', 'Flags'), tile('note', 'Check notes'), tile('remind', 'Reminders'));
       const kids = [head, tiles];
       if (lastError) kids.push(errLine("Couldn't check orders just now."));
+      if (showDismissed && canDismiss()) {
+        const dl = h('div', { class: 'list' }, ...(result.dismissed.length
+          ? [h('p', { class: 'sg-soft', style: 'margin:4px 0 0' }, 'A dismissal ends on its own if the facts behind it change.'), ...result.dismissed.map(dismissedRow)]
+          : [h('p', { class: 'sg-soft' }, 'Nothing dismissed right now.')]));
+        const ae = actErrLine();
+        kids.push(...(ae ? [ae] : []), dl, foot);
+        p.replaceChildren(...kids);
+        return;
+      }
       if (!all.length) {
         kids.push(h('div', { class: 'ae-as-empty' }, h('span', { html: AE.actionIcon('assize', 48) }), h('h3', null, 'Nothing to act on'),
           h('p', { class: 'sg-soft' }, (result.open === 1 ? 'The 1 open order passes' : 'All ' + orders(result.open) + ' pass') + ' the live checks.')), foot);
@@ -768,6 +912,7 @@ AE.crystal({
       document.body.append(h('div', { id: PANEL_ID, class: 'sg sg-card ae-as', role: 'dialog', 'aria-label': 'Assize' }));
       renderPanel();
       AE.track('assize:open');
+      loadDismissed(false);
       if (!busy && (!result || Date.now() - result.at > SCAN_MS)) pass(true);
     }
 
@@ -792,7 +937,8 @@ AE.crystal({
       if (pill.parentElement !== row) row.appendChild(pill);
       if (document.getElementById(POP_ID)) renderPop();
     }
-    function renderPop() {
+    function renderPop() { keepFocus(drawPop); }
+    function drawPop() {
       const pill = document.getElementById(PILL_ID), woId = currentWoId();
       let pop = document.getElementById(POP_ID);
       if (!pill || !woId) { pop?.remove(); return; }
@@ -871,8 +1017,12 @@ AE.crystal({
       started = true;
       const prof = await AE.profile().catch(() => null);
       if (!prof || prof.storeId == null) { started = false; return; }
-      storeId = prof.storeId;
+      storeId = prof.storeId; me = prof;
       compute(); render();
+      if (canDismiss()) {
+        AE.waymark.canEdit().then((r) => { isManager = !!(r && r.ok); render(); }).catch(() => {});
+        loadDismissed(true);
+      }
       if (AE.priceSheet && AE.waymark && AE.waymark.configured()) AE.priceSheet.get().then((v) => { sheet = v && v.data ? v : null; compute(); render(); }).catch(() => {});
       AE.every(60 * 1000, () => { if (!document.hidden) pass(false); compute(); render(); }); // pass() waits out the shared 10 minutes
       // Another tab's pass: pick up its results.
