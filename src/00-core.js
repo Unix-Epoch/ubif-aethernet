@@ -294,6 +294,38 @@ const AE = (() => {
     return profilePromise;
   }
 
+  // --------------------------------------------------------- store check
+  /*
+    Portal answers list calls (work orders, arrivals) for the session's *current* store, and any tab
+    can switch that, while profile() is this page's store from when it loaded. Oct 16, 2026: tabs still
+    on Newport News and Erie read Glen Allen's list after a switch in another tab, and Auto-Waymarked
+    (and renamed) Glen Allen's work orders under their own stores. So lists, and writes to our own
+    servers, are only used while the session's store is still this page's store. Once it isn't,
+    Aethernet's background work stops in this tab until it's reloaded.
+  */
+  let storeChanged = null, storeCheck = null, storeCheckAt = 0;
+  function sessionStore(fresh) {
+    if (fresh || !storeCheck || Date.now() - storeCheckAt > 5000) {
+      storeCheckAt = Date.now();
+      storeCheck = api('GET', '/api/auth/user').then((a) => (a && a.currentStore) || {}).catch((e) => { storeCheck = null; throw e; });
+    }
+    return storeCheck;
+  }
+  async function sameStore(fresh) {
+    if (storeChanged) return false;
+    if (!AE_ON_PORTAL) return true;
+    const [p, cur] = await Promise.all([profile(), sessionStore(fresh)]);
+    if (!p || p.storeId == null || cur.storeId == null || Number(cur.storeId) === Number(p.storeId)) return true;
+    storeChanged = { from: p.storeName || String(p.storeId), to: cur.storeName || String(cur.storeId) };
+    toast('Aethernet paused on this page', "Portal's store changed to " + storeChanged.to + ' (in this tab or another one). Reload this page to use Aethernet with ' + storeChanged.to + '.', 'err', 60000);
+    emit('store-changed', storeChanged);
+    return false;
+  }
+  class StoreChanged extends Error {
+    constructor() { super("Portal's store changed in another tab: reload this page"); this.storeChanged = true; }
+  }
+  async function assertSameStore(fresh) { if (!(await sameStore(fresh))) throw new StoreChanged(); }
+
   // ------------------------------------------------------------- styles
   const CSS = `
   .sg, .sg * { box-sizing: border-box; }
@@ -677,6 +709,7 @@ const AE = (() => {
     // so paging stops once past it). maxClosedPages bounds old lookbacks.
     async function workorders(sinceMs, maxClosedPages = PAGE_CAP) {
       await afterLoad(); // never during Portal's own first load
+      await assertSameStore();
       const byId = new Map();
       // Page by Portal's own total (rowCount), not by a short page: a server that sends fewer rows
       // per page than asked would otherwise end the list early (and open WOs would look closed).
@@ -691,11 +724,13 @@ const AE = (() => {
         const lastRow = rows[rows.length - 1];
         if (rows.length < PAGE_SIZE || !lastRow || Date.parse(lastRow.createdAt) < sinceMs) break;
       }
+      await assertSameStore(true); // still this page's store after loading: the list is ours
       return [...byId.values()];
     }
     // Arrivals not yet checked in. pageSize=100 is honored (the UI uses 10).
     async function arrivals() {
       await afterLoad();
+      await assertSameStore();
       const out = [];
       for (let p = 1; p <= PAGE_CAP; p++) {
         const j = await api('GET', '/api/arrivals/upcoming-arrivals?page=' + p + '&pageSize=' + PAGE_SIZE);
@@ -703,6 +738,7 @@ const AE = (() => {
         out.push(...rows);
         if (rows.length < PAGE_SIZE || out.length >= ((j && j.rowCount) || 0)) break;
       }
+      await assertSameStore(true);
       return out;
     }
 
@@ -977,6 +1013,8 @@ const AE = (() => {
   return {
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, woHeading, textEl, findButton,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every,
+    api, unwrap, Stopped, portal, sameStore, assertSameStore, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,

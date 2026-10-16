@@ -76,6 +76,7 @@ AE.waymark = (() => {
   async function call(method, path, body) {
     if (!configured()) throw new Error("Waymark isn't set up yet");
     const p = await me();
+    if (method !== 'GET') await AE.assertSameStore(); // never write under this page's store once Portal has switched
     const res = await fetch(API + '/v1/' + p.storeId + path, {
       method, credentials: 'omit',
       headers: { 'content-type': 'application/json', 'x-aethernet-key': KEY },
@@ -217,6 +218,8 @@ AE.waymark = (() => {
     const dev = wo && wo.CustomerDevice;
     const kind = kindOfStatus(wo && wo.workorderStatusId);
     if (!dev || !dev.customerDeviceId || !kind) return false;
+    const p = await me();
+    if (wo.storeId != null && Number(wo.storeId) !== Number(p.storeId)) return false; // another store's WO: never rename it
     const name = nickFor(kind, dev.name, due);
     if ((dev.name || '').trim() === name) return false;
     await putNickname(dev, name);
@@ -235,7 +238,8 @@ AE.waymark = (() => {
     if (cache) { delete cache.auto[woId]; AE.emit('waymark-changed', cache); }
     wo = wo || await woDetail(woId);
     const dev = wo && wo.CustomerDevice;
-    if (dev && dev.customerDeviceId && clearsNick(fromKind, kindOfStatus(wo.workorderStatusId), dev.name)) {
+    const own = wo && (wo.storeId == null || Number(wo.storeId) === Number((await me()).storeId)); // never rename another store's WO
+    if (own && dev && dev.customerDeviceId && clearsNick(fromKind, kindOfStatus(wo.workorderStatusId), dev.name)) {
       await putNickname(dev, fromKind === 'callback' ? stripNickDate(dev.name) : '');
       if (location.pathname.indexOf('/repair/workorder/' + woId) === 0) AE.refreshView();
     }
