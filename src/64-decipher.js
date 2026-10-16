@@ -10,6 +10,13 @@
       has a guess, it shows first with "That's it", which finds it in Portal's list for the tech to confirm. An i button (only then)
       carries the attribution.
     · Typo: the check digit (Luhn) fails; no lookup.
+  Samsung warranty: for a known Samsung (15-digit IMEI, not an IMEI/SV), a Warranty row asks Portal the way check-in does
+  (POST /api/customer-devices/checkDeviceWarranty, { manufacturerId: "16", imei }; by serial only when the catalog entry is
+  gspn-enabled and serial-required, which Decipher can't supply, so that case says so). Only when the tech looks a device up, once
+  per IMEI a session. It shows In warranty (+ the warranty type), Out of warranty, an extended warranty on file, or Couldn't check
+  (with a bug link). Portal itself only runs this for GSPN-enabled stores (the auth slice's isStoreGspnEnabled, read from Portal's
+  own state, no call), so on any other store a failure says "This store can't check Samsung warranty". Dev builds log the raw
+  response once per IMEI to the console so a real one can be captured.
   Learning: a work order page Aethernet sees (/api/workorder/<id>: CustomerDevice's 15-digit IMEI + catalog model + color) records
   its TAC → model once (the WO numbers sent are remembered here, ae_tac_seen). The most common model per TAC wins, which outvotes a
   wrong pick. The Worker (/v1/:store/tac) only ever gets the 8-digit TAC and the model: never an IMEI, serial or customer.
@@ -55,6 +62,38 @@ AE.decipher = (() => {
       return d && (d.serial || typeof d.isLocked === 'boolean') ? { serial: d.serial ? String(d.serial) : '', locked: d.isLocked === true } : null;
     } catch (_) { return null; }
   }
+  // ------------------------------------------------------------ Samsung warranty (Portal's checkDeviceWarranty)
+  const SAMSUNG_ID = 16; // Portal's DeviceManufacturers.Samsung
+  const isSamsung = (m) => /^samsung/i.test((m && m.manufacturer) || '');
+  // Portal's own "is this store GSPN-enabled" flag (auth slice, from the store's configs): true / false, or undefined when unreadable.
+  function storeGspn() {
+    try { const r = AE.portal('select', { slice: 'auth', key: 'isStoreGspnEnabled' }); return r && r.found ? r.value === true : undefined; } catch (_) { return undefined; }
+  }
+  // Portal sends the serial (not the IMEI) when the catalog entry is gspn-enabled and serial-required without imei-required.
+  // Attribute type ids: gspn-enabled 8, imei-required 21, serial-required 22. GUESS: where the model's response keeps them.
+  async function needsSerial(modelId) {
+    try {
+      const j = await AE.api('GET', '/api/device-models/' + modelId + '?selectedOptions=');
+      const a = (j && (j.attributes || (j.deviceCatalog && j.deviceCatalog.attributes))) || [];
+      const has = (t) => a.some((x) => Number(x && x.deviceCatalogAttributeTypeId) === t);
+      return has(8) && has(22) && !has(21);
+    } catch (_) { return false; }
+  }
+  // { inWarranty, type, extended } for an IMEI; throws on any error. One request per IMEI a session (a failure isn't kept).
+  const warrantyCache = new Map();
+  function warranty(imei) {
+    if (!warrantyCache.has(imei)) {
+      AE.track('decipher:warranty');
+      warrantyCache.set(imei, AE.api('POST', '/api/customer-devices/checkDeviceWarranty', { manufacturerId: String(SAMSUNG_ID), imei }).then((j) => {
+        if (AE_DEV) console.debug('[Aethernet] Decipher warranty', '…' + imei.slice(-4), j);
+        const w = j || {}, e = w.extendedWarranty && typeof w.extendedWarranty === 'object' ? w.extendedWarranty : {};
+        return { inWarranty: w.inWarranty === true, type: clean(w.warrantyType, 40).replace(/([a-z])([A-Z])/g, '$1 $2'),
+          extended: !!(e.claimFulfillmentId || e.extendedWarrantyId) };
+      }).catch((e) => { AE.track('decipher:warranty:error'); warrantyCache.delete(imei); throw e; }));
+    }
+    return warrantyCache.get(imei);
+  }
+
   // Portal's own device list: [{ id, name }].
   async function searchModels(text) {
     const j = await AE.api('GET', '/api/device-models?applyStoreFilter=true&searchTerm=' + encodeURIComponent(text));
@@ -97,7 +136,7 @@ AE.decipher = (() => {
     GM_setValue(SEEN_KEY, seen);
   }
 
-  return { valid, junk, scannable, luhn, fmt, digitsOf, placeholder, norm, clean, lookup, record, appleInfo, searchModels, modelDetails, fromWo, learn, open: null };
+  return { valid, junk, scannable, luhn, fmt, digitsOf, placeholder, norm, clean, lookup, record, appleInfo, isSamsung, storeGspn, needsSerial, warranty, searchModels, modelDetails, fromWo, learn, open: null };
 })();
 
 AE.crystal({
@@ -137,6 +176,8 @@ AE.crystal({
       #${DLG} .tag { display:inline-block; font-size:12px; font-weight:700; padding:3px 9px; border-radius:999px; }
       #${DLG} .tag.ok { background:var(--aui-status-success-soft, #e3f4e8); color:var(--aui-status-on-success-soft, #1d7a3a); }
       #${DLG} .tag.warn { background:var(--aui-status-warning-soft, #fdf0dc); color:var(--aui-status-on-warning-soft, #9a5b00); }
+      #${DLG} .tag.mute { background:var(--aui-neutral-soft, #f1f0f4); color:var(--aui-on-surface-soft, #5d5e61); }
+      #${DLG} .soft { color:var(--aui-on-surface-soft, #666); font-size:13px; }
       #${DLG} .mono { font-family:ui-monospace, Menlo, monospace; font-size:13.5px; }
       #${DLG} .cp { font:inherit; font-size:12px; font-weight:700; margin-left:8px; padding:0; border:0; background:none; cursor:pointer; color:var(--aui-primary, #8223d2); }
       #${DLG} .chips { display:flex; flex-wrap:wrap; gap:6px; }
@@ -181,7 +222,7 @@ AE.crystal({
       AE.track('decipher:open' + (prefill.from ? ':' + prefill.from : ''));
       // st.state: 'idle' (not 15 digits yet) | 'typo' | 'junk' | 'meid' | 'loading' | 'known' | 'unknown' | 'error'
       // st.sv: a 16-digit IMEI/SV (no check digit; its first 8 digits are the TAC; no Apple serial/Find My).
-      const st = { key: '', sv: false, digits: '', tac: '', state: 'idle', data: null, color: '', apple: null, query: '', results: [], pick: null, searching: false, suggestion: null, popup: false, busy: false, thanks: false, run: 0 };
+      const st = { key: '', sv: false, digits: '', tac: '', state: 'idle', data: null, color: '', apple: null, warr: null, query: '', results: [], pick: null, searching: false, suggestion: null, popup: false, busy: false, thanks: false, run: 0 };
       let accepting = false, sugBtn = null, saveBtn = null;
 
       const input = h('input', { type: 'text', class: 't', inputmode: 'numeric', autocomplete: 'off', placeholder: '15 digits', 'aria-label': 'IMEI',
@@ -217,7 +258,7 @@ AE.crystal({
         const key = meid || hexTyping ? 'hex:' + compact : d;
         if (key === st.key && st.state !== 'idle') return;
         st.key = key; st.digits = d; st.run++;
-        Object.assign(st, { sv: false, data: null, apple: null, color: '', pick: null, results: [], query: '', suggestion: null, popup: false, thanks: false });
+        Object.assign(st, { sv: false, data: null, apple: null, warr: null, color: '', pick: null, results: [], query: '', suggestion: null, popup: false, thanks: false });
         if (meid) { st.state = 'meid'; st.tac = ''; }
         else if (hexTyping || d.length < 15) { st.state = 'idle'; st.tac = ''; }
         else if (D.junk(d)) { st.state = 'junk'; st.tac = ''; }
@@ -236,6 +277,7 @@ AE.crystal({
             st.state = 'known';
             st.color = (data.colors[0] && data.colors[0].color) || '';
             const apple = /^apple$/i.test(data.models[0].manufacturer || '');
+            if (D.isSamsung(data.models[0]) && !st.sv) checkWarranty(run, data.models[0]);
             if (apple && !st.sv) D.appleInfo(st.digits).then((a) => { if (run === st.run) { st.apple = a; draw(); } });
           } else {
             st.state = 'unknown'; st.suggestion = data.suggestion && data.suggestion.model ? data.suggestion : null;
@@ -245,6 +287,15 @@ AE.crystal({
           st.state = 'error'; st.error = e;
         }
         draw();
+      }
+
+      // The Warranty row's state: { s: 'loading' | 'in' | 'out' | 'serial' | 'nostore' | 'error', w, e }.
+      async function checkWarranty(run, m) {
+        const put = (w) => { if (run === st.run) { st.warr = w; if (st.state === 'known') drawKnown(); } };
+        put({ s: 'loading' });
+        if (await D.needsSerial(m.deviceModelId)) return put({ s: 'serial' });
+        try { const w = await D.warranty(st.digits); put({ s: w.inWarranty ? 'in' : 'out', w }); }
+        catch (e) { put(D.storeGspn() === false ? { s: 'nostore' } : { s: 'error', e }); }
       }
 
       function draw() {
@@ -273,6 +324,14 @@ AE.crystal({
       function drawKnown() {
         const d = st.data, m = d.models[0], appleDevice = /^apple$/i.test(m.manufacturer || ''), apple = appleDevice && !st.sv;
         const rows = [];
+        const wr = st.warr;
+        if (wr) rows.push(h('span', { class: 'k' }, 'Warranty'), h('span', null, ...(
+          wr.s === 'loading' ? [h('span', { class: 'soft' }, 'Checking warranty…')]
+          : wr.s === 'in' ? [h('span', { class: 'tag ok' }, 'In warranty'), ...(wr.w.type ? [' · ' + wr.w.type] : []), ...(wr.w.extended ? [h('span', { class: 'soft' }, ' · Extended warranty on file')] : [])]
+          : wr.s === 'out' ? [h('span', { class: 'tag mute' }, 'Out of warranty'), ...(wr.w.extended ? [h('span', { class: 'soft' }, ' · Extended warranty on file')] : [])]
+          : wr.s === 'serial' ? [h('span', { class: 'soft' }, 'Samsung needs the serial for this device')]
+          : wr.s === 'nostore' ? [h('span', { class: 'soft' }, "This store can't check Samsung warranty")]
+          : [h('span', { class: 'soft' }, "Couldn't check warranty. If you keep seeing this, "), AE.bugLinkEl('report a bug', { where: 'Decipher', error: 'Samsung warranty check: ' + ((wr.e && wr.e.message) || wr.e) }), '!'])));
         if (d.colors.length) rows.push(h('span', { class: 'k' }, 'Color'), h('span', { class: 'chips' }, d.colors.map((c) =>
           h('button', { type: 'button', class: 'chip' + (st.color === c.color ? ' on' : ''), onclick: () => { st.color = c.color; drawKnown(); } }, c.color))));
         if (apple && st.apple && st.apple.serial) rows.push(h('span', { class: 'k' }, 'Serial'),

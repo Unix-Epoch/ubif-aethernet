@@ -290,7 +290,9 @@ def route(method, path, body):
         st.update({'storeId': STORE_ID, 'storeName': 'Sandbox Store', 'address_1': '1 Sandbox Way', 'city': 'Testville', 'phone': '5555550100', 'email': 'sandbox@example.invalid'})
         # userAttributes: the Work orders list reads its page size from it (blank page without it)
         return 200, {'isAuthenticated': True, 'user': USER, 'currentStore': st, 'isStoreOpen': s['settings']['storeOpen'], 'abilities': fixture('abilities', []),
-                     'userAttributes': {'PageCount': 25}, 'storeTwilioPhoneNumber': '+15555550199', 'isOutboundCommunicationEnabled': True}
+                     'userAttributes': {'PageCount': 25}, 'storeTwilioPhoneNumber': '+15555550199', 'isOutboundCommunicationEnabled': True,
+                     # Portal's isStoreGspnEnabled reads the store config 523 (GspnEnabled) = "1"; settings.gspnOff drops it to test the non-GSPN wording
+                     'storeConfigs': [] if s['settings'].get('gspnOff') else [{'storeConfigId': 9001, 'configId': 523, 'configName': 'GspnEnabled', 'storeConfigValue': '1'}]}
     if p == 'auth/user/stores':
         return 200, fixture('user-stores', [])
     if p == 'auth/store-options':
@@ -560,6 +562,22 @@ def route(method, path, body):
         if imei.startswith('99'):  # test: Portal's Find My lookup failing
             return 500, {'message': 'sandbox: lookup failed'}
         return 200, {'fmipLockStatusServicesResponse': {'fmipLockStatusDevice': {'meid': imei[:14], 'serial': 'F7KQ2MXN4P', 'isLocked': imei[8:10] == '55', 'imei': imei, 'isLost': False}}}
+    # Portal's Samsung/Dell/Google warranty check (check-in uses it; Decipher too). GUESSES: the real response was never captured. Portal's code
+    # only reads inWarranty, warrantyType ("Standard" is the one value it names; an accidental-damage type exists) and extendedWarranty
+    # { claimFulfillmentId, extendedWarrantyId }. Keyed by the two digits after the TAC (positions 9-10) of the IMEI:
+    #   11 in warranty "Standard" · 22 in warranty "AccidentalDamage" (+ an extended warranty) · 33 out of warranty · 99 HTTP 500 · else out of warranty
+    if p == 'customer-devices/checkDeviceWarranty' and method == 'POST':
+        imei = str((body or {}).get('imei') or '')
+        if not re.fullmatch(r'\d{15}', imei) or str((body or {}).get('manufacturerId')) != '16':
+            return 400, {'message': 'sandbox: need manufacturerId 16 and a 15-digit imei'}
+        k = imei[8:10]
+        if k == '99':
+            return 500, {'message': 'sandbox: warranty lookup failed'}
+        if k == '11':
+            return 200, {'inWarranty': True, 'warrantyType': 'Standard', 'extendedWarranty': {}}
+        if k == '22':
+            return 200, {'inWarranty': True, 'warrantyType': 'Accidental Damage', 'extendedWarranty': {'claimFulfillmentId': 'SBX-CF-1', 'extendedWarrantyId': 'SBX-EW-1'}}
+        return 200, {'inWarranty': False, 'warrantyType': '', 'extendedWarranty': {}}
     m = re.fullmatch(r'sandbox-tac(?:/(\d{8}))?', p)
     if m:
         return tac_route(method, m.group(1), body)
