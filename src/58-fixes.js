@@ -31,7 +31,7 @@
         opens its View Item popup; from the dashboard, WO list, customers,
         Arrivals, Sales and those inventory list pages. On a WO, Portal adds
         it to the WO instead.
-      · IMEI (15 digits that pass the check digit) → opens Decipher with it filled in (not on the check-in steps).
+      · IMEI (15 digits that pass the check digit, or 16 digits for an IMEI/SV) → opens Decipher with it filled in (not on the check-in steps).
       · never while you're typing in a field or a dialog/drawer is open
         (the scan is meant for that field), and never acts on scans
         Portal's own pages consume.
@@ -977,8 +977,8 @@ AE.crystal({
           const aec = AE.checkinDrafts && scan.match(AE.checkinDrafts.CODE_RE);
           const wo = !aec && scan.match(WO_RE), item = !aec && scan.match(ITEM_RE);
           if (!aec && /^AEC[A-Z0-9]{6}$/i.test(scan)) return 'a Return label, but Return is off';
-          // A 15-digit number that passes the IMEI check digit opens Decipher (not on check-in, where a scan is data entry).
-          const imei = !aec && !wo && !item && /^\d{15}$/.test(scan) && AE.decipher && AE.decipher.open && AE.decipher.valid(scan);
+          // A 15-digit IMEI that passes the check digit, or a 16-digit IMEI/SV, opens Decipher (not on check-in, where a scan is data entry).
+          const imei = !aec && !wo && !item && AE.decipher && AE.decipher.open && AE.decipher.scannable(scan);
           if (!aec && !wo && !item && !imei) return 'not a WO or item label';
           if (busyTyping() && !devTools) return 'typing in a field';
           if (dialogOpen()) return 'a dialog is open';

@@ -201,10 +201,11 @@ TACS = {
     '35684192': {(1573, 'Natural Titanium'): ['iPhone 15 Pro', 'Apple', 12], (1573, 'Black Titanium'): ['iPhone 15 Pro', 'Apple', 7], (1573, 'Blue Titanium'): ['iPhone 15 Pro', 'Apple', 3],
                  (1573, 'White Titanium'): ['iPhone 15 Pro', 'Apple', 1]},
     '35092741': {(1700, 'Titanium Black'): ['Samsung Galaxy S24 Ultra', 'Samsung', 6], (1700, 'Titanium Gray'): ['Samsung Galaxy S24 Ultra', 'Samsung', 3]},
+    '35231540': {(1573, 'Black Titanium'): ['iPhone 15 Pro', 'Apple', 4]},
 }
 # stands in for the Osmocom import (the Worker's osmocom_tac table)
 OSMOCOM = {'35926618': {'brand': 'Motorola', 'model': 'moto g 5G (2025)'}}
-TAC_STORES = {'35684192': {914, 915}, '35092741': {914}}
+TAC_STORES = {'35684192': {914, 915}, '35092741': {914}, '35231540': {914}}
 
 
 def tac_route(method, tac, body):

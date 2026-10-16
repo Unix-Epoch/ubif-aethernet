@@ -549,6 +549,7 @@ async function tacs(req, env, store, tac) {
     for (const it of list) {
       const id = Number(it && it.deviceModelId), name = clean(it && it.modelName, 120);
       if (!it || !TAC_RE.test(String(it.tac || '')) || !Number.isInteger(id) || id < 1 || id > 999999999 || !name) return fail(400, 'tac (8 digits), deviceModelId and modelName required');
+      if (/^00/.test(it.tac) || /^(\d)\1{7}$/.test(it.tac)) return fail(400, 'tac is not a real TAC (starts 00 or one digit repeated)');
       const tacN = String(it.tac);
       stmts.push(env.DB.prepare('INSERT INTO tac_models (tac, device_model_id, color, model_name, manufacturer, count, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?) ' +
         'ON CONFLICT (tac, device_model_id, color) DO UPDATE SET count = count + 1, model_name = excluded.model_name, manufacturer = COALESCE(excluded.manufacturer, manufacturer), updated_at = excluded.updated_at')

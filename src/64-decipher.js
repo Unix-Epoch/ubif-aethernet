@@ -26,6 +26,10 @@ AE.decipher = (() => {
     return sum % 10 === 0;
   }
   const valid = (s) => /^\d{15}$/.test(s) && luhn(s);
+  // Not a real IMEI: one digit repeated, or a TAC starting 00. Never looked up, never saved.
+  const junk = (d) => /^(\d)\1+$/.test(d) || d.slice(0, 2) === '00';
+  // What the scan path may open Decipher with: a 15-digit IMEI with a good check digit, or an IMEI/SV (16 digits).
+  const scannable = (s) => (/^\d{16}$/.test(s) || valid(s)) && !junk(s);
   // "356841 92 047713 6": the TAC's two parts, the serial part, the check digit.
   const fmt = (d) => [d.slice(0, 6), d.slice(6, 8), d.slice(8, 14), d.slice(14)].filter(Boolean).join(' ');
   // Placeholder IMEIs (33333333…, 12345678…) aren't a model's TAC.
@@ -73,7 +77,7 @@ AE.decipher = (() => {
   function fromWo(wo) {
     const cd = wo && wo.CustomerDevice;
     const imei = String((cd && cd.imei) || '').trim();
-    if (!valid(imei) || placeholder(imei.slice(0, 8))) return null;
+    if (!valid(imei) || placeholder(imei.slice(0, 8)) || junk(imei)) return null;
     const dc = cd.DeviceCatalog || {}, dm = dc.DeviceModel || {};
     const id = Number(dc.deviceModelId), name = clean(dm.modelNumber, 120);
     if (!Number.isInteger(id) || id < 1 || !name || /^other device/i.test(name)) return null;
@@ -93,7 +97,7 @@ AE.decipher = (() => {
     GM_setValue(SEEN_KEY, seen);
   }
 
-  return { valid, luhn, fmt, digitsOf, placeholder, norm, clean, lookup, record, appleInfo, searchModels, modelDetails, fromWo, learn, open: null };
+  return { valid, junk, scannable, luhn, fmt, digitsOf, placeholder, norm, clean, lookup, record, appleInfo, searchModels, modelDetails, fromWo, learn, open: null };
 })();
 
 AE.crystal({
@@ -174,8 +178,9 @@ AE.crystal({
       AE.ensureModalCss();
       document.getElementById(DLG)?.remove();
       AE.track('decipher:open' + (prefill.from ? ':' + prefill.from : ''));
-      // st.state: 'idle' (not 15 digits yet) | 'typo' | 'loading' | 'known' | 'unknown' | 'error'
-      const st = { digits: '', tac: '', state: 'idle', data: null, color: '', apple: null, query: '', results: [], pick: null, searching: false, suggestion: null, popup: false, busy: false, run: 0 };
+      // st.state: 'idle' (not 15 digits yet) | 'typo' | 'junk' | 'meid' | 'loading' | 'known' | 'unknown' | 'error'
+      // st.sv: a 16-digit IMEI/SV (no check digit; its first 8 digits are the TAC; no Apple serial/Find My).
+      const st = { key: '', sv: false, digits: '', tac: '', state: 'idle', data: null, color: '', apple: null, query: '', results: [], pick: null, searching: false, suggestion: null, popup: false, busy: false, run: 0 };
 
       const input = h('input', { type: 'text', class: 't', inputmode: 'numeric', autocomplete: 'off', placeholder: '15 digits', 'aria-label': 'IMEI',
         oninput: () => { setDigits(input.value); }, onpaste: () => setTimeout(() => setDigits(input.value)) });
@@ -201,13 +206,20 @@ AE.crystal({
 
       // What the IMEI box holds → what to do about it.
       function setDigits(raw) {
-        const d = D.digitsOf(raw).slice(0, 15);
-        const shown = D.fmt(d);
-        if (input.value !== shown) input.value = shown;
-        if (d === st.digits && st.state !== 'idle') return;
-        st.digits = d; st.run++;
-        Object.assign(st, { data: null, apple: null, color: '', pick: null, results: [], query: '', suggestion: null, popup: false });
-        if (d.length < 15) { st.state = 'idle'; st.tac = ''; }
+        const text = String(raw || ''), compact = text.replace(/[\s-]/g, '');
+        // An older MEID: 14 hex characters with at least one A-F. Its letters stay in the box (not stripped).
+        const meid = /^[0-9A-Fa-f]{14}$/.test(compact) && /[A-Fa-f]/.test(compact);
+        const hexTyping = !meid && compact.length < 14 && /^[0-9A-Fa-f]+$/.test(compact) && /[A-Fa-f]/.test(compact);
+        const d = meid || hexTyping ? '' : D.digitsOf(text).slice(0, 16);
+        if (!meid && !hexTyping) { const shown = D.fmt(d); if (input.value !== shown) input.value = shown; }
+        const key = meid || hexTyping ? 'hex:' + compact : d;
+        if (key === st.key && st.state !== 'idle') return;
+        st.key = key; st.digits = d; st.run++;
+        Object.assign(st, { sv: false, data: null, apple: null, color: '', pick: null, results: [], query: '', suggestion: null, popup: false });
+        if (meid) { st.state = 'meid'; st.tac = ''; }
+        else if (hexTyping || d.length < 15) { st.state = 'idle'; st.tac = ''; }
+        else if (D.junk(d)) { st.state = 'junk'; st.tac = ''; }
+        else if (d.length === 16) { st.state = 'loading'; st.sv = true; st.tac = d.slice(0, 8); find(st.run); }
         else if (!D.valid(d)) { st.state = 'typo'; st.tac = ''; }
         else { st.state = 'loading'; st.tac = d.slice(0, 8); find(st.run); }
         draw();
@@ -222,7 +234,7 @@ AE.crystal({
             st.state = 'known';
             st.color = (data.colors[0] && data.colors[0].color) || '';
             const apple = /^apple$/i.test(data.models[0].manufacturer || '');
-            if (apple) D.appleInfo(st.digits).then((a) => { if (run === st.run) { st.apple = a; draw(); } });
+            if (apple && !st.sv) D.appleInfo(st.digits).then((a) => { if (run === st.run) { st.apple = a; draw(); } });
           } else {
             st.state = 'unknown'; st.suggestion = data.suggestion && data.suggestion.model ? data.suggestion : null;
           }
@@ -234,9 +246,14 @@ AE.crystal({
       }
 
       function draw() {
-        input.classList.toggle('bad', st.state === 'typo');
-        chk.className = 'chk' + (st.state === 'typo' ? ' bad' : st.state === 'idle' ? ' soft' : '');
-        chk.textContent = st.state === 'typo' ? '✕ This IMEI has a typo. Check the digits and try again.' : st.state === 'idle' ? (st.digits ? st.digits.length + ' of 15 digits' : '') : '✓ Valid IMEI';
+        const bad = st.state === 'typo' || st.state === 'junk';
+        input.classList.toggle('bad', bad);
+        chk.className = 'chk' + (bad ? ' bad' : st.state === 'idle' || st.state === 'meid' ? ' soft' : '');
+        chk.textContent = st.state === 'typo' ? '✕ This IMEI has a typo. Check the digits and try again.'
+          : st.state === 'junk' ? "✕ That isn't a real IMEI. Check the device's settings or the label."
+          : st.state === 'meid' ? 'This looks like an older MEID. Decipher only reads IMEIs.'
+          : st.state === 'idle' ? (st.digits ? st.digits.length + ' of 15 digits' : '') : '✓ Valid IMEI';
+        if (st.sv) chk.append(' ', h('span', { class: 'tag ok' }, 'IMEI/SV'));
         infoBtn.hidden = !(st.state === 'unknown' && st.suggestion);
         drawPop();
         if (st.state === 'known') return drawKnown();
@@ -251,7 +268,7 @@ AE.crystal({
       // -------------------------------------------------------- known TAC
       function modelText() { const m = st.data.models[0]; return m.modelName + (st.color ? ' ' + st.color : ''); }
       function drawKnown() {
-        const d = st.data, m = d.models[0], apple = /^apple$/i.test(m.manufacturer || '');
+        const d = st.data, m = d.models[0], appleDevice = /^apple$/i.test(m.manufacturer || ''), apple = appleDevice && !st.sv;
         const rows = [];
         if (d.colors.length) rows.push(h('span', { class: 'k' }, 'Color'), h('span', { class: 'chips' }, d.colors.map((c) =>
           h('button', { type: 'button', class: 'chip' + (st.color === c.color ? ' on' : ''), onclick: () => { st.color = c.color; drawKnown(); } }, c.color))));
@@ -262,7 +279,7 @@ AE.crystal({
           h('div', { class: 'res' }, h('div', { class: 'mk' }, m.manufacturer || ' '), h('div', { class: 'md' }, m.modelName),
             h('div', { class: 'src' }, 'Seen on ' + plural(d.workOrders, 'work order') + ' at ' + plural(d.stores, 'store')),
             rows.length ? h('div', { class: 'rows' }, rows) : null),
-          h('div', { class: 'note' }, apple ? (d.colors.length ? "The IMEI doesn't say the color. Pick it from the colors stores have seen for this model." : '')
+          h('div', { class: 'note' }, appleDevice ? (d.colors.length ? "The IMEI doesn't say the color. Pick it from the colors stores have seen for this model." : '')
             : 'Serial and Find My are only available for Apple devices.'));
         const use = onDeviceStep() ? btn('Use this device', () => useDevice(), 'sg-primary', st.busy) : null;
         foot.replaceChildren(h('span', { class: 'sp' }, apple ? 'Serial and Find My from Portal' : ''),
@@ -353,7 +370,7 @@ AE.crystal({
         }
       }
 
-      if (prefill.imei) { input.value = D.fmt(D.digitsOf(prefill.imei).slice(0, 15)); setDigits(input.value); }
+      if (prefill.imei) { input.value = D.fmt(D.digitsOf(prefill.imei).slice(0, 16)); setDigits(input.value); }
       else draw();
       setTimeout(() => input.focus());
     }
