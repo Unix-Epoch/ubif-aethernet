@@ -50,17 +50,6 @@ AE.crystal({
     })(), loading = false, lastError = null;
 
     document.head.append(h('style', null, `
-      #${BADGE_ID} { display:inline-flex; align-items:center; gap:8px; height:32px; padding:0 14px; margin:0 8px 0 12px; border-radius:10000rem;
-        border:1px solid transparent; font:400 14px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; cursor:pointer; white-space:nowrap;
-        font-variant-numeric:tabular-nums; }
-      #${BADGE_ID} b { font-weight:700; }
-      #${BADGE_ID} .dot { width:8px; height:8px; border-radius:50%; background:currentColor; flex:none; }
-      #${BADGE_ID}.floating { position:fixed; left:16px; bottom:16px; z-index:2147483645; box-shadow:0 4px 14px rgba(12,14,17,.2); }
-      #${BADGE_ID}.good { background:var(--aui-status-success-soft,#c5ffc8); color:var(--aui-status-on-success-soft,#062011); }
-      #${BADGE_ID}.ok   { background:var(--aui-status-warning-soft,#fff0c0); color:var(--aui-status-on-warning-soft,#3a3000); }
-      #${BADGE_ID}.bad  { background:var(--aui-status-error-soft,#ffdad7);  color:var(--aui-status-on-error-soft,#410004); }
-      #${BADGE_ID}.none { background:transparent; border-color:var(--aui-outline,#c6c6ca); color:var(--aui-on-surface-soft,#5d5e61); }
-      #${BADGE_ID} .sg-spin { width:12px; height:12px; }
       #${PANEL_ID} { position:fixed; z-index:2147483646; width:460px; max-height:70vh; overflow:auto; padding:16px; font-size:14px; line-height:1.4; }
       #${PANEL_ID} table { width:100%; border-collapse:collapse; margin-top:10px; }
       #${PANEL_ID} td { padding:8px 4px; border-top:1px solid var(--aui-outline-soft,#eeedf1); vertical-align:top; }
@@ -138,30 +127,25 @@ AE.crystal({
     const levelColor = (pct) => ({ good: 'var(--aui-status-success,#136d31)', ok: 'var(--aui-on-surface,#1a1c1e)', bad: 'var(--aui-status-error,#b91a24)', none: 'inherit' }[level(pct)]);
     const fmtTime = (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
+    // The header icon (core's AE.headerIcon): the badge shows the rate, colored by its bands.
+    let rateIcon = null; // made on first use, so nothing is drawn on the login page
+    const makeIcon = () => AE.headerIcon({ id: 'cleaningRate', elId: BADGE_ID, icon: 'cleaningRate', order: 10, label: 'Cleanings', onClick: (e) => togglePanel(e) });
     function renderBadge() {
-      let b = document.getElementById(BADGE_ID);
-      if (!b) b = h('button', { id: BADGE_ID, type: 'button', class: 'sg', onclick: togglePanel });
-      // Sits left of "UBIF support" in the header; floats bottom-left if that's missing.
-      const anchor = AE.headerAnchor();
-      if (anchor && b.parentElement !== anchor.parentElement) { b.classList.remove('floating'); anchor.parentElement.insertBefore(b, anchor); }
-      else if (!anchor && !b.isConnected) { b.classList.add('floating'); document.body.appendChild(b); }
-      b.classList.remove('good', 'ok', 'bad', 'none');
-      b.classList.add(lastError && !last ? 'none' : level(last && last.pct));
-      const text = lastError && !last ? 'Cleanings · ???'
+      rateIcon = rateIcon || makeIcon();
+      const failed = lastError && !last;
+      const lvl = failed ? 'none' : level(last && last.pct);
+      const text = failed ? 'Cleanings · ???'
         : !last ? 'Cleanings'
         : last.pct == null ? 'Cleanings · make a WO first!'
-        : null;
-      const lead = loading ? '<span class="sg-spin"></span>' : '<span class="dot"></span>';
-      b.innerHTML = lead + (text ? esc(text) : 'Cleanings ' + last.linked + '/' + last.parents + ' · <b>' + last.pct + '%</b>');
-      // Narrow windows: if the full badge makes the header overflow (pushing
-      // the avatar off-screen), fall back to just the dot and percentage.
-      // Measured synchronously each render, so it adapts both ways without flicker.
-      const hdr = b.closest('header');
-      if (hdr && hdr.scrollWidth > hdr.clientWidth) b.innerHTML = lead + (text ? '' : '<b>' + last.pct + '%</b>');
-      b.title = (last && last.pct != null ? 'Cleanings ' + last.linked + '/' + last.parents + ' · ' + last.pct + '%' +
-        (last.pending ? ' (' + last.pending + ' pending)' : '') + ' — ' : '') +
-        (last ? 'updated ' + fmtTime(last.at) : 'Loading') + (lastError ? ' — last refresh failed: ' + lastError : '') +
-        ' · click for details';
+        : 'Cleanings ' + last.linked + '/' + last.parents + ' · ' + last.pct + '%';
+      rateIcon.update({
+        label: text,
+        severity: { good: 'green', ok: 'amber', bad: 'red', none: 'grey' }[lvl],
+        badge: failed ? '?' : !last ? '' : last.pct == null ? '–' : last.pct + '%',
+        busy: loading,
+        detail: (last && last.pct != null && last.pending ? last.pending + ' pending · ' : '') + (last ? 'updated ' + fmtTime(last.at) : 'Loading') +
+          (lastError ? ' · last refresh failed: ' + lastError : '') + ' · click for details',
+      });
     }
 
     // Chip for one cleaning. Pending ones link to the arrival and, with
@@ -193,9 +177,8 @@ AE.crystal({
     function renderPanel() {
       let p = document.getElementById(PANEL_ID);
       if (!p) { p = h('div', { id: PANEL_ID, class: 'sg sg-card' }); document.body.appendChild(p); }
-      const b = document.getElementById(BADGE_ID);
-      const r = b && b.getBoundingClientRect();
-      if (r && !b.classList.contains('floating')) { p.style.top = (r.bottom + 8) + 'px'; p.style.left = Math.max(8, Math.min(r.left, innerWidth - 476)) + 'px'; p.style.bottom = ''; }
+      const box = AE.headerIconBox('cleaningRate'), r = box && box.rect;
+      if (r && !box.floating) { p.style.top = (r.bottom + 8) + 'px'; p.style.left = Math.max(8, Math.min(r.left, innerWidth - 476)) + 'px'; p.style.bottom = ''; }
       else { p.style.left = '16px'; p.style.bottom = '60px'; p.style.top = ''; }
       if (!last || last.cached) { p.innerHTML = lastError && !last ? '<span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '<span class="sg-soft">Divining…</span>'; return; } // cached: numbers only, the list comes with the fresh count
 
@@ -473,11 +456,6 @@ AE.crystal({
 
     const onPortal = () => !/^\/login/.test(location.pathname);
     AE.every(1500, () => { if (onPortal()) renderBadge(); }); // SPA re-renders can drop the badge
-    AE.onDom(() => { // ...and puts it back in the same frame (2.23); only when it's missing or out of place
-      if (!onPortal()) return;
-      const a = AE.headerAnchor(), b = document.getElementById(BADGE_ID);
-      if (a ? b?.parentElement !== a.parentElement : !b?.isConnected) renderBadge(); // same group as Waymark's button, which sits right before the anchor
-    });
     setInterval(() => { if (onPortal() && !document.hidden) refresh(); }, REFRESH_MS);
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden && onPortal() && (!last || Date.now() - last.at > REFRESH_MS)) refresh();

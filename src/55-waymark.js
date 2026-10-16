@@ -451,13 +451,6 @@ AE.waymark = (() => {
   #sg-wm-pop li { padding:4px 0; border-top:1px solid var(--aui-outline-soft, #eeedf1); }
   #sg-wm-pop li:first-child { border-top:0; }
   #sg-wm-pop .when { color:var(--aui-on-surface-soft, #5d5e61); font-size:12px; }
-  #sg-wm-btn { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; margin-right:8px; padding:0; border:0; border-radius:9px;
-    background:none; cursor:pointer; flex:none; }
-  #sg-wm-btn:hover { background:var(--aui-neutral-soft, #f1f0f4); }
-  #sg-wm-btn .sg-aicon { width:26px; height:26px; }
-  #sg-wm-btn { position:relative; }
-  #sg-wm-btn .badge { position:absolute; top:-3px; right:-4px; min-width:18px; height:18px; padding:0 5px; border-radius:10000rem; box-sizing:border-box;
-    background:#d1344b; color:#fff; border:2px solid var(--aui-elevated-level-01, #fff); font:700 11px/14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; }
   #sg-wm-bubble { position:fixed; z-index:2147483646; width:300px; padding:14px 14px 12px; font-size:14px; line-height:1.45; animation:sg-in .25s ease-out;
     border-color:#d1344b; box-shadow:0 10px 30px rgba(12,14,17,.25); }
   #sg-wm-bubble .top { display:flex; gap:10px; align-items:flex-start; }
@@ -902,21 +895,18 @@ AE.crystal({
     AE.on('waymark-changed', () => renderList());
 
     // ---------------------------------------------------- header button + board
+    // The header icon (core's AE.headerIcon): badge = Auto-Waymarks due; red if any is overdue, amber if due today.
+    let wmIcon = null;
     function renderButton() {
-      const anchor = AE.headerAnchor();
-      let b = document.getElementById(BTN_ID);
-      if (!anchor) { b?.remove(); return; }
-      if (!b) b = h('button', { type: 'button', id: BTN_ID, class: 'sg', title: 'Waymark: work orders by tag', 'aria-label': 'Waymark board', html: AE.actionIcon('waymark', 26), onclick: (e) => { e.stopPropagation(); toggleBoard(); } });
-      if (b.parentElement !== anchor.parentElement || b.nextSibling !== anchor) anchor.parentElement.insertBefore(b, anchor);
-      // Badge: open Auto-Waymarks due today (or overdue).
-      const n = demoBadge != null ? demoBadge : W.dueMarks().length; // demoBadge: dev tools
-      let badge = b.querySelector('.badge');
-      if (!n) { badge?.remove(); b.title = 'Waymark: work orders by tag'; }
-      else {
-        if (!badge) { badge = h('span', { class: 'badge' }); b.append(badge); }
-        if (badge.textContent !== String(n)) badge.textContent = n > 99 ? '99+' : String(n);
-        b.title = 'Waymark: ' + n + ' Auto-Waymark' + (n === 1 ? '' : 's') + ' due';
-      }
+      if (!AE.headerAnchor()) { wmIcon?.remove(); wmIcon = null; return; }
+      wmIcon = wmIcon || AE.headerIcon({ id: 'waymark', elId: BTN_ID, icon: 'waymark', order: 20, headerOnly: true, label: 'Waymark', onClick: (e) => { e.stopPropagation(); toggleBoard(); } });
+      const due = demoBadge != null ? [] : W.dueMarks(); // demoBadge: dev tools
+      const n = demoBadge != null ? demoBadge : due.length;
+      const overdue = demoBadge != null ? n : due.filter(([, m]) => m.due < W.today()).length;
+      wmIcon.update(!n
+        ? { label: 'Waymark: work orders by tag', detail: '', badge: '', count: 0, severity: 'grey' }
+        : { label: n + ' Auto-Waymark' + (n === 1 ? '' : 's') + ' due', detail: (overdue ? overdue + ' overdue · ' : '') + 'click for the Waymark board',
+            badge: n > 99 ? '99+' : n, count: n, severity: overdue ? 'red' : 'amber' });
       placeBubble();
     }
 
@@ -926,13 +916,14 @@ AE.crystal({
     const MORNING_KEY = 'ae_wm_morning_shown';
     let demoBadge = null;
     function placeBubble() {
-      const bub = document.getElementById('sg-wm-bubble'), b = document.getElementById(BTN_ID);
-      if (!bub || !b) return;
-      const r = b.getBoundingClientRect();
+      const bub = document.getElementById('sg-wm-bubble'), box = AE.headerIconBox('waymark');
+      if (!bub || !box) return;
+      const r = box.rect;
       const left = Math.max(8, Math.min(r.left + r.width / 2 - bub.offsetWidth + 40, innerWidth - bub.offsetWidth - 8));
       bub.style.left = left + 'px'; bub.style.top = (r.bottom + 12) + 'px';
       bub.querySelector('.tail').style.left = (r.left + r.width / 2 - left - 7) + 'px';
     }
+    AE.on('header-icons-changed', placeBubble);
     async function morningNotice() {
       if (GM_getValue(MORNING_KEY, '') === W.today()) return;
       const role = await W.canEdit();
@@ -1083,11 +1074,7 @@ AE.crystal({
 
     AE.on('waymark-changed', () => { renderRow(); });
     W.load().catch(() => {});
-    // In the header the moment Portal draws it (2.23); the timer below also refreshes the badge.
-    AE.onDom(() => {
-      const a = AE.headerAnchor(), b = document.getElementById(BTN_ID);
-      if (a && !(b && b.nextSibling === a)) renderButton();
-    });
+    AE.onDom(() => { if (!wmIcon && AE.headerAnchor()) renderButton(); }); // in the header the moment Portal draws it (2.23)
     AE.onDom(() => { // the tag row, in the same frame as Portal's heading (2.23)
       const woId = currentWoId();
       if (!woId) return;

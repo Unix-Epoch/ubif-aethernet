@@ -963,6 +963,254 @@ const AE = (() => {
     return supportBtn;
   }
 
+  /*
+    Header icons. Every Aethernet item in Portal's top bar is one 34 px crystal icon with a small
+    count badge, registered here so the bar stays tidy as crystals are added:
+
+      const wm = AE.headerIcon({ id: 'waymark', icon: 'waymark', label: '3 Auto-Waymarks due',
+                                 badge: 3, count: 3, severity: 'amber', onClick: (e) => openBoard() });
+      wm.update({ badge: 0, count: 0, severity: 'grey' });   // later; a no-op when nothing changed
+
+      id        unique name; elId (optional) = the button's DOM id.
+      icon      a crystal's action icon id (AE.actionIcon); falls back to the Aethernet mark.
+      label     full text: the hover/focus pill, aria-label and the AeN menu row.
+      detail    optional second line in the hover pill.
+      badge     text on the corner badge ('' = none, e.g. 3 or '62%'); count = the actionable number
+                that adds up in the combined AeN badge (default 0: a color only).
+      severity  'red' (needs action) | 'amber' (due / below target) | 'green' | 'grey' | 'purple' (update).
+      busy      true while loading (the icon pulses).  headerOnly: not shown when Portal's header is missing.
+      order     left-to-right position (default 100).
+    Hover or keyboard focus shows the label as a floating pill (it never changes the bar's width). When the
+    bar has no room, measured rather than by breakpoint, the icons fold into one AeN icon with a menu:
+    always if the header overflows, and while Portal's Search is focused if the Search field would crowd them.
+    Returns { update(patch), remove(), el }.
+  */
+  const HDR_RANK = { red: 4, amber: 3, purple: 2, green: 1, grey: 0 };
+  const headerIcons = new Map();
+  let hdrBox = null, hdrAen = null, hdrMenu = null, hdrTip = null, hdrTipFor = null;
+  let hdrHold = false, hdrCollapsed = false, hdrSearchOn = false, hdrQueued = false, hdrInit = false, hdrRO = null, hdrROEl = null;
+  const HDR_CSS = `
+  #ae-hdr-icons { display:inline-flex; align-items:center; gap:4px; margin:0 8px 0 12px; flex:none; }
+  #ae-hdr-icons.floating { position:fixed; left:16px; bottom:16px; z-index:2147483645; margin:0; padding:4px; border-radius:10000rem;
+    background:var(--aui-surface, #fff); border:1px solid var(--aui-outline, #c6c6ca); box-shadow:0 4px 14px rgba(12,14,17,.2); }
+  .ae-hi { position:relative; display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; padding:0; border:0; border-radius:10000rem;
+    background:none; cursor:pointer; flex:none; color:var(--aui-on-surface, #1a1c1e); }
+  .ae-hi:hover, .ae-hi.open { background:var(--aui-neutral-soft, #f1f0f4); }
+  .ae-hi:focus-visible { outline:2px solid var(--aui-primary, #8223d2); outline-offset:1px; }
+  .ae-hi .sg-aicon { width:26px; height:26px; border-radius:6px; }
+  .ae-hi.busy .sg-aicon { animation:ae-hi-pulse 1.1s ease-in-out infinite; }
+  @keyframes ae-hi-pulse { 50% { opacity:.45; } }
+  .ae-hi .n { position:absolute; top:-3px; right:-6px; min-width:18px; height:18px; padding:0 5px; border-radius:10000rem; box-sizing:border-box;
+    border:2px solid var(--aui-elevated-level-01, var(--aui-surface, #fff)); font:700 11px/14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    text-align:center; white-space:nowrap; font-variant-numeric:tabular-nums; pointer-events:none; background:#6b6c70; color:#fff; }
+  .ae-hi .n:empty { display:none; }
+  .ae-hi .n.dot { min-width:0; width:12px; height:12px; padding:0; top:-1px; right:-2px; display:block; }
+  .ae-hi.sev-red .n { background:var(--aui-status-error, #d1344b); color:#fff; }
+  .ae-hi.sev-amber .n { background:var(--aui-status-warning, #e0a23a); color:#2a2000; }
+  .ae-hi.sev-green .n { background:var(--aui-status-success, #136d31); color:#fff; }
+  .ae-hi.sev-purple .n { background:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); }
+  .ae-hi.sev-grey .n { background:var(--aui-on-surface-soft, #6b6c70); color:var(--aui-surface, #fff); }
+  .ae-aen { color:var(--aui-primary, #8223d2); }
+  #ae-hdr-icons.collapsed > .ae-hi:not(.ae-aen) { display:none; }
+  #ae-hdr-icons:not(.collapsed) > .ae-aen { display:none; }
+  #ae-hdr-tip { position:fixed; z-index:2147483647; display:none; max-width:min(320px, calc(100vw - 16px)); padding:7px 14px; border-radius:10000rem; pointer-events:none;
+    font:400 14px/1.25 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; white-space:nowrap; box-shadow:0 4px 14px rgba(12,14,17,.22);
+    background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); border:1px solid var(--aui-outline, #c6c6ca); }
+  #ae-hdr-tip.sev-red { background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); border-color:transparent; }
+  #ae-hdr-tip.sev-amber { background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); border-color:transparent; }
+  #ae-hdr-tip.sev-green { background:var(--aui-status-success-soft, #c5ffc8); color:var(--aui-status-on-success-soft, #062011); border-color:transparent; }
+  #ae-hdr-tip.sev-purple { background:var(--aui-primary-soft, #faecff); color:var(--aui-on-surface, #1a1c1e); border-color:var(--aui-primary, #8223d2); }
+  #ae-hdr-tip small { display:block; font-size:12px; opacity:.8; margin-top:1px; }
+  @media (prefers-reduced-motion: no-preference) { #ae-hdr-tip.on { animation:sg-in .12s ease-out; } }
+  #ae-hdr-menu { position:fixed; z-index:2147483646; display:none; min-width:240px; max-width:calc(100vw - 16px); padding:6px; }
+  #ae-hdr-menu.on { display:block; }
+  #ae-hdr-menu button { display:flex; align-items:center; gap:10px; width:100%; min-height:44px; padding:5px 8px; border:0; border-radius:10px; background:none;
+    color:inherit; font:400 14px/1.25 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:left; cursor:pointer; }
+  #ae-hdr-menu button:hover, #ae-hdr-menu button:focus-visible { background:var(--aui-neutral-soft, #f1f0f4); outline:none; }
+  #ae-hdr-menu .sg-aicon { width:26px; height:26px; border-radius:6px; flex:none; }
+  #ae-hdr-menu .t { flex:1; }
+  #ae-hdr-menu .b { flex:none; min-width:22px; padding:2px 8px; border-radius:10000rem; font:700 12px/16px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; }
+  #ae-hdr-menu .b.sev-red { background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); }
+  #ae-hdr-menu .b.sev-amber { background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
+  #ae-hdr-menu .b.sev-green { background:var(--aui-status-success-soft, #c5ffc8); color:var(--aui-status-on-success-soft, #062011); }
+  #ae-hdr-menu .b.sev-purple { background:var(--aui-primary-soft, #faecff); color:var(--aui-primary, #8223d2); }
+  #ae-hdr-menu .b.sev-grey { background:var(--aui-neutral-soft, #f1f0f4); color:var(--aui-on-surface-soft, #5d5e61); }
+  `;
+  const HDR_SEARCH_OPEN = 320; // px Search is given to open up in when measuring whether the icons fit
+  const hdrSearchBox = () => document.querySelector('.components-header-searchbox');
+  const hdrVisible = () => [...headerIcons.values()].filter((d) => headerAnchor() || !d.headerOnly).sort((a, b) => a.order - b.order);
+
+  function hdrPaintIcon(d) {
+    const sev = HDR_RANK[d.severity] != null ? d.severity : 'grey';
+    const sig = [sev, d.badge, d.label, d.busy ? 1 : 0].join('\u0001');
+    if (d.sig === sig) return;
+    d.sig = sig;
+    d.el.className = 'sg ae-hi sev-' + sev + (d.busy ? ' busy' : '') + (d.el.classList.contains('open') ? ' open' : '');
+    d.el.setAttribute('aria-label', d.label);
+    d.el.querySelector('.n').textContent = d.badge == null ? '' : String(d.badge);
+    if (hdrTipFor === d && hdrTip && hdrTip.style.display === 'block') hdrShowTip(d, d.el);
+  }
+  function hdrSummary(list) {
+    let worst = 'grey', sum = 0;
+    for (const d of list) { if ((HDR_RANK[d.severity] || 0) > HDR_RANK[worst]) worst = d.severity; sum += Number(d.count) || 0; }
+    return { worst, sum };
+  }
+  function hdrPaintAen(list) {
+    const { worst, sum } = hdrSummary(list);
+    const dot = !sum && HDR_RANK[worst] >= 2; // amber/red/purple with no number: just a colored dot
+    const label = 'Aethernet' + (sum ? ': ' + sum + ' to look at' : worst === 'amber' || worst === 'red' ? ': needs a look' : '');
+    const n = hdrAen.querySelector('.n');
+    hdrAen.className = 'sg ae-hi ae-aen sev-' + worst + (hdrAen.classList.contains('open') ? ' open' : '');
+    n.className = 'n' + (dot ? ' dot' : '');
+    n.textContent = sum ? (sum > 99 ? '99+' : String(sum)) : '';
+    hdrAen.setAttribute('aria-label', label);
+    hdrAen.dataset.label = label; hdrAen.dataset.sev = worst;
+  }
+
+  function hdrShowTip(d, el) {
+    if (!hdrTip) { hdrTip = document.createElement('div'); hdrTip.id = 'ae-hdr-tip'; hdrTip.className = 'sg'; hdrTip.setAttribute('role', 'tooltip'); document.body.append(hdrTip); }
+    hdrTipFor = d;
+    const label = d.label, detail = d.detail;
+    hdrTip.className = 'sg on sev-' + (d.severity || 'grey');
+    hdrTip.replaceChildren(label, ...(detail ? [Object.assign(document.createElement('small'), { textContent: detail })] : []));
+    hdrTip.style.display = 'block';
+    const r = el.getBoundingClientRect(), tw = hdrTip.offsetWidth, th = hdrTip.offsetHeight;
+    const above = r.top > innerHeight / 2;
+    hdrTip.style.top = Math.round(above ? r.top - th - 8 : r.bottom + 8) + 'px';
+    hdrTip.style.left = Math.round(Math.max(8, Math.min(r.left + r.width / 2 - tw / 2, innerWidth - tw - 8))) + 'px';
+  }
+  function hdrHideTip() { hdrTipFor = null; if (hdrTip) hdrTip.style.display = 'none'; }
+  function hdrWire(el, get) {
+    el.onmouseenter = () => hdrShowTip(get(), el);
+    el.onmouseleave = hdrHideTip;
+    el.onfocus = () => { try { if (!el.matches(':focus-visible')) return; } catch (_) { /* old engine: show anyway */ } hdrShowTip(get(), el); };
+    el.onblur = hdrHideTip;
+  }
+
+  function hdrCloseMenu() { hdrHold = false; hdrQueue(); if (hdrMenu) hdrMenu.classList.remove('on'); hdrAen?.classList.remove('open'); hdrAen?.setAttribute('aria-expanded', 'false'); }
+  function hdrOpenMenu() {
+    if (!hdrMenu) {
+      hdrMenu = document.createElement('div'); hdrMenu.id = 'ae-hdr-menu'; hdrMenu.className = 'sg sg-card'; hdrMenu.setAttribute('role', 'menu');
+      document.body.append(hdrMenu);
+    }
+    hdrHideTip();
+    const rows = hdrVisible().map((d) => {
+      const b = h('button', { type: 'button', role: 'menuitem', onclick: (e) => { hdrCloseMenu(); try { d.onClick(e); } catch (err) { noteError('header-icon', err); } } },
+        h('span', { html: d.icon && ACTION_ICONS[d.icon] ? actionIcon(d.icon, 26) : icon('aetheryte', 26), style: 'line-height:0;flex:none' }),
+        h('span', { class: 't' }, d.label));
+      if (d.badge !== '' && d.badge != null) b.append(h('span', { class: 'b sev-' + d.severity }, String(d.badge)));
+      return b;
+    });
+    hdrMenu.replaceChildren(...rows);
+    hdrMenu.classList.add('on'); hdrAen.classList.add('open'); hdrAen.setAttribute('aria-expanded', 'true');
+    const r = hdrAen.getBoundingClientRect();
+    hdrMenu.style.top = Math.round(r.bottom + 8) + 'px';
+    hdrMenu.style.left = Math.round(Math.max(8, Math.min(r.left, innerWidth - hdrMenu.offsetWidth - 8))) + 'px';
+    rows[0]?.focus();
+  }
+
+  function hdrRender() {
+    hdrQueued = false;
+    if (!document.body) return;
+    const list = hdrVisible();
+    if (!list.length) { hdrBox?.remove(); hdrCollapsed = false; return; }
+    ensureCss();
+    if (!document.getElementById('ae-hdr-css')) { const s = document.createElement('style'); s.id = 'ae-hdr-css'; s.textContent = HDR_CSS; addEarly(s); }
+    if (!hdrBox) {
+      hdrBox = h('div', { id: 'ae-hdr-icons', class: 'sg', role: 'group', 'aria-label': 'Aethernet' });
+      hdrAen = h('button', { type: 'button', class: 'sg ae-hi ae-aen', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
+        html: icon('aetheryte', 26) + '<span class="n"></span>', onclick: (e) => { e.stopPropagation(); if (hdrMenu && hdrMenu.classList.contains('on')) hdrCloseMenu(); else { hdrHold = true; hdrOpenMenu(); } } });
+      hdrAen.onmousedown = () => { hdrHold = true; };
+      hdrWire(hdrAen, () => ({ label: hdrAen.dataset.label || 'Aethernet', severity: hdrAen.dataset.sev || 'grey' }));
+      hdrBox.append(hdrAen);
+    }
+    const anchor = headerAnchor();
+    if (anchor) {
+      hdrBox.classList.remove('floating');
+      if (hdrBox.parentElement !== anchor.parentElement || hdrBox.nextSibling !== anchor) anchor.parentElement.insertBefore(hdrBox, anchor);
+    } else { hdrBox.classList.add('floating'); if (hdrBox.parentElement !== document.body) document.body.append(hdrBox); }
+    list.forEach((d, i) => { hdrPaintIcon(d); if (hdrBox.children[i] !== d.el) hdrBox.insertBefore(d.el, hdrBox.children[i] || hdrAen); });
+    for (const el of [...hdrBox.children]) if (el !== hdrAen && !list.some((d) => d.el === el)) el.remove();
+    hdrPaintAen(list);
+
+    // Room: measured, not a breakpoint. Lay the icons out, then check the header row.
+    hdrBox.classList.remove('collapsed');
+    let collapse = false;
+    const hdr = anchor && anchor.closest('.components-header');
+    if (hdrHold && hdrCollapsed) collapse = true; // being clicked or open: stay put even though Search just lost focus
+    else if (hdr && list.length > 1) {
+      collapse = hdr.scrollWidth > hdr.clientWidth + 1; // the row overflows, with or without Search
+      if (!collapse && hdrSearchOn) { // Search is open: is there room for it to open up (about HDR_SEARCH_OPEN px) beside the icons?
+        const sb = hdrSearchBox(), field = sb && (sb.querySelector('.search-field') || sb);
+        if (field) {
+          collapse = field.getBoundingClientRect().right + 4 > hdrBox.getBoundingClientRect().left; // it already reaches them
+          if (!collapse) { // would the row overflow if Search grew to its open width?
+            const grow = Math.max(0, HDR_SEARCH_OPEN - sb.getBoundingClientRect().width);
+            hdrBox.style.marginRight = (8 + grow) + 'px';
+            collapse = hdr.scrollWidth > hdr.clientWidth + 1;
+            hdrBox.style.marginRight = '';
+          }
+        }
+      }
+    }
+    hdrBox.classList.toggle('collapsed', collapse);
+    if (collapse !== hdrCollapsed) { hdrCollapsed = collapse; hdrHideTip(); if (!collapse) hdrCloseMenu(); emit('header-icons-changed'); }
+    if (hdr && hdr !== hdrROEl && typeof ResizeObserver !== 'undefined') { hdrRO?.disconnect(); hdrROEl = hdr; hdrRO = new ResizeObserver(hdrQueue); hdrRO.observe(hdr); }
+  }
+  function hdrQueue() { if (!hdrQueued) { hdrQueued = true; queueMicrotask(hdrRender); } }
+  function hdrSetup() {
+    if (hdrInit) return;
+    hdrInit = true;
+    onDom(() => { const a = headerAnchor(); if (hdrBox && (a ? hdrBox.nextSibling !== a : !hdrBox.isConnected)) hdrQueue(); }); // Portal redrew its header
+    addEventListener('resize', hdrQueue);
+    const search = () => { const on = !!(hdrSearchBox() && hdrSearchBox().contains(document.activeElement)); if (on !== hdrSearchOn) { hdrSearchOn = on; hdrQueue(); } };
+    document.addEventListener('focusin', search);
+    document.addEventListener('focusout', () => setTimeout(search, 0));
+    document.addEventListener('click', (e) => { if (hdrMenu && hdrMenu.classList.contains('on') && !e.composedPath().includes(hdrMenu) && !e.composedPath().includes(hdrAen)) hdrCloseMenu(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      hdrHideTip();
+      if (hdrMenu && hdrMenu.classList.contains('on')) { hdrCloseMenu(); hdrAen.focus(); }
+    });
+    document.addEventListener('mouseup', () => setTimeout(() => { if (hdrHold && !(hdrMenu && hdrMenu.classList.contains('on'))) { hdrHold = false; hdrQueue(); } }, 0));
+    addEventListener('scroll', hdrHideTip, true);
+  }
+  function headerIcon(opts) {
+    hdrSetup();
+    let d = headerIcons.get(opts.id);
+    if (!d) {
+      d = { id: opts.id, order: 100, severity: 'grey', badge: '', count: 0, label: opts.id, detail: '', busy: false, headerOnly: false, onClick() {}, sig: null };
+      d.el = h('button', { type: 'button', id: opts.elId || 'ae-hi-' + opts.id, class: 'sg ae-hi',
+        html: (opts.icon && ACTION_ICONS[opts.icon] ? actionIcon(opts.icon, 26) : icon('aetheryte', 26)) + '<span class="n"></span>',
+        onclick: (e) => { hdrHideTip(); try { d.onClick(e); } catch (err) { noteError('header-icon', err); } } });
+      d.icon = opts.icon;
+      hdrWire(d.el, () => d);
+      headerIcons.set(opts.id, d);
+    }
+    const handle = {
+      update(patch) {
+        let changed = false;
+        for (const k of ['label', 'detail', 'badge', 'count', 'severity', 'busy', 'order', 'headerOnly', 'onClick']) {
+          if (k in patch && d[k] !== patch[k]) { d[k] = patch[k]; changed = true; }
+        }
+        if (changed) hdrQueue();
+        return handle;
+      },
+      remove() { headerIcons.delete(opts.id); d.el.remove(); hdrQueue(); },
+      get el() { return d.el; },
+    };
+    handle.update(opts);
+    hdrQueue();
+    return handle;
+  }
+  // Where an icon is on screen right now (the AeN icon while the icons are folded), for panels that hang off it.
+  function headerIconBox(id) {
+    const d = headerIcons.get(id);
+    const el = d && (hdrCollapsed ? hdrAen : d.el);
+    if (!el || !el.isConnected || !el.offsetParent && getComputedStyle(el).position !== 'fixed') return null;
+    return { rect: el.getBoundingClientRect(), floating: !!hdrBox && hdrBox.classList.contains('floating') };
+  }
+
   // The "Work order #123" heading on a WO page (Esuna's pill and Waymark's tags go in its row).
   // Kept while it's in the page; the scan matches text first and checks visibility only on matches.
   let woHead = null;
@@ -1011,7 +1259,7 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, woHeading, textEl, findButton,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, textEl, findButton,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every,
     api, unwrap, Stopped, portal, sameStore, assertSameStore, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
