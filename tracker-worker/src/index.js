@@ -812,6 +812,33 @@ export async function trim(env, { keepDays = KEEP_DAYS, chunk = 500, rounds = 20
   return out;
 }
 
+// Oct 16, 2026: the local Portal sandbox (sandbox/) once reached this Worker and wrote fake data as store 914.
+// Anything that identifies the sandbox is refused before any write: its fake user (id 990001, "Sandbox ..."),
+// "Sandbox Store", example.invalid emails, and its store number (999999). Real staff never match.
+async function sandboxGuard(req, url) {
+  if (req.method === 'OPTIONS') return null;
+  const m = url.pathname.match(/^\/v1\/(\d{1,6})\//);
+  const isWrite = req.method !== 'GET' || /\/access$/.test(url.pathname);
+  if (!isWrite) return null;
+  const hit = () => fail(403, 'sandbox data');
+  if (m && m[1] === '999999') return hit();
+  const sb = (v, p) => typeof v === 'string' && v.trim().toLowerCase().startsWith(p);
+  const bad = (k, v) => (/^(byId|by_id|userId|user_id)$/.test(k) && Number(v) === 990001)
+    || (/^(by|by_name|completedBy|completed_by|user)$/.test(k) && sb(v, 'sandbox '))
+    || (/^(storeName|store_name|name)$/.test(k) && sb(v, 'sandbox store'))
+    || (/email/i.test(k) && typeof v === 'string' && v.trim().toLowerCase().endsWith('@example.invalid'));
+  for (const [k, v] of url.searchParams) if (bad(k, v)) return hit();
+  if (req.method === 'GET') return null;
+  let b = null;
+  try { b = JSON.parse(await req.clone().text()); } catch (_) { return null; }
+  const walk = (x, d) => {
+    if (d > 6 || !x || typeof x !== 'object') return false;
+    if (Array.isArray(x)) return x.some((y) => walk(y, d + 1));
+    return Object.keys(x).some((k) => bad(k, x[k]) || walk(x[k], d + 1));
+  };
+  return walk(b, 0) ? hit() : null;
+}
+
 // ------------------------------------------------------------------ entry
 export default {
   async fetch(req, env) {
@@ -820,6 +847,8 @@ export default {
     if (env.LIMITER) { const { success } = await env.LIMITER.limit({ key: req.headers.get('cf-connecting-ip') || 'x' }); if (!success) return fail(429, 'slow down'); }
     if (!env.APP_KEY || req.headers.get('x-aethernet-key') !== env.APP_KEY) return fail(403, 'app key required');
     try {
+      const sg = await sandboxGuard(req, url);
+      if (sg) return sg;
       if (url.pathname === '/v1/tracker/master' && req.method === 'GET') {
         const r = await env.TR.prepare('SELECT public_jwk FROM master_key WHERE id = 1').first();
         return r ? json({ publicJwk: JSON.parse(r.public_jwk) }) : fail(404, 'tracker not set up');

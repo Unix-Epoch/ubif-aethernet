@@ -339,6 +339,23 @@ ok(await admin('owner@x.com', 'POST', '/agents/' + agId + '/remove'), 'remove');
 assert.equal((await acall('/v1/agents/me', bearer(agId, agTok))).status, 401, 'removed');
 assert.equal((await env.TR.prepare('SELECT COUNT(*) AS n FROM agent_keys').first()).n, 0);
 
+// --- sandbox guard (Oct 16, 2026): the local Portal sandbox's fake identity is refused before any write
+const cnt = async () => [(await env.TR.prepare('SELECT COUNT(*) AS n FROM workorders').first()).n, (await env.TR.prepare('SELECT COUNT(*) AS n FROM sales').first()).n, (await env.TR.prepare('SELECT COUNT(*) AS n FROM scans').first()).n];
+const before = await cnt();
+const sbRows = [{ wo: 700000001, statusId: 2, status: 'Work in progress', programId: 1, program: 'OOW', updatedAt: '2026-10-12T10:00:00Z', createdAt: '2026-10-10T10:00:00Z' }];
+for (const [path, b] of [
+  ['/v1/914/tracker/scan', { rows: sbRows, storeName: 'Sandbox Store', by: 'Tech A' }],
+  ['/v1/914/tracker/scan', { rows: sbRows, storeName: 'Newport News', by: 'Sandbox Tech' }],
+  ['/v1/914/tracker/scan', { rows: sbRows, by: 'real', byId: 990001 }],
+  ['/v1/914/tracker/sales', { day: '2026-10-16', rows: [{ saleId: 1, wo: 700000001, total: 10, completedBy: 'Sandbox Lead' }] }],
+  ['/v1/914/tracker/sales', { day: '2026-10-16', rows: [{ saleId: 1, wo: 5001, total: 10, completed_by: 'sandbox tech' }] }],
+  ['/v1/914/tracker/wo/700000001', { plain: { workorder: { storeName: 'Sandbox Store' } }, hash: 'x' }],
+  ['/v1/914/tracker/wo/700000001', { plain: { workorder: { customer: { email: 'a.b@example.invalid' } } }, hash: 'x' }],
+  ['/v1/999999/tracker/scan', { rows: [], storeName: 'Anything' }],
+]) { const r = await call('POST', path, b); assert.equal(r.status, 403, path); assert.equal(r.j.error, 'sandbox data'); }
+assert.deepEqual(await cnt(), before, 'nothing written by sandbox requests');
+ok(await call('POST', '/v1/914/tracker/scan', { rows, storeName: 'Newport News', by: 'Tech A' }), 'real staff still scan');
+
 // --- retention: nothing trimmed without cold storage; with TRIM_WITHOUT_ARCHIVE the latest snapshot per WO stays
 await env.TR.prepare("UPDATE snapshots SET fetched_at = '2026-01-01T00:00:00Z'").run();
 await env.TR.prepare("UPDATE changes SET changed_at = '2026-01-01T00:00:00Z'").run();
