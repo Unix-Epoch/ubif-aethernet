@@ -187,6 +187,51 @@ def arrival_view(a):
             'csuCartId': None, 'csuSalesOrderId': None, 'partnerJobDetails': {'serviceJobId': a['serviceJobId']}}
 
 
+# ------------------------------------------------------------------ Decipher's fakes
+DEVICE_MODELS = [
+    {'id': 1573, 'name': 'iPhone 15 Pro', 'mfr': 'Apple', 'colors': ['Natural Titanium', 'Black Titanium', 'Blue Titanium', 'White Titanium']},
+    {'id': 1571, 'name': 'iPhone 15', 'mfr': 'Apple', 'colors': ['Black', 'Blue', 'Green', 'Pink', 'Yellow']},
+    {'id': 1700, 'name': 'Samsung Galaxy S24 Ultra', 'mfr': 'Samsung', 'colors': ['Titanium Black', 'Titanium Gray', 'Titanium Violet']},
+    {'id': 1801, 'name': 'Motorola Moto G 5G (2025)', 'mfr': 'Motorola', 'colors': ['Slate Grey', 'Sage Green']},
+    {'id': 1802, 'name': 'Motorola Moto G Power 5G (2025)', 'mfr': 'Motorola', 'colors': ['Slate Grey']},
+    {'id': 1803, 'name': 'Motorola Moto G Stylus 5G (2025)', 'mfr': 'Motorola', 'colors': []},
+]
+# TAC -> {(model id, color): [model name, manufacturer, count]}; made-up TACs, in memory only (a restart resets them)
+TACS = {
+    '35684192': {(1573, 'Natural Titanium'): ['iPhone 15 Pro', 'Apple', 12], (1573, 'Black Titanium'): ['iPhone 15 Pro', 'Apple', 7], (1573, 'Blue Titanium'): ['iPhone 15 Pro', 'Apple', 3],
+                 (1573, 'White Titanium'): ['iPhone 15 Pro', 'Apple', 1]},
+    '35092741': {(1700, 'Titanium Black'): ['Samsung Galaxy S24 Ultra', 'Samsung', 6], (1700, 'Titanium Gray'): ['Samsung Galaxy S24 Ultra', 'Samsung', 3]},
+}
+# stands in for the Osmocom import (the Worker's osmocom_tac table)
+OSMOCOM = {'35926618': {'brand': 'Motorola', 'model': 'moto g 5G (2025)'}}
+TAC_STORES = {'35684192': {914, 915}, '35092741': {914}}
+
+
+def tac_route(method, tac, body):
+    if method == 'GET' and tac:
+        rows = TACS.get(tac)
+        if not rows:
+            return 200, {'tac': tac, 'known': False, 'suggestion': OSMOCOM.get(tac)}
+        models = {}
+        for (mid, color), (name, mfr, n) in rows.items():
+            e = models.setdefault(mid, {'deviceModelId': mid, 'modelName': name, 'manufacturer': mfr, 'count': 0})
+            e['count'] += n
+        ranked = sorted(models.values(), key=lambda x: -x['count'])
+        top = ranked[0]['deviceModelId']
+        colors = sorted([{'color': c, 'count': n} for (mid, c), (_, _, n) in rows.items() if mid == top and c], key=lambda x: -x['count'])
+        return 200, {'tac': tac, 'known': True, 'models': ranked, 'colors': colors, 'workOrders': sum(x['count'] for x in ranked), 'stores': len(TAC_STORES.get(tac, ())) or 1}
+    if method == 'POST':
+        for it in (body.get('items') or [body]):
+            t = str(it.get('tac') or '')
+            if not re.fullmatch(r'\d{8}', t) or not it.get('deviceModelId') or not it.get('modelName'):
+                return 400, {'message': 'tac, deviceModelId and modelName required'}
+            e = TACS.setdefault(t, {}).setdefault((int(it['deviceModelId']), it.get('color') or ''), [it['modelName'], it.get('manufacturer') or '', 0])
+            e[2] += 1
+            TAC_STORES.setdefault(t, set()).add(STORE_ID)
+        return 200, {'ok': True}
+    return 404, {'message': 'sandbox: not implemented'}
+
+
 # ------------------------------------------------------------------ routes
 def fake_punches(frm, to):
     """A week of made-up punches (no real people): 914 and 326, one worker at both, a long day, a missing clock-out."""
@@ -487,6 +532,30 @@ def route(method, path, body):
         w['csuSalesOrderId'] = so
         w['updatedAt'] = now()
         return 200, {'salesOrder': {'salesId': so}}
+
+    # ---- Decipher: Portal's device-model search and Find My lookup, plus a stand-in for Aethernet's TAC table (the Worker)
+    if p == 'device-models' and method == 'GET':
+        words = (q.get('searchTerm') or '').lower().split()
+        hits = [m for m in DEVICE_MODELS if words and all(w in m['name'].lower() for w in words)]
+        return 200, [{'id': m['id'], 'name': m['name']} for m in hits[:20]]
+    m = re.fullmatch(r'device-models/(\d+)', p)
+    if m:
+        dm = next((x for x in DEVICE_MODELS if x['id'] == int(m.group(1))), None)
+        if not dm:
+            return 404, {'message': 'Device model not found'}
+        return 200, {'deviceModelId': dm['id'], 'modelNumber': dm['name'].split(' ', 1)[1] if dm['mfr'] != 'Apple' else dm['name'], 'DeviceManufacturer': {'name': dm['mfr']},
+                     'deviceCatalog': {'deviceCatalogId': dm['id'], 'name': dm['name']},
+                     'options': [{'name': 'Color', 'deviceCatalogOptionTypeId': 1, 'deviceCatalogOptions': dm['colors']}] if dm['colors'] else []}
+    if p == 'workorder/check-fmip-status' and method == 'GET':
+        imei = q.get('imei') or ''
+        if not re.fullmatch(r'\d{15}', imei):
+            return 400, {'message': 'imei required'}
+        if imei.startswith('99'):  # test: Portal's Find My lookup failing
+            return 500, {'message': 'sandbox: lookup failed'}
+        return 200, {'fmipLockStatusServicesResponse': {'fmipLockStatusDevice': {'meid': imei[:14], 'serial': 'F7KQ2MXN4P', 'isLocked': imei[8:10] == '55', 'imei': imei, 'isLost': False}}}
+    m = re.fullmatch(r'sandbox-tac(?:/(\d{8}))?', p)
+    if m:
+        return tac_route(method, m.group(1), body)
 
     # ---- harmless empties for the dashboard and header
     if p in ('store-metrics/overview', 'store-metrics/reporting'):  # fake KPI tiles (Dashboard + Reports)

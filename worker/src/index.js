@@ -30,6 +30,8 @@
     GET  /v1/:store/checkins/:id                                 one saved check-in, contents included
     POST /v1/:store/checkins            { id?, arrivalId?, woId?, step, label, data, by, byId }   save (new id, or update `id`)
     POST /v1/:store/checkins/:id/remove                          finished or discarded: deleted
+    GET  /v1/:store/tac/:tac                                     Decipher: what a TAC (an IMEI's first 8 digits) is → { known, models, colors, workOrders, stores }
+    POST /v1/:store/tac                 { tac, deviceModelId, modelName, manufacturer, color }  or { items: [up to 50 of those] }   record one
     GET  /v1/:store/sheets/:kind                                 Provoke: the store's synced sheet (leads | prices) → { data, syncedAt }
   Sheet sync (x-aethernet-sheets = the SHEETS_KEY secret; only Garrett's Mac job has it):
     POST /v1/sheets/:store/:kind        { data }                 replace that store's sheet (leads: canned texts; prices: Price sheet tabs)
@@ -91,6 +93,14 @@ const LINK_DAYS = 120;
 // Return: saved incomplete check-ins (customer details and passcode included) are kept 7 days at most.
 const CHECKIN_DAYS = 7, CHECKIN_ID_RE = /^[A-HJ-NP-Z2-9]{6}$/, CHECKIN_MAX = 14000;
 const newCheckinId = () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', b = crypto.getRandomValues(new Uint8Array(6)); return [...b].map((x) => a[x % a.length]).join(''); };
+// Decipher: TAC → model. Model-level facts only; a full IMEI, serial or customer detail never reaches this Worker.
+const TAC_RE = /^\d{8}$/, TAC_BATCH = 50;
+// The Osmocom TAC database's guess ({ brand, model }) for a TAC no store has recorded: a one-time import into its own table
+// (import/osmocom.mjs), never mixed into tac_models. null when it has nothing.
+async function tacSuggest(env, tac) {
+  const r = await env.DB.prepare('SELECT brand, model FROM osmocom_tac WHERE tac = ?').bind(tac).first().catch(() => null);
+  return r ? { brand: r.brand || '', model: r.model } : null;
+}
 const MARK_KINDS = ['rfp', 'callback'], RULE_STATES = ['off', 'staged', 'live'];
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
 
@@ -276,7 +286,8 @@ async function route(req, env) {
   }
   const cm = url.pathname.match(/^\/v1\/(\d{1,6})\/checkins\/([A-Za-z0-9]{6})(\/remove)?$/);
   const ci = cm ? { id: cm[2].toUpperCase(), remove: !!cm[3] } : null;
-  const m = cm ? [null, cm[1], 'checkin'] : url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|open|auto|feedback|usage|access|links|links\/remove|checkins)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark|end))?$/);
+  const tm = url.pathname.match(/^\/v1\/(\d{1,6})\/tac(?:\/(\d{8}))?$/);
+  const m = tm ? [null, tm[1], 'tac'] : cm ? [null, cm[1], 'checkin'] : url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|open|auto|feedback|usage|access|links|links\/remove|checkins)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark|end))?$/);
   if (!m) return fail(404, 'not found');
   const store = Number(m[1]);
   const wo = m[3] ? Number(m[3]) : null;
@@ -291,6 +302,8 @@ async function route(req, env) {
     return json(ok ? { allowed: true, config: await readConfig(env) } : { allowed: false });
   }
   if (!(await allowed(env, store))) return fail(403, 'this store does not have access to Aethernet');
+
+  if (what === 'tac') return tacs(req, env, store, tm[2]);
 
   // Return: incomplete check-ins.
   if (what === 'checkins' || what === 'checkin') return checkins(req, env, url, store, ci);
@@ -513,6 +526,37 @@ async function checkins(req, env, url, store, ci) {
       if (!id) return fail(500, 'could not make a code');
     }
     return json({ ok: true, id, at: t });
+  }
+  return fail(405, 'method not allowed');
+}
+
+// Decipher: GET a TAC's models (the most common first; its colors are the base model's), POST to record what a TAC is.
+async function tacs(req, env, store, tac) {
+  if (req.method === 'GET' && tac) {
+    const [models, colors, seen] = await env.DB.batch([
+      env.DB.prepare('SELECT device_model_id AS deviceModelId, MAX(model_name) AS modelName, MAX(manufacturer) AS manufacturer, SUM(count) AS count FROM tac_models WHERE tac = ? GROUP BY device_model_id ORDER BY SUM(count) DESC, device_model_id').bind(tac),
+      env.DB.prepare("SELECT color, SUM(count) AS count FROM tac_models WHERE tac = ? AND color <> '' AND device_model_id = (SELECT device_model_id FROM tac_models WHERE tac = ? GROUP BY device_model_id ORDER BY SUM(count) DESC, device_model_id LIMIT 1) GROUP BY color ORDER BY SUM(count) DESC, color").bind(tac, tac),
+      env.DB.prepare('SELECT COUNT(*) AS stores FROM tac_stores WHERE tac = ?').bind(tac),
+    ]);
+    if (!models.results.length) return json({ tac, known: false, suggestion: await tacSuggest(env, tac) });
+    return json({ tac, known: true, models: models.results, colors: colors.results, workOrders: models.results.reduce((n, r) => n + r.count, 0), stores: Math.max(1, seen.results[0].stores) });
+  }
+  if (req.method === 'POST' && !tac) {
+    const b = await body(req, 20000);
+    const list = Array.isArray(b.items) ? b.items : [b];
+    if (!list.length || list.length > TAC_BATCH) return fail(400, 'one to ' + TAC_BATCH + ' items');
+    const t = now(), stmts = [];
+    for (const it of list) {
+      const id = Number(it && it.deviceModelId), name = clean(it && it.modelName, 120);
+      if (!it || !TAC_RE.test(String(it.tac || '')) || !Number.isInteger(id) || id < 1 || id > 999999999 || !name) return fail(400, 'tac (8 digits), deviceModelId and modelName required');
+      const tacN = String(it.tac);
+      stmts.push(env.DB.prepare('INSERT INTO tac_models (tac, device_model_id, color, model_name, manufacturer, count, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?) ' +
+        'ON CONFLICT (tac, device_model_id, color) DO UPDATE SET count = count + 1, model_name = excluded.model_name, manufacturer = COALESCE(excluded.manufacturer, manufacturer), updated_at = excluded.updated_at')
+        .bind(tacN, id, clean(it.color, 60), name, clean(it.manufacturer, 60) || null, t));
+      stmts.push(env.DB.prepare('INSERT INTO tac_stores (tac, store, count) VALUES (?, ?, 1) ON CONFLICT (tac, store) DO UPDATE SET count = count + 1').bind(tacN, store));
+    }
+    await env.DB.batch(stmts);
+    return json({ ok: true, recorded: list.length });
   }
   return fail(405, 'method not allowed');
 }

@@ -13,3 +13,4 @@ sheets/*.docx
 sheets/*.xlsx
 sheets/.state.json
 sheets/*.log
+worker/import/*.sql

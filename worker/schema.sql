@@ -74,3 +74,17 @@ CREATE TABLE IF NOT EXISTS sheets (          -- Provoke: a store's lead texts an
   store INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL, synced_at TEXT NOT NULL,
   PRIMARY KEY (store, kind)
 );
+CREATE TABLE IF NOT EXISTS tac_models (      -- Decipher: what a TAC (an IMEI's first 8 digits) is: model-level only, never an IMEI, serial or customer
+  tac TEXT NOT NULL, device_model_id INTEGER NOT NULL, color TEXT NOT NULL DEFAULT '',  -- color '' = none recorded
+  model_name TEXT NOT NULL, manufacturer TEXT,
+  count INTEGER NOT NULL DEFAULT 1,          -- work orders (and confirmations) that say this TAC is this model + color; the most common model wins
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (tac, device_model_id, color)
+);
+CREATE TABLE IF NOT EXISTS tac_stores (      -- which stores have recorded a TAC ("seen at N stores")
+  tac TEXT NOT NULL, store INTEGER NOT NULL, count INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (tac, store)
+);
+CREATE TABLE IF NOT EXISTS osmocom_tac (     -- Decipher: the Osmocom TAC database (CC BY-SA 3.0), imported once by import/osmocom.mjs; kept apart from tac_models, never merged into it
+  tac TEXT PRIMARY KEY, brand TEXT, model TEXT
+);
