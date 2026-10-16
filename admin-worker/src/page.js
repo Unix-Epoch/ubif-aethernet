@@ -152,7 +152,7 @@ async function drawStores(m) {
 
 // ---------------------------------------------------------------- Auto-Waymark rules
 const RULES = [['rfp', 'Ready for pickup', 'Follow up 3 days after · added after 7 PM · nickname mirrors the date · texting the customer → 3 days from then · push options start at +3 days'],
-  ['callback', 'Awaiting callback', 'Contact every day: due the day after · added right away · nickname mirrors the date · texting the customer → tomorrow · push options start at +1 day']];
+  ['callback', 'Awaiting callback or device', 'Contact every day: Awaiting callback and Awaiting device · added after 7 PM, due the next day · nickname mirrors the date · texting the customer → tomorrow · push options start at +1 day']];
 async function drawAuto(m) {
   const j = await api('GET', '/auto-rules'), st = Object.fromEntries(j.rules.map((r) => [r.rule, r]));
   const stateOf = (k) => (k === 'rfp' ? 'live' : (st[k] && st[k].state) || 'off'), L = { live: 'Live', staged: 'Staged', off: 'Off' };
@@ -187,7 +187,7 @@ async function drawData(m) {
       h('div', { class: 'card' }, h('h3', null, 'Tagged work orders'), byWo.size ? h('table', null, h('tr', null, h('th', null, 'WO #'), h('th', null, 'Tags'), h('th', null, 'Added by'), h('th', null, 'When')),
         [...byWo].map(([wo, ts]) => h('tr', null, h('td', null, woLink(wo), closed.has(wo) ? h('div', { class: 'soft' }, 'closed') : null), h('td', null, ts.map((x) => tag(x.tag))), h('td', null, [...new Set(ts.map((x) => x.by || ''))].join(', ')), h('td', { class: 'soft' }, fmt(ts[0].at))))) : h('div', { class: 'soft' }, 'No tagged work orders.')),
       h('div', { class: 'card' }, h('h3', null, 'Auto-Waymarks'), marks.length ? h('table', null, h('tr', null, h('th', null, 'WO #'), h('th', null, 'Rule'), h('th', null, 'Due')),
-        marks.map((x) => h('tr', null, h('td', null, woLink(x.wo)), h('td', null, x.kind === 'callback' ? 'Awaiting callback' : 'Ready for pickup'), h('td', null, markChip(x))))) : h('div', { class: 'soft' }, 'No Auto-Waymarks.')),
+        marks.map((x) => h('tr', null, h('td', null, woLink(x.wo)), h('td', null, x.kind === 'callback' ? 'Awaiting callback or device' : 'Ready for pickup'), h('td', null, markChip(x))))) : h('div', { class: 'soft' }, 'No Auto-Waymarks.')),
       h('div', { class: 'card' }, h('h3', null, 'Store tag list'), d.list.length ? d.list.map((x) => tag(x.name)) : h('div', { class: 'soft' }, 'No store tags set up.')),
       h('div', { class: 'card' }, h('h3', null, 'Divination: manual cleaning links'), d.links.length ? h('table', null, h('tr', null, h('th', null, 'Day'), h('th', null, 'Phone'), h('th', null, 'Counted for WO'), h('th', null, 'By')),
         d.links.map((x) => h('tr', null, h('td', null, fmtDay(x.day)), h('td', { class: 'soft' }, x.device.length > 12 ? x.device.slice(0, 8) + '…' + x.device.slice(-6) : x.device), h('td', null, woLink(x.parent)), h('td', null, x.by || '')))) : h('div', { class: 'soft' }, 'No manual links in the last 30 days.'))));

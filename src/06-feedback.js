@@ -109,6 +109,14 @@ AE.feedback = (() => {
   .sg-adm .row .track i { display:block; height:100%; background:var(--aui-primary, #8223d2); border-radius:4px; }
   .sg-adm .row .n { font-variant-numeric:tabular-nums; color:var(--aui-on-surface-soft, #5d5e61); min-width:36px; text-align:right; }
   .sg-adm .sub { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-adm .arule { display:flex; gap:10px; align-items:flex-start; justify-content:space-between; border:1px solid var(--aui-outline-soft, #eeedf1); border-radius:12px; padding:10px 12px; margin-bottom:8px; }
+  .sg-adm .astate { flex:none; font-size:11px; font-weight:700; padding:2px 8px; border-radius:10000rem; }
+  .sg-adm .astate.live { background:var(--aui-status-success-soft, #c5ffc8); color:var(--aui-status-on-success-soft, #062011); }
+  .sg-adm .astate.staged { background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
+  .sg-adm .astate.off { background:var(--aui-neutral-soft, #f1f0f4); color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-adm .astaged { border:1px dashed #b38f00; border-radius:12px; padding:10px 12px; margin:10px 0; background:color-mix(in srgb, #fff0c0 40%, transparent); }
+  .sg-adm .astaged .r { display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:3px 0; }
+  .sg-adm .abtns { display:flex; gap:8px; margin-top:10px; }
   .sg-adm .qwrap { margin-top:6px; font-size:13px; }
   .sg-adm .qwrap .innotes { color:var(--aui-status-success, #136d31); font-weight:700; font-size:12px; margin-right:8px; }
   .sg-adm .quote-box summary { cursor:pointer; color:var(--aui-primary, #8223d2); font-weight:600; font-size:12px; display:inline; }
@@ -262,9 +270,10 @@ AE.feedback = (() => {
         h('button', { type: 'button', class: 'tab' + (tab === 'reports' ? ' on' : ''), onclick: () => { tab = 'reports'; draw(); } }, 'Reports'),
         h('button', { type: 'button', class: 'tab' + (tab === 'usage' ? ' on' : ''), onclick: () => { tab = 'usage'; draw(); } }, 'Usage'),
         h('button', { type: 'button', class: 'tab' + (tab === 'stores' ? ' on' : ''), onclick: () => { tab = 'stores'; draw(); } }, 'Stores'),
+        h('button', { type: 'button', class: 'tab' + (tab === 'auto' ? ' on' : ''), onclick: () => { tab = 'auto'; draw(); } }, 'Auto-Waymark'),
         h('button', { type: 'button', class: 'tab' + (tab === 'settings' ? ' on' : ''), onclick: () => { tab = 'settings'; draw(); } }, 'Settings'));
       body.replaceChildren(h('div', { class: 'sg-soft' }, 'Loading…'));
-      try { tab === 'reports' ? await drawReports() : tab === 'usage' ? await drawUsage() : tab === 'stores' ? await drawStores() : await drawSettings(); }
+      try { tab === 'reports' ? await drawReports() : tab === 'usage' ? await drawUsage() : tab === 'stores' ? await drawStores() : tab === 'auto' ? await drawAuto() : await drawSettings(); }
       catch (e) { if (/admin key/.test(e.message)) { GM_deleteValue(ADMIN_KEY_GM); unlock('The saved key was refused.'); } else body.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load: " + (e.message || e))); }
     }
 
@@ -460,6 +469,58 @@ AE.feedback = (() => {
         ...(allowed.length ? allowed : [h('div', { class: 'sub' }, 'No stores yet.')]),
         h('h3', { style: 'margin:14px 0 6px;font-size:13px;letter-spacing:.03em;text-transform:uppercase;color:var(--aui-on-surface-soft,#5d5e61)' }, 'Waiting for access (' + j.waiting.length + ')'),
         ...(waiting.length ? waiting : [h('div', { class: 'sub' }, 'No other stores have opened Portal with ' + AE_NAME + '.')]));
+    }
+
+    /*
+      Auto-Waymark rules. Ready for pickup is always live. Newer rules ship "off":
+      Stage turns them on for work orders that newly enter the status (and shows
+      what Push would add here); Push makes them live for every store, whose next
+      scan backfills work orders already waiting.
+    */
+    const RULE_TEXT = {
+      rfp: 'Follow up 3 days after · added after 7 PM · nickname mirrors the date · texting the customer → 3 days from then · push options start at +3 days',
+      callback: 'Contact every day: Awaiting callback and Awaiting device · added after 7 PM, due the next day · nickname mirrors the date · texting the customer → tomorrow · push options start at +1 day',
+    };
+    async function drawAuto() {
+      const W = AE.waymark;
+      if (!W || !W.configured()) { body.replaceChildren(h('div', { class: 'sub' }, 'Waymark isn\'t set up in this build.')); return; }
+      const j = await call('GET', '/v1/admin/auto-rules', null, key());
+      const st = Object.fromEntries(j.rules.map((r) => [r.rule, r]));
+      const stateOf = (k) => (k === 'rfp' ? 'live' : (st[k] && st[k].state) || 'off');
+      const LABEL = { live: 'Live', staged: 'Staged', off: 'Off' };
+      const rules = Object.entries(W.RULES).map(([k, r]) => h('div', { class: 'arule' },
+        h('div', null, h('b', null, r.name), h('div', { class: 'sub' }, RULE_TEXT[k] || '')),
+        h('span', { class: 'astate ' + stateOf(k) }, LABEL[stateOf(k)])));
+      const later = Object.keys(W.RULES).filter((k) => k !== 'rfp');
+      const toStage = later.filter((k) => stateOf(k) === 'off'), toPush = later.filter((k) => stateOf(k) === 'staged');
+      const set = async (ks, state) => { for (const k of ks) await call('POST', '/v1/admin/auto-rules', { rule: k, state }, key()); };
+      const stageBtn = h('button', { type: 'button', class: 'sg-btn', disabled: !toStage.length, onclick: async () => {
+        stageBtn.disabled = true;
+        try { await set(toStage, 'staged'); await W.load(true); AE.toast('Auto-Waymark', 'Staged: ' + toStage.map((k) => W.RULES[k].name).join(', ') + '. Work orders that newly enter the status get marks now.', 'ok'); draw(); }
+        catch (e) { stageBtn.disabled = false; AE.toast("Couldn't stage", e.message || String(e), 'err'); }
+      } }, 'Stage rule changes');
+      const pushBtn = h('button', { type: 'button', class: 'sg-btn sg-primary', disabled: !toPush.length, onclick: async () => {
+        pushBtn.disabled = true;
+        try {
+          await set(toPush, 'live'); await W.load(true);
+          const plan = await W.scan(null, { force: true }); // backfill this store now; other stores on their next scan
+          AE.toast('Auto-Waymark', 'Live for every store. ' + ((plan && plan.create.length) || 0) + ' work order(s) here got marks.', 'ok');
+          draw();
+        } catch (e) { pushBtn.disabled = false; AE.toast("Couldn't push", e.message || String(e), 'err'); }
+      } }, 'Push staged changes');
+      let preview = null;
+      if (toPush.length || toStage.length) {
+        const p = await W.backfillPreview().catch((e) => { throw new Error('preview: ' + (e.message || e)); });
+        const store = (await AE.profile()).storeName || 'this store';
+        preview = h('div', { class: 'astaged' },
+          h('b', null, (toPush.length ? 'Staged' : 'If staged and pushed') + ': what pushing adds at ' + store),
+          ...(p.length ? p.map((x) => h('div', { class: 'r' }, h('span', null, x.wo + ' · ' + (x.name || 'Customer')),
+            h('span', { class: 'sub' }, W.RULES[x.kind].name + ' since ' + x.since + ' → due ' + (x.due === new Date().toISOString().slice(0, 10) ? 'today' : x.due))))
+            : [h('div', { class: 'sub' }, 'Nothing here right now.')]),
+          h('div', { class: 'sub', style: 'margin-top:6px' }, p.length + ' work order' + (p.length === 1 ? '' : 's') + ' here. Every other store gets the same on its next scan after you push.'));
+      }
+      body.replaceChildren(...rules, preview, h('div', { class: 'abtns' }, stageBtn, pushBtn),
+        h('div', { class: 'sub', style: 'margin-top:8px' }, 'Off: no marks. Staged: only work orders that newly enter the status. Live: all of them, everywhere.'));
     }
 
     /*
