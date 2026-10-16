@@ -14,7 +14,7 @@ HERE = Path(__file__).resolve().parent
 FIX = HERE / 'fixtures'
 STATE_FILE = HERE / 'state.json'
 LOCK = threading.RLock()
-STORE_ID = 914  # what the sandbox calls itself; none of the store's real data is used
+STORE_ID = 999999  # scratch store: no Aethernet access, so the real Worker refuses it; none of a real store's data is used
 
 PROGRAMS = {6494: 'Samsung In Warranty Repair', 8849: 'Asurion Home+ Repairs', 5062: 'Asurion Mobility', 11759: 'VZ Device Refresh', 9470: 'VZ Sanitization', 11009: 'AT&T Enhanced Cleaning',
             9901: 'AT&T Device Diagnostic', 10303: 'AT&T Performance Check', 20001: 'Out Of Warranty'}
@@ -37,7 +37,13 @@ def now(offset_h=0.0):
 
 def fixture(name, default=None):
     f = FIX / (name + '.json')
-    return json.loads(f.read_text()) if f.exists() else default
+    if not f.exists():
+        return default
+    # fixtures were captured at a real store; rename it to the scratch sandbox store whatever the capture says
+    txt = f.read_text()
+    txt = re.sub(r'("(?:storeId|number|defaultStoreId)":\s*)914\b', r'\g<1>%d' % STORE_ID, txt)
+    txt = txt.replace('"Newport News"', '"Sandbox Store"').replace('UBIF914', 'UBIF%d' % STORE_ID).replace('"914-', '"%d-' % STORE_ID)
+    return json.loads(txt)
 
 
 # ------------------------------------------------------------------ state
@@ -205,7 +211,7 @@ TACS = {
 }
 # stands in for the Osmocom import (the Worker's osmocom_tac table)
 OSMOCOM = {'35926618': {'brand': 'Motorola', 'model': 'moto g 5G (2025)'}, '99001200': {'brand': 'Motorola', 'model': 'moto g 5G (2025)'}}
-TAC_STORES = {'35684192': {914, 915}, '35092741': {914}, '35231540': {914}}
+TAC_STORES = {'35684192': {STORE_ID, 915}, '35092741': {STORE_ID}, '35231540': {STORE_ID}}
 
 
 def tac_route(method, tac, body):
@@ -235,10 +241,10 @@ def tac_route(method, tac, body):
 
 # ------------------------------------------------------------------ routes
 def fake_punches(frm, to):
-    """A week of made-up punches (no real people): 914 and 326, one worker at both, a long day, a missing clock-out."""
+    """A week of made-up punches (no real people): the sandbox store and 326, one worker at both, a long day, a missing clock-out."""
     import datetime as dt
     start = dt.date.fromisoformat((frm or '2026-10-05')[:10])
-    people = [(33254, 'avery.tech', 914), (33255, 'blake.lead', 914), (33256, 'casey.mgr', 914), (33257, 'drew.tech', 326), (33258, 'emery.tech', 326), (33259, 'finley.float', None)]
+    people = [(33254, 'avery.tech', STORE_ID), (33255, 'blake.lead', STORE_ID), (33256, 'casey.mgr', STORE_ID), (33257, 'drew.tech', 326), (33258, 'emery.tech', 326), (33259, 'finley.float', None)]
     rows, n = [], 900000
     def iso(d, h, m=0):
         return (dt.datetime.combine(d, dt.time(0)) + dt.timedelta(hours=h, minutes=m) + dt.timedelta(hours=4)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
@@ -249,8 +255,8 @@ def fake_punches(frm, to):
         for uid, name, store in people:
             if (uid + day) % 5 == 0:
                 continue
-            st = store or (914 if day % 2 else 326)
-            sname = {914: 'Newport News', 326: 'Lynnhaven'}[st]
+            st = store or (STORE_ID if day % 2 else 326)
+            sname = {STORE_ID: 'Sandbox Store', 326: 'Lynnhaven'}[st]
             h_in, h_out = 9.75 + (uid % 3) * 0.25, 18.5 + (uid % 2) * 0.75 + (1.5 if name == 'blake.lead' else 0)
             n += 1; rows.append({'timeclockId': n, 'userId': uid, 'username': name, 'storeId': st, 'storeName': sname, 'clockTypeId': 1,
                                  'timeIn': iso(d, int(h_in), int(h_in % 1 * 60)), 'timeOut': None if (name == 'drew.tech' and day == 6) else iso(d, int(h_out), int(h_out % 1 * 60))})

@@ -8,6 +8,8 @@ real work order, arrival or customer.
 python3 sandbox/server.py          # then open http://localhost:8790/sandbox
 ```
 
+The sandbox is store 999999 (no Aethernet access) on purpose: never point it, or a patched Aethernet build running in it, at the real Workers.
+
 - **The app** is Portal's own (index page + `/assets`, fetched read-only from
   portal.ubreakifix.net and cached in `.cache/`), with FullStory/Appcues removed
   and its API address rewritten to the sandbox.
