@@ -95,7 +95,7 @@ const AE = (() => {
     if (body !== undefined) { init.headers['content-type'] = 'application/json'; init.body = JSON.stringify(body); }
     const res = await fetch(path, init);
     const text = await res.text();
-    if (res.status === 401 || res.status === 403) throw new Error('Your portal session expired — log in again.');
+    if (res.status === 401 || res.status === 403) throw new Error('Your Portal session expired. Log in again.');
     if (!res.ok) throw new Error(method + ' ' + path + ' → HTTP ' + res.status + ': ' + text.slice(0, 200));
     if (/^\s*<!doctype html/i.test(text)) throw new Error(method + ' ' + path + ' returned the app page, not data (wrong route?)');
     try { return text ? JSON.parse(text) : null; } catch (_) { return text; }
@@ -317,7 +317,7 @@ const AE = (() => {
     const [p, cur] = await Promise.all([profile(), sessionStore(fresh)]);
     if (!p || p.storeId == null || cur.storeId == null || Number(cur.storeId) === Number(p.storeId)) return true;
     storeChanged = { from: p.storeName || String(p.storeId), to: cur.storeName || String(cur.storeId) };
-    toast('Aethernet paused on this page', "Portal's store changed to " + storeChanged.to + ' (in this tab or another one). Reload this page to use Aethernet with ' + storeChanged.to + '.', 'err', 60000);
+    toast('Aethernet paused on this page', 'Portal switched to ' + storeChanged.to + ', in this tab or another one. Reload this page to keep using Aethernet.', 'err', 60000);
     emit('store-changed', storeChanged);
     return false;
   }

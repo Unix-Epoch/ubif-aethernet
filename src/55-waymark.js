@@ -432,9 +432,11 @@ AE.waymark = (() => {
 
   // ------------------------------------------------------------ UI bits
   const CSS = `
+  /* Chip text mixes the chip's color with Portal's text color (60/40; 52/48 on the darker Today fill) so every color
+     reads at WCAG AA (4.5:1 or better) in both light and dark Portal. */
   .sg-tag { display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 9px; border-radius:10000rem; font:600 12px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif;
     white-space:nowrap; max-width:220px; overflow:hidden; text-overflow:ellipsis; flex:none;
-    color:color-mix(in srgb, var(--c) 78%, var(--aui-on-surface, #1a1c1e)); background:color-mix(in srgb, var(--c) 15%, var(--aui-surface, #fff));
+    color:color-mix(in srgb, var(--c) 60%, var(--aui-on-surface, #1a1c1e)); background:color-mix(in srgb, var(--c) 15%, var(--aui-surface, #fff));
     border:1px solid color-mix(in srgb, var(--c) 45%, transparent); }
   .sg-tag.oneoff { --c:var(--aui-on-surface-soft, #5d5e61); border-style:dashed; background:transparent; font-weight:400; }
   .sg-tag button { border:0; background:none; padding:0 0 0 2px; margin:0; color:inherit; cursor:pointer; font-size:13px; line-height:1; opacity:.7; }
@@ -484,11 +486,11 @@ AE.waymark = (() => {
   #sg-wm-board .wo .chips { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; max-width:45%; }
   .sg-auto { display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 3px 0 6px; border-radius:6px; flex:none; cursor:context-menu;
     font:700 12px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; white-space:nowrap;
-    color:color-mix(in srgb, var(--c) 80%, var(--aui-on-surface, #1a1c1e)); background:color-mix(in srgb, var(--c) 14%, var(--aui-surface, #fff));
+    color:color-mix(in srgb, var(--c) 60%, var(--aui-on-surface, #1a1c1e)); background:color-mix(in srgb, var(--c) 14%, var(--aui-surface, #fff));
     border:1px solid color-mix(in srgb, var(--c) 55%, transparent); }
   .sg-auto svg { width:13px; height:13px; flex:none; }
   .sg-auto.upcoming { --c:#4a68f9; }
-  .sg-auto.today { --c:#b38f00; background:color-mix(in srgb, var(--c) 28%, var(--aui-surface, #fff)); }
+  .sg-auto.today { --c:#b38f00; background:color-mix(in srgb, var(--c) 28%, var(--aui-surface, #fff)); color:color-mix(in srgb, var(--c) 52%, var(--aui-on-surface, #1a1c1e)); }
   .sg-auto.overdue { --c:#d1344b; background:#d1344b; color:#fff; border-color:#d1344b; }
   .sg-auto button { border:0; background:none; padding:0 2px; margin:0; color:inherit; cursor:pointer; font-size:13px; line-height:1; opacity:.75; }
   .sg-auto button:hover { opacity:1; }
@@ -1010,7 +1012,7 @@ AE.crystal({
           const rows = sorted.filter(([, m]) => W.dueState(m.due) === st);
           return rows.length ? h('div', { class: 'group' }, h('div', { class: 'gh' }, title + ' · ' + rows.length),
             rows.map(([id, m]) => h('div', { class: 'wo' }, woLine(id), h('div', { class: 'chips' }, W.autoChip(id, m, redraw))))) : null;
-        }).filter(Boolean) : [h('div', { class: 'sg-soft', style: 'padding:8px 0' }, 'No Auto-Waymarks. A work order gets one when it reaches Ready for pickup (3 days out) or Awaiting callback or Awaiting device (the next day).')]),
+        }).filter(Boolean) : [h('div', { class: 'sg-soft', style: 'padding:8px 0' }, 'No Auto-Waymarks. A work order gets one when it reaches Ready for pickup (due in 3 days), or Awaiting callback or device (due the next day).')]),
           h('div', { class: 'sg-soft', style: 'padding:6px 0 2px' }, 'Right-click a date to push it later; × removes it.'));
         return;
       }

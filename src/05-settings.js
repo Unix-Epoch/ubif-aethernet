@@ -10,33 +10,33 @@
 
   // Crystals are named after FFXIV actions; the description says what each does.
   const CRYSTAL_INFO = [
-    ['cleaningRate', 'Divination', "Your store's live cleaning rate - shoot for 100% or more!"],
+    ['cleaningRate', 'Divination', "Your store's live cleaning rate - shoot for 100% or more! Click the Cleanings icon at the top of any page."],
     // The demo build (AE_DEMO) ships only Divination, Swiftcast and Glamour; the
     // rest sit in AE_DEMO ? [] : […] so their text isn't in that file at all.
     ...(AE_DEMO ? [] : [
-    ['woCleanings', 'Esuna', 'Divination but for your work order page, with an easy Swiftcast button.'],
-    ['textNotes', 'Recitation', 'Imprints a work order with the text of your message, whenever you text a customer from a WO. **This does not work anywhere else; only inside of a work order!**'],
+    ['woCleanings', 'Esuna', 'Divination, but for your work order page, with an easy Swiftcast button. Look for the cleanings chip next to the work order number.'],
+    ['textNotes', 'Recitation', 'Saves every text you send a customer as a note on the work order. **Only works when you text from inside a work order.**'],
     ]),
-    ['autoClose', 'Swiftcast', 'Your new favorite tool. Auto-close cleanings in one click - even multiple at once.'],
+    ['autoClose', 'Swiftcast', 'Your new favorite tool: auto-close cleanings in one click, even multiple at once. Click Swiftcast on a cleaning arrival or work order.'],
     ...(AE_DEMO ? [] : [
-    ['checkinDrafts', 'Return', 'Saves an incomplete check-in so you can create cleanings once the device is functional. Goodbye, paper slips!'],
-    ['leadReplies', 'Provoke', 'Pre-loads your responses to leads/Arrivals, then sends and marks contacted with one click. In a work order\'s customer chat, puts the store\'s texts (pickup, parts, updates) one click away.'],
+    ['checkinDrafts', 'Return', 'Saves an incomplete check-in so you can create cleanings once the device works. Goodbye, paper slips! Click Save as incomplete during check-in.'],
+    ['leadReplies', 'Provoke', 'Pre-loads your replies to leads, then texts them and marks them contacted in one click. Find it on Arrivals and in a work order\'s customer chat.'],
     ]),
     ...(AE_DEMO ? [] : [
-    ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms.'],
-    ['timeSheet', 'Tactician', 'The Store time sheet, one store at a time: pick a store to filter Portal\'s punches, and see a weekly breakdown of everyone\'s hours with overtime (over 40 a week, counting every store they worked at). Adds sales per labor hour to the Reports page.'],
-    ['reassemble', 'Reassemble', 'The price calculator you\'re used to, with a few new tricks. Auto-checks the price sheet for you, if the device is on it, it\'ll show you that price. Find it in the avatar menu, on the Estimates page, or during check-in.'],
-    ['decipher', 'Decipher', 'Identify a device from its IMEI: the model, its colors, for Apple the serial and Find My, and for Samsung the warranty. Find it in the avatar menu, beside the IMEI box during check-in, or scan an IMEI barcode.'],
-    ['assize', 'Assize', 'Audits your store\'s open work orders live: intake notes, carts, partner rules, nickname dates, bins, ages and Need to order. Fails, flags and things to check in the notes, by tech, from the icon at the top; a findings pill on each work order and a marker on the Work orders list.'],
-    ['buybacks', 'Bountiful Yield', 'Set of handy "add all" buttons for setting up your Buybacks and RMAs.'],
-    ['printLabels', 'Quick Synthesis', '\'Print All\' for your Receiving. No longer shall you have to manually print 20+ generic SKU labels!'],
+    ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms. Click its button on any work order with a GSPN number.'],
+    ['timeSheet', 'Tactician', 'Filters the Store time sheet by store, with weekly hours, overtime and sales per labor hour. Find it on the Store time sheet and Reports pages.'],
+    ['reassemble', 'Reassemble', 'The price calculator you\'re used to, and it checks the price sheet for you. Find it in the avatar menu, on the Estimates page, or during check-in.'],
+    ['decipher', 'Decipher', 'Type or scan an IMEI to see the model, colors, Apple serial and Find My, or Samsung warranty. Find it in the avatar menu or during check-in.'],
+    ['assize', 'Assize', 'Audits your store\'s open work orders live and lists what needs fixing, by tech. Click the Assize icon at the top or a work order\'s findings chip.'],
+    ['buybacks', 'Bountiful Yield', 'Handy "add all" buttons for setting up your Buybacks and RMAs. Find them in the Add buyback parts and Add RMA parts popouts.'],
+    ['printLabels', 'Quick Synthesis', 'No longer shall you have to manually print 20+ generic SKU labels! Click Print all labels on a purchase order\'s Receive page.'],
     ]),
-    ['glamour', 'Glamour', 'Beautify your Portal - change the colors of your pages and change the image on your login page.'],
+    ['glamour', 'Glamour', 'Beautify your Portal - change the colors of your pages and the image on your login page. Pick your look right here in Settings.'],
     ...(AE_DEMO ? [] : [
-    ['waymark', 'Waymark', 'Keep track of important details on your WOs; tagging that the whole store can see, along with a board at the top of the screen that groups all the info together.'],
-    ['countCheck', 'Lay of the Land', 'Restoring the inventory count experience to what we remember - variance and unscanned serials at Arm\'s Length.'],
-    ['rowColors', 'Rainbow Drip', 'Restoring the work orders list to what you remember, with colors for each status. Goodbye, corporate minimalism! (sorta.)'],
-    ['fixes', "Master's Mend", 'Doing what a million dollar company can\'t; fixing genuinely annoying issues.'],
+    ['waymark', 'Waymark', 'Tags on your WOs that the whole store can see, plus a board that groups them all together. Click the Waymark icon at the top for the board.'],
+    ['countCheck', 'Lay of the Land', 'Restores the inventory count you remember - variance and unscanned serials at Arm\'s Length. Shows on any inventory count page.'],
+    ['rowColors', 'Rainbow Drip', 'Brings back a color for every status - goodbye, corporate minimalism (sorta). Shows on the Work orders list.'],
+    ['fixes', "Master's Mend", 'Doing what a million-dollar company can\'t: fixing genuinely annoying Portal issues. Turn each fix on or off in its options here.'],
     ]),
   ];
 
@@ -207,7 +207,12 @@
   .sg-opts > div { overflow:hidden; min-height:0; }
   .sg-opts > div > div { margin:0 0 12px 2px; padding:2px 0 2px 14px; border-left:2px solid var(--aui-primary-soft, #faecff); }
   /* Crystals list: search + collapsible groups */
-  .sg-csearch { display:block; position:relative; margin:4px 0 6px; }
+  /* The search box stays at the top of the Settings sheet while the list scrolls under it (solid panel background,
+     above the group headers). top:-24px cancels the sheet's top padding so nothing shows above it. The section's
+     clipping box uses overflow:clip, which, unlike hidden, leaves the sheet as the scroller sticky follows. */
+  .sg-csearch { display:block; position:sticky; top:-24px; z-index:2; margin:-8px 0 2px; padding:12px 0 8px;
+    background:var(--aui-surface, #fff); box-shadow:0 1px 0 var(--aui-outline-soft, #eeedf1); }
+  .sg-sec-body > div:has(> .sg-clist) { overflow:clip; }
   .sg-csearch .lbl { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
   .sg-csearch input { width:100%; height:36px; padding:0 12px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; box-sizing:border-box;
     background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font:14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
@@ -301,7 +306,7 @@
         h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
         h('div', { class: 'sg-soft' }, 'v' + AE_VERSION)),
       h('h4', null, 'Authored by'),
-      kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914'], ['With', 'Claude (Anthropic)']),
+      kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914']),
       h('div', { class: 'fine' }, 'Crystal icons are FINAL FANTASY XIV action icons. © SQUARE ENIX.'),
       h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')))
     : h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
@@ -312,7 +317,7 @@
       h('h4', null, 'This build'),
       kv(['Version', 'v' + AE_VERSION], ['Built', builtText], ['Commit', h('code', null, AE_BUILD_COMMIT)]),
       h('h4', null, 'Authored by'),
-      kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914'], ['With', 'Claude (Anthropic)']),
+      kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914']),
       h('h4', null, 'Crystals'),
       h('div', { class: 'chips' }, CRYSTAL_INFO.map(([id, name]) =>
         h('span', { class: 'sg-chip' + (on[id] ? '' : ' chip-off'), title: on[id] ? 'On' : 'Off' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 16) }), name))),
@@ -555,7 +560,7 @@
       search.addEventListener('input', refresh);
       search.addEventListener('keydown', (e) => { if (e.key === 'Escape' && search.value) { e.stopPropagation(); search.value = ''; refresh(); } });
       refresh();
-      return h('div', null, h('label', { class: 'sg-csearch' }, h('span', { class: 'lbl' }, 'Search crystals'), search), ...wraps, empty);
+      return h('div', { class: 'sg-clist' }, h('label', { class: 'sg-csearch' }, h('span', { class: 'lbl' }, 'Search crystals'), search), ...wraps, empty);
     }
 
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
@@ -570,7 +575,7 @@
 
       section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
         who,
-        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your portal login. Crystals use these automatically.'),
+        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your Portal login. Crystals use these automatically.'),
         AE_DEMO ? null : h('div', { class: 'sg-soft', style: 'margin-top:6px' }, AE_NAME + ' records which features you use (a count per feature per day, with your name and store) to decide what to improve. It never records customer details or what\'s on the page.')),
 
       section('crystals', 'Crystals', true,

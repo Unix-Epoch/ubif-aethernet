@@ -64,7 +64,7 @@ AE.assizeRules = (() => {
   // Checks, in the rules' order (section headings in the panel).
   const CHECKS = [
     ['intake', 'Intake note'], ['cart', 'Cart and price'], ['quote', 'Quote'], ['partner', 'Partner rules'],
-    ['cleaning', 'Cleaning rate'], ['contact', 'Nickname and contact'], ['bin', 'Bin'], ['start', 'Start'],
+    ['cleaning', 'Cleaning rate'], ['contact', 'Nickname and contact'], ['bin', 'Bin'], ['start', 'Start time'],
     ['age', 'Age'], ['order', 'Need to order'], ['remind', 'Reminders'],
   ];
   const KINDS = ['fail', 'flag', 'note', 'remind'];
@@ -305,7 +305,7 @@ AE.assizeRules = (() => {
     // ---- 1 Intake note (Active)
     if (active && f.notes) {
       const intake = intakeNote(f), who = intakeAuthor(f);
-      if (!intake) add('intake', 'note', 'No intake note', 'No check-in note found', who, 'no-intake-note');
+      if (!intake) add('intake', 'note', 'No intake note', 'Nothing was written at check-in', who, 'no-intake-note');
       else {
         const own = String(intake.noteText || '').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !CHECKLIST_LINE.test(l));
         if (own.length < 3) add('intake', 'note', 'Short note', 'Intake note is under 3 lines', who, 'short-intake-note', intake.noteText);
@@ -334,7 +334,7 @@ AE.assizeRules = (() => {
             const charged = lines(cart).filter((l) => price(l) > 0 && !isCredit(l) && !neverFlag(l) && !/diagnostic|deposit/i.test(l.name || '')).reduce((s, l) => s + price(l), 0);
             if (charged > 0 && !sheet.some((p) => Math.abs(p - charged) <= 1.01)) {
               const near = sheet.slice().sort((a, b) => Math.abs(a - charged) - Math.abs(b - charged))[0];
-              add('cart', 'note', 'Price off the sheet', 'Cart ' + money(charged) + '; Price sheet ' + money(near) + ' for ' + f.device + ' ' + repair.toLowerCase(), who, 'price-off-sheet', cartSig(cart), near);
+              add('cart', 'note', 'Price off the sheet', 'Cart is ' + money(charged) + '; the price sheet says ' + money(near) + ' for ' + f.device + ' ' + repair.toLowerCase(), who, 'price-off-sheet', cartSig(cart), near);
             }
           }
         }
@@ -344,7 +344,7 @@ AE.assizeRules = (() => {
         const ls = lines(cart);
         if (/no issue found/i.test(f.outcome)) {
           const labor = ls.filter((l) => !isCredit(l) && (l.lineType === 'labor' || /labor|asurion repair/i.test(l.name || '')));
-          if (!labor.length) add('cart', 'fail', 'NTF, no labor line', 'Asurion non-phone, no issue found: the cart needs the labor line plus its offset', who, 'ntf-no-labor', cartSig(cart));
+          if (!labor.length) add('cart', 'fail', 'No labor line', 'No issue found on an Asurion non-phone: the cart needs the labor line and its offset', who, 'ntf-no-labor', cartSig(cart));
         } else if (!ls.some((l) => !isCredit(l) && !neverFlag(l) && l.lineType !== 'labor' && !/labor|diagnostic|asurion repair/i.test(l.name || ''))) {
           add('cart', 'fail', 'No part line', 'Asurion non-phone at Ready for pickup with no part in the cart', who, 'no-part-line', cartSig(cart));
         }
@@ -353,19 +353,19 @@ AE.assizeRules = (() => {
       } else if (prog.key === 'amazon') {
         const charged = lines(cart).filter((l) => !isCredit(l) && !neverFlag(l) && price(l) > 0.009);
         const total = cartTotal(cart);
-        if (charged.length || total > 0.009) add('cart', 'fail', 'Buyout has charges', 'Amazon Buyout: ' + money(Math.max(total, charged.reduce((s, l) => s + price(l), 0))) + ' in the cart; buyouts have no repair lines or charge', who, 'buyout-has-charges', cartSig(cart));
+        if (charged.length || total > 0.009) add('cart', 'fail', 'Buyout has charges', 'Amazon Buyout: ' + money(Math.max(total, charged.reduce((s, l) => s + price(l), 0))) + ' in the cart; buyouts have no repair lines or charges', who, 'buyout-has-charges', cartSig(cart));
       } else if (prog.key === 'cci' && rfp) {
         const sum = cartSum(cart);
         if (Math.abs(sum) <= 0.009) add('cart', 'note', 'CCI, $0 cart', 'Cart is $0; an incomplete service needs a reason', who, 'cci-zero-cart', cartSig(cart));
         else if (Math.abs(sum - 15) > 0.009) add('cart', 'fail', 'CCI not $15', 'Cart is ' + money(sum) + '; a CCI service is $15', who, 'cci-not-15', cartSig(cart));
       }
     }
-    if (active && prog.key === 'oop' && f.notes && !DOLLAR_RE.test(noteText)) add('quote', 'note', 'No quote', 'OOP order; no dollar amount in any note', intakeAuthor(f), 'no-quote');
+    if (active && prog.key === 'oop' && f.notes && !DOLLAR_RE.test(noteText)) add('quote', 'note', 'No quote', 'OOP; no price in any note', intakeAuthor(f), 'no-quote');
 
     // ---- 4 Partner rules (Active)
     if (active && prog.key !== 'oop') {
       const who = f.notes ? intakeAuthor(f) : person(f.createdBy) || UNASSIGNED;
-      if (prog.key === 'unknown') add('partner', 'note', 'Unknown partner', prog.name + ': only the all-partner rules were checked', UNASSIGNED, 'unknown-partner', prog.name);
+      if (prog.key === 'unknown') add('partner', 'note', 'Unknown partner', prog.name + ": Assize doesn't know this partner, so only the general rules were checked", UNASSIGNED, 'unknown-partner', prog.name);
       if (dev.wearable) add('partner', 'fail', 'Wearable checked in', f.device + ': partners don\'t take wearables or hearables', who, 'wearable-checked-in', f.device);
       if (dev.tv && f.createdAt) {
         const close = closeAfter(f.createdAt, hours);
@@ -421,7 +421,7 @@ AE.assizeRules = (() => {
       if (dev.phone && f.nextUpdate) {
         let by = f.nextUpdate - HOUR;
         if (new Date(f.createdAt).getHours() >= 17) by = Math.max(by, openAfter(at(addDays(f.createdAt, 1), 0), hours) + HOUR); // checked in after 5 PM: the next business day
-        if (now > by) add('start', 'fail', 'Not started', 'Still Ready for work; start by ' + clock(by) + (dayKey(by) === dayKey(now) ? '' : ' ' + md(by)) + ' (1 h before pickup)', UNASSIGNED, 'not-started', dayKey(f.createdAt), dayKey(f.nextUpdate));
+        if (now > by) add('start', 'fail', 'Not started', 'Still Ready for work; start by ' + clock(by) + (dayKey(by) === dayKey(now) ? '' : ' ' + md(by)) + ' (1 hour before pickup)', UNASSIGNED, 'not-started', dayKey(f.createdAt), dayKey(f.nextUpdate));
       } else if (!dev.phone && now - f.createdAt >= 3 * DAY) {
         const later = manual.some((n) => n.noteTag !== 'initial_checkin');
         add('start', later ? 'note' : 'fail', 'Not started in 3 days', 'Still Ready for work ' + plural(Math.floor((now - f.createdAt) / DAY), 'day') + ' after check-in' + (later ? '; a note may say why' : ''), UNASSIGNED, 'not-started-3-days', dayKey(f.createdAt));
@@ -431,7 +431,7 @@ AE.assizeRules = (() => {
     // ---- 6 Age (Awaiting callback / device: 14 days or more)
     if (/awaiting (callback|device)/.test(st)) {
       const e = statusEntry(f);
-      if (e.since) { const days = daysBetween(e.since, now); if (days >= 14) add('age', 'flag', 'Unresponsive', f.status + ' for ' + days + ' days. Decide what to do', e.who, 'unresponsive', statusTag(f.status), dayOf(e.since)); }
+      if (e.since) { const days = daysBetween(e.since, now); if (days >= 14) add('age', 'flag', 'Unresponsive', f.status + ' for ' + days + ' days; decide what to do', e.who, 'unresponsive', statusTag(f.status), dayOf(e.since)); }
     }
 
     // ---- 6 Need to order: entered before the last business night's close = not ordered (Store)
@@ -664,7 +664,7 @@ AE.crystal({
         if (dp === f) dp = null;
         await loadDismissed(true);
       } catch (e) {
-        f.busy = false; f.err = e.storeChanged ? 'Portal switched stores, so nothing was saved.' : "Couldn't dismiss this just now."; f.errRaw = e.message || String(e);
+        f.busy = false; f.err = e.storeChanged ? 'Portal switched stores, so nothing was saved.' : "Couldn't dismiss this."; f.errRaw = e.message || String(e);
         if (!e.storeChanged) AE.noteError('Assize dismiss', e);
         render();
       }
@@ -675,7 +675,7 @@ AE.crystal({
         await AE.waymark.call('POST', '/assize/restore', { wo: Number(d.wo), rule: d.rule, sig: d.sig });
         AE.track('assize:restore');
         await loadDismissed(true);
-      } catch (e) { actErr = { text: e.storeChanged ? 'Portal switched stores, so nothing was changed.' : "Couldn't restore this just now.", raw: e.message || String(e) }; if (!e.storeChanged) AE.noteError('Assize restore', e); render(); }
+      } catch (e) { actErr = { text: e.storeChanged ? 'Portal switched stores, so nothing was changed.' : "Couldn't restore this.", raw: e.message || String(e) }; if (!e.storeChanged) AE.noteError('Assize restore', e); render(); }
     }
     // Restore: whoever dismissed it, or a manager (Waymark's role check).
     const canRestore = (d) => isManager || (d.byId != null && me && Number(d.byId) === Number(me.userId));
@@ -785,7 +785,7 @@ AE.crystal({
     // The Dismiss form under a finding: why (three chips), an optional note, Dismiss / Cancel.
     function dismissForm() {
       const f = dp;
-      const chips = h('div', { class: 'dpc', role: 'radiogroup', 'aria-label': 'Why does this not apply?' }, ...REASONS.map(([k, label]) =>
+      const chips = h('div', { class: 'dpc', role: 'radiogroup', 'aria-label': "Why doesn't this apply?" }, ...REASONS.map(([k, label]) =>
         h('button', { type: 'button', role: 'radio', 'aria-checked': String(f.reason === k), class: 'ae-as-f' + (f.reason === k ? ' on' : ''), 'data-fk': 'dr:' + k,
           onclick: (e) => { e.stopPropagation(); f.reason = k; f.err = null; render(); } }, label)));
       const note = h('input', { type: 'text', maxlength: '200', placeholder: 'Note (optional)', 'aria-label': 'Note (optional)', 'data-fk': 'dn', value: f.note,
@@ -793,7 +793,7 @@ AE.crystal({
         onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); submitDismiss(); } else if (e.key === 'Escape') { e.stopPropagation(); dp = null; render(); } } });
       return h('div', { class: 'ae-as-dp', role: 'group', 'aria-label': 'Dismiss this finding' },
         h('span', { class: 'q' }, "Why doesn't this apply?"), chips, note,
-        f.err ? h('div', { class: 'ae-as-err' }, f.err + ' Try again, and if it keeps happening, ', AE.bugLinkEl('report a bug', { where: 'Assize dismiss', error: f.errRaw })) : null,
+        f.err ? h('div', { class: 'ae-as-err' }, f.err + ' If you keep seeing this, ', AE.bugLinkEl('report a bug', { where: 'Assize dismiss', error: f.errRaw }), '!') : null,
         h('div', { class: 'act' },
           h('button', { type: 'button', class: 'sg-btn', 'data-fk': 'dc', onclick: (e) => { e.stopPropagation(); dp = null; render(); } }, 'Cancel'),
           h('button', { type: 'button', class: 'sg-btn sg-primary', 'data-fk': 'dd', disabled: !f.reason || f.busy || null, title: f.reason ? null : 'Pick a reason first', onclick: (e) => { e.stopPropagation(); submitDismiss(); } }, f.busy ? 'Dismissing…' : 'Dismiss')));
@@ -831,9 +831,9 @@ AE.crystal({
       const el = [...document.querySelectorAll('[data-fk]')].find((n) => n.dataset.fk === fk && n.closest('#' + PANEL_ID + ', #' + POP_ID));
       if (el) { el.focus({ preventScroll: true }); if (pos != null && el.setSelectionRange) try { el.setSelectionRange(pos, pos); } catch (_) { /* not a text field */ } }
     }
-    const actErrLine = () => (actErr ? h('div', { class: 'ae-as-err' }, actErr.text + ' Try again, and if it keeps happening, ', AE.bugLinkEl('report a bug', { where: 'Assize', error: actErr.raw })) : null);
+    const actErrLine = () => (actErr ? h('div', { class: 'ae-as-err' }, actErr.text + ' If you keep seeing this, ', AE.bugLinkEl('report a bug', { where: 'Assize', error: actErr.raw }), '!') : null);
     const kindWords = (s) => [s.fail && s.fail + (s.fail === 1 ? ' fail' : ' fails'), s.flag && s.flag + (s.flag === 1 ? ' flag' : ' flags'), s.note && s.note + ' to check in notes'].filter(Boolean).join(', ');
-    const errLine = (prefix) => h('div', { class: 'ae-as-err' }, prefix + ' Try again, and if it keeps happening, ', AE.bugLinkEl('report a bug', { where: 'Assize', error: lastError }));
+    const errLine = (prefix) => h('div', { class: 'ae-as-err' }, prefix + ' If you keep seeing this, ', AE.bugLinkEl('report a bug', { where: 'Assize', error: lastError }), '!');
 
     // ------------------------------------------------------------ header icon
     let icon = null;
@@ -868,15 +868,15 @@ AE.crystal({
       const head = h('div', { class: 'hd' }, h('span', { html: AE.actionIcon('assize', 26), style: 'line-height:0' }), h('b', null, 'Assize'), h('span', { class: 'sg-soft' }, busy ? (progress && progress.total ? 'Checking ' + Math.min(progress.done + 1, progress.total) + ' of ' + progress.total + '…' : 'Checking orders…') : sub), close);
       const refresh = h('button', { type: 'button', class: 'sg-btn', disabled: busy || null, onclick: (e) => { e.stopPropagation(); AE.track('assize:refresh'); pass(true, true); } }, 'Refresh');
       const nGone = result ? result.dismissed.length : 0;
-      const toggle = canDismiss() ? h('button', { type: 'button', class: 'sg-btn', 'aria-pressed': String(showDismissed), 'data-fk': 'dt', title: 'Findings dismissed as not applying, for this store',
+      const toggle = canDismiss() ? h('button', { type: 'button', class: 'sg-btn', 'aria-pressed': String(showDismissed), 'data-fk': 'dt', title: 'Findings dismissed at this store',
         onclick: (e) => { e.stopPropagation(); showDismissed = !showDismissed; actErr = null; dp = null; if (showDismissed) loadDismissed(true); renderPanel(); } }, showDismissed ? 'Back to findings' : 'Dismissed (' + nGone + ')') : null;
-      const foot = h('div', { class: 'ft' }, h('span', { class: 'sg-soft' }, showDismissed ? 'Dismissed for everyone at this store.' : 'Check notes need a person. A note may explain it.'), toggle, refresh);
-      if (!result) { p.replaceChildren(head, lastError ? errLine("Couldn't check orders just now.") : h('p', { class: 'sg-soft' }, 'Checking orders…'), foot); return; }
+      const foot = h('div', { class: 'ft' }, h('span', { class: 'sg-soft' }, showDismissed ? 'Dismissed for everyone at this store.' : 'Check notes: a note may explain these, so give them a look.'), toggle, refresh);
+      if (!result) { p.replaceChildren(head, lastError ? errLine("Couldn't check orders.") : h('p', { class: 'sg-soft' }, 'Checking orders…'), foot); return; }
       const s = result.sum, all = result.findings;
       const tile = (k, name) => h('div', { class: 'ae-as-tile ' + k + (s[k] ? '' : ' zero') }, h('span', { class: 'n' }, String(s[k])), h('span', { class: 'l' }, name));
       const tiles = h('div', { class: 'sum' }, tile('fail', 'Fails'), tile('flag', 'Flags'), tile('note', 'Check notes'), tile('remind', 'Reminders'));
       const kids = [head, tiles];
-      if (lastError) kids.push(errLine("Couldn't check orders just now."));
+      if (lastError) kids.push(errLine("Couldn't check orders."));
       if (showDismissed && canDismiss()) {
         const dl = h('div', { class: 'list' }, ...(result.dismissed.length
           ? [h('p', { class: 'sg-soft', style: 'margin:4px 0 0' }, 'A dismissal ends on its own if the facts behind it change.'), ...result.dismissed.map(dismissedRow)]
@@ -963,7 +963,7 @@ AE.crystal({
         h('div', { class: 'hd' }, h('span', { html: AE.actionIcon('assize', 22), style: 'line-height:0' }), h('b', null, 'Assize · this order'),
           h('button', { type: 'button', class: 'sg-x', title: 'Close', 'aria-label': 'Close', onclick: () => pop.remove() }, '✕')),
         ...list.map((x) => rowEl(x, true)),
-        h('div', { class: 'ft' }, h('span', { class: 'sg-soft' }, 'Check notes need a person. A note may explain it.')));
+        h('div', { class: 'ft' }, h('span', { class: 'sg-soft' }, 'Check notes: a note may explain these, so give them a look.')));
       pop.style.left = Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8)) + 'px';
     }
     function togglePop(e) {
@@ -1006,7 +1006,7 @@ AE.crystal({
         if (mk && mk.dataset.sig === sig && mk.previousElementSibling === link) continue;
         mk?.remove();
         if (!list.length) continue;
-        mk = h('button', { type: 'button', class: MK + ' ae-as ae-chip mini has-icon ' + sev, 'data-sig': sig, title: 'Assize: ' + list.length + (list.length === 1 ? ' finding' : ' findings') + ' (click opens the order)',
+        mk = h('button', { type: 'button', class: MK + ' ae-as ae-chip mini has-icon ' + sev, 'data-sig': sig, title: 'Assize: ' + list.length + (list.length === 1 ? ' finding' : ' findings') + '. Click to open the order.',
           html: AE.actionIcon('assize', 14) + list.length, 'aria-label': 'Assize: ' + list.length + (list.length === 1 ? ' finding' : ' findings') });
         mk.onmousedown = (e) => e.stopPropagation();
         mk.onclick = (e) => { e.preventDefault(); e.stopPropagation(); link.click(); };

@@ -111,7 +111,7 @@ AE.crystal({
     const fill = (text, price) => price == null ? text : text.replace(/\$\s?price\b/gi, money(price));
 
     // ------------------------------------------------------------ sending
-    const report = (what, e) => ' ' + AE.bugLink('Report a bug', { where: 'Provoke', error: what + ': ' + ((e && e.message) || e) }) + '.';
+    const report = (what, e) => ' If you keep seeing this, ' + AE.bugLink('report a bug', { where: 'Provoke', error: what + ': ' + ((e && e.message) || e) }) + '!';
     async function send(a, texts, title) {
       const [prof, jobs] = await Promise.all([AE.profile(), AE.api('GET', '/api/customer/recent-jobs/' + a.customer.customerId + (a.clientId ? '?clientId=' + a.clientId : ''))]);
       const c = (jobs && jobs.customer) || {};
@@ -180,7 +180,7 @@ AE.crystal({
             if (p.priced && p.item !== p.priced) { p.item = p.priced; sel.value = String(items.indexOf(p.priced)); }
             setText();
           } }, x.label + ' ' + money(x.price)); return c; }))
-        : (typeOf(a) === APPOINTMENT && prices && prices.data ? h('div', { class: 'chips sg-soft' }, 'No Price sheet row for this device. Check the Price sheet.') : null);
+        : (typeOf(a) === APPOINTMENT && prices && prices.data ? h('div', { class: 'chips sg-soft' }, "This device isn't on the price sheet.") : null);
       const second = p.second ? h('input', { type: 'checkbox', checked: true }) : null;
       const msg = h('span', { class: 'sg-soft' });
       const btn = h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: go, html: AE.actionIcon('leadReplies', 18) + 'Send and mark contacted' });
@@ -209,7 +209,7 @@ AE.crystal({
           h('span', { class: 'pill' }, p.ready ? 'Reply ready' : 'Needs a reply')),
         p.call ? h('div', { class: 'call' }, h('b', null, 'Call this customer too.'), ' ' + (programOf(a) === 6494 ? 'Samsung In-Warranty' : 'Out-of-warranty') + ' leads need a call as well as a text.') : null,
         sel, chips, ta,
-        second ? h('label', { class: 'chk' }, second, h('span', { class: 'hint', title: p.second.texts[0] }, 'Send secondary price match message?')) : null,
+        second ? h('label', { class: 'chk' }, second, h('span', { class: 'hint', title: p.second.texts[0] }, 'Also send the price match message')) : null,
         h('div', { class: 'ft' }, msg, h('span', { class: 'sp' }), btn),
         h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' }, 'From the lead sheet' + edited(leads) +
           (p.prices && p.prices.length ? ' and Price sheet' + edited(prices) : '') + '.'));

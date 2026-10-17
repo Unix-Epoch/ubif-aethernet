@@ -101,12 +101,12 @@ AE.tactician = (() => {
         can.ok ? h('div', { class: 'sg-actions', style: 'margin-top:4px' }, h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: async (e) => {
           e.target.disabled = true; status.textContent = 'Saving…';
           try { const g = await saveGm([...sel], Object.fromEntries([...sel].map((id) => [id, names[id] || (list.find((p) => p.id === id) || {}).name || null]))); st.gm = settings.gm; cur.clear(); g.userIds.forEach((id) => cur.add(id)); status.textContent = ''; draw(); AE.toast('Tactician', 'General manager saved for everyone at the store.', 'ok'); }
-          catch (err) { status.textContent = ''; AE.toast("Couldn't save", err.message || String(err), 'err'); }
+          catch (err) { status.textContent = ''; AE.toast('Tactician', { html: "Couldn't save the general manager. If you keep seeing this, " + AE.bugLink('report a bug', { where: 'Tactician', error: 'Saving the general manager: ' + (err.message || err) }) + '!' }, 'err'); }
           e.target.disabled = false;
         } }, 'Save general manager'), status) : null,
         st.gm && st.gm.by ? h('div', { class: 'sg-soft', style: 'margin-top:4px;font-size:12px' }, 'Last set by ' + st.gm.by + (st.gm.at ? ' · ' + new Date(st.gm.at).toLocaleDateString() : '')) : null].filter(Boolean));
       draw();
-    }).catch((e) => root.replaceChildren(h('div', { class: 'sg-soft', style: 'margin-top:8px' }, "Couldn't load: " + (e.message || e))));
+    }).catch((e) => root.replaceChildren(h('div', { class: 'sg-soft', style: 'margin-top:8px' }, "Couldn't load the general manager setting. If you keep seeing this, ", AE.bugLinkEl('report a bug', { where: 'Tactician', error: 'Loading the general manager setting: ' + (e.message || e) }), '!')));
     return root;
   }
   const summary = () => { const g = settings && settings.gm; return g && g.userIds && g.userIds.length ? 'General manager: ' + g.userIds.map((id) => (g.names || {})[id] || id).join(', ') : 'General manager not set'; };
@@ -218,7 +218,7 @@ AE.crystal({
       const main = strip.closest('main'); if (main && !main.classList.contains('ae-ts-scroll')) main.classList.add('ae-ts-scroll');
       if (row.nextElementSibling !== box || box.nextElementSibling !== strip) { strip.before(row); strip.before(box); }
 
-      if (failed) { row.replaceChildren(h('span', { class: 'lbl' }, "Tactician couldn't load this week's punches: " + failed)); box.replaceChildren(); filter(); return; }
+      if (failed) { row.replaceChildren(h('span', { class: 'lbl' }, "Tactician couldn't load this week's punches. If you keep seeing this, ", AE.bugLinkEl('report a bug', { where: 'Tactician', error: 'Loading punches for the week of ' + weekKey + ': ' + failed }), '!')); box.replaceChildren(); filter(); return; }
       if (!rows) { row.replaceChildren(h('span', { class: 'lbl' }, 'Loading stores…')); box.replaceChildren(); return; }
       const list = stores();
       if (store != null && !list.some((s) => s.id === store)) store = list.length === 1 ? list[0].id : store;
@@ -428,7 +428,7 @@ AE.crystal({
       const key = range;
       if (!busy && (dataFor !== key || Date.now() - loadedAt > STALE_MS)) {
         const f = fresh; fresh = false;
-        busy = loadSplh(f).then((d) => { if (range === key) { data = d; err = null; } dataFor = key; loadedAt = Date.now(); }, (e) => { err = /session expired/i.test(e.message || '') ? 'Sales per labor hour needs Store time sheet access.' : "Couldn't load: " + (e.message || e); dataFor = key; loadedAt = Date.now(); })
+        busy = loadSplh(f).then((d) => { if (range === key) { data = d; err = null; } dataFor = key; loadedAt = Date.now(); }, (e) => { err = /session expired/i.test(e.message || '') ? 'Sales per labor hour needs Store time sheet access.' : ["Couldn't load sales and hours. If you keep seeing this, ", AE.bugLinkEl('report a bug', { where: 'Tactician', error: 'Sales per labor hour: ' + (e.message || e) }), '!']; dataFor = key; loadedAt = Date.now(); })
           .finally(() => { busy = null; if (document.getElementById(RP)) showSplh(); }); // (a range picked meanwhile loads next)
       }
     }

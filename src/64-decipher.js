@@ -211,7 +211,7 @@ AE.crystal({
     const report = (what, e) => ({ html: ' If you keep seeing this, ' + AE.bugLink('report a bug', { where: 'Decipher', error: what + ': ' + ((e && e.message) || e) }) + '!' });
     const copy = async (text, what) => {
       try { await navigator.clipboard.writeText(text); AE.toast('Copied ' + what, text, 'ok', 4000); }
-      catch (e) { AE.toast("Couldn't copy", e.message || String(e), 'err'); }
+      catch (e) { AE.toast('Decipher', { html: AE.esc("Couldn't copy the " + what + '.') + report('Copying the ' + what, e).html }, 'err'); }
     };
     const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 
@@ -228,15 +228,15 @@ AE.crystal({
       const input = h('input', { type: 'text', class: 't', inputmode: 'numeric', autocomplete: 'off', placeholder: '15 digits', 'aria-label': 'IMEI',
         oninput: () => { setDigits(input.value); }, onpaste: () => setTimeout(() => setDigits(input.value)) });
       const chk = h('div', { class: 'chk' }), body = h('div'), foot = h('div', { class: 'foot' });
-      const infoBtn = h('button', { class: 'info', title: 'Where this suggestion comes from', 'aria-label': 'About this suggestion', onclick: (e) => { e.stopPropagation(); st.popup = !st.popup; drawPop(); } }, 'i');
+      const infoBtn = h('button', { class: 'info', title: 'Where this guess comes from', 'aria-label': 'About this guess', onclick: (e) => { e.stopPropagation(); st.popup = !st.popup; drawPop(); } }, 'i');
       const pop = h('div', { class: 'sg sg-card pop', role: 'note' },
-        'Suggestion from the Osmocom TAC database, CC BY-SA 3.0, © Harald Welte and contributors. ', h('a', { href: 'https://tacdb.osmocom.org/', target: '_blank', rel: 'noopener noreferrer' }, 'tacdb.osmocom.org'));
+        'Guess from the Osmocom TAC database (CC BY-SA 3.0, © Harald Welte and contributors). ', h('a', { href: 'https://tacdb.osmocom.org/', target: '_blank', rel: 'noopener noreferrer' }, 'tacdb.osmocom.org'));
       pop.hidden = true; infoBtn.hidden = true;
       const hd = h('div', { class: 'hd' }, icon(32), h('h2', null, 'Decipher'), infoBtn, h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕'));
       const card = h('div', { class: 'sg sg-card sg-about dc', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Decipher', onclick: () => { if (st.popup) { st.popup = false; drawPop(); } } },
-        hd, pop, h('div', { class: 'sg-soft' }, 'Identify a device from its IMEI. Type it or scan it.'),
+        hd, pop, h('div', { class: 'sg-soft' }, "Got an IMEI? Type it or scan it and we'll tell you what it is."),
         h('label', { class: 'f' }, 'IMEI'),
-        h('div', { class: 'in' }, input, h('button', { type: 'button', class: 'sg-btn', onclick: () => { input.value = ''; setDigits(''); input.focus(); chk.className = 'chk soft'; chk.textContent = 'Ready: scan the barcode now.'; } }, 'Scan')),
+        h('div', { class: 'in' }, input, h('button', { type: 'button', class: 'sg-btn', onclick: () => { input.value = ''; setDigits(''); input.focus(); chk.className = 'chk soft'; chk.textContent = 'Ready. Scan the barcode now.'; } }, 'Scan')),
         chk, body, foot);
       const scrim = h('div', { class: 'sg sg-about-scrim', id: DLG, onclick: (e) => { if (e.target === scrim) close(); } }, card);
       const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); if (st.popup) { st.popup = false; drawPop(); } else close(); } };
@@ -302,10 +302,10 @@ AE.crystal({
         const bad = st.state === 'typo' || st.state === 'junk';
         input.classList.toggle('bad', bad);
         chk.className = 'chk' + (bad ? ' bad' : st.state === 'idle' || st.state === 'meid' ? ' soft' : '');
-        chk.textContent = st.state === 'typo' ? '✕ This IMEI has a typo. Check the digits and try again.'
+        chk.textContent = st.state === 'typo' ? '✕ One of those digits is wrong. Give them another look.'
           : st.state === 'junk' ? "✕ That isn't a real IMEI. Check the device's settings or the label."
           : st.state === 'meid' ? 'This looks like an older MEID. Decipher only reads IMEIs.'
-          : st.state === 'idle' ? (st.digits ? st.digits.length + ' of 15 digits' : '') : '✓ Valid IMEI';
+          : st.state === 'idle' ? (st.digits ? st.digits.length + ' of 15 digits' : '') : '✓ Looks good';
         if (st.sv) chk.append(' ', h('span', { class: 'tag ok' }, 'IMEI/SV'));
         infoBtn.hidden = !(st.state === 'unknown' && st.suggestion);
         drawPop();
@@ -342,10 +342,10 @@ AE.crystal({
           h('div', { class: 'res' }, h('div', { class: 'mk' }, m.manufacturer || ' '), h('div', { class: 'md' }, m.modelName),
             h('div', { class: 'src' }, 'Seen on ' + plural(d.workOrders, 'work order') + ' at ' + plural(d.stores, 'store')),
             rows.length ? h('div', { class: 'rows' }, rows) : null),
-          h('div', { class: 'note' }, appleDevice ? (d.colors.length ? "The IMEI doesn't say the color. Pick it from the colors stores have seen for this model." : '')
-            : 'Serial and Find My are only available for Apple devices.'));
+          h('div', { class: 'note' }, appleDevice ? (d.colors.length ? "The IMEI can't tell us the color. Pick one stores have seen on this model." : '')
+            : 'Serial and Find My are Apple-only.'));
         const use = onDeviceStep() ? btn('Use this device', () => useDevice(), 'sg-primary', st.busy) : null;
-        foot.replaceChildren(h('span', { class: 'sp' }, apple ? 'Serial and Find My from Portal' : ''),
+        foot.replaceChildren(h('span', { class: 'sp' }, apple ? 'Serial and Find My come from Portal' : ''),
           ...[btn('Copy model', () => { AE.track('decipher:copy'); copy(modelText(), 'model'); }, use ? '' : 'sg-primary'), use].filter(Boolean));
       }
 
@@ -359,12 +359,12 @@ AE.crystal({
           close();
         } catch (e) {
           st.busy = false; drawKnown();
-          AE.toast('Decipher', { html: AE.esc("Couldn't fill in the Device step. Use Copy model instead.") + report('Use this device', e).html }, 'err', 10000);
+          AE.toast('Decipher', { html: AE.esc("Couldn't fill in the Device step. Copy the model and paste it in instead.") + report('Use this device', e).html }, 'err', 10000);
         }
       }
 
       // -------------------------------------------------------- unknown TAC
-      const search = h('input', { type: 'text', class: 't plain', autocomplete: 'off', placeholder: 'Type the model, e.g. moto g', 'aria-label': 'Model',
+      const search = h('input', { type: 'text', class: 't plain', autocomplete: 'off', placeholder: 'Search models, e.g. moto g', 'aria-label': 'Model',
         oninput: () => { st.query = search.value; st.pick = null; searchSoon(); drawList(); } });
       const list = h('div', { class: 'list' }), listWrap = h('div');
       let timer = null, searchRun = 0;
@@ -393,21 +393,21 @@ AE.crystal({
         const q = search.value.trim();
         list.replaceChildren(...(st.searching ? [h('div', { class: 'none' }, 'Searching…')]
           : st.results.length ? st.results.map((x) => h('button', { type: 'button', class: st.pick && st.pick.id === x.id ? 'on' : '', onclick: () => { st.pick = x; drawList(); drawUnknownFoot(); } }, h('span', { class: 'r' }), x.name))
-          : [h('div', { class: 'none' }, q.length < 3 ? 'Type at least 3 letters of the model.' : st.searchError ? "Couldn't search Portal's device list." : 'Portal has no model like that.')]));
+          : [h('div', { class: 'none' }, q.length < 3 ? 'Type at least 3 letters.' : st.searchError ? ["Couldn't search Portal's device list.", h('span', { html: report('Searching models', st.searchError).html })] : 'Nothing in Portal matches that. Try fewer letters or a different spelling.')]));
         drawUnknownFoot();
       }
       function drawUnknownFoot() {
         saveBtn = btn('Save model', () => save(), 'sg-primary', !st.pick || st.busy || accepting);
-        foot.replaceChildren(h('span', { class: 'sp' }, "Models from Portal's device list"), saveBtn);
+        foot.replaceChildren(h('span', { class: 'sp' }, "These are Portal's models"), saveBtn);
       }
       function drawUnknown() {
         const s = st.suggestion;
         const sugText = s ? (s.brand && !D.norm(s.model).startsWith(D.norm(s.brand)) ? s.brand + ' ' : '') + s.model : '';
         body.replaceChildren(
-          h('div', { class: 'unk' }, h('b', null, 'No store has seen this model yet.'), h('div', { class: 's' }, 'Confirm it once and every store gets it from then on.'),
-            s ? h('div', { class: 'sug' }, h('div', { class: 't' }, sugText, h('div', { class: 's' }, 'Suggested by a community TAC list')),
+          h('div', { class: 'unk' }, h('b', null, 'New one! No store has seen this model yet.'), h('div', { class: 's' }, 'Tell us what it is once and every store gets it from then on.'),
+            s ? h('div', { class: 'sug' }, h('div', { class: 't' }, sugText, h('div', { class: 's' }, 'Our best guess, from a public device list')),
               sugBtn = btn("That's it", () => acceptSuggestion(sugText), 'sg-primary', accepting || st.busy)) : null),
-          h('label', { class: 'f' }, s ? 'Not it? Pick the model' : 'Pick the model'), h('div', { class: 'in' }, search), listWrap);
+          h('label', { class: 'f' }, s ? 'Not it? Find the model' : 'Find the model'), h('div', { class: 'in' }, search), listWrap);
         listWrap.replaceChildren(list);
         drawList();
         setTimeout(() => { if (st.state === 'unknown' && !s) search.focus(); });
@@ -438,7 +438,7 @@ AE.crystal({
           st.busy = false; st.thanks = true; st.run++; st.state = 'loading'; draw(); find(st.run);
         } catch (e) {
           st.busy = false; setButtons();
-          AE.toast('Decipher', { html: AE.esc("Couldn't save the model.") + report('Saving TAC ' + st.tac, e).html }, 'err', 10000);
+          AE.toast('Decipher', { html: AE.esc("Couldn't save the model. Try again.") + report('Saving TAC ' + st.tac, e).html }, 'err', 10000);
         }
       }
 
@@ -468,15 +468,15 @@ AE.crystal({
       const opt = await until(() => byText(name, input), 6000);
       if (!opt) throw new Error('"' + name + '" not in the Portal list');
       opt.click();
-      if (!color) return 'Model filled in: ' + name + '.';
+      if (!color) return 'Filled in the model: ' + name + '.';
       const lab = await until(() => byText('Color'), 4000);
       if (lab) {
         lab.click();
         const c = await until(() => { const e = byText(color); return e && e !== lab ? e : null; }, 2500);
-        if (c) { c.click(); return 'Model and color filled in: ' + name + ' ' + color + '.'; }
+        if (c) { c.click(); return 'Filled in the model and color: ' + name + ' ' + color + '.'; }
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       }
-      return 'Model filled in: ' + name + '. Pick the color (' + color + ') yourself.';
+      return 'Filled in the model: ' + name + '. Pick the color yourself (' + color + ').';
     }
 
     // The Decipher button on check-in's Device step: beside the IMEI box, or under the model box until that shows up.
@@ -487,7 +487,7 @@ AE.crystal({
       const anchor = step && (imei || modelInput());
       if (!anchor) { b?.remove(); return; }
       if (!b) {
-        b = h('button', { type: 'button', id: BTN, title: 'Decipher: identify a device from its IMEI', onclick: () => { const i = imeiInput(); open({ from: 'checkin', imei: i ? i.value : '' }); } }, icon(24), 'Decipher');
+        b = h('button', { type: 'button', id: BTN, title: 'Decipher: look up this device from its IMEI', onclick: () => { const i = imeiInput(); open({ from: 'checkin', imei: i ? i.value : '' }); } }, icon(24), 'Decipher');
         document.body.append(b);
       }
       const r = anchor.closest('div[class]')?.getBoundingClientRect() || anchor.getBoundingClientRect();

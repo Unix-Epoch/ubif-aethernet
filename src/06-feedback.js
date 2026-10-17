@@ -497,23 +497,23 @@ AE.feedback = (() => {
       const stageBtn = h('button', { type: 'button', class: 'sg-btn', disabled: !toStage.length, onclick: async () => {
         stageBtn.disabled = true;
         try { await set(toStage, 'staged'); await W.load(true); AE.toast('Auto-Waymark', 'Staged: ' + toStage.map((k) => W.RULES[k].name).join(', ') + '. Work orders that newly enter the status get marks now.', 'ok'); draw(); }
-        catch (e) { stageBtn.disabled = false; AE.toast("Couldn't stage", e.message || String(e), 'err'); }
+        catch (e) { stageBtn.disabled = false; AE.toast('Auto-Waymark', { html: "Couldn't stage the rules. If you keep seeing this, " + AE.bugLink('report a bug', { where: 'Admin: Auto-Waymark', error: 'Stage: ' + (e.message || e) }) + '!' }, 'err'); }
       } }, 'Stage rule changes');
       const pushBtn = h('button', { type: 'button', class: 'sg-btn sg-primary', disabled: !toPush.length, onclick: async () => {
         pushBtn.disabled = true;
         try {
           await set(toPush, 'live'); await W.load(true);
           const plan = await W.scan(null, { force: true }); // backfill this store now; other stores on their next scan
-          AE.toast('Auto-Waymark', 'Live for every store. ' + ((plan && plan.create.length) || 0) + ' work order(s) here got marks.', 'ok');
+          AE.toast('Auto-Waymark', 'Live for every store. ' + ((plan && plan.create.length) || 0) + (((plan && plan.create.length) || 0) === 1 ? ' work order' : ' work orders') + ' here got marks.', 'ok');
           draw();
-        } catch (e) { pushBtn.disabled = false; AE.toast("Couldn't push", e.message || String(e), 'err'); }
+        } catch (e) { pushBtn.disabled = false; AE.toast('Auto-Waymark', { html: "Couldn't push the staged rules. If you keep seeing this, " + AE.bugLink('report a bug', { where: 'Admin: Auto-Waymark', error: 'Push: ' + (e.message || e) }) + '!' }, 'err'); }
       } }, 'Push staged changes');
       let preview = null;
       if (toPush.length || toStage.length) {
         const p = await W.backfillPreview().catch((e) => { throw new Error('preview: ' + (e.message || e)); });
         const store = (await AE.profile()).storeName || 'this store';
         preview = h('div', { class: 'astaged' },
-          h('b', null, (toPush.length ? 'Staged' : 'If staged and pushed') + ': what pushing adds at ' + store),
+          h('b', null, (toPush.length ? 'Staged' : 'If you stage and push') + ': what pushing adds at ' + store),
           ...(p.length ? p.map((x) => h('div', { class: 'r' }, h('span', null, x.wo + ' · ' + (x.name || 'Customer')),
             h('span', { class: 'sub' }, W.RULES[x.kind].name + ' since ' + x.since + ' → due ' + (x.due === new Date().toISOString().slice(0, 10) ? 'today' : x.due))))
             : [h('div', { class: 'sub' }, 'Nothing here right now.')]),
