@@ -19,7 +19,7 @@
 
   Dismissing: a finding that doesn't apply can be dismissed for the whole store ("Dismiss" on its row,
   in the panel and the order's pill popover: a reason, an optional note). Every finding carries a stable
-  `rule` id (kebab-case, e.g. missed-contact, cart-not-offset) and a `sig`, a short hash of the facts it
+  `rule` id (kebab-case, e.g. missed-contact, no-bin) and a `sig`, a short hash of the facts it
   was raised on (the nickname's date, the cart's lines, the status and the date it began...), so a
   dismissal stops applying when those facts change. Dismissals live on the Waymark Worker
   (assize_dismissals, GET /assize/dismissed, POST /assize/dismiss and /assize/restore), are loaded with
@@ -254,16 +254,6 @@ AE.assizeRules = (() => {
   // The cart's lines as the rules see them (what, price, quantity, whether a child), so a changed cart is a new signature.
   const cartSig = (cart) => sigOf(lines(cart).map((l) => [l.sku || l.itemNumber || l.name || '', price(l).toFixed(2), l.quantity == null ? 1 : l.quantity, l.parentLineId ? 'c' : ''].join(':')).sort().join('|') || 'empty');
   const money = (n) => '$' + (Math.round(n * 100) % 100 ? n.toFixed(2) : String(Math.round(n)));
-  // Lines with a price that aren't offset by a PCEXEMPT credit (children by parentLineId; the cart total when credits carry no parent).
-  function unoffset(cart) {
-    const all = lines(cart), credits = all.filter(isCredit), charged = all.filter((l) => !isCredit(l) && !neverFlag(l) && price(l) > 0.009);
-    if (!charged.length) return [];
-    if (credits.length && !credits.some((c) => c.parentLineId)) {
-      const left = charged.reduce((s, l) => s + price(l), 0) + credits.reduce((s, c) => s + price(c), 0);
-      return left > 0.01 ? charged : [];
-    }
-    return charged.filter((l) => price(l) + credits.filter((c) => c.parentLineId && String(c.parentLineId) === String(l.lineId)).reduce((s, c) => s + price(c), 0) > 0.01);
-  }
   const cartSum = (cart) => lines(cart).filter((l) => !neverFlag(l)).reduce((s, l) => s + price(l), 0);
   const cartTotal = (cart) => { const p = cart && cart.payment; const v = p && (p.subtotal != null ? Number(p.subtotal) : Number(p.total)); return Number.isFinite(v) ? v : cartSum(cart); };
   const repairFrom = (issues) => {
@@ -340,14 +330,12 @@ AE.assizeRules = (() => {
           }
         }
       } else if ((prog.key === 'asurion' && dev.phone) || prog.key === 'servify') {
-        const bad = unoffset(cart);
-        if (bad.length) add('cart', 'fail', 'Line not offset', (prog.key === 'servify' ? prog.label : 'Asurion phone') + ': ' + (bad.length === 1 ? money(price(bad[0])) + ' line' : bad.length + ' lines (' + bad.map((l) => money(price(l))).join(', ') + ')') + ' with no PCEXEMPT offset', who, 'cart-not-offset', cartSig(cart));
+        // Asurion phones, Servify, Samsung Care+: PCEXEMPT offsets are always applied, so the cart isn't checked (Oct 16, 2026).
       } else if (prog.key === 'asurion' && rfp && !/declined|incomplete/i.test(f.outcome)) {
         const ls = lines(cart);
         if (/no issue found/i.test(f.outcome)) {
           const labor = ls.filter((l) => !isCredit(l) && (l.lineType === 'labor' || /labor|asurion repair/i.test(l.name || '')));
           if (!labor.length) add('cart', 'fail', 'NTF, no labor line', 'Asurion non-phone, no issue found: the cart needs the labor line plus its offset', who, 'ntf-no-labor', cartSig(cart));
-          else if (unoffset({ cartItems: ls.filter((l) => isCredit(l) || labor.includes(l)) }).length) add('cart', 'fail', 'Line not offset', 'Asurion non-phone, no issue found: the labor line has no PCEXEMPT offset', who, 'cart-not-offset', cartSig(cart));
         } else if (!ls.some((l) => !isCredit(l) && !neverFlag(l) && l.lineType !== 'labor' && !/labor|diagnostic|asurion repair/i.test(l.name || ''))) {
           add('cart', 'fail', 'No part line', 'Asurion non-phone at Ready for pickup with no part in the cart', who, 'no-part-line', cartSig(cart));
         }
@@ -478,7 +466,7 @@ AE.assizeRules = (() => {
     const worst = n.fail ? 'fail' : n.flag ? 'flag' : n.note ? 'note' : n.remind ? 'remind' : 'ok';
     return Object.assign(n, { worst, act: n.fail + n.flag });
   }
-  return { STORE_HOURS, MORNING_ENDS, CHECKS, KINDS, programOf, deviceOf, nickDate, closeAfter, closeBefore, facts, audit, orphanCleanings, summarize, sort, unoffset, sigOf, dismissKey };
+  return { STORE_HOURS, MORNING_ENDS, CHECKS, KINDS, programOf, deviceOf, nickDate, closeAfter, closeBefore, facts, audit, orphanCleanings, summarize, sort, sigOf, dismissKey };
 })();
 
 AE.crystal({
