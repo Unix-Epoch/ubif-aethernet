@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Aethernet — crystals for NextGen Portal
 // @namespace    garrett.ubif
-// @version      2.23.0
+// @version      2.23.1
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*
@@ -34,13 +34,13 @@
 */
 
 const AE_NAME = 'Aethernet';
-const AE_VERSION = '2.23.0';            // filled in by build.py
+const AE_VERSION = '2.23.1';            // filled in by build.py
 const AE_DEV = false;                      // true only in the dev channel ("Aethernet (dev)")
 // false (used bare, never declared): build.py swaps it for true in the demo
 // channel's build (build.py --demo: only a few crystals, nothing else) and
 // false everywhere else, so the other side's code is dropped by the minifier.
-const AE_BUILD_TIME = '2026-10-13T17:22:53-04:00';       // ISO time of the build
-const AE_BUILD_COMMIT = '0252795-dirty';   // git commit it was built from ("-dirty" = uncommitted changes)
+const AE_BUILD_TIME = '2026-10-16T11:44:52-04:00';       // ISO time of the build
+const AE_BUILD_COMMIT = '4bab87f';   // git commit it was built from ("-dirty" = uncommitted changes)
 const AE_INSTALL_URL = 'https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js';     // where installs update from
 // The Portal sandbox (sandbox/server.py: Portal's real app on fake data) — dev builds only.
 const AE_SANDBOX = AE_DEV && location.host === 'localhost:8790';
@@ -312,6 +312,38 @@ const AE = (() => {
     }
     return profilePromise;
   }
+
+  // --------------------------------------------------------- store check
+  /*
+    Portal answers list calls (work orders, arrivals) for the session's *current* store, and any tab
+    can switch that, while profile() is this page's store from when it loaded. Oct 16, 2026: tabs still
+    on Newport News and Erie read Glen Allen's list after a switch in another tab, and Auto-Waymarked
+    (and renamed) Glen Allen's work orders under their own stores. So lists, and writes to our own
+    servers, are only used while the session's store is still this page's store. Once it isn't,
+    Aethernet's background work stops in this tab until it's reloaded.
+  */
+  let storeChanged = null, storeCheck = null, storeCheckAt = 0;
+  function sessionStore(fresh) {
+    if (fresh || !storeCheck || Date.now() - storeCheckAt > 5000) {
+      storeCheckAt = Date.now();
+      storeCheck = api('GET', '/api/auth/user').then((a) => (a && a.currentStore) || {}).catch((e) => { storeCheck = null; throw e; });
+    }
+    return storeCheck;
+  }
+  async function sameStore(fresh) {
+    if (storeChanged) return false;
+    if (!AE_ON_PORTAL) return true;
+    const [p, cur] = await Promise.all([profile(), sessionStore(fresh)]);
+    if (!p || p.storeId == null || cur.storeId == null || Number(cur.storeId) === Number(p.storeId)) return true;
+    storeChanged = { from: p.storeName || String(p.storeId), to: cur.storeName || String(cur.storeId) };
+    toast('Aethernet paused on this page', "Portal's store changed to " + storeChanged.to + ' (in this tab or another one). Reload this page to use Aethernet with ' + storeChanged.to + '.', 'err', 60000);
+    emit('store-changed', storeChanged);
+    return false;
+  }
+  class StoreChanged extends Error {
+    constructor() { super("Portal's store changed in another tab: reload this page"); this.storeChanged = true; }
+  }
+  async function assertSameStore(fresh) { if (!(await sameStore(fresh))) throw new StoreChanged(); }
 
   // ------------------------------------------------------------- styles
   const CSS = `
@@ -687,6 +719,7 @@ const AE = (() => {
     // All open WOs, plus closed WOs created since `sinceMs` (newest first,
     // so paging stops once past it). maxClosedPages bounds old lookbacks.
     async function workorders(sinceMs, maxClosedPages = PAGE_CAP) {
+      await assertSameStore();
       const byId = new Map();
       // Page by Portal's own total (rowCount), not by a short page: a server that sends fewer rows
       // per page than asked would otherwise end the list early (and open WOs would look closed).
@@ -701,10 +734,12 @@ const AE = (() => {
         const lastRow = rows[rows.length - 1];
         if (rows.length < PAGE_SIZE || !lastRow || Date.parse(lastRow.createdAt) < sinceMs) break;
       }
+      await assertSameStore(true); // still this page's store after loading: the list is ours
       return [...byId.values()];
     }
     // Arrivals not yet checked in. pageSize=100 is honored (the UI uses 10).
     async function arrivals() {
+      await assertSameStore();
       const out = [];
       for (let p = 1; p <= PAGE_CAP; p++) {
         const j = await api('GET', '/api/arrivals/upcoming-arrivals?page=' + p + '&pageSize=' + PAGE_SIZE);
@@ -712,6 +747,7 @@ const AE = (() => {
         out.push(...rows);
         if (rows.length < PAGE_SIZE || out.length >= ((j && j.rowCount) || 0)) break;
       }
+      await assertSameStore(true);
       return out;
     }
 
@@ -870,7 +906,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every,
-    api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, portal, sameStore, assertSameStore, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
@@ -4046,6 +4082,7 @@ return { PBKDF2_ROUNDS, b64u, unb64u, gzip, gunzip, newKeyPair, importPublic, ex
   const configured = () => (AE_SANDBOX ? /^http:\/\/localhost[:/]/.test(API) : /^(https:\/\/|http:\/\/localhost[:/])/.test(API));
 
   async function call(method, path, body) {
+    if (method !== 'GET') await AE.assertSameStore(); // never upload under this page's store once Portal has switched
     const res = await fetch(API + path, { method, credentials: 'omit', headers: { 'content-type': 'application/json', 'x-aethernet-key': KEY }, body: body ? JSON.stringify(body) : undefined });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw Object.assign(new Error(j.error || 'HTTP ' + res.status), { status: res.status });
@@ -4175,6 +4212,8 @@ return { scanRow, scrub, pick, outcomeOf, plainPart, cardOf };
   // One WO, ready to send (or to look at, for the dev tools' dry run).
   async function prepare(store, wo, listRow, jwk) {
     const d = await detailOf(wo);
+    const own = d.workorder && d.workorder.workorder;
+    if (own && own.storeId != null && Number(own.storeId) !== Number(store)) throw Object.assign(new Error("another store's work order"), { otherStore: true });
     if (listRow) d.list_row = scrub(listRow);
     const plain = plainPart(d, listRow), card = cardOf(d, listRow);
     const out = { plain, card, detail: d, hash: await C.hashJson([plain, d]), detailBytes: JSON.stringify(d).length };
@@ -4207,7 +4246,8 @@ return { scanRow, scrub, pick, outcomeOf, plainPart, cardOf };
           const j = await call('POST', '/v1/' + store + '/tracker/wo/' + n.wo, { hash: x.hash, trigger: n.why, plain: x.plain, sealed: x.sealed, card: x.cardSealed, by: p.name });
           if (j.same) result.same++; else result.sent++;
         } catch (e) {
-          if (/session expired/i.test(e.message || '')) throw e; // signed out: stop, try again next time
+          if (/session expired/i.test(e.message || '') || e.storeChanged) throw e; // signed out or store switched: stop
+          if (e.otherStore) continue; // never upload another store's work order
           if (e.gone) { // Portal no longer has it
             try { await call('POST', '/v1/' + store + '/tracker/wo/' + n.wo + '/gone', { by: p.name }); result.gone++; continue; } catch (_) {}
           }
@@ -4219,6 +4259,7 @@ return { scanRow, scrub, pick, outcomeOf, plainPart, cardOf };
       catch (e) { result.errors.push('sales: ' + (e.message || e)); }
       return result;
     } catch (e) {
+      if (e.storeChanged) { result.note = "paused: Portal's store changed, reload the page"; return result; }
       result.errors.push(e.message || String(e));
       AE.noteError('tracker', e);
       return result;
@@ -5574,6 +5615,7 @@ AE.waymark = (() => {
   async function call(method, path, body) {
     if (!configured()) throw new Error("Waymark isn't set up yet");
     const p = await me();
+    if (method !== 'GET') await AE.assertSameStore(); // never write under this page's store once Portal has switched
     const res = await fetch(API + '/v1/' + p.storeId + path, {
       method, credentials: 'omit',
       headers: { 'content-type': 'application/json', 'x-aethernet-key': KEY },
@@ -5665,6 +5707,8 @@ AE.waymark = (() => {
     wo = wo || await woDetail(woId);
     const dev = wo && wo.CustomerDevice;
     if (!dev || !dev.customerDeviceId || Number(wo.workorderStatusId) !== RFP_STATUS) return false;
+    const p = await me();
+    if (wo.storeId != null && Number(wo.storeId) !== Number(p.storeId)) return false; // another store's WO: never rename it
     const name = nickDate(due);
     if ((dev.name || '').trim() === name) return false;
     await AE.api('PUT', '/api/customer-devices/' + dev.customerDeviceId, {
