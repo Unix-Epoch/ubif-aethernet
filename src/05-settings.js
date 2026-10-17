@@ -40,6 +40,17 @@
     ]),
   ];
 
+  // The Crystals list is grouped by what the crystals do. Order here is the order shown; a crystal
+  // missing from every group lands in the last one, so a new crystal is never lost. A group with no
+  // crystals in this build (demo, public) is not shown.
+  const CRYSTAL_GROUPS = [
+    ['cleanings', 'Cleanings', ['cleaningRate', 'woCleanings', 'autoClose']],
+    ['orders', 'Work orders & customers', ['waymark', 'assize', 'textNotes', 'leadReplies', 'rowColors', 'checkinDrafts']],
+    ['devices', 'Devices & pricing', ['decipher', 'reassemble', 'galaxy']],
+    ['inventory', 'Inventory', ['countCheck', 'buybacks', 'printLabels']],
+    ['store', 'Store & Portal', ['timeSheet', 'fixes', 'glamour']],
+  ];
+
   /*
     What's new. A crystal is "new" until Settings has been opened and closed
     once with it listed; new ones get a yellow sheen. The first run of a build
@@ -195,6 +206,28 @@
   .sg-opts.closed { grid-template-rows:0fr; }
   .sg-opts > div { overflow:hidden; min-height:0; }
   .sg-opts > div > div { margin:0 0 12px 2px; padding:2px 0 2px 14px; border-left:2px solid var(--aui-primary-soft, #faecff); }
+  /* Crystals list: search + collapsible groups */
+  .sg-csearch { display:block; position:relative; margin:4px 0 6px; }
+  .sg-csearch .lbl { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+  .sg-csearch input { width:100%; height:36px; padding:0 12px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; box-sizing:border-box;
+    background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font:14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .sg-csearch input:focus { outline:2px solid var(--aui-primary, #8223d2); outline-offset:-1px; border-color:transparent; }
+  .sg-csearch input::-webkit-search-cancel-button { cursor:pointer; }
+  .sg-grp { border-top:1px solid var(--aui-outline-soft, #eeedf1); }
+  .sg-grp:first-of-type { border-top:0; }
+  .sg-grp-head { display:flex; align-items:center; gap:8px; width:100%; padding:11px 0 8px; border:0; background:none; cursor:pointer;
+    color:var(--aui-on-surface-soft, #5d5e61); font:700 12px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing:.04em; text-transform:uppercase; text-align:left; }
+  .sg-grp-head .name { flex:1; }
+  .sg-grp-head .sum { font-weight:400; font-size:12px; letter-spacing:0; text-transform:none; }
+  .sg-grp-head .chev { display:block; width:16px; height:16px; flex:none; transition:transform .2s; }
+  .sg-grp.closed .sg-grp-head .chev { transform:rotate(-90deg); }
+  .sg-grp-head:hover { color:var(--aui-on-surface, #1a1c1e); }
+  .sg-grp-head:focus-visible { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; border-radius:4px; }
+  .sg-grp-body { display:grid; grid-template-rows:1fr; transition:grid-template-rows .2s ease; }
+  .sg-grp.closed .sg-grp-body { grid-template-rows:0fr; }
+  .sg-grp-body > div { overflow:hidden; min-height:0; }
+  .sg-grp.closed .sg-grp-body > div { visibility:hidden; transition:visibility 0s .2s; }
+  .sg-cempty { padding:18px 0 10px; text-align:center; }
   /* new crystals: a yellow sheen until Settings is closed once */
   .sg-crystal.sg-new { position:relative; margin:0 -10px; padding:0 10px; border-radius:10px; border-top-color:transparent;
     background:linear-gradient(105deg, rgba(255,204,0,.14) 0%, rgba(255,204,0,.14) 38%, rgba(255,236,140,.55) 50%, rgba(255,204,0,.14) 62%, rgba(255,204,0,.14) 100%);
@@ -476,6 +509,55 @@
         optBody);
     };
 
+    // The Crystals list: a search box over collapsible groups. A group's open/closed is remembered
+    // per browser with the sections ('grp_<id>'); the first Settings open after an update opens any
+    // group holding a New or Updated crystal, so the sheen is seen. Searching opens every group with
+    // a match without touching what's remembered.
+    function crystalList() {
+      const rows = new Map(CRYSTAL_INFO.map(([id, name, desc]) => [id, crystalRow(id, name, desc)]));
+      const listed = new Set(CRYSTAL_GROUPS.flatMap(([, , ids]) => ids));
+      const groups = CRYSTAL_GROUPS.map(([gid, gname, ids], i, all) => [gid, gname,
+        CRYSTAL_INFO.map(([id]) => id).filter((id) => ids.includes(id) || (i === all.length - 1 && !listed.has(id)))
+          .sort((a, b) => (ids.indexOf(a) + 1 || 99) - (ids.indexOf(b) + 1 || 99))]).filter(([, , ids]) => ids.length);
+      let query = '';
+      const search = h('input', { type: 'search', placeholder: 'Search crystals', autocomplete: 'off', spellcheck: 'false' });
+      const empty = h('div', { class: 'sg-cempty sg-soft', role: 'status', style: 'display:none' }, 'No crystals match');
+      const paints = [];
+      const wraps = groups.map(([gid, gname, ids]) => {
+        const key = 'grp_' + gid;
+        if (ids.some((id) => isNew(id) || isUpdated(id)) || (focus && ids.includes(focus))) { openState[key] = true; GM_setValue(SECTIONS_KEY, openState); }
+        const sum = h('span', { class: 'sum' });
+        const head = h('button', { type: 'button', class: 'sg-grp-head' }, h('span', { class: 'name' }, gname), sum, h('span', { html: CHEV, style: 'display:contents' }));
+        const wrap = h('div', { class: 'sg-grp', 'data-group': gid }, head, h('div', { class: 'sg-grp-body' }, h('div', null, ...ids.map((id) => rows.get(id)))));
+        const paint = () => {
+          const hits = ids.filter((id) => !query || matches(id));
+          wrap.style.display = hits.length ? '' : 'none';
+          rows.forEach((el, id) => { if (ids.includes(id)) el.style.display = !query || matches(id) ? '' : 'none'; });
+          const open = query ? true : openState[key] !== false;
+          wrap.classList.toggle('closed', !open);
+          head.setAttribute('aria-expanded', String(open));
+          sum.textContent = ids.filter((id) => s.crystals[id]).length + ' of ' + ids.length + ' on';
+          return hits.length;
+        };
+        head.onclick = () => {
+          if (query) return; // searching shows every match; the remembered state is left alone
+          openState[key] = wrap.classList.contains('closed');
+          GM_setValue(SECTIONS_KEY, openState);
+          paint();
+        };
+        paints.push(paint);
+        sums.push(paint);
+        return wrap;
+      });
+      const info = new Map(CRYSTAL_INFO.map(([id, name, desc]) => [id, (name + ' ' + desc.replace(/\*\*/g, '')).toLowerCase()]));
+      const matches = (id) => info.get(id).includes(query);
+      const refresh = () => { query = search.value.trim().toLowerCase(); empty.style.display = paints.map((p) => p()).some(Boolean) ? 'none' : ''; };
+      search.addEventListener('input', refresh);
+      search.addEventListener('keydown', (e) => { if (e.key === 'Escape' && search.value) { e.stopPropagation(); search.value = ''; refresh(); } });
+      refresh();
+      return h('div', null, h('label', { class: 'sg-csearch' }, h('span', { class: 'lbl' }, 'Search crystals'), search), ...wraps, empty);
+    }
+
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
         // Hidden way in: ten quick clicks on the crystal open the admin panel (key entry first time).
@@ -493,7 +575,7 @@
 
       section('crystals', 'Crystals', true,
         () => CRYSTAL_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + CRYSTAL_INFO.length + ' on',
-        h('div', null, CRYSTAL_INFO.map(([id, name, desc]) => crystalRow(id, name, desc)))),
+        crystalList()),
 
       h('div', { class: 'sg-foot-links' },
         AE_DEMO ? null : h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.feedback.openFeedback() }, 'Send feedback'),
