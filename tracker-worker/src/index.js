@@ -20,6 +20,7 @@
     POST /v1/:store/tracker/wo/:wo { hash, trigger, plain, sealed, card, by }   one WO's detail
     POST /v1/:store/tracker/wo/:wo/gone { by }   Portal answers 404 for it: recorded closed after a second 404.
     GET  /v1/:store/tracker/rfp                  the store's RFP total (count, value, complete/incomplete split, last scan)
+    POST /v1/:store/tracker/daily { day, metrics, source, by }   plain daily numbers for the Metrics page (src/daily.js)
     POST /v1/:store/tracker/sales { day, rows }  Portal's sales history for one business day (see the route)
     GET  /v1/:store/tracker/sales/days?from&to   daily sales totals (Tactician)
     GET  /v1/:store/tracker/rfp/days?from&to     the RFP table's value at the end of each day (Tactician)
@@ -46,6 +47,7 @@
   snapshot is always kept. Without ARCHIVE nothing is trimmed (nothing is lost before cold
   storage is set up) unless TRIM_WITHOUT_ARCHIVE is set.
 */
+import { daily } from './daily.js';
 
 const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
@@ -315,6 +317,8 @@ async function storeApi(req, env, url, store) {
     const r = await T.prepare('SELECT public_jwk FROM store_keys WHERE store = ?').bind(store).first();
     return json({ publicJwk: JSON.parse(r.public_jwk) });
   }
+
+  if (path === '/daily' && req.method === 'POST') return daily(req, env, store, { readJson, json, fail, clean });
 
   if (path === '/scan' && req.method === 'POST') {
     const b = await readJson(req, MAX.scan);

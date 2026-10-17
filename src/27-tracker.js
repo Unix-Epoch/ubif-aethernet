@@ -167,6 +167,39 @@ AE.tracker = (() => {
     return out;
   }
 
+  /*
+    Daily metrics: plain numbers (hours, counts) for the admin Metrics page, from Tactician, Divination and Assize.
+    POST /v1/:store/tracker/daily. Never blocks the caller and never throws: a failure is a console warning and
+    AE.noteError. Not sent when the same numbers went up for that store, day and source in the last 3 hours
+    (this browser's record, so a few Divination refreshes an hour cost nothing); anything older than 14 days
+    is not sent (the Worker refuses it). Same rules as every other write here: configured() only, and
+    call() checks the page's store is still Portal's store first.
+  */
+  const DAILY_KEY = 'ae_tracker_daily', DAILY_SAME_MS = 3 * 60 * 60 * 1000;
+  async function daily(store, day, metrics, source, opts = {}) {
+    try {
+      if (!configured() || !store || !/^\d{4}-\d\d-\d\d$/.test(day || '')) return false;
+      const age = (Date.now() - Date.parse(day + 'T12:00:00')) / 86400000;
+      if (!(age < 14)) return false;
+      const clean = {};
+      for (const [k, v] of Object.entries(metrics || {})) if (typeof v === 'number' && isFinite(v) && v >= 0) clean[k] = Math.round(v * 1000) / 1000;
+      if (!Object.keys(clean).length) return false;
+      const id = store + '|' + day + '|' + source, sig = JSON.stringify(clean), sent = GM_getValue(DAILY_KEY, {});
+      if (!opts.force && sent[id] && sent[id].sig === sig && Date.now() - sent[id].at < DAILY_SAME_MS) return false;
+      await AE.assertSameStore();
+      const p = await AE.profile();
+      await call('POST', '/v1/' + store + '/tracker/daily', { day, metrics: clean, source, by: p.name });
+      const keep = Object.fromEntries(Object.entries(GM_getValue(DAILY_KEY, {})).filter(([, x]) => Date.now() - x.at < 2 * 86400000));
+      keep[id] = { sig, at: Date.now() };
+      GM_setValue(DAILY_KEY, keep);
+      return true;
+    } catch (e) {
+      if (e.status === 403) return false; // no access for that store (or sandbox data): expected, not an error
+      if (!e.storeChanged) { console.warn('[Aethernet] daily upload failed', e); AE.noteError('tracker daily', e); }
+      return false;
+    }
+  }
+
   // Dev tools: what one WO would send, without sending it.
   async function dryRun(wo) {
     const p = await AE.profile();
@@ -192,7 +225,7 @@ AE.tracker = (() => {
     return data;
   }
 
-  return { configured, scan, dryRun, rfp, call, last: () => GM_getValue(LAST_KEY, null), plainPart, cardOf, scrub, crypto: C };
+  return { configured, scan, dryRun, rfp, call, daily, last: () => GM_getValue(LAST_KEY, null), plainPart, cardOf, scrub, crypto: C };
 })();
 
 if (AE.tracker.configured()) {

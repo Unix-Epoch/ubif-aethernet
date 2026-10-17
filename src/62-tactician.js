@@ -178,7 +178,7 @@ AE.crystal({
       weekKey = key; rows = null; failed = null;
       const end = new Date(start); end.setDate(end.getDate() + 6);
       const mine = loading = AE.api('GET', '/api/store-time-sheet?fromDate=' + key + '&toDate=' + ymd(end))
-        .then((j) => { if (loading === mine) { rows = (j && j.rows) || []; draw(); } })
+        .then((j) => { if (loading === mine) { rows = (j && j.rows) || []; draw(); setTimeout(() => AE.tactician.uploadDaily(), 3000); } })
         .catch((e) => { if (loading === mine) { failed = e.message || String(e); draw(); } })
         .finally(() => { if (loading === mine) loading = null; });
     }
@@ -352,6 +352,7 @@ AE.crystal({
         const who = d.people.get(pu.u) || d.people.set(pu.u, { name: pu.n || 'User ' + pu.u, hrs: 0, gm: gm.has(pu.u), open: false }).get(pu.u); // who worked it (hover)
         who.hrs += hrs; if (!pu.o) who.open = true;
       }
+      setTimeout(() => T.uploadDaily(), 3000);
       return { from, to, rows: [...days.values()], gmSet: gm.size > 0 };
     }
     // Bar color: at/over the target's low end = good; within 10% below, or over it with the RFP table picked up = near; else miss.
