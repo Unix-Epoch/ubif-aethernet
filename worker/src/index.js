@@ -144,13 +144,19 @@ async function admin(req, env, url) {
 /*
   The admin routes, shared by this Worker (behind the admin key, for the in-Portal
   panel) and the admin site (admin-worker/, behind Cloudflare Access). path: "/feedback", …
+  `who`: set only by the admin site, after its access gate (tracker-worker/src/access.js) let this
+  route through for that person. Store-scoped answers are then cut to who.canSee: Store data refuses
+  other stores, Usage rows and the store list are filtered. Without `who` (the admin key) nothing is limited.
 */
-export async function adminApi(req, env, url, path) {
+export async function adminApi(req, env, url, path, who) {
+  if (who && who.gated !== req.method + ' /api' + path) return fail(403, 'not checked by the access gate');
+  const sees = (st) => !who || who.canSee(Number(st));
   if (req.method === 'GET' && path === '/ping') return json({ ok: true });
   // One store's Aethernet data (admin site → Store data): its tag list, tags, Auto-Waymarks, which WOs Aethernet saw close, manual cleaning links.
   const sd = path.match(/^\/store\/(\d{1,6})$/);
   if (req.method === 'GET' && sd) {
     const store = Number(sd[1]), since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    if (!sees(store)) return fail(403, 'no access to store ' + store);
     const [name, list, tags, marks, closed, links] = await env.DB.batch([
       env.DB.prepare('SELECT COALESCE(a.name, s.name) AS name FROM (SELECT ? AS store) x LEFT JOIN store_access a ON a.store = x.store LEFT JOIN store_seen s ON s.store = x.store').bind(store),
       env.DB.prepare('SELECT name, color FROM list WHERE store = ? ORDER BY pos').bind(store),
@@ -196,6 +202,8 @@ export async function adminApi(req, env, url, path) {
       env.DB.prepare('SELECT a.store, COALESCE(a.name, s.name) AS name, a.added_by, a.added_at, s.last_at, s.loads FROM store_access a LEFT JOIN store_seen s ON s.store = a.store ORDER BY a.store'),
       env.DB.prepare('SELECT s.* FROM store_seen s WHERE s.store NOT IN (SELECT store FROM store_access) ORDER BY s.last_at DESC LIMIT 200'),
     ]);
+    // Someone with Store data but not Stores only gets their own stores (for Store data's picker), nothing waiting.
+    if (who && !who.pages.includes('stores')) return json({ allowed: allowed.results.filter((s) => sees(s.store)), waiting: [] });
     return json({ allowed: allowed.results, waiting: seen.results });
   }
   if (req.method === 'POST' && path === '/stores') {
@@ -249,7 +257,7 @@ export async function adminApi(req, env, url, path) {
     const days = Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30));
     const since = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
     const r = await env.DB.prepare('SELECT day, store, store_name, user_id, user_name, feature, count FROM usage WHERE day >= ? ORDER BY day').bind(since).all();
-    return json({ since, rows: r.results });
+    return json({ since, rows: r.results.filter((x) => sees(x.store)) });
   }
   return fail(404, 'not found');
 }

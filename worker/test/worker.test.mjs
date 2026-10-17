@@ -1,7 +1,7 @@
 // Sandbox guard: run with `node worker/test/worker.test.mjs`. No database needed, because a guarded
 // request must be refused before anything touches DB (the fake DB throws if it is used).
 import assert from 'node:assert/strict';
-import worker from '../src/index.js';
+import worker, { adminApi } from '../src/index.js';
 
 const DB = { prepare() { throw new Error('DB touched'); }, batch() { throw new Error('DB touched'); } };
 const E = { APP_KEY: 'k', DB, LIMITER: null };
@@ -88,4 +88,20 @@ await (async () => { const r = await c2('POST', '/v1/914/assize/dismiss', { ...g
 await (async () => { const r = await c2('POST', '/v1/999999/assize/dismiss', good); assert.equal(r.status, 403); assert.equal(r.j.error, 'sandbox data'); })();
 await (async () => { const r = await c2('POST', '/v1/914/assize/restore', { ...good, by: 'Sandbox Lead' }); assert.equal(r.status, 403); assert.equal(r.j.error, 'sandbox data'); })();
 assert.equal((await c2('GET', '/v1/914/assize/dismissed')).j.dismissed.length, 3, 'guarded requests wrote nothing');
+
+// ---- adminApi as the admin site calls it (Oct 17, 2026): only after the access gate, and cut to the person's stores
+const usageRows = [{ day: '2026-10-16', store: 914, feature: 'waymark', count: 1 }, { day: '2026-10-16', store: 326, feature: 'waymark', count: 2 }];
+const adb = {
+  prepare(sql) { const q = { bind() { return q; }, async all() { if (/FROM usage/.test(sql)) return { results: usageRows }; throw new Error('unexpected all: ' + sql); } }; return q; },
+  batch(qs) { return Promise.resolve([{ results: [{ store: 914, name: 'Newport News' }, { store: 326, name: 'Lynnhaven' }] }, { results: [{ store: 777 }] }]); },
+};
+const person = (route, pages = ['usage', 'data']) => ({ pages, canSee: (s) => s === 914, gated: route });
+const aa = async (path, who) => { const u = new URL('https://a.test/api' + path); const r = await adminApi(new Request(u), { DB: adb }, u, path, who); return { status: r.status, j: await r.json() }; };
+assert.equal((await aa('/usage', person('GET /api/feedback'))).status, 403, 'a route the gate did not pass is refused');
+assert.deepEqual((await aa('/usage', person('GET /api/usage'))).j.rows.map((r) => r.store), [914], 'usage cut to their stores');
+assert.equal((await aa('/usage')).j.rows.length, 2, 'admin key (no who): everything');
+assert.equal((await aa('/store/326', person('GET /api/store/326'))).status, 403, 'Store data for another store');
+const sl = (await aa('/stores', person('GET /api/stores'))).j;
+assert.deepEqual(sl.allowed.map((x) => x.store), [914]); assert.deepEqual(sl.waiting, [], 'no Stores page: only their stores, nothing waiting');
+assert.equal((await aa('/stores', person('GET /api/stores', ['stores']))).j.waiting.length, 1);
 console.log('waymark worker: all passed');

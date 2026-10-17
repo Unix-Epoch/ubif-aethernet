@@ -47,6 +47,8 @@
   storage is set up) unless TRIM_WITHOUT_ARCHIVE is set.
 */
 
+import { PAGES, WIDE_PAGES, owners, cleanPages, presetOf, accessOf, check, stripSealed } from './access.js';
+
 const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
 const CLOSED_IDS = new Set([14, 15, 25]); // Sale complete, Closed, Cancelled
@@ -551,50 +553,82 @@ async function storeApi(req, env, url, store) {
 }
 
 // ------------------------------------------------------------------ admin side (Access-protected)
-const owners = (env) => String(env.TRACKER_OWNERS || '').toLowerCase().split(/[\s,]+/).filter(Boolean);
-
-async function person(env, email) {
-  const p = await env.TR.prepare('SELECT * FROM people WHERE email = ?').bind(email).first();
-  if (!p) return null;
-  return { email: p.email, name: p.name, scope: p.scope, stores: JSON.parse(p.stores || '[]') };
-}
-const canSee = (p, store) => p && (p.scope === 'all' || p.stores.includes(store));
+// Who may open what: src/access.js (one gate for every admin route; owners bypass it).
 async function log(env, email, action, store = null, wo = null, detail = null) {
   await env.TR.prepare('INSERT INTO access_log (email, action, store, wo, detail, at) VALUES (?, ?, ?, ?, ?, ?)').bind(email, action, store, wo, detail, now()).run();
 }
+const PAGE_NAME = { wos: 'work orders', sales: 'sales', metrics: 'metrics', data: 'store data', usage: 'usage', reports: 'reports', auto: 'auto-waymark', stores: 'stores' };
+// "pages +metrics -usage · stores +1276 · details on · role manager → custom" (access_log detail for access:change)
+function accessDiff(before, after) {
+  const out = [], pm = (a, b, f) => [...b.filter((x) => !a.includes(x)).map((x) => '+' + f(x)), ...a.filter((x) => !b.includes(x)).map((x) => '-' + f(x))];
+  const pg = pm(before.pages, after.pages, (x) => x);
+  if (pg.length) out.push('pages ' + pg.join(' '));
+  const sa = before.scope === 'all' ? ['all'] : before.stores, sb = after.scope === 'all' ? ['all'] : after.stores;
+  const sd = pm(sa.map(String), sb.map(String), (x) => x);
+  if (sd.length) out.push('stores ' + sd.join(' '));
+  if (before.details !== after.details) out.push('details ' + (after.details ? 'on' : 'off'));
+  const ra = before.review ? 'review' : presetOf(before), rb = presetOf(after);
+  if (ra !== rb) out.push('role ' + ra + ' → ' + rb);
+  return out.join(' · ') || 'no change';
+}
 
 /*
-  GET  /me                       { email, person, keys: [copies], master: publicJwk|null, canInit }
+  Every route below is gated first (src/access.js ROUTES): unknown routes, pages the person
+  wasn't given and stores outside their list are refused with 403 and an access_log 'denied' row.
+  With customer details off, sealed fields (card, sealed, customerName) are stripped from every answer.
+
+  GET  /me                       { email, person, keys: [copies], master: publicJwk|null, canInit,
+                                   access: { owner, pages, scope, stores, details, review } }
   POST /init { publicJwk, copy } first setup (an owner from TRACKER_OWNERS): master key + their copy
-  PUT  /me/keys { keys }         replace your own copies (new passphrase / redeeming an invite)
-  GET  /store-keys               full access: every store's { store, publicJwk, wrappedPrivate }
+  PUT  /me/keys { keys }         replace your own copies (new passphrase / redeeming an invite); details on only
+  GET  /store-keys               all stores + details: every store's { store, publicJwk, wrappedPrivate }
   GET  /stores                   stores you can see, with counts
   GET  /wos?store=&open=&status=&since=&limit=&offset=&detail=1   WO rows (plain + sealed card;
                                  detail=1 adds the latest sealed snapshot, for searching note text)
   GET  /wo/:store/:wo            one WO: row, snapshots (plain + sealed), changes
-  GET  /people                   full access: everyone + their key copies' kinds
-  POST /people { email, name, scope, stores, keys }        full access: add/update, keys = invite copies
-  POST /people/:email/remove     full access
-  GET  /log?limit=               full access: who looked at what
-  GET  /agents                   full access: connected programs
-  POST /agents/:id/approve { stores, keys: [{ store, wrapped }] }   full access: grant stores (replaces earlier grants)
-  POST /agents/:id/remove        full access
-  POST /agents/:id/settings { settings }   full access: audit settings (validated; see agentSettings)
-  POST /agents/:id/run-now       full access: the program runs its audit at its next check (within 30 minutes)
+  Owners only (People):
+  GET  /people                   everyone + their key copies' kinds, pages, details, review; owners list
+  POST /people { email, name, scope, stores, pages, details, keys, keysMode }   add/update. keys = invite
+                                 copies (details on only); keysMode 'add' keeps their other copies, otherwise
+                                 a new invite replaces them all. Details off deletes every copy.
+  POST /people/:email/remove
+  GET  /log?limit=&kind=access   who looked at what (kind=access: access changes and denied requests)
+  GET  /agents                   connected programs
+  POST /agents/:id/approve { stores, keys: [{ store, wrapped }] }   grant stores (replaces earlier grants)
+  POST /agents/:id/remove
+  POST /agents/:id/settings { settings }   audit settings (validated; see agentSettings)
+  POST /agents/:id/run-now       the program runs its audit at its next check (within 30 minutes)
+
+  `who` (optional): the caller's access as admin-worker already worked it out (accessOf); without it,
+  it's read here. Either way the gate runs again here.
 */
-export async function trackerAdmin(req, env, url, path, email) {
-  const T = env.TR;
+export async function trackerAdmin(req, env, url, path, email, who) {
   email = String(email || '').toLowerCase();
   if (!email) return fail(403, 'not signed in', false);
-  const me = await person(env, email);
-  if (me) await T.prepare('UPDATE people SET last_seen_at = ? WHERE email = ?').bind(now(), email).run();
+  if (who === undefined) who = await accessOf(env, email);
+  const denied = await check(env, who, email, req.method, '/api/tracker' + path, url.search);
+  if (denied) return json(denied, 403, false);
+  const res = await trackerRoutes(req, env, url, path, email, who);
+  if (!who || who.details) return res;
+  // Customer details off: nothing sealed leaves the server, whatever the route.
+  const text = await res.text();
+  let b; try { b = JSON.parse(text); } catch (_) { return new Response(text, res); }
+  return json(stripSealed(b), res.status, false);
+}
+
+async function trackerRoutes(req, env, url, path, email, who) {
+  const T = env.TR;
+  const me = who;
+  if (me && me.listed) await T.prepare('UPDATE people SET last_seen_at = ? WHERE email = ?').bind(now(), email).run();
   const master = await T.prepare('SELECT public_jwk FROM master_key WHERE id = 1').first();
   const body = () => readJson(req, 200000);
-  const full = me && me.scope === 'all';
+  const canSee = (st) => !!me && me.canSee(st);
 
   if (req.method === 'GET' && path === '/me') {
-    const keys = me ? (await T.prepare('SELECT kind, store, salt, rounds, wrapped, invite FROM person_keys WHERE email = ?').bind(email).all()).results : [];
-    return json({ email, person: me, keys, master: master ? JSON.parse(master.public_jwk) : null, canInit: !master && owners(env).includes(email) }, 200, false);
+    const keys = me && me.listed ? (await T.prepare('SELECT kind, store, salt, rounds, wrapped, invite FROM person_keys WHERE email = ?').bind(email).all()).results : [];
+    return json({ email, person: me ? { email, name: me.name, scope: me.scope, stores: me.stores } : null, keys, master: master ? JSON.parse(master.public_jwk) : null,
+      canInit: !master && owners(env).includes(email),
+      access: me ? { owner: me.owner, pages: me.pages, scope: me.scope, stores: me.stores, details: me.details, review: me.review } : null }, 200, false);
   }
   if (req.method === 'POST' && path === '/init') {
     if (master) return fail(409, 'already set up', false);
@@ -603,21 +637,23 @@ export async function trackerAdmin(req, env, url, path, email) {
     if (!isJwk(b.publicJwk) || !isCopy(b.copy)) return fail(400, 'publicJwk and copy required', false);
     await T.batch([
       T.prepare('INSERT INTO master_key (id, public_jwk, created_by, created_at) VALUES (1, ?, ?, ?)').bind(JSON.stringify(pubJwk(b.publicJwk)), email, now()),
-      T.prepare("INSERT INTO people (email, name, scope, stores, added_by, added_at) VALUES (?, ?, 'all', '[]', ?, ?) ON CONFLICT (email) DO UPDATE SET scope = 'all'").bind(email, clean(b.name, 60) || null, email, now()),
+      T.prepare("INSERT INTO people (email, name, scope, stores, pages, details, added_by, added_at) VALUES (?, ?, 'all', '[]', ?, 1, ?, ?) ON CONFLICT (email) DO UPDATE SET scope = 'all', details = 1")
+        .bind(email, clean(b.name, 60) || null, JSON.stringify(PAGES), email, now()),
       T.prepare("INSERT OR REPLACE INTO person_keys (email, kind, store, salt, rounds, wrapped, invite, created_by, created_at) VALUES (?, 'master', 0, ?, ?, ?, 0, ?, ?)").bind(email, b.copy.salt, b.copy.rounds, b.copy.wrapped, email, now()),
     ]);
     await log(env, email, 'init');
     return json({ ok: true }, 200, false);
   }
-  if (!me) return fail(403, 'not on the tracker list; ask an admin to add you', false);
+  if (!me) return fail(403, 'not on the access list; ask an owner to add you', false);
 
   if (req.method === 'PUT' && path === '/me/keys') {
+    if (!me.details) return fail(403, 'customer details are off for your account', false);
     const b = await body();
     if (!Array.isArray(b.keys) || !b.keys.length || b.keys.length > 500) return fail(400, 'keys required', false);
     const stmts = [];
     for (const k of b.keys) {
       const store = k.kind === 'store' ? int(k.store) : 0;
-      if (!isCopy(k) || !['master', 'store'].includes(k.kind) || (k.kind === 'master' && !full) || (k.kind === 'store' && !canSee(me, store))) return fail(400, 'bad key copy', false);
+      if (!isCopy(k) || !['master', 'store'].includes(k.kind) || (k.kind === 'master' && me.scope !== 'all') || (k.kind === 'store' && !canSee(store))) return fail(400, 'bad key copy', false);
       stmts.push(T.prepare('INSERT OR REPLACE INTO person_keys (email, kind, store, salt, rounds, wrapped, invite, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)')
         .bind(email, k.kind, store, k.salt, k.rounds, k.wrapped, email, now()));
     }
@@ -626,7 +662,8 @@ export async function trackerAdmin(req, env, url, path, email) {
     return json({ ok: true }, 200, false);
   }
   if (req.method === 'GET' && path === '/store-keys') {
-    if (!full) return fail(403, 'full access only', false);
+    // Each store's private key, sealed to the master key: only useful to (and only given to) master holders.
+    if (!(me.owner || (me.scope === 'all' && me.details))) return fail(403, 'all stores with customer details only', false);
     const r = await T.prepare('SELECT store, public_jwk, wrapped_private FROM store_keys ORDER BY store').all();
     return json({ keys: r.results.map((k) => ({ store: k.store, publicJwk: JSON.parse(k.public_jwk), wrappedPrivate: k.wrapped_private })) }, 200, false);
   }
@@ -640,20 +677,20 @@ export async function trackerAdmin(req, env, url, path, email) {
         SUM(CASE WHEN is_open = 1 AND status_id = 13 AND service_outcome IS NOT NULL AND service_outcome != 'Completed' THEN COALESCE(cart_value, 0) ELSE 0 END) AS rfp_other_value,
         SUM(CASE WHEN is_open = 1 AND status_id = 13 AND service_outcome IS NULL THEN 1 ELSE 0 END) AS rfp_unknown, MAX(last_detail_at) AS last_detail_at FROM workorders GROUP BY store ORDER BY store`).all();
     const scans = new Map((await T.prepare('SELECT store, MAX(at) AS at FROM scans GROUP BY store').all()).results.map((s) => [s.store, s.at]));
-    return json({ stores: r.results.filter((s) => canSee(me, s.store)).map((s) => Object.assign(s, { last_scan_at: scans.get(s.store) || null })) }, 200, false);
+    return json({ stores: r.results.filter((s) => canSee(s.store)).map((s) => Object.assign(s, { last_scan_at: scans.get(s.store) || null })) }, 200, false);
   }
   if (req.method === 'GET' && path === '/wos') {
     const q = url.searchParams, where = [], args = [];
     const store = q.get('store') ? int(q.get('store')) : null;
-    if (store != null) { if (!canSee(me, store)) return fail(403, 'not your store', false); where.push('store = ?'); args.push(store); }
-    else if (!full) { if (!me.stores.length) return json({ wos: [] }, 200, false); where.push('store IN (' + me.stores.map(() => '?').join(',') + ')'); args.push(...me.stores); }
+    if (store != null) { if (!canSee(store)) return fail(403, 'not your store', false); where.push('store = ?'); args.push(store); }
+    else if (me.scope !== 'all') { if (!me.stores.length) return json({ wos: [] }, 200, false); where.push('store IN (' + me.stores.map(() => '?').join(',') + ')'); args.push(...me.stores); }
     if (q.get('open') === '1') where.push('is_open = 1'); else if (q.get('open') === '0') where.push('is_open = 0');
     if (q.get('status')) { where.push('status_id = ?'); args.push(int(q.get('status'))); }
     if (q.get('outcome') === 'complete') where.push("service_outcome = 'Completed'"); else if (q.get('outcome') === 'other') where.push("service_outcome IS NOT NULL AND service_outcome != 'Completed'"); else if (q.get('outcome') === 'unknown') where.push('service_outcome IS NULL');
     if (q.get('since')) { where.push('COALESCE(api_updated_at, first_seen_at) >= ?'); args.push(clean(q.get('since'), 40)); }
     const limit = Math.min(int(q.get('limit')) || 500, 5000), offset = int(q.get('offset')) || 0;
     const r = await T.prepare(`SELECT store, wo, store_name, status_id, status_name, program_id, program_name, device, created_at, api_updated_at, is_open, first_seen_at,
-        last_detail_at, closed_at, closed_reason, cart_total, cart_paid, cart_due, cart_value, service_outcome, card${q.get('detail') === '1' ? ', (SELECT sealed FROM snapshots s WHERE s.store = workorders.store AND s.wo = workorders.wo ORDER BY id DESC LIMIT 1) AS sealed' : ''} FROM workorders ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+        last_detail_at, closed_at, closed_reason, cart_total, cart_paid, cart_due, cart_value, service_outcome${me.details ? ', card' : ''}${me.details && q.get('detail') === '1' ? ', (SELECT sealed FROM snapshots s WHERE s.store = workorders.store AND s.wo = workorders.wo ORDER BY id DESC LIMIT 1) AS sealed' : ''} FROM workorders ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
         ORDER BY COALESCE(api_updated_at, first_seen_at) DESC LIMIT ? OFFSET ?`).bind(...args, limit, offset).all();
     await log(env, email, 'list', store, null, url.search.slice(0, 200));
     return json({ wos: r.results }, 200, false);
@@ -661,7 +698,7 @@ export async function trackerAdmin(req, env, url, path, email) {
   const om = path.match(/^\/wo\/(\d{1,6})\/(\d{1,12})$/);
   if (req.method === 'GET' && om) {
     const store = Number(om[1]), wo = Number(om[2]);
-    if (!canSee(me, store)) return fail(403, 'not your store', false);
+    if (!canSee(store)) return fail(403, 'not your store', false);
     const [row, snaps, chg] = await T.batch([
       T.prepare('SELECT * FROM workorders WHERE store = ? AND wo = ?').bind(store, wo),
       T.prepare('SELECT id, fetched_at, trigger, by_name, hash, plain, sealed FROM snapshots WHERE store = ? AND wo = ? ORDER BY id DESC LIMIT 200').bind(store, wo),
@@ -679,10 +716,10 @@ export async function trackerAdmin(req, env, url, path, email) {
     GET /sales/day?store=&day=         that day's sales (customer sealed in card) or estimated WOs.
   */
   if (req.method === 'GET' && (path === '/sales/days' || path === '/sales/day')) {
-    const q = url.searchParams, tz = env.STORE_TZ || 'America/New_York';
+    const q = url.searchParams;
     const stores = q.get('store') ? [int(q.get('store'))] : null;
-    if (stores && !canSee(me, stores[0])) return fail(403, 'not your store', false);
-    const visible = (st) => canSee(me, st) && (!stores || stores.includes(st));
+    if (stores && !canSee(stores[0])) return fail(403, 'not your store', false);
+    const visible = (st) => canSee(st) && (!stores || stores.includes(st));
     const from = clean(q.get(path === '/sales/day' ? 'day' : 'from'), 10), to = clean(q.get(path === '/sales/day' ? 'day' : 'to'), 10);
     if (!DAY_RE.test(from) || !DAY_RE.test(to) || to < from) return fail(400, 'from/to (YYYY-MM-DD) required', false);
     const r = await salesDays(env, visible, from, to);
@@ -695,11 +732,14 @@ export async function trackerAdmin(req, env, url, path, email) {
     await log(env, email, 'sales:days', stores ? stores[0] : null, null, from + '..' + to);
     return json({ days: r.days }, 200, false);
   }
+  // METRICS HOOK (feat/metrics registers it here; gated as page 'metrics', stores via me.canSee): if (path === '/metrics' || path.startsWith('/metrics/')) return metricsApi(req, env, url, path, me);
 
-  if (!full) return fail(403, 'full access only', false);
+  if (!me.owner) return fail(403, 'owners only', false);
   if (req.method === 'GET' && path === '/people') {
     const [p, k] = await T.batch([T.prepare('SELECT * FROM people ORDER BY email'), T.prepare('SELECT email, kind, store, invite FROM person_keys')]);
-    return json({ people: p.results.map((x) => Object.assign(x, { stores: JSON.parse(x.stores || '[]'), keys: k.results.filter((c) => c.email === x.email) })) }, 200, false);
+    const own = owners(env);
+    return json({ owners: own, pages: PAGES, wide: WIDE_PAGES, people: p.results.map((x) => Object.assign(x, { stores: JSON.parse(x.stores || '[]'), pages: cleanPages(x.pages), details: !!x.details, review: !!x.review,
+      owner: own.includes(x.email), keys: k.results.filter((c) => c.email === x.email) })) }, 200, false);
   }
   if (req.method === 'POST' && path === '/people') {
     const b = await body();
@@ -707,29 +747,49 @@ export async function trackerAdmin(req, env, url, path, email) {
     if (!EMAIL_RE.test(who) || !['all', 'stores'].includes(scope)) return fail(400, 'email and scope required', false);
     const stores = scope === 'stores' ? [...new Set((b.stores || []).map(int).filter((s) => s && s < 1000000))] : [];
     if (scope === 'stores' && !stores.length) return fail(400, 'pick at least one store', false);
-    const stmts = [T.prepare('INSERT INTO people (email, name, scope, stores, added_by, added_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (email) DO UPDATE SET name = COALESCE(excluded.name, name), scope = excluded.scope, stores = excluded.stores')
-      .bind(who, clean(b.name, 60) || null, scope, JSON.stringify(stores), email, now())];
-    // A new invite replaces all their copies (they set a passphrase again); otherwise copies they no longer qualify for go.
-    if ((b.keys || []).length) stmts.push(T.prepare('DELETE FROM person_keys WHERE email = ?').bind(who));
-    if (scope === 'stores') stmts.push(T.prepare("DELETE FROM person_keys WHERE email = ? AND (kind = 'master' OR store NOT IN (" + stores.map(() => '?').join(',') + '))').bind(who, ...stores));
-    for (const k of b.keys || []) {
+    const old = await T.prepare('SELECT * FROM people WHERE email = ?').bind(who).first();
+    const keysIn = Array.isArray(b.keys) ? b.keys : [];
+    if (keysIn.length > 500) return fail(400, 'too many key copies', false);
+    // Pages and details: as sent; otherwise kept (an older page that doesn't send them) or, for someone new, Store viewer.
+    if (b.pages !== undefined && !Array.isArray(b.pages)) return fail(400, 'pages must be a list', false);
+    const pages = b.pages !== undefined ? cleanPages(b.pages) : old ? cleanPages(old.pages) : ['wos'];
+    const details = b.details !== undefined ? !!b.details : (keysIn.length > 0 || !!(old && old.details));
+    if (!details && keysIn.length) return fail(400, 'customer details are off: no key copies', false);
+    const stmts = [T.prepare(`INSERT INTO people (email, name, scope, stores, pages, details, review, added_by, added_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+        ON CONFLICT (email) DO UPDATE SET name = COALESCE(excluded.name, name), scope = excluded.scope, stores = excluded.stores, pages = excluded.pages, details = excluded.details, review = 0,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+      .bind(who, clean(b.name, 60) || null, scope, JSON.stringify(stores), JSON.stringify(pages), details ? 1 : 0, email, now(), email, now())];
+    if (!details) stmts.push(T.prepare('DELETE FROM person_keys WHERE email = ?').bind(who));
+    else {
+      // A new invite replaces all their copies (they set a passphrase again) unless it only adds to them (keysMode 'add');
+      // either way copies they no longer qualify for go.
+      if (keysIn.length && b.keysMode !== 'add') stmts.push(T.prepare('DELETE FROM person_keys WHERE email = ?').bind(who));
+      if (scope === 'stores') stmts.push(T.prepare("DELETE FROM person_keys WHERE email = ? AND (kind = 'master' OR store NOT IN (" + stores.map(() => '?').join(',') + '))').bind(who, ...stores));
+    }
+    for (const k of keysIn) {
       const st = k.kind === 'store' ? int(k.store) : 0;
       if (!isCopy(k) || !['master', 'store'].includes(k.kind) || (k.kind === 'master' && scope !== 'all') || (k.kind === 'store' && scope === 'stores' && !stores.includes(st))) return fail(400, 'bad key copy', false);
       stmts.push(T.prepare('INSERT OR REPLACE INTO person_keys (email, kind, store, salt, rounds, wrapped, invite, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)')
         .bind(who, k.kind, st, k.salt, k.rounds, k.wrapped, email, now()));
     }
     await T.batch(stmts);
-    await log(env, email, 'person:add', null, null, who + ' ' + scope + (stores.length ? ' ' + stores.join(',') : ''));
+    const after = { scope, stores, pages, details };
+    if (!old) await log(env, email, 'access:add', null, null, who + ' · ' + presetOf(after) + ' · ' + (scope === 'all' ? 'all stores' : 'stores ' + stores.join(', ')) + ' · details ' + (details ? 'on' : 'off'));
+    else {
+      const before = { scope: old.scope, stores: JSON.parse(old.stores || '[]'), pages: cleanPages(old.pages), details: !!old.details, review: !!old.review };
+      await log(env, email, 'access:change', null, null, who + ' · ' + accessDiff(before, after));
+    }
+    if (keysIn.length) await log(env, email, 'access:keys', null, null, who + ' · details on · invite for ' + keysIn.map((k) => (k.kind === 'master' ? 'all stores' : int(k.store))).join(', '));
     return json({ ok: true }, 200, false);
   }
   const rm = path.match(/^\/people\/([^/]+)\/remove$/);
   if (req.method === 'POST' && rm) {
     const who = decodeURIComponent(rm[1]).toLowerCase();
     const others = await T.prepare("SELECT COUNT(*) AS n FROM people WHERE scope = 'all' AND email != ?").bind(who).first();
-    const target = await person(env, who);
+    const target = await T.prepare('SELECT scope FROM people WHERE email = ?').bind(who).first();
     if (target && target.scope === 'all' && !others.n) return fail(409, "can't remove the last person with full access", false);
     await T.batch([T.prepare('DELETE FROM person_keys WHERE email = ?').bind(who), T.prepare('DELETE FROM people WHERE email = ?').bind(who)]);
-    await log(env, email, 'person:remove', null, null, who);
+    await log(env, email, 'access:remove', null, null, who);
     return json({ ok: true }, 200, false);
   }
   if (req.method === 'GET' && path === '/agents') {
@@ -777,7 +837,10 @@ export async function trackerAdmin(req, env, url, path, email) {
     return json({ ok: true }, 200, false);
   }
   if (req.method === 'GET' && path === '/log') {
-    const r = await T.prepare('SELECT * FROM access_log ORDER BY id DESC LIMIT ?').bind(Math.min(int(url.searchParams.get('limit')) || 200, 2000)).all();
+    const lim = Math.min(int(url.searchParams.get('limit')) || 200, 2000);
+    const r = url.searchParams.get('kind') === 'access'
+      ? await T.prepare("SELECT * FROM access_log WHERE action LIKE 'access:%' OR action IN ('denied', 'init', 'person:add', 'person:remove') ORDER BY id DESC LIMIT ?").bind(lim).all()
+      : await T.prepare("SELECT * FROM access_log WHERE action NOT LIKE 'access:%' AND action != 'denied' ORDER BY id DESC LIMIT ?").bind(lim).all();
     return json({ log: r.results }, 200, false);
   }
   return fail(404, 'not found', false);

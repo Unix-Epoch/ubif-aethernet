@@ -1,5 +1,5 @@
 /*
-  Aethernet admin site (Garrett only). Served at aethernet-admin.<account>.workers.dev
+  Aethernet admin site. Served at aethernet-admin.<account>.workers.dev
   with Cloudflare Access in front of the whole hostname; the Waymark Worker that stores
   use is separate and untouched.
 
@@ -13,10 +13,16 @@
                       usage, stores, auto-rules, store/:store
     *    /api/tracker/…  the work order tracker (tracker-worker/src/index.js trackerAdmin),
                       as the signed-in Access user; needs the TR binding
+
+  Per-person access (Oct 17, 2026): after the Access check, every /api/… and /metrics… request goes
+  through one gate (tracker-worker/src/access.js): route → page, deny by default, store scope, owners
+  (TRACKER_OWNERS) bypass. Refusals are 403 { error, page } and an access_log 'denied' row. Pages
+  are only drawn for what GET /api/tracker/me says the person has.
   Local testing only: `wrangler dev --var LOCAL_TEST:1` lets requests to localhost in.
 */
 import { adminApi } from '../../worker/src/index.js';
 import { trackerAdmin } from '../../tracker-worker/src/index.js';
+import { accessOf, check } from '../../tracker-worker/src/access.js';
 import { PAGE } from './page.js';
 import CRYPTO_SRC from '../../tracker-worker/src/crypto.js';
 import WORDS from './words.txt';
@@ -64,6 +70,14 @@ export default {
     if (url.pathname === '/crypto.js') return new Response(CRYPTO_SRC, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     if (url.pathname === '/tracker-ui.js') return new Response(TRACKER_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     if (url.pathname === '/words.txt') return new Response(WORDS, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'max-age=86400' } });
+    if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/metrics')) return new Response('Not found', { status: 404 });
+    // The access gate: nothing below runs for a route, page or store this person wasn't given.
+    if (!env.TR) return new Response(JSON.stringify({ error: 'tracker database not bound' }), { status: 503, headers: { 'content-type': 'application/json' } });
+    const me = await accessOf(env, who.email);
+    const denied = await check(env, me, who.email, req.method, url.pathname, url.search);
+    if (denied) return new Response(JSON.stringify(denied), { status: 403, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+    // (feat/metrics: the Metrics page's own files, if any, are served here; already gated as page 'metrics'.)
+    if (!url.pathname.startsWith('/api/')) return new Response('Not found', { status: 404 });
     // The next public version (status.json's latest, minor + 1): the default "fixed in" for quoting a report.
     if (url.pathname === '/api/next-version') {
       try {
@@ -73,13 +87,12 @@ export default {
       } catch (e) { return new Response(JSON.stringify({ next: '' }), { headers: { 'content-type': 'application/json' } }); }
     }
     if (url.pathname.startsWith('/api/tracker/')) {
-      if (!env.TR) return new Response(JSON.stringify({ error: 'tracker database not bound' }), { status: 503, headers: { 'content-type': 'application/json' } });
-      try { return await trackerAdmin(req, env, url, url.pathname.replace(/^\/api\/tracker/, ''), who.email); }
+      try { return await trackerAdmin(req, env, url, url.pathname.replace(/^\/api\/tracker/, ''), who.email, me); }
       catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: e.status || 500, headers: { 'content-type': 'application/json' } }); }
     }
     if (url.pathname.startsWith('/api/')) {
       try {
-        const res = await adminApi(req, env, url, url.pathname.replace(/^\/api/, ''));
+        const res = await adminApi(req, env, url, url.pathname.replace(/^\/api/, ''), me);
         const h = new Headers(res.headers); h.set('cache-control', 'no-store'); h.delete('access-control-allow-origin');
         return new Response(res.body, { status: res.status, headers: h });
       } catch (e) {
