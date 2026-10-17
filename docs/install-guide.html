@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Aethernet Install Guide</title>
+<style>
+  @page { size: Letter; margin: 0.7in 0.75in; }
+  :root { --ink:#1d1b20; --soft:#5d5e61; --line:#e4e1ea; --accent:#8223d2; --tint:#f4ecfb; --warn:#fff6e0; --warnline:#e0a400; }
+  * { box-sizing: border-box; }
+  body { font: 10.5pt/1.5 -apple-system, "Helvetica Neue", Arial, sans-serif; color: var(--ink); margin: 0; }
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 10px; margin-bottom: 18px; }
+  h1 { font-size: 24pt; margin: 0; letter-spacing: -0.5px; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--soft); margin-top: 2px; }
+  h2 { font-size: 13pt; margin: 22px 0 8px; color: var(--accent); }
+  .step { display: flex; gap: 12px; margin: 0 0 14px; page-break-inside: avoid; }
+  .n { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+  .step b.t { display: block; font-size: 11pt; margin-bottom: 2px; }
+  .step p { margin: 3px 0; }
+  code, .link { font: 9.5pt/1.4 ui-monospace, Menlo, monospace; background: var(--tint); border-radius: 4px; padding: 1px 5px; }
+  .link { display: block; padding: 7px 10px; margin: 6px 0; word-break: break-all; border: 1px solid #dcc8ef; }
+  .note { background: var(--warn); border-left: 4px solid var(--warnline); padding: 8px 12px; border-radius: 4px; margin: 8px 0; page-break-inside: avoid; }
+  .tip { background: var(--tint); border-left: 4px solid var(--accent); padding: 8px 12px; border-radius: 4px; margin: 8px 0; page-break-inside: avoid; }
+  table { width: 100%; border-collapse: collapse; margin: 6px 0 4px; page-break-inside: avoid; }
+  th, td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { font-size: 9.5pt; color: var(--soft); text-transform: uppercase; letter-spacing: 0.4px; }
+  td:first-child { width: 36%; font-weight: 600; }
+  ul { margin: 4px 0; padding-left: 20px; }
+  footer { margin-top: 26px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--soft); font-size: 8.5pt; }
+</style></head><body>
+<header>
+  <h1><span>Aethernet</span> Install Guide</h1>
+  <div class="sub">Restoring the flow of NextGen · setup takes about 5 minutes</div>
+</header>
+
+<h2>Before you start</h2>
+<ul>
+  <li><b>A computer browser:</b> Google Chrome or Microsoft Edge (recommended). Firefox also works.</li>
+  <li><b>Your Portal sign-in.</b> Aethernet runs inside Portal at portal.ubreakifix.net.</li>
+  <li><b>Store access.</b> Aethernet is turned on store by store. If your store isn't on yet, Portal will say so after you install (see Troubleshooting).</li>
+</ul>
+
+<h2>Install</h2>
+
+<div class="step"><div class="n">1</div><div>
+  <b class="t">Add the Tampermonkey extension</b>
+  <p>Tampermonkey is a free browser extension that runs add-ons like Aethernet. Get it from your browser's store:</p>
+  <ul>
+    <li><b>Chrome:</b> Chrome Web Store, search “Tampermonkey”, then <b>Add to Chrome</b>.</li>
+    <li><b>Edge:</b> Edge Add-ons, search “Tampermonkey”, then <b>Get</b>.</li>
+    <li><b>Firefox:</b> Firefox Add-ons, search “Tampermonkey”, then <b>Add to Firefox</b>.</li>
+  </ul>
+  <p>Violentmonkey works too. Greasemonkey does not.</p>
+</div></div>
+
+<div class="step"><div class="n">2</div><div>
+  <b class="t">Chrome and Edge only: allow user scripts</b>
+  <p>Without this, Tampermonkey installs fine but nothing runs.</p>
+  <ul>
+    <li>Go to <code>chrome://extensions</code> (Edge: <code>edge://extensions</code>).</li>
+    <li>Find Tampermonkey and click <b>Details</b>.</li>
+    <li>Turn on <b>Allow User Scripts</b>. On older browser versions this switch doesn't exist; turn on <b>Developer mode</b> (top right of the extensions page) instead.</li>
+  </ul>
+</div></div>
+
+<div class="step"><div class="n">3</div><div>
+  <b class="t">Open the install link</b>
+  <p>Paste this into the address bar:</p>
+  <span class="link">https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/aethernet.user.js</span>
+  <p>Tampermonkey opens its own install page for Aethernet. Click <b>Install</b>.</p>
+</div></div>
+
+<div class="step"><div class="n">4</div><div>
+  <b class="t">Refresh Portal</b>
+  <p>Reload any open Portal tabs (or open Portal and sign in). Aethernet loads with Portal.</p>
+</div></div>
+
+<div class="step"><div class="n">5</div><div>
+  <b class="t">Check that it's working</b>
+  <p>Click your picture in Portal's top right corner. The menu now has <b>Aethernet settings</b>. That's where you turn each tool on or off and read the patch notes.</p>
+</div></div>
+
+<div class="tip"><b>Tip:</b> Aethernet's tools are called crystals. Each one has a short description in Settings.</div>
+
+<h2>Updates</h2>
+<ul>
+  <li>Tampermonkey checks for a new version about once a day and installs it by itself.</li>
+  <li>When an update is out, Aethernet shows an <b>update available</b> note. Click it, then <b>Update</b> on Tampermonkey's page, then refresh Portal.</li>
+  <li>You can check any time: <b>Aethernet settings → Check for updates</b>.</li>
+  <li>After an update, a short “Aethernet has updated!” note appears once. New or changed crystals are highlighted in Settings.</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+<table>
+  <tr><th>What you see</th><th>What to do</th></tr>
+  <tr><td>Nothing changes in Portal, and no Aethernet settings in the menu</td><td>Check step 2 (Allow User Scripts). Make sure Tampermonkey and the Aethernet script are both switched on in Tampermonkey's dashboard. Then refresh Portal.</td></tr>
+  <tr><td>“Aethernet isn't available for [store] yet”</td><td>Your store isn't turned on yet. Ask your manager to request access.</td></tr>
+  <tr><td>“Aethernet couldn't check this store's access”</td><td>A temporary connection problem. Aethernet keeps trying; refresh Portal in a few minutes.</td></tr>
+  <tr><td>Buttons show up twice</td><td>An older single-tool script is still installed. In Tampermonkey's dashboard, remove every script except Aethernet.</td></tr>
+  <tr><td>Something looks wrong or broken</td><td>Click your picture in Portal, then <b>Send feedback</b>. Choose bug or suggestion; bug reports include the details needed to fix it.</td></tr>
+</table>
+
+<div class="note"><b>Good to know:</b> Aethernet only runs on Portal. It works in every Portal tab you have open, and it uses your own Portal sign-in. It never asks for a password.</div>
+
+<footer>Aethernet is an independent add-on by Garrett Green, Newport News #914. It isn't made or supported by uBreakiFix or Asurion.</footer>
+</body></html>
