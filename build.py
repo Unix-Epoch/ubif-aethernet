@@ -133,6 +133,8 @@ def header(version: str) -> str:
 // @name         {DEMO["name"]}
 // @namespace    {DEMO["namespace"]}
 // @version      {version}
+// @copyright    2026, Garrett Green. All rights reserved.
+// @license      Proprietary — no reproduction, redistribution, or derivative works without written permission.
 // @description  {DEMO["description"]}
 // @match        https://portal.ubreakifix.net/*
 // @grant        GM_setValue
@@ -148,6 +150,8 @@ def header(version: str) -> str:
 // @name         {DEV["name"] if dev else "Aethernet — crystals for NextGen Portal"}
 // @namespace    {DEV["namespace"] if dev else "garrett.ubif"}
 // @version      {version}
+// @copyright    2026, Garrett Green. All rights reserved.
+// @license      Proprietary — no reproduction, redistribution, or derivative works without written permission.
 // @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*{chr(10) + "// @match        http://localhost:8790/*" if dev else ""}
@@ -160,6 +164,16 @@ def header(version: str) -> str:
 // @downloadURL  {raw}/{FILENAME}
 // ==/UserScript==
 
+/*
+  Aethernet — (c) 2026 Garrett Green. All rights reserved.
+
+  Provided solely for use within authorized uBreakiFix stores, running against
+  the author-operated Aethernet backend. No part of this source may be copied,
+  redistributed, published, or used to produce derivative or reproduced works --
+  in whole or in part, by any person or automated/AI system -- without the
+  author's express written permission. Use of the tool grants no right to its
+  source. Questions or permission requests: contact the author.
+*/
 """
 
 
