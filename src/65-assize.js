@@ -163,7 +163,9 @@ AE.assizeRules = (() => {
   const DATA_RE = /\b(reinstall(?:ed|ing)?|re-?flash(?:ed|ing)?|wipe[ds]?|wiping|(?:factory )?reset|(?:mother|logic|main) ?board|board swap|recovery)\b/i;
   const AGREE_RE = /\b(aware|agree[sd]?|agreement|okay with|ok with|fine with|understands?|understood|acknowledge[sd]?|consent(?:s|ed)?|accept(?:s|ed)?|signed)\b/i;
   const CONTACT_RE = /\b(call(?:ed|ing)?|texted|sent a text|left (?:a )?(?:vm|voicemail|message)|voicemail|vm|spoke|talked|emailed|reached|no answer|contacted|messaged)\b/i;
-  const DOLLAR_RE = /\$\s?\d|\b\d+\.\d{2}\b|\b\d+\s?(?:dollars|usd)\b/i;
+  // A price in a note: $150 · 150$ / 150 $ / 49.99$ (sign after, as techs often write it) · 150.00 · 150 dollars ·
+  // a number right after OOP / quote(d) / price ("OOP - 150"). Oct 16, 2026: "OOP - 150$" was missed.
+  const DOLLAR_RE = /\$\s?\d|\b\d+(?:[.,]\d{1,2})?\s?\$|\b\d+\.\d{2}\b|\b\d+\s?(?:dollars|usd)\b|\b(?:oop|quoted?|price)\b[^\n\d]{0,8}\d{2,}/i;
   const OVERRIDE_RE = /-\s*per\s+(?:gg|garrett)\b/i;
   const EXPLAIN_RE = /\b(deposit|gspn|checkout complete|waive[ds]?|refund(?:ed)?|atc|no charge)\b/i;
   // A keyword that isn't negated ("no water damage", "not wet").
