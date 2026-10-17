@@ -88,7 +88,7 @@ AE.crystal({
         try {
           let n = await logRecentTexts(m[1]);
           if (!n) { await AE.sleep(2500); n = await logRecentTexts(m[1]); } // history can lag a moment
-          if (n) AE.refreshView();
+          if (n) { AE.refreshView(); AE.emit('wo-changed', { woId: m[1], why: 'note' }); } // Assize re-reads the order's notes
           if (n) AE.toast('Text logged', (n > 1 ? n + ' texts' : 'Text') + ' added to WO ' + m[1] + "'s notes.", 'ok', 4000);
         } catch (e) {
           AE.toast('Text sent, but not logged', { html: "Couldn't add this text to the WO notes. " +

@@ -26,17 +26,11 @@ AE.crystal({
     let loadingFor = null;
 
     document.head.append(h('style', null, `
-      #${PILL_ID} { display:inline-flex; align-items:center; gap:6px; height:28px; margin-left:14px; padding:0 12px; border-radius:10000rem;
-        border:1px solid transparent; font:600 14px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; cursor:pointer; white-space:nowrap; flex:none;
-        align-self:center; }
       #${PILL_ID}.avail { background:var(--aui-primary,#8223d2); color:var(--aui-on-primary,#fff); }
       #${PILL_ID}.done  { background:var(--aui-status-success-soft,#c5ffc8); color:var(--aui-status-on-success-soft,#062011); }
-      #${PILL_ID}.none  { background:transparent; border-color:var(--aui-outline,#c6c6ca); color:var(--aui-on-surface-soft,#5d5e61); font-weight:400; }
-      #${PILL_ID}.load  { background:transparent; border-color:var(--aui-outline-soft,#eeedf1); color:var(--aui-on-surface-soft,#5d5e61); font-weight:400; }
-      #${PILL_ID} .sg-spin { width:12px; height:12px; }
-      #${PILL_ID}.icon { width:30px; height:30px; padding:0; justify-content:center; border:2px solid var(--aui-status-success,#136d31); background:var(--aui-surface,#fff); }
-      #${PILL_ID}.avail .sg-aicon { width:18px; height:18px; border-radius:50%; }
-      #${PILL_ID}.icon .sg-aicon { width:22px; height:22px; border-radius:50%; }
+      #${PILL_ID}.none  { background:transparent; border-color:var(--aui-outline,#c6c6ca); color:var(--aui-on-surface-soft,#5d5e61); }
+      #${PILL_ID}.load  { background:transparent; border-color:var(--aui-outline-soft,#eeedf1); color:var(--aui-on-surface-soft,#5d5e61); }
+      #${PILL_ID}.icon { border:2px solid var(--aui-status-success,#136d31); background:var(--aui-surface,#fff); }
       #${POP_ID} .hd { display:flex; align-items:center; gap:8px; font-size:16px; font-weight:700; }
       #${POP_ID} { position:fixed; z-index:2147483646; width:380px; padding:16px; font-size:14px; line-height:1.4; }
       #${POP_ID} .row { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--aui-outline-soft,#eeedf1); }
@@ -80,8 +74,7 @@ AE.crystal({
 
     // Anchor: the flex row holding the "Work order #… | NAME" heading.
     function nameRow(woId) {
-      const heading = AE.woHeading(woId);
-      return heading && heading.parentElement;
+      return AE.woHeadingRow(woId); // core's chip row: Esuna's pill goes first (order 10)
     }
 
     function pillFor(s) {
@@ -93,7 +86,7 @@ AE.crystal({
       if (!s.matched.length) return s.wo.programId === AE.PARENT_PROGRAM_ID ? { cls: 'none', html: 'No cleanings' } : null;
       if (avail && done) return { cls: 'avail', html: AE.actionIcon('woCleanings', 18) + 'Swiftcast available (' + avail + ' / ' + done + ')', title: avail + ' available, ' + done + ' done' };
       if (avail) return { cls: 'avail', html: AE.actionIcon('woCleanings', 18) + 'Swiftcast available (' + avail + ')' };
-      return { cls: 'done icon', html: AE.actionIcon('woCleanings', 22), title: (done === 1 ? '1 cleaning' : done + ' cleanings') + ' done — click for details' };
+      return { cls: 'done icon round', html: AE.actionIcon('woCleanings', 18), title: (done === 1 ? '1 cleaning' : done + ' cleanings') + ' done — click for details' };
     }
 
     function render() {
@@ -103,13 +96,13 @@ AE.crystal({
       const row = woId && nameRow(woId);
       if (!spec || !row) { existing?.remove(); return; }
       const pill = existing || h('button', { id: PILL_ID, type: 'button', class: 'sg', onclick: (e) => pillClick(e) });
-      pill.className = 'sg ' + spec.cls;
+      pill.className = 'sg ae-chip ' + spec.cls + (/Icon|aicon/.test(spec.html) && !/round/.test(spec.cls) ? ' has-icon' : '');
       // A failed lookup: the pill is a bug report link carrying the error (AE.bugLink) instead of opening the list.
       if (spec.bug) pill.dataset.aeBug = JSON.stringify({ where: 'Esuna', error: 'Cleaning lookup for WO ' + woId + ' failed: ' + state.error });
       else delete pill.dataset.aeBug;
       pill.innerHTML = spec.html;
       pill.title = spec.title || 'Cleanings for this device — click for details';
-      if (pill.parentElement !== row) row.appendChild(pill);
+      AE.woChip(woId, pill, 10);
     }
 
     function renderPop() {

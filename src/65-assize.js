@@ -34,8 +34,11 @@
 
   Cost: Portal's open list once a pass (+1 page of closed orders, for 4b), then each in-scope open
   order's detail (GET /api/workorder/:id, /api/note?workorderId=… (30 a page), /api/workorder-audit-
-  trail/:id and /api/get-cart/:csuCartId: 4 calls) only when its updatedAt changed since the last
-  fetch, one after another 300 ms apart. One pass per 10 minutes, shared by every tab (a timestamp
+  trail/:id and /api/get-cart/:csuCartId: 4 calls) when its updatedAt changed, when the copy is older
+  than 30 minutes (updatedAt does NOT move for a new note or a nickname edit), on the panel's Refresh
+  (every open order, cache ignored: about 4 calls each plus the list), and right away after a text, a
+  Recitation note or a Waymark nickname change on that order; one after another 300 ms apart. The list
+  row's status, nickname, bin and dates are re-read every pass and win over a cached detail. One pass per 10 minutes, shared by every tab (a timestamp
   in GM storage, like Waymark's scan), plus the order being viewed (at most every 2 minutes). Rows
   and details are kept in GM storage per store, so every tab shows the same findings without
   fetching again; each tab re-runs the rules every minute so time-based ones (after close, today's
@@ -201,22 +204,26 @@ AE.assizeRules = (() => {
     const issuesRow = Array.isArray(row.deviceIssues) ? row.deviceIssues.map((x) => (x && typeof x === 'object' ? x.name : x)).filter(Boolean) : [];
     const binName = (w.WorkorderBinDeviceLocation && w.WorkorderBinDeviceLocation.WorkorderBin && w.WorkorderBinDeviceLocation.WorkorderBin.name);
     const outcomes = (w.WorkorderAttributes || []).filter((a) => Number(a.workorderAttributeTypeId) === 22).map((a) => String(a.value || '').trim());
+    // List-row fields (status, nickname, bin, dates) come from the list row when there is one: it is re-read every pass,
+    // while a cached detail can be older. A detail fetched after the row (d.rowFresher === false: the order's own page,
+    // a just-sent text, a Waymark nickname change) wins instead. Detail alone supplies notes, cart, audit trail, checklist.
+    const rowFirst = !!row.workorderId && !(d && d.rowFresher === false);
     const notes = d && Array.isArray(d.notes) ? d.notes.slice().sort((a, b) => t(a) - t(b)) : null;
     return {
       id: String(w.workorderId || row.workorderId || ''),
-      statusId: Number(w.workorderStatusId || row.workorderStatusId) || null,
-      status: (w.WorkorderStatus && w.WorkorderStatus.name) || row.workorderStatusName || '',
+      statusId: Number((rowFirst ? row.workorderStatusId || w.workorderStatusId : w.workorderStatusId || row.workorderStatusId)) || null,
+      status: (rowFirst ? row.workorderStatusName || (w.WorkorderStatus && w.WorkorderStatus.name) : (w.WorkorderStatus && w.WorkorderStatus.name) || row.workorderStatusName) || '',
       programId: w.programId != null ? w.programId : row.programId,
       programName: (w.Program && w.Program.name) || row.programName || '',
       device: cat.name || (row.deviceCatalog && row.deviceCatalog.name) || '',
       deviceType: (model.DeviceType && model.DeviceType.name) || row.deviceTypeName || (row.deviceType && row.deviceType.name) || '',
       deviceFamily: (model.DeviceFamily && model.DeviceFamily.name) || '',
       issues: issuesDetail.length ? issuesDetail : issuesRow,
-      nickname: (d ? cd.name : null) ?? (row.customerDevice && row.customerDevice.name) ?? '',
-      bin: d && w.WorkorderBinDeviceLocation !== undefined ? (binName || '') : (row.locationBin != null ? row.locationBin : binName || ''),
+      nickname: (rowFirst && row.customerDevice && row.customerDevice.name != null ? row.customerDevice.name : (d ? cd.name : null) ?? (row.customerDevice && row.customerDevice.name)) ?? '',
+      bin: rowFirst && row.locationBin != null ? row.locationBin : d && w.WorkorderBinDeviceLocation !== undefined ? (binName || '') : (row.locationBin != null ? row.locationBin : binName || ''),
       createdAt: Date.parse(w.createdAt || row.createdAt) || null,
-      updatedAt: Date.parse(w.updatedAt || row.updatedAt) || null,
-      nextUpdate: Date.parse(w.nextUpdate || row.nextUpdate) || null,
+      updatedAt: Date.parse(rowFirst ? row.updatedAt || w.updatedAt : w.updatedAt || row.updatedAt) || null,
+      nextUpdate: Date.parse(rowFirst ? row.nextUpdate || w.nextUpdate : w.nextUpdate || row.nextUpdate) || null,
       rfpAt: Date.parse(row.rfpWorkorderStatusDate) || null,
       outcome: outcomes.find((v) => ['Completed', 'Incomplete', 'Declined', 'No issue found'].includes(v)) || (row.serviceOutcome || ''),
       createdBy: row.createdBy && typeof row.createdBy === 'object' ? row.createdBy : null,
@@ -477,7 +484,7 @@ AE.crystal({
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h, esc } = AE, R = AE.assizeRules;
-    const SCAN_MS = 10 * 60 * 1000, GAP_MS = 300, NOTE_PAGE = 30, NOTE_PAGES = 10, WO_MS = 2 * 60 * 1000;
+    const SCAN_MS = 10 * 60 * 1000, GAP_MS = 300, NOTE_PAGE = 30, NOTE_PAGES = 10, WO_MS = 2 * 60 * 1000, DETAIL_TTL = 30 * 60 * 1000;
     const PANEL_ID = 'ae-as-panel', PILL_ID = 'ae-as-pill', POP_ID = 'ae-as-pop', MK = 'ae-as-mk';
     const CHECK_NAME = Object.fromEntries(R.CHECKS);
     const orders = (n) => n + (n === 1 ? ' open order' : ' open orders');
@@ -549,7 +556,10 @@ AE.crystal({
 
     // ------------------------------------------------------------ the pass
     let busy = false, lastError = null, progress = null;
-    async function pass(force) {
+    // A work order's updatedAt does not move when a note is added or the device nickname is edited, so a cached detail is
+    // refetched when the list's updatedAt changed, when it is older than DETAIL_TTL, on Refresh (full), and right after
+    // anything Aethernet itself did to the order (a text, a Recitation note, a Waymark nickname change: invalidate()).
+    async function pass(force, full) {
       if (busy || AE.status.paused('assize')) return;
       const lock = key('scan_at');
       if (!force && Date.now() - GM_getValue(lock, 0) < SCAN_MS - 30000) return;
@@ -568,7 +578,8 @@ AE.crystal({
         for (const r of want) if (details[r.workorderId]) keep[r.workorderId] = details[r.workorderId];
         GM_setValue(key('details'), keep);
         compute(); render();
-        const stale = want.filter((r) => !keep[r.workorderId] || keep[r.workorderId].u !== r.updatedAt);
+        const nowMs = Date.now();
+        const stale = want.filter((r) => full || !keep[r.workorderId] || keep[r.workorderId].u !== r.updatedAt || nowMs - (keep[r.workorderId].at || 0) > DETAIL_TTL);
         progress = { done: 0, total: stale.length };
         let n = 0;
         for (const r of stale) {
@@ -582,7 +593,7 @@ AE.crystal({
             if (!e.otherStore) AE.noteError('Assize detail ' + r.workorderId, e);
           }
           progress.done++;
-          if (++n % 4 === 0) { compute(); render(); }
+          if (++n % 4 === 0) { compute(); render(); } else renderPanel();
           await AE.sleep(GAP_MS);
         }
         lastError = null;
@@ -595,11 +606,19 @@ AE.crystal({
       }
     }
     // The order on screen: its own detail, fresh within 2 minutes.
-    const woLoading = new Set();
-    async function refreshWo(woId) {
+    const woLoading = new Set(), woAgain = new Set();
+    // Something just changed this order (a text, a note, a nickname): fetch it again now, ignoring the cache.
+    // If a fetch is already under way it may have missed the change, so it runs once more when it finishes.
+    function invalidate(woId) {
+      woId = String(woId || '');
+      if (!woId || !storeId) return;
+      if (woLoading.has(woId)) { woAgain.add(woId); return; }
+      refreshWo(woId, true);
+    }
+    async function refreshWo(woId, force) {
       if (!storeId || woLoading.has(woId) || AE.status.paused('assize')) return;
       const cur = readDetails()[woId];
-      if (cur && Date.now() - cur.at < WO_MS) return;
+      if (!force && cur && Date.now() - cur.at < WO_MS) return;
       const rows = readRows();
       const row = rows && rows.rows.find((r) => String(r.workorderId) === String(woId));
       if (rows && !row && rows.at > Date.now() - SCAN_MS && !cur) return; // not open (or not ours) at the last pass: nothing to check
@@ -607,13 +626,17 @@ AE.crystal({
       try {
         await AE.afterLoad();
         const d = await detailOf(woId);
-        if (!inScope({ workorderStatusName: d.wo.WorkorderStatus && d.wo.WorkorderStatus.name, programId: d.wo.programId, programName: d.wo.Program && d.wo.Program.name })) return;
+        if (!inScope({ workorderStatusName: d.wo.WorkorderStatus && d.wo.WorkorderStatus.name, programId: d.wo.programId, programName: d.wo.Program && d.wo.Program.name })) {
+          const gone = readDetails();
+          if (gone[woId]) { delete gone[woId]; GM_setValue(key('details'), gone); compute(); render(); } // moved out of scope: its old findings go
+          return;
+        }
         const all = readDetails();
         all[woId] = { u: row ? row.updatedAt : d.wo.updatedAt, at: Date.now(), d };
         GM_setValue(key('details'), all);
         compute(); render();
       } catch (e) { if (!e.otherStore) AE.noteError('Assize WO ' + woId, e); }
-      finally { woLoading.delete(woId); }
+      finally { woLoading.delete(woId); if (woAgain.delete(woId)) refreshWo(woId, true); }
     }
 
     // ------------------------------------------------------------ dismissals (shared per store, on the Waymark Worker)
@@ -671,7 +694,9 @@ AE.crystal({
       const details = readDetails(), now = AE.now();
       const seen = new Set(rows.rows.map((r) => String(r.workorderId)));
       let list = [];
-      for (const r of rows.rows) list.push(...R.audit(r, details[r.workorderId] ? details[r.workorderId].d : null, { now, hours: R.STORE_HOURS, priceFor }));
+      // rowFresher: this tab's list row was read after the detail was fetched, so the row's status / nickname / bin win (see facts()).
+      const dOf = (x) => (x ? Object.assign({}, x.d, { rowFresher: (x.at || 0) <= rows.at }) : null);
+      for (const r of rows.rows) list.push(...R.audit(r, dOf(details[r.workorderId]), { now, hours: R.STORE_HOURS, priceFor }));
       // An order fetched on its own page that wasn't open at the last pass (new since)
       for (const [id, x] of Object.entries(details)) if (!seen.has(String(id))) list.push(...R.audit(null, x.d, { now, hours: R.STORE_HOURS, priceFor }));
       list.push(...R.orphanCleanings(rows.rows, rows.closed || [], AE.data.belongs));
@@ -744,16 +769,11 @@ AE.crystal({
       .ae-as-r.dis .bar { opacity:.5; } .ae-as-r.dis .k { text-decoration:line-through; color:var(--aui-on-surface-soft,#5d5e61); }
       .ae-as-r.dis .who { display:flex; }
       .ae-as-err { margin:8px 0; color:var(--as-fail); font-size:13px; } .ae-as-err a { color:inherit; font-weight:700; }
-      #${PILL_ID} { display:inline-flex; align-items:center; gap:6px; height:28px; margin-left:8px; padding:0 12px 0 5px; border-radius:10000rem; border:1px solid transparent; cursor:pointer;
-        font:600 14px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; white-space:nowrap; flex:none; align-self:center; }
-      #${PILL_ID} .sg-aicon { width:20px; height:20px; border-radius:50%; }
       #${PILL_ID}.fail { background:var(--as-fail-soft); color:var(--as-fail-on); } #${PILL_ID}.flag { background:var(--as-flag-soft); color:var(--as-flag-on); }
       #${PILL_ID}.note { background:transparent; border-color:var(--aui-outline,#c6c6ca); color:var(--aui-on-surface-soft,#5d5e61); }
       #${POP_ID} { position:fixed; z-index:2147483646; width:min(430px, calc(100vw - 16px)); padding:14px 16px 12px; font-size:14px; line-height:1.4; }
       #${POP_ID} .hd { margin-bottom:4px; }
-      .${MK} { display:inline-flex; align-items:center; gap:3px; height:18px; padding:0 6px 0 2px; border-radius:10000rem; flex:none; white-space:nowrap; vertical-align:middle; cursor:pointer;
-        font:700 11px/1 Apercu, "Helvetica Neue", Arial, sans-serif; border:0; }
-      .${MK} .sg-aicon { width:14px; height:14px; border-radius:50%; box-shadow:none; }
+      .${MK} { vertical-align:middle; border:0; } .${MK} .sg-aicon { box-shadow:none; }
       .${MK}.fail { background:var(--as-fail-soft); color:var(--as-fail-on); } .${MK}.flag { background:var(--as-flag-soft); color:var(--as-flag-on); }
       .${MK}.note { background:var(--aui-neutral-soft,#f1f0f4); color:var(--aui-on-surface,#1a1c1e); box-shadow:inset 0 0 0 1px var(--aui-outline,#c6c6ca); }
       .ae-as-wrap { display:flex !important; align-items:center; gap:6px; min-width:0; flex-wrap:nowrap; }
@@ -845,8 +865,8 @@ AE.crystal({
       const scroll = p.querySelector('.list') ? p.querySelector('.list').scrollTop : 0;
       const close = h('button', { type: 'button', class: 'sg-x', title: 'Close', 'aria-label': 'Close', onclick: () => p.remove() }, '✕');
       const sub = result ? 'Checked ' + fmtTime(result.at) + ' · ' + orders(result.open) : '';
-      const head = h('div', { class: 'hd' }, h('span', { html: AE.actionIcon('assize', 26), style: 'line-height:0' }), h('b', null, 'Assize'), h('span', { class: 'sg-soft' }, busy ? (progress && progress.total ? 'Checking orders… ' + progress.done + '/' + progress.total : 'Checking orders…') : sub), close);
-      const refresh = h('button', { type: 'button', class: 'sg-btn', disabled: busy || null, onclick: (e) => { e.stopPropagation(); AE.track('assize:refresh'); pass(true); } }, 'Refresh');
+      const head = h('div', { class: 'hd' }, h('span', { html: AE.actionIcon('assize', 26), style: 'line-height:0' }), h('b', null, 'Assize'), h('span', { class: 'sg-soft' }, busy ? (progress && progress.total ? 'Checking ' + Math.min(progress.done + 1, progress.total) + ' of ' + progress.total + '…' : 'Checking orders…') : sub), close);
+      const refresh = h('button', { type: 'button', class: 'sg-btn', disabled: busy || null, onclick: (e) => { e.stopPropagation(); AE.track('assize:refresh'); pass(true, true); } }, 'Refresh');
       const nGone = result ? result.dismissed.length : 0;
       const toggle = canDismiss() ? h('button', { type: 'button', class: 'sg-btn', 'aria-pressed': String(showDismissed), 'data-fk': 'dt', title: 'Findings dismissed as not applying, for this store',
         onclick: (e) => { e.stopPropagation(); showDismissed = !showDismissed; actErr = null; dp = null; if (showDismissed) loadDismissed(true); renderPanel(); } }, showDismissed ? 'Back to findings' : 'Dismissed (' + nGone + ')') : null;
@@ -912,7 +932,7 @@ AE.crystal({
     function renderPill() {
       const woId = currentWoId();
       const list = woId && result ? (result.byWo.get(woId) || []).filter((x) => x.kind !== 'remind') : [];
-      const heading = woId && AE.woHeading(woId), row = heading && heading.parentElement;
+      const row = woId && AE.woHeadingRow(woId); // core's chip row: Assize goes after Esuna (order 20)
       let pill = document.getElementById(PILL_ID);
       if (!list.length || !row) { pill?.remove(); document.getElementById(POP_ID)?.remove(); return; }
       const sev = worstOf(list), text = list.length === 1 ? '1 finding' : list.length + ' findings';
@@ -920,11 +940,11 @@ AE.crystal({
       if (!pill) pill = h('button', { id: PILL_ID, type: 'button', class: 'sg ae-as', onclick: (e) => togglePop(e) });
       if (pill.dataset.sig !== sig) {
         pill.dataset.sig = sig;
-        pill.className = 'sg ae-as ' + sev;
+        pill.className = 'sg ae-as ae-chip has-icon ' + sev;
         pill.title = 'Assize: ' + text + ' on this order';
-        pill.innerHTML = AE.actionIcon('assize', 20) + esc(text);
+        pill.innerHTML = AE.actionIcon('assize', 18) + esc(text);
       }
-      if (pill.parentElement !== row) row.appendChild(pill);
+      AE.woChip(woId, pill, 20);
       if (document.getElementById(POP_ID)) renderPop();
     }
     function renderPop() { keepFocus(drawPop); }
@@ -985,7 +1005,7 @@ AE.crystal({
         if (mk && mk.dataset.sig === sig && mk.previousElementSibling === link) continue;
         mk?.remove();
         if (!list.length) continue;
-        mk = h('button', { type: 'button', class: MK + ' ae-as ' + sev, 'data-sig': sig, title: 'Assize: ' + list.length + (list.length === 1 ? ' finding' : ' findings') + ' (click opens the order)',
+        mk = h('button', { type: 'button', class: MK + ' ae-as ae-chip mini has-icon ' + sev, 'data-sig': sig, title: 'Assize: ' + list.length + (list.length === 1 ? ' finding' : ' findings') + ' (click opens the order)',
           html: AE.actionIcon('assize', 14) + list.length });
         mk.onmousedown = (e) => e.stopPropagation();
         mk.onclick = (e) => { e.preventDefault(); e.stopPropagation(); link.click(); };
@@ -1018,7 +1038,7 @@ AE.crystal({
       // Another tab's pass: pick up its results.
       AE.every(5000, () => {
         const rows = readRows();
-        const stamp = (rows ? rows.at : 0) + ':' + Object.keys(readDetails()).length;
+        const dets = Object.values(readDetails()), stamp = (rows ? rows.at : 0) + ':' + dets.length + ':' + dets.reduce((m, x) => Math.max(m, x.at || 0), 0);
         if (stamp !== seenAt) { seenAt = stamp; compute(); render(); }
       });
       AE.every(1000, () => { const woId = currentWoId(); if (woId) refreshWo(woId); renderPill(); renderList(); });
@@ -1035,5 +1055,7 @@ AE.crystal({
     if (!/^\/login/.test(location.pathname)) start();
     else AE.every(2000, () => { if (!started && !/^\/login/.test(location.pathname)) start(); });
     AE.hooks.assizePass = () => pass(true); // dev tools
+    AE.on('text-sent', ({ woId }) => { if (woId) invalidate(woId); });
+    AE.on('wo-changed', ({ woId }) => { if (woId) invalidate(woId); }); // Recitation's note, Waymark's nickname
   },
 });

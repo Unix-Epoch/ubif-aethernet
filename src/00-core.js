@@ -330,6 +330,28 @@ const AE = (() => {
   const CSS = `
   .sg, .sg * { box-sizing: border-box; }
   .sg { font-family: Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--aui-on-surface, #1a1c1e); }
+  /*
+    Chips next to the customer name (WO heading) and in Work orders rows: one size, one font, one icon size, one gap.
+    #ae-wo-chips is the single flex row every crystal drops its chip into (AE.woChip); each chip carries its own
+    order (CSS), so they line up the same whichever crystal draws first: 10 Esuna, 20 Assize, 30 Waymark tags,
+    40 + Tag, 50 Auto-Waymark. Variants: .ae-chip (status pill: crystal icon + text, colors set by the crystal),
+    .sg-tag.ae-chip / .sg-auto.ae-chip (Waymark's own colors), .ghost (+ Tag), .round (icon only), .mini (list rows).
+  */
+  :root { --ae-chip-h:26px; --ae-chip-fs:13px; --ae-chip-icon:18px; --ae-chip-gap:8px; }
+  #ae-wo-chips { display:flex; flex-wrap:wrap; align-items:center; gap:var(--ae-chip-gap); flex:0 .15 auto; min-width:0; align-self:center; }
+  #ae-wo-chips:empty { display:none; }
+  #sg-wm-row { display:contents; }
+  .ae-chip { display:inline-flex; align-items:center; justify-content:center; gap:6px; box-sizing:border-box; height:var(--ae-chip-h); margin:0; padding:0 10px; border-radius:10000rem;
+    border:1px solid transparent; font:600 var(--ae-chip-fs)/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; white-space:nowrap; flex:none; align-self:center; cursor:pointer; }
+  .ae-chip.has-icon { padding-left:4px; }
+  .ae-chip .sg-aicon { width:var(--ae-chip-icon); height:var(--ae-chip-icon); border-radius:50%; box-shadow:0 0 0 1px rgba(0,0,0,.3); }
+  .ae-chip .sg-spin { width:12px; height:12px; }
+  .ae-chip.round { width:var(--ae-chip-h); padding:0; }
+  .ae-chip.ghost { background:transparent; border:1px dashed var(--aui-primary, #8223d2); color:var(--aui-primary, #8223d2); }
+  .ae-chip.ghost:hover { background:var(--aui-primary-soft, #faecff); }
+  .ae-chip:focus-visible { outline:2px solid var(--aui-primary, #8223d2); outline-offset:1px; }
+  .ae-chip.mini { --ae-chip-h:18px; --ae-chip-fs:11px; --ae-chip-icon:14px; gap:3px; padding:0 7px; font-weight:700; }
+  .ae-chip.mini.has-icon { padding-left:2px; }
   .sg-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:32px; padding:0 15px; border-radius:10000rem;
     border:1px solid var(--aui-on-surface, #1a1c1e); background:transparent; color:var(--aui-on-surface, #1a1c1e);
     font:400 14px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; cursor:pointer; white-space:nowrap; }
@@ -683,6 +705,8 @@ const AE = (() => {
 
   // Crystals tell each other when a cleaning changes (e.g. auto-close finished)
   // so the badge and WO pill refresh without waiting for their timers.
+  // Events: cleaning-changed, text-sent { woId }, waymark-changed, wo-changed { woId, why } (Aethernet itself changed a work order's notes
+  // or nickname: Assize re-reads it now, since Portal's updatedAt doesn't move for either).
   const emit = (name, detail) => document.dispatchEvent(new CustomEvent('aethernet:' + name, { detail }));
   const on = (name, fn) => document.addEventListener('aethernet:' + name, (e) => fn(e.detail));
 
@@ -1221,6 +1245,24 @@ const AE = (() => {
     return woHead;
   }
 
+  // The one flex row beside the heading where every crystal's chip goes (see the chip notes in the CSS). Null off a WO page.
+  function woHeadingRow(woId) {
+    const heading = woHeading(woId), parent = heading && heading.parentElement;
+    if (!parent) return null;
+    let box = document.getElementById('ae-wo-chips');
+    if (!box) { box = document.createElement('div'); box.id = 'ae-wo-chips'; box.className = 'sg'; }
+    if (box.parentElement !== parent) parent.appendChild(box);
+    return box;
+  }
+  // Put a chip in that row at `order` (10 Esuna, 20 Assize, 30 tags, 40 + Tag, 50 Auto-Waymark). Returns false off a WO page.
+  function woChip(woId, el, order) {
+    const box = woHeadingRow(woId);
+    if (!box) return false;
+    if (order != null && el.style.order !== String(order)) el.style.order = String(order);
+    if (el.parentElement !== box && !(el.parentElement && el.parentElement.parentElement === box)) box.appendChild(el);
+    return true;
+  }
+
   // The element whose own text is exactly `text` (e.g. the arrival drawer's "Preferred contact method"),
   // kept while it's in the page. Walks text nodes, not every element: cheap enough for the page watcher.
   const textEls = new Map();
@@ -1259,7 +1301,7 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, textEl, findButton,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, woHeadingRow, woChip, textEl, findButton,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every,
     api, unwrap, Stopped, portal, sameStore, assertSameStore, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,

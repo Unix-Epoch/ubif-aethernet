@@ -223,6 +223,7 @@ AE.waymark = (() => {
     const name = nickFor(kind, dev.name, due);
     if ((dev.name || '').trim() === name) return false;
     await putNickname(dev, name);
+    AE.emit('wo-changed', { woId: String(woId), why: 'nickname' }); // Assize re-reads the order
     if (location.pathname.indexOf('/repair/workorder/' + woId) === 0) AE.refreshView(); // show the new nickname
     return name;
   }
@@ -241,6 +242,7 @@ AE.waymark = (() => {
     const own = wo && (wo.storeId == null || Number(wo.storeId) === Number((await me()).storeId)); // never rename another store's WO
     if (own && dev && dev.customerDeviceId && clearsNick(fromKind, kindOfStatus(wo.workorderStatusId), dev.name)) {
       await putNickname(dev, fromKind === 'callback' ? stripNickDate(dev.name) : '');
+      AE.emit('wo-changed', { woId: String(woId), why: 'nickname' });
       if (location.pathname.indexOf('/repair/workorder/' + woId) === 0) AE.refreshView();
     }
   }
@@ -439,8 +441,16 @@ AE.waymark = (() => {
   .sg-tag button:hover { opacity:1; }
   .sg-tag.off { opacity:.55; background:transparent; }
   .sg-tag.toggle { cursor:pointer; }
-  #sg-wm-row { display:inline-flex; align-items:center; gap:6px; margin-left:12px; flex-wrap:wrap; align-self:center; }
-  #sg-wm-row .add { height:24px; padding:0 10px; font-size:12px; }
+  /* the WO heading's tags join core's chip row (#ae-wo-chips) directly: tags 30, + Tag 40, Auto-Waymark 50 */
+  #sg-wm-row { display:contents; }
+  #sg-wm-row .sg-tag { order:30; } #sg-wm-row .add { order:40; } #sg-wm-row .sg-auto { order:50; }
+  .sg-tag.ae-chip, .sg-auto.ae-chip { height:var(--ae-chip-h); border-radius:10000rem; font:600 var(--ae-chip-fs)/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .sg-auto.ae-chip { font-weight:700; }
+  .sg-tag.ae-chip { max-width:220px; overflow:hidden; text-overflow:ellipsis; gap:4px; padding:0 10px; cursor:default; }
+  .sg-tag.ae-chip.mini { padding:0 7px; font-weight:600; }
+  .sg-auto.ae-chip { gap:5px; padding:0 4px 0 8px; cursor:context-menu; }
+  .sg-auto.ae-chip svg { width:14px; height:14px; }
+  .sg-auto.ae-chip.mini { padding:0 5px; } .sg-auto.ae-chip.mini svg { width:11px; height:11px; }
   #sg-wm-pop { position:fixed; z-index:2147483646; width:360px; max-height:70vh; overflow:auto; padding:14px 16px; font-size:14px; line-height:1.4; }
   #sg-wm-pop h4 { margin:12px 0 6px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
   #sg-wm-pop h4:first-child { margin-top:0; }
@@ -525,10 +535,10 @@ AE.waymark = (() => {
   const CAL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 2h2v2h6V2h2v2h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V2zM5 9v10h14V9H5z"/></svg>';
 
   // The Auto-Waymark chip: blue ahead of time, amber on the day, red once overdue.
-  function autoChip(woId, mark, onChange) {
+  function autoChip(woId, mark, onChange, cls) {
     const st = dueState(mark.due);
     const label = (st === 'today' ? 'Today · ' : st === 'overdue' ? 'Overdue · ' : '') + fmtDate(mark.due);
-    const el = h('span', { class: 'sg-auto ' + st, role: 'note',
+    const el = h('span', { class: 'sg-auto ' + st + (cls ? ' ' + cls : ''), role: 'note',
       title: 'Auto-Waymark: follow up by ' + fmtDate(mark.due) + ' (set when it reached ' + (RULES[markKind(mark)] || RULES.rfp).name + '). Right-click to push it later; × removes it.' },
       h('span', { html: CAL_SVG, style: 'line-height:0' }), label,
       h('button', { type: 'button', title: 'Remove this Auto-Waymark', 'aria-label': 'Remove Auto-Waymark', onclick: async (e) => {
@@ -641,8 +651,7 @@ AE.crystal({
     const ROW_ID = 'sg-wm-row', POP_ID = 'sg-wm-pop', BTN_ID = 'sg-wm-btn', BOARD_ID = 'sg-wm-board';
     const currentWoId = () => { const m = location.pathname.match(/^\/repair\/workorder\/(\d+)/); return m ? m[1] : null; };
     const nameRow = (woId) => {
-      const heading = AE.woHeading(woId);
-      return heading && heading.parentElement;
+      return AE.woHeadingRow(woId); // core's chip row beside the heading
     };
 
     // ---------------------------------------------------- WO page: chips + "+ Tag"
@@ -655,9 +664,9 @@ AE.crystal({
       if (row && row.dataset.key === key && row.parentElement === anchor) return;
       row?.remove();
       row = h('span', { id: ROW_ID, 'data-key': key },
-        W.autoOf(woId) ? W.autoChip(woId, W.autoOf(woId), renderRow) : null,
-        W.tagsOf(woId).map((t) => W.chip(t.tag, { title: t.tag + ' · added by ' + (t.by || 'someone') + ', ' + W.when(t.at), onRemove: () => toggle(woId, t.tag, false) })),
-        h('button', { type: 'button', class: 'sg-btn add', onclick: (e) => { e.stopPropagation(); togglePop(woId); } }, '+ Tag'));
+        W.autoOf(woId) ? W.autoChip(woId, W.autoOf(woId), renderRow, 'ae-chip') : null,
+        W.tagsOf(woId).map((t) => W.chip(t.tag, { cls: 'ae-chip', title: t.tag + ' · added by ' + (t.by || 'someone') + ', ' + W.when(t.at), onRemove: () => toggle(woId, t.tag, false) })),
+        h('button', { type: 'button', class: 'ae-chip ghost add', onclick: (e) => { e.stopPropagation(); togglePop(woId); } }, '+ Tag'));
       anchor.appendChild(row);
     }
 
@@ -735,10 +744,9 @@ AE.crystal({
       .sg-wm-li-wrap > a { min-width:0; overflow:hidden; }
       .sg-wm-li-wrap > a > div { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .${LI} { position:relative; display:inline-flex; align-items:center; gap:4px; flex:none; white-space:nowrap; line-height:1; }
-      .${LI} .sg-tag, .sg-wm-all .sg-tag { height:18px; padding:0 7px; font-size:11px; max-width:140px; }
-      .${LI} .sg-auto, .sg-wm-all .sg-auto { height:18px; padding:0 5px; font-size:11px; border-radius:5px; }
-      .${LI} .sg-auto svg { width:11px; height:11px; }
-      .${LI} .more { height:18px; padding:0 6px; border-radius:10000rem; border:0; cursor:pointer; font:700 11px/1 Apercu, "Helvetica Neue", Arial, sans-serif;
+      .sg-wm-all .sg-tag { height:18px; padding:0 7px; font-size:11px; max-width:140px; }
+      .sg-wm-all .sg-auto { height:18px; padding:0 5px; font-size:11px; border-radius:5px; }
+      .${LI} .more { height:18px; padding:0 6px; border-radius:10000rem; border:0; cursor:pointer; font:700 11px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif;
         background:color-mix(in srgb, var(--aui-on-surface, #1a1c1e) 12%, transparent); color:var(--aui-on-surface, #1a1c1e); }
       /* + Tag and × float over the row on hover (no space reserved, so no gap after the tags, and hovering never reflows) */
       .${LI} .add { position:absolute; left:calc(100% + 4px); top:50%; transform:translateY(-50%); display:inline-flex; align-items:center; visibility:hidden; height:18px; padding:0 7px; border-radius:10000rem; border:1px dashed var(--aui-primary, #8223d2); background:transparent; cursor:pointer;
@@ -773,11 +781,11 @@ AE.crystal({
     }
     const chipFor = (woId, it, edit) => {
       if (it.auto) {
-        const el = W.autoChip(woId, it.auto, () => { renderList(); renderRow(); });
+        const el = W.autoChip(woId, it.auto, () => { renderList(); renderRow(); }, 'ae-chip mini');
         if (!edit) el.querySelector('button')?.remove();
         return el;
       }
-      return W.chip(it.t.tag, { title: it.t.tag + ' · added by ' + (it.t.by || 'someone') + ', ' + W.when(it.t.at), onRemove: edit ? () => toggle(woId, it.t.tag, false) : null });
+      return W.chip(it.t.tag, { cls: 'ae-chip mini', title: it.t.tag + ' · added by ' + (it.t.by || 'someone') + ', ' + W.when(it.t.at), onRemove: edit ? () => toggle(woId, it.t.tag, false) : null });
     };
     const stop = (e) => { e.stopPropagation(); };
     function custIndex(table) {
