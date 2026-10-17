@@ -71,7 +71,6 @@ export default {
     // The tracker's encryption, as a module for the page (unlocking happens in the browser).
     if (url.pathname === '/crypto.js') return new Response(CRYPTO_SRC, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     if (url.pathname === '/tracker-ui.js') return new Response(TRACKER_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
-    if (url.pathname === '/metrics-ui.js') return new Response(METRICS_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     if (url.pathname === '/words.txt') return new Response(WORDS, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'max-age=86400' } });
     if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/metrics')) return new Response('Not found', { status: 404 });
     // The access gate: nothing below runs for a route, page or store this person wasn't given.
@@ -79,7 +78,8 @@ export default {
     const me = await accessOf(env, who.email);
     const denied = await check(env, me, who.email, req.method, url.pathname, url.search);
     if (denied) return new Response(JSON.stringify(denied), { status: 403, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
-    // (feat/metrics: the Metrics page's own files, if any, are served here; already gated as page 'metrics'.)
+    // The Metrics page's own script: after the gate, so only people with page 'metrics' get it.
+    if (url.pathname === '/metrics-ui.js') return new Response(METRICS_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     if (!url.pathname.startsWith('/api/')) return new Response('Not found', { status: 404 });
     // The next public version (status.json's latest, minor + 1): the default "fixed in" for quoting a report.
     if (url.pathname === '/api/next-version') {

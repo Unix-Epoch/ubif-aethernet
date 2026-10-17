@@ -112,7 +112,7 @@ assert.deepEqual(m.dailyKeys, []); assert.equal(m.tot.cur.labor[914], 0);
 // compare off: totals for deltas but no previous series
 assert.equal((await buildMetrics(E, q({ compare: false }))).prev, null);
 // uploads appear once daily_metrics has rows
-await T.prepare('CREATE TABLE daily_metrics (store INTEGER NOT NULL, day TEXT NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL, source TEXT, by_name TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (store, day, metric))').run();
+await T.prepare('CREATE TABLE IF NOT EXISTS daily_metrics (store INTEGER NOT NULL, day TEXT NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL, source TEXT, by_name TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (store, day, metric))').run();
 await T.prepare("INSERT INTO daily_metrics (store, day, metric, value, updated_at) VALUES (914, '2026-10-13', 'am_orders', 10, 'x'), (914, '2026-10-13', 'cleanings_linked', 6, 'x'), (914, '2026-10-14', 'labor_hours', 20, 'x'), (914, '2026-10-14', 'bogus', 1, 'x')").run();
 m = await buildMetrics(E, q());
 assert.deepEqual(m.dailyKeys.sort(), ['am_orders', 'cleanings_linked', 'labor_hours']);

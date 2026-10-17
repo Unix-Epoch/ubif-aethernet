@@ -13,14 +13,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 export async function load(url, ctx, next) {
   const asText = url.endsWith('.txt') || url.endsWith('?as-text') || (ctx.importAttributes && ctx.importAttributes.type === 'text')
-    || ((url.endsWith('/admin-worker/src/tracker-ui.js') || url.endsWith('/tracker-worker/src/crypto.js')) && ctx.parentURL && ctx.parentURL.endsWith('/admin-worker/src/index.js'));
+    || ((url.endsWith('/admin-worker/src/tracker-ui.js') || url.endsWith('/admin-worker/src/metrics-ui.js') || url.endsWith('/tracker-worker/src/crypto.js')) && ctx.parentURL && ctx.parentURL.endsWith('/admin-worker/src/index.js'));
   if (!asText) return next(url, ctx);
   return { format: 'module', source: 'export default ' + JSON.stringify(readFileSync(fileURLToPath(url), 'utf8')), shortCircuit: true };
 }
 export async function resolve(spec, ctx, next) {
   const r = await next(spec, ctx);
   // Same file imported as text by admin-worker and as code elsewhere: keep them apart.
-  if (ctx.parentURL && ctx.parentURL.endsWith('/admin-worker/src/index.js') && /(tracker-ui|crypto)\\.js$/.test(r.url)) return Object.assign({}, r, { url: r.url + '?as-text' });
+  if (ctx.parentURL && ctx.parentURL.endsWith('/admin-worker/src/index.js') && /(tracker-ui|metrics-ui|crypto)\\.js$/.test(r.url)) return Object.assign({}, r, { url: r.url + '?as-text' });
   return r;
 }`));
 const { default: site } = await import('../../admin-worker/src/index.js');
