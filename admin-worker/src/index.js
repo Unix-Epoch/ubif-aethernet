@@ -18,6 +18,7 @@
   through one gate (tracker-worker/src/access.js): route → page, deny by default, store scope, owners
   (TRACKER_OWNERS) bypass. Refusals are 403 { error, page } and an access_log 'denied' row. Pages
   are only drawn for what GET /api/tracker/me says the person has.
+    GET  /metrics-ui.js  the Metrics page (loaded by page.js on first use; data from /api/tracker/metrics)
   Local testing only: `wrangler dev --var LOCAL_TEST:1` lets requests to localhost in.
 */
 import { adminApi } from '../../worker/src/index.js';
@@ -27,6 +28,7 @@ import { PAGE } from './page.js';
 import CRYPTO_SRC from '../../tracker-worker/src/crypto.js';
 import WORDS from './words.txt';
 import TRACKER_UI from './tracker-ui.js';
+import METRICS_UI from './metrics-ui.js';
 
 const b64url = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 const parse = (s) => JSON.parse(new TextDecoder().decode(b64url(s)));
@@ -69,6 +71,7 @@ export default {
     // The tracker's encryption, as a module for the page (unlocking happens in the browser).
     if (url.pathname === '/crypto.js') return new Response(CRYPTO_SRC, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     if (url.pathname === '/tracker-ui.js') return new Response(TRACKER_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
+    if (url.pathname === '/metrics-ui.js') return new Response(METRICS_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     if (url.pathname === '/words.txt') return new Response(WORDS, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'max-age=86400' } });
     if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/metrics')) return new Response('Not found', { status: 404 });
     // The access gate: nothing below runs for a route, page or store this person wasn't given.

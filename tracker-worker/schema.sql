@@ -170,3 +170,16 @@ CREATE TABLE IF NOT EXISTS agent_keys (
   created_by TEXT, created_at TEXT,
   PRIMARY KEY (agent_id, store)
 );
+
+-- Oct 17, 2026: Metrics page. When each WO sat in each (open) status; kept from each WO upload (src/metrics.js).
+CREATE TABLE IF NOT EXISTS status_periods (
+  store INTEGER NOT NULL, wo INTEGER NOT NULL,
+  status_id INTEGER NOT NULL,
+  start_at TEXT NOT NULL,              -- entered the status (UTC ISO)
+  end_at TEXT,                         -- left it; NULL = still in it
+  PRIMARY KEY (store, wo, start_at)
+);
+CREATE INDEX IF NOT EXISTS sp_end ON status_periods (store, end_at);
+CREATE INDEX IF NOT EXISTS wo_created ON workorders (store, created_at);
+CREATE INDEX IF NOT EXISTS rfp_start ON rfp_periods (store, start_at);
+CREATE INDEX IF NOT EXISTS scans_at ON scans (store, at);

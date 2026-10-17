@@ -19,7 +19,7 @@ database_id = "08abe72b-5ba4-4934-8013-1f8b6b1a8825"
 # Served to the page as text: the tracker's encryption (shared with Aethernet) and the passphrase word list (EFF large list).
 [[rules]]
 type = "Text"
-globs = ["**/*.txt", "**/tracker-ui.js", "**/crypto.js"]
+globs = ["**/*.txt", "**/tracker-ui.js", "**/metrics-ui.js", "**/crypto.js"]
 fallthrough = true
 
 [vars]

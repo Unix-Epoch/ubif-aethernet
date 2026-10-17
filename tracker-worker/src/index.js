@@ -48,6 +48,7 @@
 */
 
 import { PAGES, WIDE_PAGES, owners, cleanPages, presetOf, accessOf, check, stripSealed } from './access.js';
+import { metricsApi, statusPeriodStmts, closeStatusPeriod } from './metrics.js';
 
 const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
@@ -504,7 +505,7 @@ async function storeApi(req, env, url, store) {
         else await T.prepare('UPDATE workorders SET claimed_until = NULL WHERE store = ? AND wo = ?').bind(store, wo).run();
         return json({ ok: true, pending: 'confirm later' });
       }
-      await T.prepare("UPDATE workorders SET is_open = 0, closed_at = ?, closed_reason = 'gone', claimed_until = NULL, last_detail_at = ? WHERE store = ? AND wo = ?").bind(at, at, store, wo).run();
+      await T.batch([T.prepare("UPDATE workorders SET is_open = 0, closed_at = ?, closed_reason = 'gone', claimed_until = NULL, last_detail_at = ? WHERE store = ? AND wo = ?").bind(at, at, store, wo), closeStatusPeriod(T, store, wo, at)]);
       return json({ ok: true, closed: true });
     }
     const hash = clean(b.hash, 64), plain = b.plain;
@@ -546,6 +547,7 @@ async function storeApi(req, env, url, store) {
         closed ? 0 : 1, at, at, hash, closed ? at : null, closed ? (clean(w.status, 60) || 'closed') : null, num(pay.total), num(pay.amountPaid), num(pay.amountDue), value, clean(w.outcome, 40) || null, plainText, b.card || null,
         hasItems ? value : null, hasItems ? num(pay.tax) : null, iso(soldAt)));
     stmts.push(...(await rfpPeriodStmts(T, store, wo, plain, at)));
+    stmts.push(...(await statusPeriodStmts(T, store, wo, plain, at)));
     for (let i = 0; i < stmts.length; i += 100) await T.batch(stmts.slice(i, i + 100));
     return json({ ok: true, snapshot: snap.id, changes: changes.length });
   }
@@ -593,6 +595,7 @@ function accessDiff(before, after) {
                                  a new invite replaces them all. Details off deletes every copy.
   POST /people/:email/remove
   GET  /log?limit=&kind=access   who looked at what (kind=access: access changes and denied requests)
+  GET  /metrics?from&to&stores&granularity&compare   the Metrics page (src/metrics.js); POST /metrics/backfill
   GET  /agents                   connected programs
   POST /agents/:id/approve { stores, keys: [{ store, wrapped }] }   grant stores (replaces earlier grants)
   POST /agents/:id/remove
@@ -732,7 +735,8 @@ async function trackerRoutes(req, env, url, path, email, who) {
     await log(env, email, 'sales:days', stores ? stores[0] : null, null, from + '..' + to);
     return json({ days: r.days }, 200, false);
   }
-  // METRICS HOOK (feat/metrics registers it here; gated as page 'metrics', stores via me.canSee): if (path === '/metrics' || path.startsWith('/metrics/')) return metricsApi(req, env, url, path, me);
+  // Metrics (src/metrics.js): the gate above already required page 'metrics'; metricsApi limits stores to what `me` may see.
+  if (path === '/metrics' || path.startsWith('/metrics/')) return metricsApi(req, env, url, path, me);
 
   if (!me.owner) return fail(403, 'owners only', false);
   if (req.method === 'GET' && path === '/people') {

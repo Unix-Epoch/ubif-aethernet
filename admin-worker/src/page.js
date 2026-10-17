@@ -61,7 +61,7 @@ const woLink = (id) => h('a', { href: 'https://portal.ubreakifix.net/repair/work
 // The server refuses the rest on its own (tracker-worker/src/access.js); this only keeps the page honest.
 const TABS_ALL = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['sales', 'Sales'], ['metrics', 'Metrics'], ['people', 'People']];
 let TABS = [], ACCESS = null;
-let tab = location.hash.slice(1);
+let tab = location.hash.slice(1).split('?')[0]; // #metrics?store=…: the Metrics page keeps its view after the ?
 function nav() { $('#tabs').replaceChildren(...TABS.map(([k, l]) => h('button', { class: k === tab ? 'on' : null, onclick: () => { tab = k; location.hash = k; draw(); } }, l))); }
 const LOCK_SVG = '<svg width="26" height="26" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg>';
 function noAccess(m) {
@@ -82,11 +82,10 @@ async function draw() {
   }
   nav();
   if (!TABS.some(([k]) => k === tab)) return noAccess(m); // a direct link to a page they don't have: no API call for it
-  m.replaceChildren(h('div', { class: 'soft' }, 'Loading…'));
+  m.replaceChildren(h('div', { class: 'soft' }, 'Loading…')); m.style.maxWidth = tab === 'metrics' ? '1720px' : '';
   try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, metrics: drawMetrics, wos: (x) => drawTracker('wos', x), sales: (x) => drawTracker('sales', x), people: (x) => drawTracker('people', x) }[tab])(m); }
   catch (e) { m.replaceChildren(h('div', { class: 'err' }, "Couldn't load: " + e.message)); } }
 // Metrics: the page itself lands with feat/metrics (metrics-ui); until then the tab only holds its place.
-async function drawMetrics(m) { m.replaceChildren(h('div', { class: 'card' }, h('h3', null, 'Metrics'), h('div', { class: 'soft' }, 'Metrics is on its way.'))); }
 function toast(t) { const el = h('div', { style: 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;z-index:9' }, t); document.body.append(el); setTimeout(() => el.remove(), 3500); }
 
 // ---------------------------------------------------------------- Reports
@@ -224,6 +223,8 @@ async function drawTracker(which, m) {
   const mod = await import('/tracker-ui.js');
   await mod.draw(which, m, { h, api, toast, fmt, woLink, tab: () => tab, redraw: draw });
 }
-addEventListener('hashchange', () => { const t = location.hash.slice(1); if (t && t !== tab) { tab = t; draw(); } });
+// Metrics: the dashboard (metrics-ui.js), loaded on first use.
+async function drawMetrics(m) { const mod = await import('/metrics-ui.js'); await mod.draw(m, { h, api, toast }); }
+addEventListener('hashchange', () => { const t = location.hash.slice(1).split('?')[0]; if (t && t !== tab) { tab = t; draw(); } });
 draw();
 </script></body></html>`;

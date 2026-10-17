@@ -3,3 +3,4 @@ node_modules/
 .wrangler-test/
 .wrangler-e2e/
 mac-import*.sql
+.wrangler-test-metrics/
