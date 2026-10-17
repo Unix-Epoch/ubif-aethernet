@@ -54,11 +54,11 @@ const fmt = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocal
 const fmtDay = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' });
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const woLink = (id) => h('a', { href: 'https://portal.ubreakifix.net/repair/workorder/' + id, target: '_blank', rel: 'noopener' }, id + ' ↗');
-const TABS = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['sales', 'Sales'], ['people', 'People']];
-let tab = (location.hash.slice(1) || 'reports');
+const TABS = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['sales', 'Sales'], ['metrics', 'Metrics'], ['people', 'People']];
+let tab = (location.hash.slice(1).split('?')[0] || 'reports'); // #metrics?store=…: the Metrics page keeps its view after the ?
 function nav() { $('#tabs').replaceChildren(...TABS.map(([k, l]) => h('button', { class: k === tab ? 'on' : null, onclick: () => { tab = k; location.hash = k; draw(); } }, l))); }
-async function draw() { nav(); const m = $('#main'); m.replaceChildren(h('div', { class: 'soft' }, 'Loading…'));
-  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, wos: (x) => drawTracker('wos', x), sales: (x) => drawTracker('sales', x), people: (x) => drawTracker('people', x) }[tab] || drawReports)(m); }
+async function draw() { nav(); const m = $('#main'); m.replaceChildren(h('div', { class: 'soft' }, 'Loading…')); m.style.maxWidth = tab === 'metrics' ? '1720px' : '';
+  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, wos: (x) => drawTracker('wos', x), sales: (x) => drawTracker('sales', x), people: (x) => drawTracker('people', x), metrics: drawMetrics }[tab] || drawReports)(m); }
   catch (e) { m.replaceChildren(h('div', { class: 'err' }, "Couldn't load: " + e.message)); } }
 function toast(t) { const el = h('div', { style: 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;z-index:9' }, t); document.body.append(el); setTimeout(() => el.remove(), 3500); }
 
@@ -197,6 +197,8 @@ async function drawTracker(which, m) {
   const mod = await import('/tracker-ui.js');
   await mod.draw(which, m, { h, api, toast, fmt, woLink, tab: () => tab, redraw: draw });
 }
-addEventListener('hashchange', () => { const t = location.hash.slice(1); if (t && t !== tab) { tab = t; draw(); } });
+// Metrics: the dashboard (metrics-ui.js), loaded on first use.
+async function drawMetrics(m) { const mod = await import('/metrics-ui.js'); await mod.draw(m, { h, api, toast }); }
+addEventListener('hashchange', () => { const t = location.hash.slice(1).split('?')[0]; if (t && t !== tab) { tab = t; draw(); } });
 draw();
 </script></body></html>`;
