@@ -1,4 +1,4 @@
-// Admin site: the work order tracker tabs (Work orders, People). A proof of concept UI.
+// Admin site: the work order tracker tabs (Work orders, Sales, People). A proof of concept UI.
 // Served at /tracker-ui.js and loaded by page.js when one of those tabs opens. Keys are
 // unlocked and customer data is opened only here, in the browser; the server never sees either.
 import * as C from '/crypto.js';
@@ -17,7 +17,23 @@ const CSS = '.unlocked{padding:3px 10px;border-radius:999px;background:var(--ps)
   + '.scope{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}.scope.all{background:var(--ps);color:var(--p)}.scope.some{background:var(--line)}'
   + '.inv{border:1px dashed var(--p);border-radius:12px;padding:12px 14px;background:var(--ps);margin-top:10px}.inv code{font-size:18px;font-weight:700;color:var(--p)}'
   + '.rec{font:12px ui-monospace,Menlo,monospace;word-break:break-all;background:var(--bg);padding:8px;border-radius:8px}'
-  + '@media (max-width:900px){.split{grid-template-columns:1fr}.drawer{position:static;max-height:none}}';
+  + '.role{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--line);color:var(--soft);white-space:nowrap}'
+  + '.role.owner{background:var(--p);color:#fff}.role.ol{background:var(--ps);color:var(--pt)}.role.mgr{background:#dbe8fb;color:#0d366b}.role.view{background:var(--line);color:var(--fg)}.role.custom{background:var(--warn);color:var(--warnf)}'
+  + '@media (prefers-color-scheme:dark){.role.mgr{background:#13294a;color:#b7d3f6}}'
+  + '.sc{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;border:1px solid var(--line);font-size:11.5px;margin:0 3px 3px 0;white-space:nowrap}'
+  + '.key{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:700}.key.no{color:var(--soft);font-weight:400}'
+  + '.ppl td{vertical-align:top;padding:8px}.ppl tr.pick{cursor:pointer}.ppl tr.sel td{background:var(--ps)}'
+  + '.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;flex-wrap:wrap}.seg button{border:0;border-right:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit;font-size:13px;padding:8px 12px;cursor:pointer;text-align:left}.seg button:last-child{border-right:0}.seg button.on{background:var(--ps);color:var(--pt);font-weight:700}.seg button small{display:block;font-size:11px;color:var(--soft);font-weight:400}'
+  + '.schips{display:flex;flex-wrap:wrap;gap:6px}.schip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit;font-size:13px;cursor:pointer}.schip.on{background:var(--ps);border-color:var(--p);color:var(--pt);font-weight:700}'
+  + '.lbl{font-size:12px;font-weight:700;margin:16px 0 6px;display:flex;align-items:center;gap:8px}.lbl .soft{font-weight:400}'
+  + '.pages{display:grid;grid-template-columns:1fr 1fr;gap:2px 14px}.pg{display:flex;align-items:flex-start;gap:9px;padding:7px 4px;border-radius:8px;cursor:pointer}.pg:hover{background:var(--hd)}.pg input{margin:2px 0 0;width:16px;height:16px;accent-color:var(--p);flex:none}.pg .t{font-size:13px;font-weight:700}.pg .d{font-size:11.5px;color:var(--soft)}.pg.dis{opacity:.55;cursor:default}'
+  + '.tagw{font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:5px;background:var(--warn);color:var(--warnf);margin-left:4px;vertical-align:1px}.tagn{font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:5px;background:var(--ps);color:var(--pt);margin-left:4px;vertical-align:1px}'
+  + '.sw{display:flex;gap:12px;align-items:flex-start;padding:12px;border:1px solid var(--line);border-radius:10px;margin-top:6px;cursor:pointer}.sw .t{font-weight:700;font-size:13px}'
+  + '.tg{width:34px;height:20px;border-radius:10px;background:var(--p);position:relative;flex:none;margin-top:2px}.tg:after{content:"";position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff}.tg.off{background:var(--line)}.tg.off:after{right:auto;left:2px}'
+  + '.diff{margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--hd);border:1px dashed var(--line);font-size:12.5px}.diff .a{color:#136d31;font-weight:700}.diff .r{color:var(--err);font-weight:700}@media (prefers-color-scheme:dark){.diff .a{color:#7fdc8f}}'
+  + '.banner{display:flex;gap:10px;align-items:center;padding:10px 14px;border-radius:12px;background:var(--ps);color:var(--fg);margin-bottom:14px;font-size:13px}.banner svg{color:var(--p);flex:none}'
+  + '.pgrid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:14px;align-items:start}.pgrid .card{margin:0}'
+  + '@media (max-width:900px){.split{grid-template-columns:1fr}.drawer{position:static;max-height:none}.pgrid{grid-template-columns:minmax(0,1fr)}.seg button{flex:1 1 45%;border-bottom:1px solid var(--line)}.pages{grid-template-columns:1fr}}';
 
 const IDLE_MS = 30 * 60 * 1000;
 let words = null, me = null;
@@ -32,6 +48,7 @@ function lock(reason) {
   if (reason && ui) ui.toast(reason);
 }
 const unlocked = () => keys.stores.size > 0 || !!keys.master;
+const plainMode = () => !me.access || !me.access.details || !me.keys.length;
 function touch() {
   keys.at = Date.now(); clearTimeout(idleTimer);
   idleTimer = setTimeout(() => { lock('Work orders locked after 30 minutes without use.'); if (ui && ['wos', 'people'].includes(ui.tab())) ui.redraw(); }, IDLE_MS);
@@ -42,7 +59,7 @@ function badge() {
   let b = document.getElementById('trk-badge');
   if (!unlocked()) { b && b.remove(); return; }
   if (!b) { b = ui.h('span', { id: 'trk-badge', class: 'unlocked', title: 'Click to lock now', onclick: () => { lock('Locked.'); ui.redraw(); } }); host.prepend(b); }
-  b.textContent = '🔓 Unlocked · ' + (me.person.scope === 'all' ? 'all stores' : me.person.stores.join(', ')) + ' · click to lock';
+  b.textContent = '🔓 Unlocked · ' + (me.person && me.person.scope === 'all' ? 'all stores' : ((me.person && me.person.stores) || []).join(', ')) + ' · click to lock';
 }
 async function wordList() { return words || (words = (await (await fetch('/words.txt')).text()).split('\n').map((w) => w.trim()).filter(Boolean)); }
 const suggest = async (n) => C.randomWords(await wordList(), n);
@@ -110,12 +127,16 @@ export async function draw(which, m, helpers) {
   if (!document.getElementById('trk-css')) document.head.append(ui.h('style', { id: 'trk-css' }, CSS));
   me = await ui.api('GET', '/tracker/me');
   badge();
-  if (!me.person) return m.replaceChildren(me.canInit ? await setupCard() : ui.h('div', { class: 'card lockcard' }, ui.h('h3', null, 'Work orders'),
-    ui.h('div', null, me.master ? "You're not on the work order list yet. Ask an admin to add you; they'll send you an invite code." : "The work order tracker hasn't been set up yet.")));
+  if (me.canInit) return m.replaceChildren(await setupCard());
+  if (!me.person || !me.master) return m.replaceChildren(ui.h('div', { class: 'card lockcard' }, ui.h('h3', null, 'Work orders'),
+    ui.h('div', null, me.master ? "You're not on the access list yet. Ask an owner to add you." : "The work order tracker hasn't been set up yet.")));
+  // People needs no unlock to change pages and stores; it asks for the passphrase only when an invite needs key copies.
+  if (which === 'people') return drawPeople(m);
+  // Customer details off (or no key copies yet): no unlock wall, plain mode (the server sends nothing sealed).
+  if (plainMode()) return which === 'sales' ? drawSales(m) : drawWos(m);
   if (me.keys.some((k) => k.invite) && !me.keys.some((k) => !k.invite)) return m.replaceChildren(await redeemCard());
   if (!unlocked()) return m.replaceChildren(unlockCard(() => draw(which, m, helpers)));
   touch();
-  if (which === 'people') return drawPeople(m);
   if (which === 'sales') return drawSales(m);
   return drawWos(m);
 }
@@ -171,14 +192,39 @@ function unlockCard(after) {
   const p = ui.h('input', { type: 'password', placeholder: 'Passphrase', autocomplete: 'current-password', onkeydown: (e) => { if (e.key === 'Enter') go.click(); } });
   const go = ui.h('button', { class: 'btn p', onclick: async () => {
     go.disabled = true; go.textContent = 'Unlocking…';
-    try { await unlockWith(p.value); after(); }
+    try { await unlockWith(p.value); if (me.keys.some((k) => k.invite)) return card.replaceChildren(...newInvite(p.value, after)); after(); }
     catch (e) { lock(); go.disabled = false; go.textContent = 'Unlock'; ui.toast(/Wrong passphrase/.test(e.message) ? 'Wrong passphrase.' : "Couldn't unlock: " + e.message); }
   } }, 'Unlock');
   setTimeout(() => p.focus(), 50);
-  return ui.h('div', { class: 'card lockcard', style: 'text-align:center' }, ui.h('div', { style: 'font-size:40px' }, '🔒'), ui.h('h2', { style: 'margin:6px 0' }, 'Work orders are locked'),
+  const card = ui.h('div', { class: 'card lockcard', style: 'text-align:center' }, ui.h('div', { style: 'font-size:40px' }, '🔒'), ui.h('h2', { style: 'margin:6px 0' }, 'Work orders are locked'),
     ui.h('div', { class: 'soft', style: 'font-size:13px;margin-bottom:8px' }, 'Customer details, notes and history open only in this browser, with your passphrase. You can see ',
       ui.h('b', null, me.person.scope === 'all' ? 'all stores' : 'stores ' + me.person.stores.join(', ')), '.'),
-    p, go, ui.h('div', { class: 'soft', style: 'margin-top:10px' }, 'Locks again after 30 minutes without use, or when you close the tab. Forgot it? Ask an admin for a new invite code.'));
+    p, go, ui.h('div', { class: 'soft', style: 'margin-top:10px' }, 'Locks again after 30 minutes without use, or when you close the tab. Forgot it? Ask an owner for a new invite code.'));
+  return card;
+}
+// An owner added stores (or all stores) to someone who already has a passphrase: those copies come locked with a
+// new invite code. After unlocking, the code moves them onto the passphrase they just typed.
+function newInvite(phrase, after) {
+  const code = ui.h('input', { type: 'text', placeholder: 'Invite code (e.g. otter maple crisp lantern)' });
+  const inv = me.keys.filter((k) => k.invite);
+  const go = ui.h('button', { class: 'btn p', onclick: async () => {
+    go.disabled = true;
+    try {
+      const out = [];
+      for (const k of inv) {
+        const bind = C.aad.person(me.email, k.kind, k.store), key = await C.unlockWithPhrase(k, code.value, bind, true);
+        out.push(Object.assign({ kind: k.kind, store: k.store }, await C.lockWithPhrase(await C.exportPrivate(key), phrase, bind)));
+        if (k.kind === 'store') keys.stores.set(k.store, key);
+      }
+      await ui.api('PUT', '/tracker/me/keys', { keys: out });
+      me = await ui.api('GET', '/tracker/me');
+      if (inv.some((k) => k.kind === 'master')) { lock(); return ui.toast('All stores added. Unlock again with your passphrase.') || ui.redraw(); }
+      ui.toast('New access added to your passphrase.'); after();
+    } catch (e) { go.disabled = false; ui.toast(/Wrong passphrase/.test(e.message) ? "That invite code doesn't match." : e.message); }
+  } }, 'Add to my passphrase');
+  return [ui.h('div', { style: 'font-size:40px' }, '🔑'), ui.h('h2', { style: 'margin:6px 0' }, 'You have new access'),
+    ui.h('div', { class: 'soft', style: 'font-size:13px;margin-bottom:8px' }, 'An owner gave you ' + inv.map((k) => (k.kind === 'master' ? 'all stores' : 'store ' + k.store)).join(', ') + '. Enter the invite code they sent you; your passphrase opens it from then on.'),
+    code, go, ui.h('button', { class: 'btn', style: 'margin-top:6px;width:100%', onclick: after }, 'Later')];
 }
 
 // ------------------------------------------------------------------ Work orders
@@ -192,14 +238,19 @@ async function drawWos(m) {
   const sum = (k) => st.reduce((n, s) => n + (s[k] || 0), 0);
   const ago = (iso) => { if (!iso) return '—'; const mins = Math.round((Date.now() - Date.parse(iso)) / 60000); return mins < 60 ? mins + ' min' : mins < 1440 ? Math.round(mins / 60) + ' h' : Math.round(mins / 1440) + ' d'; };
   const newest = st.map((s) => s.last_scan_at).filter(Boolean).sort().pop();
-  const totals = h('div', { class: 'sum' },
+  const plain = plainMode(), one = st.length === 1 ? st[0].store + (st[0].name ? ' ' + st[0].name : '') : null;
+  const totals = plain ? h('div', { class: 'card', style: 'display:flex;gap:16px 32px;flex-wrap:wrap;align-items:center' },
+    h('div', null, h('div', { style: 'font-size:28px;font-weight:700' }, String(sum('open'))), h('div', { class: 'soft' }, 'Open work orders' + (one ? ' · ' + one : ' · ' + st.length + ' stores'))),
+    h('div', null, h('div', { style: 'font-size:28px;font-weight:700' }, String(sum('rfp'))), h('div', { class: 'soft' }, 'Ready for pickup')),
+    h('div', { class: 'soft', style: 'margin-left:auto' }, one ? ['Store: ', h('b', { style: 'color:var(--fg)' }, one), ' (the only store you can see)'] : ['Stores: ', h('b', { style: 'color:var(--fg)' }, st.map((x) => x.store).join(', ')), ' (the stores you can see)']))
+  : h('div', { class: 'sum' },
     h('div', { class: 'card k' }, h('div', { class: 'n' }, String(sum('open'))), h('div', { class: 'l' }, 'Open work orders · ' + st.length + ' store' + (st.length === 1 ? '' : 's'))),
     h('div', { class: 'card k' }, h('div', { class: 'n' }, String(sum('rfp'))), h('div', { class: 'l' }, 'Ready for pickup · ' + sum('rfp_complete') + ' complete · ' + sum('rfp_other') + ' incomplete' + (sum('rfp_unknown') ? ' · ' + sum('rfp_unknown') + ' not known yet' : ''))),
     h('div', { class: 'card k', title: 'Cart lines before tax, with Partner Credit Tax Exempt (PCEXEMPT) lines ignored, so partner repairs count at their value' },
       h('div', { class: 'n' }, money(sum('rfp_value'))), h('div', { class: 'l' }, 'Value on the RFP table · complete ' + money(sum('rfp_complete_value')) + ' · incomplete ' + money(sum('rfp_other_value')) + ' · ' + money(sum('rfp_due')) + ' due from customers')),
     h('div', { class: 'card k' }, h('div', { class: 'n' }, !newest ? '—' : Date.now() - Date.parse(newest) < 60000 ? 'Just now' : ago(newest) + ' ago'), h('div', { class: 'l' }, 'Last update · ' + st.map((s) => s.store + ' ' + ago(s.last_scan_at)).join(' · '))));
 
-  const q = h('input', { class: 'qq', value: F.q, placeholder: 'Search name, phone, email, IMEI/serial, claim, WO #' + (F.notes ? ', or note text' : ''), oninput: (e) => { F.q = e.target.value; clearTimeout(q.t); q.t = setTimeout(run, 200); } });
+  const q = h('input', { class: 'qq', value: F.q, placeholder: plain ? 'Search WO #, status, program or device' : 'Search name, phone, email, IMEI/serial, claim, WO #' + (F.notes ? ', or note text' : ''), oninput: (e) => { F.q = e.target.value; clearTimeout(q.t); q.t = setTimeout(run, 200); } });
   const sel1 = (val, opts, set) => { const s = h('select', { onchange: (e) => { set(e.target.value); run(true); } }, opts.map(([v, l]) => { const o = h('option', { value: v }, l); o.selected = String(v) === String(val); return o; })); return s; };
   const storeSel = sel1(F.store, [['', 'All stores']].concat(st.map((s) => [s.store, s.store + (s.name ? ' ' + s.name : '')])), (v) => { F.store = v; });
   const statSel = sel1(F.status, [['', 'Any status'], ['13', 'Ready for pickup'], ['13c', 'RFP complete'], ['13i', 'RFP incomplete'], ['8', 'Ready for work'], ['9', 'Diagnostics'], ['10', 'Work in progress'], ['2', 'Need to order'], ['3', 'Awaiting item'], ['4', 'Awaiting device'], ['7', 'Awaiting callback'], ['14', 'Sale complete'], ['25', 'Cancelled']], (v) => { F.status = v; });
@@ -208,7 +259,10 @@ async function drawWos(m) {
   const notesBox = h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: F.notes || null, onchange: (e) => { F.notes = e.target.checked; run(true); } }), 'Search note text');
   const info = h('div', { class: 'soft', style: 'margin-top:8px' });
   const tbl = h('div', { class: 'card res' }), drawer = h('div', { class: 'card drawer' }, h('div', { class: 'soft' }, 'Pick a work order to see its details.'));
-  m.replaceChildren(totals, h('div', { class: 'card' }, h('div', { class: 'srch' }, q, storeSel, statSel, openSel, monSel, notesBox), info), h('div', { class: 'split' }, tbl, drawer));
+  if (plain) F.notes = false;
+  m.replaceChildren(totals, h('div', { class: 'card' }, plain ? h('h3', null, 'Work orders') : null,
+    plain ? h('div', { class: 'soft', style: 'margin:-4px 0 8px' }, 'Customer details are hidden for your account: search by work order number, status, program or device.') : null,
+    h('div', { class: 'srch' }, q, st.length > 1 ? storeSel : null, statSel, openSel, monSel, plain ? null : notesBox), info), h('div', { class: 'split' }, tbl, drawer));
 
   async function run(reload) {
     touch();
@@ -231,7 +285,7 @@ async function drawWos(m) {
       const why = [];
       const hay = [c.name, (c.emails || []).join(' '), c.claim, r.device, r.program_name, r.status_name].filter(Boolean).join(' ').toLowerCase();
       if (term.split(/\s+/).every((t) => hay.includes(t))) why.push(c.name && term.split(/\s+/).every((t) => c.name.toLowerCase().includes(t)) ? 'name' : 'details');
-      if (digits.length >= 4) {
+      if (digits.length >= (plain ? 2 : 4)) {
         if ((c.phones || []).some((p) => p.includes(digits))) why.push('phone');
         if ((c.imei && c.imei.includes(digits)) || (c.serial && String(c.serial).toLowerCase().includes(term))) why.push('IMEI/serial');
         if (String(r.wo).includes(digits)) why.push('WO #');
@@ -243,6 +297,14 @@ async function drawWos(m) {
     info.textContent = (term ? hits.length + ' match' + (hits.length === 1 ? '' : 'es') + ' · ' : '') + 'searched ' + rows.length + ' work orders in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s, in this browser'
       + (rows.some((r) => r.c && r.c.error) ? ' · some cards could not be opened' : '');
     const shown = hits.slice(0, 300);
+    const pick = (r) => (e) => { sel = r.store + '|' + r.wo; [...tbl.querySelectorAll('tr.sel')].forEach((x) => x.classList.remove('sel')); e.currentTarget.classList.add('sel'); showWo(drawer, r); };
+    if (plain) return tbl.replaceChildren(...(shown.length ? [h('table', null, h('tr', null, ['WO #', st.length > 1 ? 'Store' : null, 'Status', 'Device · program', 'Updated', 'Customer'].filter(Boolean).map((x) => h('th', null, x))),
+      shown.map(({ r, why }) => h('tr', { class: sel === r.store + '|' + r.wo ? 'sel' : null, onclick: pick(r) },
+        h('td', null, ui.woLink(r.wo), why ? h('div', { class: 'hit' }, 'matched ' + why) : null), st.length > 1 ? h('td', null, String(r.store)) : null,
+        h('td', null, h('span', { class: 'st ' + stClass(r) }, statusText(r))), h('td', null, [r.device, r.program_name].filter(Boolean).join(' · ')),
+        h('td', { class: 'soft' }, ui.fmt(r.api_updated_at || r.first_seen_at)), h('td', { class: 'soft' }, '🔒 Hidden')))),
+      hits.length > shown.length ? h('div', { class: 'soft', style: 'margin-top:8px' }, 'Showing the first 300. Narrow the search to see the rest.') : '']
+      : [h('div', { class: 'soft' }, term ? 'No matches.' : 'No work orders yet.')]));
     tbl.replaceChildren(...(shown.length ? [h('table', null, h('tr', null, ['WO', 'Store', 'Customer', 'Device', 'Program', 'Status', 'Updated', 'Value'].map((x) => h('th', null, x))),
       shown.map(({ r, why, noteHit }) => h('tr', { class: sel === r.store + '|' + r.wo ? 'sel' : null, onclick: (e) => { sel = r.store + '|' + r.wo; [...tbl.querySelectorAll('tr.sel')].forEach((x) => x.classList.remove('sel')); e.currentTarget.classList.add('sel'); showWo(drawer, r); } },
         h('td', null, h('b', null, String(r.wo))), h('td', null, String(r.store), ' ', h('span', { class: 'soft' }, r.store_name || '')),
@@ -266,9 +328,9 @@ async function showWo(drawer, r) {
   const plain = snaps[0] && snaps[0].plain ? JSON.parse(snaps[0].plain) : {};
   const w = plain.workorder || {}, pay = (plain.cart && plain.cart.payment) || {};
   if (w.statusId != null) r = Object.assign({}, r, { status_id: w.statusId, status_name: w.status || null, service_outcome: w.outcome || r.service_outcome }); // newest snapshot beats the list
-  const notes = notesOf(d);
-  const tabs = [['notes', 'Notes (' + notes.length + ')'], ['history', 'Status history (' + (plain.auditTrail || []).length + ')'], ['cart', 'Cart (' + ((plain.cart && plain.cart.items) || []).length + ')'], ['changes', 'Changes (' + j.changes.length + ')'], ['snaps', 'Snapshots (' + snaps.length + ')']];
-  let cur = 'notes';
+  const notes = notesOf(d), hide = plainMode();
+  const tabs = [hide ? null : ['notes', 'Notes (' + notes.length + ')'], ['history', 'Status history (' + (plain.auditTrail || []).length + ')'], ['cart', 'Cart (' + ((plain.cart && plain.cart.items) || []).length + ')'], ['changes', 'Changes (' + j.changes.length + ')'], ['snaps', 'Snapshots (' + snaps.length + ')']].filter(Boolean);
+  let cur = hide ? 'history' : 'notes';
   const body = h('div');
   const nav = h('div', { class: 'dtabs' });
   const drawTab = () => {
@@ -285,9 +347,9 @@ async function showWo(drawer, r) {
   drawer.replaceChildren(
     h('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap' }, h('h2', null, String(r.wo)), h('span', { class: 'st ' + stClass(r) }, statusText(r)), h('span', { style: 'margin-left:auto' }, ui.woLink(r.wo))),
     h('div', { class: 'soft', style: 'margin:2px 0 10px' }, [r.store + ' ' + (r.store_name || ''), r.program_name, r.device, w.bin ? 'bin ' + w.bin : null, w.createdAt ? 'checked in ' + ui.fmt(w.createdAt) : null].filter(Boolean).join(' · ')),
-    h('dl', { class: 'kv' }, h('dt', null, 'Customer'), h('dd', null, h('b', null, c.name || '—')),
+    h('dl', { class: 'kv' }, hide ? [h('dt', null, 'Customer'), h('dd', { class: 'soft' }, '🔒 Hidden for your account')] : [h('dt', null, 'Customer'), h('dd', null, h('b', null, c.name || '—')),
       h('dt', null, 'Phone'), h('dd', null, (c.phones || []).map(fmtPhone).join(', ') || '—'), h('dt', null, 'Email'), h('dd', null, (c.emails || []).join(', ') || '—'),
-      h('dt', null, 'IMEI / serial'), h('dd', null, [c.imei, c.serial].filter(Boolean).join(' · ') || '—'), c.claim ? [h('dt', null, 'Claim'), h('dd', null, c.claim)] : null,
+      h('dt', null, 'IMEI / serial'), h('dd', null, [c.imei, c.serial].filter(Boolean).join(' · ') || '—'), c.claim ? [h('dt', null, 'Claim'), h('dd', null, c.claim)] : null],
       h('dt', null, 'Value'), h('dd', null, h('b', null, money(r.cart_value)), h('span', { class: 'soft' }, ' cart before tax, partner credits ignored')),
       h('dt', null, r.status_id === 13 ? 'Due at pickup' : 'Customer owes'), h('dd', null, money(pay.amountDue) + ' of ' + money(pay.total) + (pay.amountPaid ? ' · ' + money(pay.amountPaid) + ' paid' : ''))),
     nav, body);
@@ -333,66 +395,200 @@ async function showSalesDay(box, d) {
     h('div', { class: 'soft', style: 'margin:2px 0 10px' }, (d.source === 'estimated' ? 'Estimated from ' + d.count + ' work order(s): ' : d.count + ' sale(s): ') + money(d.total)));
   if (d.source === 'estimated') {
     const rows = [];
-    for (const w of j.estimated.filter((x) => x.store === d.store)) { const c = await who(w, C.aad.card(w.store, w.wo)); rows.push(h('tr', null, h('td', null, ui.woLink(w.wo)), h('td', null, (c && c.name) || '—'), h('td', null, w.program_name || ''), h('td', null, w.device || ''), h('td', null, money(w.estimate)))); }
+    for (const w of j.estimated.filter((x) => x.store === d.store)) { const c = await who(w, C.aad.card(w.store, w.wo)); rows.push(h('tr', null, h('td', null, ui.woLink(w.wo)), h('td', null, plainMode() ? h('span', { class: 'soft' }, '🔒 Hidden') : (c && c.name) || '—'), h('td', null, w.program_name || ''), h('td', null, w.device || ''), h('td', null, money(w.estimate)))); }
     return box.replaceChildren(head, h('table', { class: 'tl' }, h('tr', null, ['WO', 'Customer', 'Program', 'Device', 'Estimate'].map((x) => h('th', null, x))), rows));
   }
   const rows = [];
   for (const x of j.sales.filter((y) => y.store === d.store)) {
     const c = await who(x, C.aad.sale(x.store, x.sale_id));
     rows.push(h('tr', null, h('td', { class: 'soft' }, x.sale_at ? new Date(x.sale_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''), h('td', null, x.wo ? ui.woLink(x.wo) : h('span', { class: 'soft' }, 'Quick sale')),
-      h('td', null, (c && c.customerName) || '—', x.type === 'Return' ? h('span', { class: 'st rfpi', style: 'margin-left:6px' }, 'Return') : null), h('td', null, x.program || ''),
+      h('td', null, plainMode() ? h('span', { class: 'soft' }, '🔒 Hidden') : (c && c.customerName) || '—', x.type === 'Return' ? h('span', { class: 'st rfpi', style: 'margin-left:6px' }, 'Return') : null), h('td', null, x.program || ''),
       h('td', null, money(x.total)), h('td', null, x.partner_credits ? money(x.partner_credits) : '—'), h('td', null, money(x.paid)), h('td', { class: 'soft' }, x.completed_by || ''),
       h('td', { class: 'soft', title: (x.items || []).map((i) => i.name).join('\n') }, (x.items || []).filter((i) => String(i.sku || '').toUpperCase() !== 'PCEXEMPT').length + ' item(s)')));
   }
   box.replaceChildren(head, h('table', { class: 'tl' }, h('tr', null, ['Time', 'WO', 'Customer', 'Program', 'Total', 'Partner', 'Paid', 'By', 'Items'].map((x) => h('th', null, x))), rows));
 }
 
-// ------------------------------------------------------------------ People
+// ------------------------------------------------------------------ People (owners only; the server refuses everyone else)
+// Per-person access: stores, pages, customer details. The server checks all of it on every request
+// (tracker-worker/src/access.js); this page only edits it. Presets just fill the boxes.
+const PAGE_DEFS = [
+  ['wos', 'Work orders', 'Search and open work orders in their stores', 'store'],
+  ['sales', 'Sales', 'Daily sales and each day’s transactions', 'store'],
+  ['metrics', 'Metrics', 'Charts for sales, operations, cleanings', 'store', true],
+  ['data', 'Store data', 'Waymark tags, Auto-Waymarks, Divination links', 'store'],
+  ['usage', 'Usage', 'Who uses which crystal (filtered to their stores)', 'store'],
+  ['reports', 'Reports', 'Bug reports and ideas; set status, quote in patch notes', 'wide'],
+  ['auto', 'Auto-Waymark', 'Stage and push rules live for every store', 'wide'],
+  ['stores', 'Stores', 'Give or remove a store’s Aethernet access', 'wide'],
+  ['people', 'People', 'Owners only', 'owner'],
+];
+const GRANTABLE = PAGE_DEFS.filter((p) => p[3] !== 'owner').map((p) => p[0]);
+const PRESETS = {
+  viewer: ['Store viewer', 'Default for new people', { scope: 'stores', pages: ['wos'], details: false }],
+  mgr: ['Manager', 'Their stores, with customer details', { scope: 'stores', pages: ['wos', 'sales', 'metrics', 'data'], details: true }],
+  ol: ['Owner-level', 'Every page but People', { scope: 'all', pages: GRANTABLE, details: true }],
+};
+const ROLE = { owner: ['Owner', 'owner'], ol: ['Owner-level', 'ol'], mgr: ['Manager', 'mgr'], viewer: ['Store viewer', 'view'], custom: ['Custom', 'custom'] };
+const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+const roleOf = (a) => Object.keys(PRESETS).find((k) => { const p = PRESETS[k][2]; return a.scope === p.scope && a.details === p.details && sameSet(a.pages, p.pages); }) || 'custom';
+const KEY_SVG = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5.5" cy="10.5" r="3.5"/><path d="M8 8l6-6M12 4l2 2"/></svg>';
+const SHIELD_SVG = '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1.5l5.5 2v4c0 3.5-2.4 6-5.5 7-3.1-1-5.5-3.5-5.5-7v-4z"/><path d="M5.6 8l1.7 1.7 3.2-3.4"/></svg>';
+
 async function drawPeople(m) {
   const { h } = ui;
-  if (me.person.scope !== 'all') return m.replaceChildren(h('div', { class: 'card' }, 'Only people with access to every store can manage people.'));
-  const [pp, lg] = await Promise.all([ui.api('GET', '/tracker/people'), ui.api('GET', '/tracker/log?limit=50')]);
-  const form = { email: h('input', { type: 'email', placeholder: 'Email (as they sign in to Cloudflare Access)' }), name: h('input', { type: 'text', placeholder: 'Name' }),
-    scope: h('select', null, h('option', { value: 'stores' }, 'Some stores'), h('option', { value: 'all' }, 'All stores (owner, district manager, dev)')),
-    stores: h('input', { type: 'text', placeholder: 'Store numbers, e.g. 914, 326' }) };
-  const out = h('div');
-  const create = h('button', { class: 'btn p', style: 'margin-top:10px', onclick: async () => {
-    const email = form.email.value.trim().toLowerCase(), scope = form.scope.value;
-    const stores = scope === 'stores' ? [...new Set(form.stores.value.split(/[^\d]+/).filter(Boolean).map(Number))] : [];
-    if (!email) return ui.toast('Enter their email.');
-    if (scope === 'stores' && !stores.length) return ui.toast('Enter at least one store number.');
-    const missing = stores.filter((s) => !keys.wrapped.has(s));
-    if (missing.length) return ui.toast('No key yet for store ' + missing.join(', ') + ": Aethernet hasn't sent anything from there.");
-    create.disabled = true;
-    try {
-      const code = await suggest(4), copies = [];
-      if (scope === 'all') copies.push(Object.assign({ kind: 'master', store: 0 }, await C.lockWithPhrase(keys.masterPkcs8, code, C.aad.person(email, 'master', 0))));
-      for (const s of stores) copies.push(Object.assign({ kind: 'store', store: s }, await C.lockWithPhrase(await C.openStoreKeyBytes(s, keys.wrapped.get(s), keys.master), code, C.aad.person(email, 'store', s))));
-      await ui.api('POST', '/tracker/people', { email, name: form.name.value.trim(), scope, stores, keys: copies });
-      out.replaceChildren(h('div', { class: 'inv' }, h('div', { class: 'soft' }, 'Invite code for ' + (form.name.value.trim() || email) + ' (shown once; send it to them yourself):'), h('code', null, code),
-        h('div', { class: 'soft', style: 'margin-top:6px' }, 'They sign in, enter this code, then choose their own passphrase. It unlocks ' + (scope === 'all' ? 'every store' : stores.join(', ') + ' only') + '. Add their email to the Cloudflare Access list too.')));
-      create.disabled = false;
-      drawList((await ui.api('GET', '/tracker/people')).people);
-    } catch (e) { create.disabled = false; ui.toast("Couldn't add: " + e.message); }
-  } }, 'Create invite');
-  const list = h('div', { class: 'card' });
-  function drawList(people) {
-    list.replaceChildren(h('h3', null, 'People who can search work orders'), h('table', null, h('tr', null, ['Person', 'Can see', 'Last used', ''].map((x) => h('th', null, x))),
-      people.map((p) => h('tr', null, h('td', null, h('b', null, p.name || p.email), h('div', { class: 'soft' }, p.email)),
-        h('td', null, h('span', { class: 'scope ' + (p.scope === 'all' ? 'all' : 'some') }, p.scope === 'all' ? 'All stores' : 'Some stores'), p.scope === 'all' ? null : h('div', { class: 'soft' }, p.stores.join(', '))),
-        h('td', null, p.keys.some((k) => k.invite) && !p.keys.some((k) => !k.invite) ? 'Invite not used yet' : p.last_seen_at ? ui.fmt(p.last_seen_at) : '—'),
-        h('td', null, h('button', { class: 'btn', style: 'height:28px', onclick: () => { form.email.value = p.email; form.name.value = p.name || ''; form.scope.value = p.scope; form.stores.value = p.stores.join(', '); ui.toast('Change what they can see, then Create invite: they get a new code.'); } }, 'Edit'), ' ',
-          p.email === me.email ? null : h('button', { class: 'btn', style: 'height:28px', onclick: async () => { if (!confirm('Remove ' + p.email + '? Their key copies are deleted.')) return; try { await ui.api('POST', '/tracker/people/' + encodeURIComponent(p.email) + '/remove'); drawList((await ui.api('GET', '/tracker/people')).people); } catch (e) { ui.toast(e.message); } } }, 'Remove'))))),
-      h('div', { class: 'soft', style: 'margin-top:10px' }, "Each person also needs their email on the admin site's Cloudflare Access list."));
+  if (!me.access || !me.access.owner) return m.replaceChildren(h('div', { class: 'card' }, 'Only owners can change access.'));
+  const [pp, ts, as] = await Promise.all([ui.api('GET', '/tracker/people'), ui.api('GET', '/tracker/stores'), ui.api('GET', '/stores').catch(() => ({ allowed: [] }))]);
+  const names = new Map();
+  for (const x of as.allowed || []) if (x.name) names.set(x.store, x.name);
+  for (const x of ts.stores || []) if (x.name && !names.has(x.store)) names.set(x.store, x.name);
+  let people = pp.people, owners = pp.owners, selected = null, ed = null, orig = null, invite = null;
+  const storeList = () => [...new Set([...names.keys(), ...(ts.stores || []).map((x) => x.store), ...people.flatMap((p) => p.stores)])].sort((a, b) => a - b);
+  const storeLabel = (s) => s + (names.get(s) ? ' ' + names.get(s) : '');
+  const pageName = (k) => (PAGE_DEFS.find((p) => p[0] === k) || [k, k])[1];
+  const listCard = h('div', { class: 'card' }), edCard = h('div', { class: 'card' }), logCard = h('div', { class: 'card', style: 'margin-top:14px' });
+  const actCard = h('div', { class: 'card' }), progs = h('div', { class: 'card' });
+
+  // Owners first (from TRACKER_OWNERS, with or without a people row), then everyone else.
+  const rows = () => {
+    const byEmail = new Map(people.map((p) => [p.email, p]));
+    const own = owners.map((e) => Object.assign({ email: e, name: null, scope: 'all', stores: [], pages: GRANTABLE, details: true, keys: [] }, byEmail.get(e) || {}, { owner: true }));
+    return own.concat(people.filter((p) => !owners.includes(p.email)).sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email)));
+  };
+  const lastUsed = (p) => (p.keys.length && p.keys.every((k) => k.invite) ? 'Invite not used yet' : p.email === me.email ? 'Now' : p.last_seen_at ? ui.fmt(p.last_seen_at) : '—');
+  const keyCell = (on) => (on ? h('span', { class: 'key', html: KEY_SVG + 'Yes' }) : h('span', { class: 'key no' }, 'No'));
+  function drawList() {
+    const all = rows();
+    listCard.replaceChildren(h('h3', null, 'People (' + all.length + ')'),
+      h('div', { style: 'overflow-x:auto' }, h('table', { class: 'ppl', style: 'min-width:640px' }, h('tr', null, ['Person', 'Role', 'Stores', 'Pages', 'Customer details', 'Last used'].map((x) => h('th', null, x))),
+        all.map((p) => { const r = p.owner ? 'owner' : roleOf(p); return h('tr', { class: 'pick' + (selected === p.email ? ' sel' : ''), onclick: () => open(p) },
+          h('td', null, h('b', null, p.name || p.email.split('@')[0]), h('div', { class: 'soft' }, p.email)),
+          h('td', null, h('span', { class: 'role ' + ROLE[r][1] }, ROLE[r][0]), p.review && !p.owner ? h('div', { class: 'soft', style: 'margin-top:3px' }, 'Carried over: review') : null),
+          h('td', null, p.scope === 'all' ? h('span', { class: 'sc' }, h('b', null, 'All stores')) : p.stores.map((s) => h('span', { class: 'sc' }, String(s)))),
+          h('td', { class: 'soft', style: 'max-width:190px' }, p.owner ? 'All pages' : p.pages.map(pageName).join(', ') || 'None'),
+          h('td', null, keyCell(p.owner || p.details)), h('td', { class: 'soft' }, lastUsed(p))); }))),
+      h('div', { style: 'display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap' }, h('button', { class: 'btn p', onclick: () => open(null) }, 'Add a person'),
+        h('span', { class: 'soft' }, 'New people start as ', h('b', null, 'Store viewer'), ': Work orders for their stores only, no customer details.')));
   }
-  drawList(pp.people);
-  const progs = h('div', { class: 'card' });
-  drawAgents(progs);
-  m.replaceChildren(h('div', { class: 'grid', style: 'grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)' }, list,
-    h('div', { class: 'card' }, h('h3', null, 'Add a person'), h('div', { style: 'display:grid;gap:8px' }, form.email, form.name, form.scope, form.stores), create, out)),
-    progs,
-    h('div', { class: 'card' }, h('h3', null, 'Recent activity'), h('table', null, h('tr', null, h('th', null, 'When'), h('th', null, 'Who'), h('th', null, 'What')),
-      lg.log.map((x) => h('tr', null, h('td', null, ui.fmt(x.at)), h('td', null, x.email), h('td', null, [x.action, x.store, x.wo, x.detail].filter((v) => v != null && v !== '').join(' · ')))))));
+  function open(p) {
+    selected = p ? p.email : null; invite = null;
+    orig = p ? JSON.parse(JSON.stringify(p)) : null;
+    ed = p ? { email: p.email, name: p.name || '', scope: p.scope, stores: [...p.stores], pages: [...p.pages], details: !!p.details, owner: !!p.owner }
+      : { isNew: true, email: '', name: '', scope: 'stores', stores: [], pages: ['wos'], details: false };
+    drawList(); drawEditor();
+  }
+  // What saving needs: key copies for every store (or all stores) they should open and don't hold a copy for.
+  function plan() {
+    const copies = orig && orig.details ? orig.keys : [];
+    const kept = ed.scope === 'all' ? copies : copies.filter((k) => k.kind === 'store' && ed.stores.includes(k.store));
+    const redeemed = kept.filter((k) => !k.invite);
+    const missing = ed.scope === 'all' ? (kept.some((k) => k.kind === 'master') ? [] : ['all']) : ed.stores.filter((s) => !kept.some((k) => k.kind === 'store' && k.store === s));
+    if (!ed.details || !missing.length) return { invite: false };
+    // Already has a passphrase: the new code adds to it (unredeemed copies are re-issued with the same code). Otherwise everything is new.
+    if (redeemed.length) return { invite: true, mode: 'add', targets: [...missing, ...kept.filter((k) => k.invite && k.kind === 'store').map((k) => k.store)], keeps: redeemed.map((k) => (k.kind === 'master' ? 'all stores' : k.store)) };
+    return { invite: true, mode: 'replace', targets: ed.scope === 'all' ? ['all'] : [...ed.stores] };
+  }
+  function changes() {
+    const out = [], sA = orig ? (orig.scope === 'all' ? ['all'] : orig.stores) : [], sB = ed.scope === 'all' ? ['all'] : ed.stores;
+    const lab = (s) => (s === 'all' ? 'All stores' : storeLabel(s));
+    for (const s of sB) if (!sA.includes(s)) out.push(['a', '+ ' + lab(s)]);
+    for (const s of sA) if (!sB.includes(s)) out.push(['r', '− ' + lab(s)]);
+    const pA = orig ? orig.pages : [];
+    for (const k of ed.pages) if (!pA.includes(k)) out.push(['a', '+ ' + pageName(k)]);
+    for (const k of pA) if (!ed.pages.includes(k)) out.push(['r', '− ' + pageName(k)]);
+    if (orig ? !!orig.details !== ed.details : ed.details) out.push([ed.details ? 'a' : 'r', 'Customer details ' + (ed.details ? 'on' : 'off')]);
+    return out;
+  }
+  function drawEditor() {
+    if (!ed) return edCard.replaceChildren(h('h3', null, 'Access'), h('div', { class: 'soft' }, 'Pick a person to change what they can open, or add someone.'));
+    const set = (f) => () => { f(); invite = null; drawEditor(); };
+    const head = [h('h3', null, ed.isNew ? 'Add a person' : 'Access for ' + (ed.name || ed.email)),
+      ed.isNew ? h('div', { style: 'display:grid;gap:8px;margin-bottom:4px' },
+        h('input', { type: 'email', value: ed.email, placeholder: 'Email (as they sign in to Cloudflare Access)', oninput: (e) => { ed.email = e.target.value.trim().toLowerCase(); } }),
+        h('input', { type: 'text', value: ed.name, placeholder: 'Name', oninput: (e) => { ed.name = e.target.value; } }))
+        : h('div', { class: 'soft', style: 'margin:-4px 0 10px' }, ed.email + (orig && orig.added_at ? ' · added ' + new Date(orig.added_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) + (orig.added_by ? ' by ' + orig.added_by : '') : ''))];
+    if (ed.owner) return edCard.replaceChildren(...head, h('div', { class: 'banner', style: 'margin:6px 0 0' }, h('span', { html: SHIELD_SVG }),
+      h('div', null, 'An owner (', h('b', null, 'TRACKER_OWNERS'), ') always has every page, every store and customer details. Owners are set in the admin site’s settings, not here.')));
+    const role = roleOf(ed);
+    const seg = h('div', { class: 'seg' }, Object.entries(PRESETS).map(([k, [n, d, p]]) => h('button', { class: role === k ? 'on' : null,
+      onclick: set(() => { ed.pages = [...p.pages]; ed.details = p.details; ed.scope = p.scope; }) }, n, h('small', null, d))),
+      h('button', { class: role === 'custom' ? 'on' : null, onclick: () => {} }, 'Custom', h('small', null, 'Edited by hand')));
+    const chips = h('div', { class: 'schips' }, storeList().map((s) => { const on = ed.scope === 'stores' && ed.stores.includes(s);
+      return h('button', { class: 'schip' + (on ? ' on' : ''), onclick: set(() => { if (ed.scope === 'all') { ed.scope = 'stores'; ed.stores = [s]; } else ed.stores = on ? ed.stores.filter((x) => x !== s) : [...ed.stores, s].sort((a, b) => a - b); }) },
+        on ? h('span', null, '✓') : null, storeLabel(s)); }),
+      h('button', { class: 'schip' + (ed.scope === 'all' ? ' on' : ''), onclick: set(() => { ed.scope = ed.scope === 'all' ? 'stores' : 'all'; if (ed.scope === 'all') ed.stores = []; }) },
+        ed.scope === 'all' ? h('span', null, '✓') : null, 'All stores, including new ones'));
+    const pages = h('div', { class: 'pages' }, PAGE_DEFS.map(([k, n, d, sc, nw]) => { const owner = sc === 'owner';
+      const box = h('input', { type: 'checkbox', disabled: owner || null, onchange: set(() => { ed.pages = ed.pages.includes(k) ? ed.pages.filter((x) => x !== k) : GRANTABLE.filter((x) => x === k || ed.pages.includes(x)); }) });
+      box.checked = !owner && ed.pages.includes(k);
+      return h('label', { class: 'pg' + (owner ? ' dis' : '') }, box, h('span', null, h('span', { class: 't' }, n), nw ? h('span', { class: 'tagn' }, 'New') : null, sc === 'wide' ? h('span', { class: 'tagw' }, 'All stores') : null, h('div', { class: 'd' }, d))); }));
+    const sw = h('div', { class: 'sw', onclick: set(() => { ed.details = !ed.details; }) }, h('span', { class: 'tg' + (ed.details ? '' : ' off') }),
+      h('div', null, h('div', { class: 't' }, 'Can open sealed customer details'), h('div', { class: 'soft' }, 'Names, phones, emails, IMEI, notes. Gives them key copies for their stores only; turning it on needs a new invite code (shown once). Turning it off deletes their copies.')));
+    const ch = changes(), pl = plan(), removed = orig && orig.details && ed.details && orig.scope !== 'all' && orig.stores.some((s) => ed.scope === 'stores' && !ed.stores.includes(s));
+    const lab = (t) => (t === 'all' ? 'all stores' : String(t));
+    const note = pl.invite ? (pl.mode === 'add' ? 'Adding a store with customer details on: a new invite code covers ' + pl.targets.map(lab).join(', ') + ' (their passphrase keeps working for ' + pl.keeps.join(', ') + ' after they redeem it).'
+      : 'Customer details on: a new invite code (shown once) covers ' + pl.targets.map(lab).join(', ') + '. They sign in, enter it, then choose their own passphrase.')
+      : orig && orig.details && !ed.details ? 'Turning customer details off deletes their key copies; Work orders opens for them without customer details.'
+      : removed ? 'Their key copies for removed stores are deleted.' : orig && orig.review ? 'Carried over from before per-person access. Saving confirms it and clears the review flag.' : '';
+    const dirty = ch.length > 0 || ed.isNew || (orig && orig.review);
+    const diff = dirty ? h('div', { class: 'diff' }, h('b', null, ed.isNew ? 'New person: ' : 'Unsaved changes: '),
+      ch.length ? ch.map(([c, t], i) => [i ? ' · ' : '', h('span', { class: c }, t)]) : h('span', { class: 'soft' }, ed.isNew ? roleOf(ed) === 'viewer' ? 'Store viewer' : '' : 'none'),
+      note ? h('div', { class: 'soft', style: 'margin-top:4px' }, note) : null) : null;
+    const save = h('button', { class: 'btn p', disabled: !dirty || null, onclick: () => doSave(save) }, pl.invite ? 'Save and create invite' : 'Save');
+    const actions = h('div', { style: 'display:flex;gap:8px;margin-top:12px;flex-wrap:wrap' }, save, h('button', { class: 'btn', onclick: () => { ed = orig = selected = null; invite = null; drawList(); drawEditor(); } }, 'Cancel'),
+      ed.isNew || ed.email === me.email ? null : h('button', { class: 'btn', style: 'margin-left:auto;border-color:var(--err);color:var(--err)', onclick: doRemove }, 'Remove person'));
+    edCard.replaceChildren(...head,
+      h('div', { class: 'lbl' }, 'Role', h('span', { class: 'soft' }, 'a starting point; any change below makes it Custom')), seg,
+      h('div', { class: 'lbl' }, 'Stores', h('span', { class: 'soft' }, 'what every page shows them')), chips,
+      h('div', { class: 'lbl' }, 'Pages', h('span', { class: 'soft' }, 'nav shows only these; the server refuses the rest')), pages,
+      h('div', { class: 'soft', style: 'margin-top:4px' }, h('span', { class: 'tagw', style: 'margin:0' }, 'All stores'), ' = Aethernet-wide page: not limited by their store list.'),
+      h('div', { class: 'lbl' }, 'Customer details'), sw, diff || '', actions,
+      !invite ? '' : h('div', { class: 'inv' }, h('div', { class: 'soft' }, 'Invite code for ' + invite.who + ' (shown once; send it to them yourself):'), h('code', null, invite.code),
+        h('div', { class: 'soft', style: 'margin-top:6px' }, 'It unlocks ' + invite.what + '. They enter it after signing in' + (invite.mode === 'add' ? ' and unlocking with their passphrase.' : ', then choose their own passphrase.') + ' New people also need their email on the admin site’s Cloudflare Access list.')));
+  }
+  async function doSave(btn) {
+    if (!/^[^\s@]+@[^\s@]+$/.test(ed.email)) return ui.toast('Enter their email.');
+    if (ed.scope === 'stores' && !ed.stores.length) return ui.toast('Pick at least one store, or All stores.');
+    const pl = plan(), copies = [];
+    let code = null;
+    if (pl.invite) {
+      if (!keys.master) return edCard.replaceChildren(unlockCard(() => drawEditor()));
+      const none = pl.targets.filter((t) => t !== 'all' && !keys.wrapped.has(t));
+      if (none.length) return ui.toast('No key yet for store ' + none.join(', ') + ": Aethernet hasn't sent anything from there.");
+      code = await suggest(4);
+      for (const t of pl.targets) {
+        if (t === 'all') copies.push(Object.assign({ kind: 'master', store: 0 }, await C.lockWithPhrase(keys.masterPkcs8, code, C.aad.person(ed.email, 'master', 0))));
+        else copies.push(Object.assign({ kind: 'store', store: t }, await C.lockWithPhrase(await C.openStoreKeyBytes(t, keys.wrapped.get(t), keys.master), code, C.aad.person(ed.email, 'store', t))));
+      }
+      touch();
+    }
+    btn.disabled = true;
+    try {
+      await ui.api('POST', '/tracker/people', { email: ed.email, name: ed.name.trim(), scope: ed.scope, stores: ed.scope === 'all' ? [] : ed.stores, pages: ed.pages, details: ed.details, keys: copies, keysMode: pl.mode === 'add' ? 'add' : undefined });
+      const email = ed.email, inv = code ? { code, who: ed.name.trim() || ed.email, mode: pl.mode, what: pl.targets.map((t) => (t === 'all' ? 'every store' : storeLabel(t))).join(', ') } : null;
+      await reload();
+      open(rows().find((p) => p.email === email) || null);
+      invite = inv; drawEditor();
+      ui.toast('Saved.');
+    } catch (e) { btn.disabled = false; ui.toast("Couldn't save: " + e.message); }
+  }
+  async function doRemove() {
+    if (!confirm('Remove ' + ed.email + '? They lose every page here and their key copies are deleted.')) return;
+    try { await ui.api('POST', '/tracker/people/' + encodeURIComponent(ed.email) + '/remove'); ed = orig = selected = null; await reload(); drawList(); drawEditor(); ui.toast('Removed.'); } catch (e) { ui.toast(e.message); }
+  }
+  const logRows = (list, bold) => list.map((x) => h('tr', null, h('td', { class: 'soft', style: 'white-space:nowrap' }, ui.fmt(x.at)), h('td', null, x.email),
+    h('td', null, bold ? [h('b', null, x.action), ' ', [x.store, x.wo, x.detail].filter((v) => v != null && v !== '').join(' · ')] : [x.action, x.store, x.wo, x.detail].filter((v) => v != null && v !== '').join(' · '))));
+  async function reload() {
+    const [p2, ac, lg] = await Promise.all([ui.api('GET', '/tracker/people'), ui.api('GET', '/tracker/log?kind=access&limit=50'), ui.api('GET', '/tracker/log?limit=50')]);
+    people = p2.people; owners = p2.owners;
+    logCard.replaceChildren(h('h3', null, 'Access changes'), h('div', { style: 'overflow-x:auto' }, h('table', { style: 'min-width:560px' }, h('tr', null, ['When', 'Who', 'What'].map((x) => h('th', null, x))),
+      ac.log.length ? logRows(ac.log, true) : h('tr', null, h('td', { colspan: 3, class: 'soft' }, 'No access changes yet.')))));
+    actCard.replaceChildren(h('h3', null, 'Recent activity'), h('div', { style: 'overflow-x:auto' }, h('table', null, h('tr', null, h('th', null, 'When'), h('th', null, 'Who'), h('th', null, 'What')), logRows(lg.log, false))));
+  }
+  await reload();
+  drawList(); drawEditor(); drawAgents(progs);
+  m.replaceChildren(h('div', { class: 'banner' }, h('span', { html: SHIELD_SVG }), h('div', null, 'Only owners (', h('b', null, 'TRACKER_OWNERS'), ') can change access. Owners always see everything. Every change is checked on the server and recorded in the activity log.')),
+    h('div', { class: 'pgrid' }, listCard, edCard), logCard, progs, actCard);
 }
 
 // ------------------------------------------------------------------ Connected programs

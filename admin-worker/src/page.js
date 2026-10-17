@@ -4,8 +4,8 @@ export const PAGE = String.raw`<!doctype html><html lang="en"><head><meta charse
 <style>
 @font-face{font-family:Apercu;src:url(https://assets.asurion-ui.my.asurion53.com/fonts/Apercu-Regular-Pro.woff2) format('woff2');font-weight:400}
 @font-face{font-family:Apercu;src:url(https://assets.asurion-ui.my.asurion53.com/fonts/Apercu-Bold-Pro.woff2) format('woff2');font-weight:700}
-:root{--bg:#f6f5f8;--card:#fff;--fg:#1a1c1e;--soft:#5d5e61;--line:#e4e2e8;--p:#8223d2;--ps:#f3e9fd;--ok:#c5ffc8;--okf:#062011;--warn:#fff0c0;--warnf:#3a3000;--err:#d1344b}
-@media (prefers-color-scheme:dark){:root{--bg:#131216;--card:#1d1c21;--fg:#ececf0;--soft:#a8a7ad;--line:#2e2d33;--ps:#2c1f3d;--ok:#163d1c;--okf:#c5ffc8;--warn:#3d3410;--warnf:#fff0c0}}
+:root{--bg:#f6f5f8;--card:#fff;--fg:#1a1c1e;--soft:#5d5e61;--line:#e4e2e8;--p:#8223d2;--pt:#8223d2;--ps:#f3e9fd;--ok:#c5ffc8;--okf:#062011;--warn:#fff0c0;--warnf:#3a3000;--err:#d1344b;--hd:#faf9fb}
+@media (prefers-color-scheme:dark){:root{--bg:#131216;--card:#1d1c21;--fg:#ececf0;--soft:#a8a7ad;--line:#2e2d33;--ps:#2c1f3d;--pt:#c39af5;--ok:#163d1c;--okf:#c5ffc8;--warn:#3d3410;--warnf:#fff0c0;--hd:#211f26}}
 *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 Apercu,"Helvetica Neue",Helvetica,Arial,sans-serif}
 .top{position:sticky;top:0;z-index:5;min-height:60px;background:var(--card);border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:8px 24px}
 .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px} .logo svg{color:var(--p)}
@@ -34,10 +34,13 @@ a{color:var(--p);font-weight:700;text-decoration:none} .soft{color:var(--soft);f
 .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 6px 0 10px;border-radius:999px;border:0;background:var(--ps);color:var(--p);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
 .state{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px} .state.live{background:var(--ok);color:var(--okf)} .state.staged{background:var(--warn);color:var(--warnf)} .state.off{background:var(--line);color:var(--soft)}
 .rule{display:flex;gap:10px;justify-content:space-between;align-items:flex-start}
+.ownr{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--p);color:#fff}
+.deny{max-width:520px;margin:60px auto;text-align:center} .deny .ic{width:56px;height:56px;border-radius:50%;background:var(--ps);color:var(--p);display:inline-flex;align-items:center;justify-content:center;margin-bottom:12px} .deny h2{margin:0 0 6px;font-size:20px} .deny p{color:var(--soft);margin:0 0 16px}
+@media (max-width:900px){.top{position:relative}}
 @media (max-width:640px){.top,main{padding-left:16px;padding-right:16px} .me{margin-left:0} .grid{grid-template-columns:1fr}}
 </style></head><body>
 <div class="top"><span class="logo"><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="11" rx="10.5" ry="3.2" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".55"/><path fill="currentColor" d="M12 1.5 6 10l6 12.5L18 10z"/></svg>Aethernet admin</span>
-<nav class="tabs" id="tabs"></nav><span class="me"><span class="lock">Cloudflare Access</span><span>__EMAIL__</span></span></div>
+<nav class="tabs" id="tabs"></nav><span class="me"><span class="ownr" id="ownr" style="display:none">Owner</span><span class="lock">Cloudflare Access</span><span>__EMAIL__</span></span></div>
 <main id="main"><div class="soft">Loading…</div></main>
 <script>
 const $ = (s) => document.querySelector(s);
@@ -54,12 +57,36 @@ const fmt = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocal
 const fmtDay = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' });
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const woLink = (id) => h('a', { href: 'https://portal.ubreakifix.net/repair/workorder/' + id, target: '_blank', rel: 'noopener' }, id + ' ↗');
-const TABS = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['sales', 'Sales'], ['people', 'People']];
-let tab = (location.hash.slice(1) || 'reports');
+// Every page there is; the nav shows only the ones GET /api/tracker/me says this person has (owners: all).
+// The server refuses the rest on its own (tracker-worker/src/access.js); this only keeps the page honest.
+const TABS_ALL = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['sales', 'Sales'], ['metrics', 'Metrics'], ['people', 'People']];
+let TABS = [], ACCESS = null;
+let tab = location.hash.slice(1);
 function nav() { $('#tabs').replaceChildren(...TABS.map(([k, l]) => h('button', { class: k === tab ? 'on' : null, onclick: () => { tab = k; location.hash = k; draw(); } }, l))); }
-async function draw() { nav(); const m = $('#main'); m.replaceChildren(h('div', { class: 'soft' }, 'Loading…'));
-  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, wos: (x) => drawTracker('wos', x), sales: (x) => drawTracker('sales', x), people: (x) => drawTracker('people', x) }[tab] || drawReports)(m); }
+const LOCK_SVG = '<svg width="26" height="26" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg>';
+function noAccess(m) {
+  const name = (TABS_ALL.find(([k]) => k === tab) || [])[1], first = TABS[0];
+  m.replaceChildren(h('div', { class: 'card deny' }, h('div', { class: 'ic', html: LOCK_SVG }), h('h2', null, 'You don’t have access to this page'),
+    h('p', null, name ? '“' + name + '” isn’t part of your access. If you need it, ask an owner to add it on the People page.' : 'There’s no page at this link.'),
+    first ? h('button', { class: 'btn p', onclick: () => { tab = first[0]; location.hash = tab; draw(); } }, 'Go to ' + first[1]) : null,
+    h('div', { class: 'soft', style: 'margin-top:16px' }, 'Direct link: /#' + tab + (name ? ' · the server refuses its data too' : ''))));
+}
+async function draw() {
+  const m = $('#main');
+  if (!ACCESS) {
+    try { ACCESS = (await api('GET', '/tracker/me')).access; } catch (e) { return m.replaceChildren(h('div', { class: 'err' }, "Couldn't load: " + e.message)); }
+    if (!ACCESS) return m.replaceChildren(h('div', { class: 'card deny' }, h('div', { class: 'ic', html: LOCK_SVG }), h('h2', null, 'You’re not on the access list yet'), h('p', null, 'Ask an owner to add you on the People page.')));
+    TABS = TABS_ALL.filter(([k]) => ACCESS.owner || ACCESS.pages.includes(k));
+    $('#ownr').style.display = ACCESS.owner ? '' : 'none';
+    if (!tab) tab = (TABS[0] || [''])[0];
+  }
+  nav();
+  if (!TABS.some(([k]) => k === tab)) return noAccess(m); // a direct link to a page they don't have: no API call for it
+  m.replaceChildren(h('div', { class: 'soft' }, 'Loading…'));
+  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, metrics: drawMetrics, wos: (x) => drawTracker('wos', x), sales: (x) => drawTracker('sales', x), people: (x) => drawTracker('people', x) }[tab])(m); }
   catch (e) { m.replaceChildren(h('div', { class: 'err' }, "Couldn't load: " + e.message)); } }
+// Metrics: the page itself lands with feat/metrics (metrics-ui); until then the tab only holds its place.
+async function drawMetrics(m) { m.replaceChildren(h('div', { class: 'card' }, h('h3', null, 'Metrics'), h('div', { class: 'soft' }, 'Metrics is on its way.'))); }
 function toast(t) { const el = h('div', { style: 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;z-index:9' }, t); document.body.append(el); setTimeout(() => el.remove(), 3500); }
 
 // ---------------------------------------------------------------- Reports

@@ -18,7 +18,12 @@ CREATE TABLE IF NOT EXISTS people (
   name TEXT,
   scope TEXT NOT NULL CHECK (scope IN ('all', 'stores')),
   stores TEXT NOT NULL DEFAULT '[]',   -- JSON [914, ...] when scope = 'stores'
-  added_by TEXT, added_at TEXT, last_seen_at TEXT
+  added_by TEXT, added_at TEXT, last_seen_at TEXT,
+  -- Oct 17, 2026: per-person access (admin-worker gate, tracker-worker/src/access.js). Owners (TRACKER_OWNERS) bypass all of it.
+  pages TEXT NOT NULL DEFAULT '["wos"]',   -- JSON page ids: wos sales metrics data usage reports auto stores
+  details INTEGER NOT NULL DEFAULT 0,      -- 1 = may open sealed customer details (gets key copies); 0 = sealed fields stripped
+  review INTEGER NOT NULL DEFAULT 0,       -- 1 = carried over by the access migration, an owner should trim it
+  updated_by TEXT, updated_at TEXT
 );
 -- A person's copies of keys, locked with their passphrase (or a one-time invite code).
 CREATE TABLE IF NOT EXISTS person_keys (
