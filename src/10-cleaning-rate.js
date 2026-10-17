@@ -260,12 +260,19 @@ AE.crystal({
       if (p && !p.contains(e.target) && !(b && b.contains(e.target))) p.remove();
     });
 
+    // Daily metrics for the admin Metrics page: plain counts (AM orders, linked cleanings) for this store and day.
+    // Fire and forget; AE.tracker.daily is quiet on failure and skips numbers it already sent.
+    function upload(day, amOrders, cleanings) {
+      if (!AE.tracker || !AE.tracker.configured()) return;
+      AE.profile().then((p) => p.storeId && AE.tracker.daily(p.storeId, day, { am_orders: amOrders, cleanings_linked: cleanings }, 'divination')).catch(() => {});
+    }
     async function refresh() {
       if (loading) return;
       loading = true; renderBadge();
       try {
         last = await compute(); lastError = null;
         GM_setValue(BADGE_KEY, { day: todayKey(), parents: last.parents, linked: last.linked, pending: last.pending, pct: last.pct, at: last.at.toISOString() });
+        upload(last.day, last.parents, last.linked);
       }
       catch (e) { lastError = e.message || String(e); }
       finally {
@@ -324,7 +331,9 @@ AE.crystal({
       const since = new Date(need[0] + 'T00:00:00').getTime();
       const [wos, links] = await Promise.all([AE.data.workorders(since, 40), // closed lists newest first; stops past `since`
         fetchLinks(need[0]).catch(() => [])]);
-      saveHist(tallyDays(wos, need, links));
+      const tallied = tallyDays(wos, need, links);
+      saveHist(tallied);
+      for (const [k, v] of Object.entries(tallied)) upload(k, v[0], v[1]);
     }
 
     const pctOf = (parents, linked) => (parents ? Math.round((linked / parents) * 100) : null);

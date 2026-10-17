@@ -356,6 +356,35 @@ for (const [path, b] of [
 assert.deepEqual(await cnt(), before, 'nothing written by sandbox requests');
 ok(await call('POST', '/v1/914/tracker/scan', { rows, storeName: 'Newport News', by: 'Tech A' }), 'real staff still scan');
 
+// --- daily metrics: plain numbers for the Metrics page
+{
+  const dayOf = (back) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - back * 86400000));
+  const d0 = dayOf(0), d3 = dayOf(3);
+  const dm = (store, day) => env.TR.prepare('SELECT metric, value, source, by_name FROM daily_metrics WHERE store = ? AND day = ? ORDER BY metric').bind(store, day).all().then((r) => r.results);
+  let r = await call('POST', '/v1/914/tracker/daily', { day: d3, metrics: { labor_hours: 31.5, headcount: 6 }, source: 'tactician', by: 'Tech A' });
+  ok(r, 'daily upsert'); assert.deepEqual(r.j, { ok: true, saved: 2 });
+  assert.deepEqual(await dm(914, d3), [{ metric: 'headcount', value: 6, source: 'tactician', by_name: 'Tech A' }, { metric: 'labor_hours', value: 31.5, source: 'tactician', by_name: 'Tech A' }]);
+  ok(await call('POST', '/v1/914/tracker/daily', { day: d3, metrics: { labor_hours: 33 }, source: 'tactician', by: 'Tech A' }), 'daily replace');
+  assert.equal((await dm(914, d3)).find((x) => x.metric === 'labor_hours').value, 33, 'a later upload replaces the day');
+  ok(await call('POST', '/v1/914/tracker/daily', { day: d0, metrics: { am_orders: 9, cleanings_linked: 7 }, source: 'divination', by: 'Tech A' }), 'daily today');
+  const before = (await env.TR.prepare('SELECT COUNT(*) AS n FROM daily_metrics').first()).n;
+  for (const [what, b] of [
+    ['unknown key', { day: d0, metrics: { sales: 5 }, source: 'tactician' }],
+    ['not a number', { day: d0, metrics: { labor_hours: '5' }, source: 'tactician' }],
+    ['infinite', { day: d0, metrics: { labor_hours: null }, source: 'tactician' }],
+    ['negative', { day: d0, metrics: { labor_hours: -1 }, source: 'tactician' }],
+    ['no metrics', { day: d0, metrics: {}, source: 'tactician' }],
+    ['bad source', { day: d0, metrics: { headcount: 1 }, source: 'nope' }],
+    ['too old', { day: dayOf(20), metrics: { headcount: 1 }, source: 'tactician' }],
+    ['future', { day: dayOf(-5), metrics: { headcount: 1 }, source: 'tactician' }],
+    ['bad day', { day: '10/17/2026', metrics: { headcount: 1 }, source: 'tactician' }],
+  ]) assert.equal((await call('POST', '/v1/914/tracker/daily', b)).status, 400, what);
+  assert.equal((await call('POST', '/v1/999/tracker/daily', { day: d0, metrics: { headcount: 1 }, source: 'tactician' })).status, 403, 'store without access');
+  assert.equal((await call('POST', '/v1/914/tracker/daily', { day: d0, metrics: { headcount: 1 }, source: 'tactician', by: 'Sandbox Tech' })).status, 403, 'sandbox identity');
+  assert.equal((await call('POST', '/v1/999999/tracker/daily', { day: d0, metrics: { headcount: 1 }, source: 'tactician' })).status, 403, 'sandbox store');
+  assert.equal((await env.TR.prepare('SELECT COUNT(*) AS n FROM daily_metrics').first()).n, before, 'rejected uploads wrote nothing');
+}
+
 // --- retention: nothing trimmed without cold storage; with TRIM_WITHOUT_ARCHIVE the latest snapshot per WO stays
 await env.TR.prepare("UPDATE snapshots SET fetched_at = '2026-01-01T00:00:00Z'").run();
 await env.TR.prepare("UPDATE changes SET changed_at = '2026-01-01T00:00:00Z'").run();
