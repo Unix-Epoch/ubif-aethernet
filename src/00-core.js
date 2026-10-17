@@ -338,7 +338,20 @@ const AE = (() => {
     .sg-tag.ae-chip / .sg-auto.ae-chip (Waymark's own colors), .ghost (+ Tag), .round (icon only), .mini (list rows).
   */
   :root { --ae-chip-h:26px; --ae-chip-fs:13px; --ae-chip-icon:18px; --ae-chip-gap:8px; }
-  #ae-wo-chips { display:flex; flex-wrap:wrap; align-items:center; gap:var(--ae-chip-gap); flex:0 .15 auto; min-width:0; align-self:center; }
+  #ae-wo-chips { display:flex; flex-wrap:nowrap; align-items:center; gap:var(--ae-chip-gap); flex:0 1000 auto; min-width:0; align-self:center; }
+  /* Fit levels (AE.fitChips sets data-fit on the row from measurements; the name always gets room first, no animated widths):
+     0 full; 1 tag chips capped at 90px; 2 every chip icon-only (labels hidden, counts/dates kept, full text in title + aria-label);
+     3 row on its own line under the heading (full labels, wraps if it must). */
+  #ae-wo-chips[data-fit="1"] .ae-tl, #ae-wo-chips[data-fit="2"] .ae-tl { max-width:90px; }
+  #ae-wo-chips[data-fit="3"] { flex:1 1 100%; flex-wrap:wrap; row-gap:6px; margin:2px 0 6px; }
+  #ae-wo-chips[data-fit="2"] { --ae-chip-h:22px; --ae-chip-icon:16px; --ae-chip-gap:6px; }
+  #ae-wo-chips[data-fit="2"] .ae-lbl, #ae-wo-chips[data-fit="2"] .ae-tl { display:none; }
+  #ae-wo-chips[data-fit="2"] .ae-dot { display:inline-block; }
+  #ae-wo-chips[data-fit="2"] .ae-chip { padding:0 7px; gap:4px; }
+  #ae-wo-chips[data-fit="2"] .ae-chip.has-icon { padding-left:3px; }
+  #ae-wo-chips[data-fit="2"] .ae-chip.round { width:var(--ae-chip-h); padding:0; }
+  .ae-dot { display:none; width:8px; height:8px; border-radius:50%; background:currentColor; flex:none; }
+  .ae-tl { min-width:0; max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #ae-wo-chips:empty { display:none; }
   #sg-wm-row { display:contents; }
   .ae-chip { display:inline-flex; align-items:center; justify-content:center; gap:6px; box-sizing:border-box; height:var(--ae-chip-h); margin:0; padding:0 10px; border-radius:10000rem;
@@ -1251,9 +1264,38 @@ const AE = (() => {
     if (!parent) return null;
     let box = document.getElementById('ae-wo-chips');
     if (!box) { box = document.createElement('div'); box.id = 'ae-wo-chips'; box.className = 'sg'; }
-    if (box.parentElement !== parent) parent.appendChild(box);
+    if (box.parentElement !== parent) { parent.appendChild(box); watchFit(box, parent); }
     return box;
   }
+  // Fit the chip row to the heading, as little compaction as possible (levels in the CSS above): the customer's name must not be
+  // cut unless nothing else helps. Measured, not guessed: each level is tried in one synchronous pass (no paint between), the
+  // first where the name is whole and the row isn't squeezed wins. Re-runs (debounced) when the heading's row resizes (window,
+  // Portal's sidebar) and when chips come or go.
+  let fitBox = null, fitRO = null, fitMO = null, fitTimer = 0, fitW = -1;
+  function fitChips() {
+    fitTimer = 0;
+    const box = fitBox, parent = box && box.parentElement, head = woHead;
+    if (!box || !parent || !head || !head.isConnected || !box.isConnected || !box.firstElementChild) return;
+    fitW = parent.clientWidth;
+    let lvl = 0;
+    for (; lvl <= 3; lvl++) {
+      box.dataset.fit = String(lvl);
+      parent.style.flexWrap = lvl === 3 ? 'wrap' : '';
+      if (lvl === 3 || (head.scrollWidth <= head.clientWidth + 1 && box.scrollWidth <= box.clientWidth + 1)) break; // own line: the row wraps, so it always fits
+    }
+    // at level 3 a name still too long for its own line gets Portal's ellipsis, as it always did
+    fitW = parent.clientWidth;
+  }
+  const fitSoon = () => { if (!fitTimer) fitTimer = setTimeout(fitChips, 40); };
+  function watchFit(box, parent) {
+    fitBox = box;
+    if (!fitRO && window.ResizeObserver) fitRO = new ResizeObserver(() => { if (fitBox && fitBox.parentElement && fitBox.parentElement.clientWidth !== fitW) fitSoon(); });
+    if (!fitMO) fitMO = new MutationObserver(fitSoon);
+    fitRO && (fitRO.disconnect(), fitRO.observe(parent));
+    fitMO.disconnect(); fitMO.observe(box, { childList: true, subtree: true, characterData: true });
+    fitSoon();
+  }
+
   // Put a chip in that row at `order` (10 Esuna, 20 Assize, 30 tags, 40 + Tag, 50 Auto-Waymark). Returns false off a WO page.
   function woChip(woId, el, order) {
     const box = woHeadingRow(woId);

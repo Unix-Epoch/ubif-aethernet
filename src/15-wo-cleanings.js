@@ -84,8 +84,8 @@ AE.crystal({
       if (AE.CLEANING_PROGRAMS[s.wo.programId]) return null; // this is a cleaning
       const avail = s.matched.filter((c) => c.pending).length, done = s.matched.length - avail;
       if (!s.matched.length) return s.wo.programId === AE.PARENT_PROGRAM_ID ? { cls: 'none', html: 'No cleanings' } : null;
-      if (avail && done) return { cls: 'avail', html: AE.actionIcon('woCleanings', 18) + 'Swiftcast available (' + avail + ' / ' + done + ')', title: avail + ' available, ' + done + ' done' };
-      if (avail) return { cls: 'avail', html: AE.actionIcon('woCleanings', 18) + 'Swiftcast available (' + avail + ')' };
+      if (avail && done) return { cls: 'avail', html: AE.actionIcon('woCleanings', 18) + '<span class="ae-t"><span class="ae-lbl">Swiftcast available </span>(' + avail + ' / ' + done + ')</span>', title: avail + ' available, ' + done + ' done' };
+      if (avail) return { cls: 'avail', html: AE.actionIcon('woCleanings', 18) + '<span class="ae-t"><span class="ae-lbl">Swiftcast available </span>(' + avail + ')</span>', title: 'Swiftcast available (' + avail + ')' };
       return { cls: 'done icon round', html: AE.actionIcon('woCleanings', 18), title: (done === 1 ? '1 cleaning' : done + ' cleanings') + ' done — click for details' };
     }
 
@@ -102,6 +102,7 @@ AE.crystal({
       else delete pill.dataset.aeBug;
       pill.innerHTML = spec.html;
       pill.title = spec.title || 'Cleanings for this device — click for details';
+      pill.setAttribute('aria-label', spec.bug ? 'Divination failed' : pill.textContent.trim() ? pill.textContent.trim() + '. ' + pill.title : pill.title); // compact chips hide the label
       AE.woChip(woId, pill, 10);
     }
 

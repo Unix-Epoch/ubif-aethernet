@@ -446,7 +446,7 @@ AE.waymark = (() => {
   #sg-wm-row .sg-tag { order:30; } #sg-wm-row .add { order:40; } #sg-wm-row .sg-auto { order:50; }
   .sg-tag.ae-chip, .sg-auto.ae-chip { height:var(--ae-chip-h); border-radius:10000rem; font:600 var(--ae-chip-fs)/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
   .sg-auto.ae-chip { font-weight:700; }
-  .sg-tag.ae-chip { max-width:220px; overflow:hidden; text-overflow:ellipsis; gap:4px; padding:0 10px; cursor:default; }
+  .sg-tag.ae-chip { gap:4px; padding:0 10px; cursor:default; }
   .sg-tag.ae-chip.mini { padding:0 7px; font-weight:600; }
   .sg-auto.ae-chip { gap:5px; padding:0 4px 0 8px; cursor:context-menu; }
   .sg-auto.ae-chip svg { width:14px; height:14px; }
@@ -522,7 +522,7 @@ AE.waymark = (() => {
   // A tag chip. opts.label shows different text (e.g. with a count) but keeps the tag's colour.
   function chip(name, opts = {}) {
     const color = colorOf(name);
-    const el = h('span', { class: 'sg-tag' + (color ? '' : ' oneoff') + (opts.cls ? ' ' + opts.cls : ''), style: color ? '--c:' + COLORS[color] : null, title: opts.title || name }, opts.label || name);
+    const el = h('span', { class: 'sg-tag' + (color ? '' : ' oneoff') + (opts.cls ? ' ' + opts.cls : ''), style: color ? '--c:' + COLORS[color] : null, title: opts.title || name, 'aria-label': opts.title || name }, h('span', { class: 'ae-dot' }), h('span', { class: 'ae-tl' }, opts.label || name));
     if (opts.onRemove) el.append(h('button', { type: 'button', title: 'Remove ' + name, 'aria-label': 'Remove ' + name, onclick: (e) => { e.stopPropagation(); opts.onRemove(); } }, '×'));
     return el;
   }
@@ -537,10 +537,10 @@ AE.waymark = (() => {
   // The Auto-Waymark chip: blue ahead of time, amber on the day, red once overdue.
   function autoChip(woId, mark, onChange, cls) {
     const st = dueState(mark.due);
-    const label = (st === 'today' ? 'Today · ' : st === 'overdue' ? 'Overdue · ' : '') + fmtDate(mark.due);
-    const el = h('span', { class: 'sg-auto ' + st + (cls ? ' ' + cls : ''), role: 'note',
+    const prefix = st === 'today' ? 'Today · ' : st === 'overdue' ? 'Overdue · ' : '';
+    const el = h('span', { class: 'sg-auto ' + st + (cls ? ' ' + cls : ''), role: 'note', 'aria-label': 'Auto-Waymark: ' + prefix + fmtDate(mark.due),
       title: 'Auto-Waymark: follow up by ' + fmtDate(mark.due) + ' (set when it reached ' + (RULES[markKind(mark)] || RULES.rfp).name + '). Right-click to push it later; × removes it.' },
-      h('span', { html: CAL_SVG, style: 'line-height:0' }), label,
+      h('span', { html: CAL_SVG, style: 'line-height:0' }), h('span', { class: 'ae-t' }, prefix ? h('span', { class: 'ae-lbl' }, prefix) : null, fmtDate(mark.due)),
       h('button', { type: 'button', title: 'Remove this Auto-Waymark', 'aria-label': 'Remove Auto-Waymark', onclick: async (e) => {
         e.stopPropagation();
         try { await unmark(woId); } catch (err) { fail("couldn't remove the Auto-Waymark", err); }
@@ -666,7 +666,7 @@ AE.crystal({
       row = h('span', { id: ROW_ID, 'data-key': key },
         W.autoOf(woId) ? W.autoChip(woId, W.autoOf(woId), renderRow, 'ae-chip') : null,
         W.tagsOf(woId).map((t) => W.chip(t.tag, { cls: 'ae-chip', title: t.tag + ' · added by ' + (t.by || 'someone') + ', ' + W.when(t.at), onRemove: () => toggle(woId, t.tag, false) })),
-        h('button', { type: 'button', class: 'ae-chip ghost add', onclick: (e) => { e.stopPropagation(); togglePop(woId); } }, '+ Tag'));
+        h('button', { type: 'button', class: 'ae-chip ghost add', 'aria-label': 'Add a tag', title: 'Add a tag', onclick: (e) => { e.stopPropagation(); togglePop(woId); } }, '+', h('span', { class: 'ae-lbl' }, ' Tag')));
       anchor.appendChild(row);
     }
 

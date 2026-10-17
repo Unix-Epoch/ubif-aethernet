@@ -942,7 +942,8 @@ AE.crystal({
         pill.dataset.sig = sig;
         pill.className = 'sg ae-as ae-chip has-icon ' + sev;
         pill.title = 'Assize: ' + text + ' on this order';
-        pill.innerHTML = AE.actionIcon('assize', 18) + esc(text);
+        pill.innerHTML = AE.actionIcon('assize', 18) + '<span class="ae-t"><span class="ae-n">' + list.length + '</span><span class="ae-lbl"> ' + (list.length === 1 ? 'finding' : 'findings') + '</span></span>';
+        pill.setAttribute('aria-label', 'Assize: ' + text);
       }
       AE.woChip(woId, pill, 20);
       if (document.getElementById(POP_ID)) renderPop();
@@ -1006,7 +1007,7 @@ AE.crystal({
         mk?.remove();
         if (!list.length) continue;
         mk = h('button', { type: 'button', class: MK + ' ae-as ae-chip mini has-icon ' + sev, 'data-sig': sig, title: 'Assize: ' + list.length + (list.length === 1 ? ' finding' : ' findings') + ' (click opens the order)',
-          html: AE.actionIcon('assize', 14) + list.length });
+          html: AE.actionIcon('assize', 14) + list.length, 'aria-label': 'Assize: ' + list.length + (list.length === 1 ? ' finding' : ' findings') });
         mk.onmousedown = (e) => e.stopPropagation();
         mk.onclick = (e) => { e.preventDefault(); e.stopPropagation(); link.click(); };
         wrap.classList.add('ae-as-wrap');
