@@ -345,7 +345,7 @@ AE.crystal({
           h('div', { class: 'note' }, appleDevice ? (d.colors.length ? "The IMEI can't tell us the color. Pick one stores have seen on this model." : '')
             : 'Serial and Find My are Apple-only.'));
         const use = onDeviceStep() ? btn('Use this device', () => useDevice(), 'sg-primary', st.busy) : null;
-        foot.replaceChildren(h('span', { class: 'sp' }, apple ? 'Serial and Find My come from Portal' : ''),
+        foot.replaceChildren(h('span', { class: 'sp' }, apple ? 'Serial and Find My use Portal\'s backend to check' : ''),
           ...[btn('Copy model', () => { AE.track('decipher:copy'); copy(modelText(), 'model'); }, use ? '' : 'sg-primary'), use].filter(Boolean));
       }
 
@@ -404,7 +404,7 @@ AE.crystal({
         const s = st.suggestion;
         const sugText = s ? (s.brand && !D.norm(s.model).startsWith(D.norm(s.brand)) ? s.brand + ' ' : '') + s.model : '';
         body.replaceChildren(
-          h('div', { class: 'unk' }, h('b', null, 'New one! No store has seen this model yet.'), h('div', { class: 's' }, 'Tell us what it is once and every store gets it from then on.'),
+          h('div', { class: 'unk' }, h('b', null, 'New device or a rare IMEI! No store has seen this yet.'), h('div', { class: 's' }, 'Tell us what it is once and every store gets it from then on.'),
             s ? h('div', { class: 'sug' }, h('div', { class: 't' }, sugText, h('div', { class: 's' }, 'Our best guess, from a public device list')),
               sugBtn = btn("That's it", () => acceptSuggestion(sugText), 'sg-primary', accepting || st.busy)) : null),
           h('label', { class: 'f' }, s ? 'Not it? Find the model' : 'Find the model'), h('div', { class: 'in' }, search), listWrap);
@@ -476,7 +476,7 @@ AE.crystal({
         if (c) { c.click(); return 'Filled in the model and color: ' + name + ' ' + color + '.'; }
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       }
-      return 'Filled in the model: ' + name + '. Pick the color yourself (' + color + ').';
+      return 'Filled in the model: ' + name + '. Pick the device\'s color (' + color + ').';
     }
 
     // The Decipher button on check-in's Device step: beside the IMEI box, or under the model box until that shows up.
@@ -503,7 +503,7 @@ AE.crystal({
       const item = settingsItem.cloneNode(true);
       item.setAttribute('data-testid', MENU);
       const label = item.querySelector('[data-aui="text"]') || item;
-      label.textContent = 'Decipher';
+      label.textContent = 'IMEI lookup';
       item.addEventListener('click', (e) => {
         e.preventDefault(); e.stopPropagation();
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

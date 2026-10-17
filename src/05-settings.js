@@ -34,8 +34,8 @@
     ['glamour', 'Glamour', 'Beautify your Portal - change the colors of your pages and the image on your login page. Pick your look right here in Settings.'],
     ...(AE_DEMO ? [] : [
     ['waymark', 'Waymark', 'Tags on your WOs that the whole store can see, plus a board that groups them all together. Click the Waymark icon at the top for the board.'],
-    ['countCheck', 'Lay of the Land', 'Restores the inventory count you remember - variance and unscanned serials at Arm\'s Length. Shows on any inventory count page.'],
-    ['rowColors', 'Rainbow Drip', 'Brings back a color for every status - goodbye, corporate minimalism (sorta). Shows on the Work orders list.'],
+    ['countCheck', 'Lay of the Land', 'Restores the inventory count you remember - variance and unscanned serials at an Arm\'s Length. Shows on any inventory count page.'],
+    ['rowColors', 'Rainbow Drip', 'Brings back a color for every status. Goodbye, corporate minimalism! (sorta). Shows on the Work orders list.'],
     ['fixes', "Master's Mend", 'Doing what a million-dollar company can\'t: fixing genuinely annoying Portal issues. Turn each fix on or off in its options here.'],
     ]),
   ];

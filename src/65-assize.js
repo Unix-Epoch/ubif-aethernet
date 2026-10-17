@@ -1006,7 +1006,7 @@ AE.crystal({
         if (mk && mk.dataset.sig === sig && mk.previousElementSibling === link) continue;
         mk?.remove();
         if (!list.length) continue;
-        mk = h('button', { type: 'button', class: MK + ' ae-as ae-chip mini has-icon ' + sev, 'data-sig': sig, title: 'Assize: ' + list.length + (list.length === 1 ? ' finding' : ' findings') + '. Click to open the order.',
+        mk = h('button', { type: 'button', class: MK + ' ae-as ae-chip mini has-icon ' + sev, 'data-sig': sig, title: 'Assize: ' + list.length + (list.length === 1 ? ' finding' : ' findings') + '. Click to open the WO.',
           html: AE.actionIcon('assize', 14) + list.length, 'aria-label': 'Assize: ' + list.length + (list.length === 1 ? ' finding' : ' findings') });
         mk.onmousedown = (e) => e.stopPropagation();
         mk.onclick = (e) => { e.preventDefault(); e.stopPropagation(); link.click(); };
