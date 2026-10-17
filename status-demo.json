@@ -3,25 +3,5 @@
     "version": "2.16.1",
     "date": "2026-09-30T23:12:50Z"
   },
-  "incident": {
-    "id": "2026-10-05-swiftcast-now-adds-vzw-screen-protectors",
-    "severity": "info",
-    "title": "Swiftcast now adds VZW screen protectors to Refresh cleanings!",
-    "message": "Thanks to your reports, as of Aethernet ver. 2.22.0,  Swiftcast can now add the optional VZW Free Screen Protector SKU to any VZ Refresh cleanings you close with it. Enjoy the extra commission on these cleanings, and please keep the suggestions and bug reports coming!",
-    "crystals": [
-      "autoClose"
-    ],
-    "pause": [],
-    "fixedIn": null,
-    "posted": "2026-10-05T04:28:21Z",
-    "updated": "2026-10-05T04:28:21Z",
-    "tag": "Fixed in future version",
-    "chips": [
-      {
-        "id": "autoClose",
-        "text": "Fixed in future version",
-        "below": "2.22.0"
-      }
-    ]
-  }
+  "incident": null
 }
