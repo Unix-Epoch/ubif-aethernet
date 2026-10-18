@@ -84,6 +84,18 @@ assert.deepEqual(sp.filter((r) => r.wo === 9002).map((r) => [r.status_id, r.star
 assert.deepEqual(sp.filter((r) => r.wo === 9003).map((r) => [r.status_id, r.start_at, r.end_at]), [[10, Z('2026-10-12', 10), Z('2026-10-13', 10)], [13, Z('2026-10-13', 10), Z('2026-10-14', 12)]], 'from changes when the history is missing');
 assert.equal((await api(owner, '/metrics/backfill?after=0', 'POST')).j.written, 0, 'second run writes nothing');
 
+// RFP level comes from rfp_periods: WO 9004 sat in Bench (12) 10:00-13:00 with an RFP episode 11:00-12:00 the audit trail missed
+await T.batch([
+  T.prepare('INSERT INTO scans (store, at, by_name) VALUES (777, ?, ?)').bind('2026-10-01T15:00:00Z', 'x'),
+  T.prepare('INSERT INTO status_periods (store, wo, status_id, start_at, end_at) VALUES (777, 9004, 12, ?, ?), (777, 9005, 12, ?, NULL)').bind(Z('2026-10-13', 10), Z('2026-10-13', 13), Z('2026-10-13', 9)),
+  T.prepare('INSERT INTO rfp_periods (store, wo, start_at, end_at, value) VALUES (777, 9004, ?, ?, 50), (777, 9006, ?, NULL, 10)').bind(Z('2026-10-13', 11), Z('2026-10-13', 12), Z('2026-10-13', 11)),
+]);
+{
+  const h = (await buildMetrics(E, { from: '2026-10-13', to: '2026-10-13', stores: [777], gran: 'hour', compare: false, now: NOW })).cur.main, at = (k, hr) => h[k][777][hr - 8];
+  assert.deepEqual([10, 11, 12].map((x) => at('open', x)), [2, 2, 2], 'open unchanged by the overlay');
+  assert.deepEqual([10, 11, 12].map((x) => at('rfp', x)), [0, 1, 0], 'RFP episode inside a bench period counts as rfp (an untracked WO 9006 adds nothing)');
+  assert.deepEqual([10, 11, 12].map((x) => at('bench', x)), [2, 1, 2], 'and not as bench');
+}
 // ------------------------------------------------------------------ sums
 const q = (o) => Object.assign({ from: '2026-10-13', to: '2026-10-15', stores: [914, 326], gran: 'day', compare: true, now: NOW }, o);
 let m = await buildMetrics(E, q());

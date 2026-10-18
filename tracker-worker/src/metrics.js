@@ -238,8 +238,10 @@ async function build(env, q) {
       FROM rfp_periods r JOIN workorders w ON w.store = r.store AND w.wo = r.wo
       WHERE r.store ${IN} AND r.end_at >= ? AND r.end_at < ? AND w.status_id = 14 AND NOT EXISTS (SELECT 1 FROM rfp_periods e WHERE e.store = r.store AND e.wo = r.wo AND e.start_at > r.start_at)
       GROUP BY r.store, h`).bind(S, t0, t1),
-    T.prepare(`SELECT store, status_id AS s, start_at AS a, end_at AS b FROM status_periods WHERE store ${IN} AND end_at IS NULL AND start_at < ?
-      UNION ALL SELECT store, status_id, start_at, end_at FROM status_periods WHERE store ${IN} AND end_at >= ? AND start_at < ?`).bind(S, t1, S, t0, t1),
+    T.prepare(`SELECT store, wo, status_id AS s, start_at AS a, end_at AS b FROM status_periods WHERE store ${IN} AND end_at IS NULL AND start_at < ?
+      UNION ALL SELECT store, wo, status_id, start_at, end_at FROM status_periods WHERE store ${IN} AND end_at >= ? AND start_at < ?`).bind(S, t1, S, t0, t1),
+    T.prepare(`SELECT store, wo, start_at AS a, end_at AS b FROM rfp_periods WHERE store ${IN} AND end_at IS NULL AND start_at < ?
+      UNION ALL SELECT store, wo, start_at, end_at FROM rfp_periods WHERE store ${IN} AND end_at >= ? AND start_at < ?`).bind(S, t1, S, t0, t1),
     T.prepare(`SELECT store, CAST(julianday(?) - julianday(start_at) AS INTEGER) AS age, COUNT(*) AS n, SUM(COALESCE(value, 0)) AS v FROM rfp_periods WHERE store ${IN} AND end_at IS NULL GROUP BY store, age`).bind(nowIso, S),
     T.prepare(`SELECT store, wo, MIN(start_at) AS a FROM rfp_periods WHERE store ${IN} AND end_at IS NULL GROUP BY store`).bind(S),
     T.prepare(`SELECT value AS store, (SELECT MIN(at) FROM scans WHERE store = j.value) AS first, (SELECT MAX(at) FROM scans WHERE store = j.value) AS last,
@@ -263,7 +265,7 @@ async function build(env, q) {
     T.prepare(`SELECT store, day, metric, value FROM daily_metrics WHERE store ${IN} AND day BETWEEN ? AND ?`).bind(S, prevFrom, to).all().then((r) => r.results).catch(() => []), // table comes with daily uploads
     aeQ.length ? A.batch(aeQ).catch(() => aeQ.map(() => ({ results: [] }))) : [],
   ]);
-  const [sDays, sales, progs, est, created, done, devs, pick, sp, aging, oldest, scans, spAny] = tr.map((x) => x.results);
+  const [sDays, sales, progs, est, created, done, devs, pick, sp, rfpP, aging, oldest, scans, spAny] = tr.map((x) => x.results);
 
   // ---- sales: Portal's where the day was synced, else estimated from WOs at Sale complete
   const synced = new Set(sDays.map((d) => d.store + '|' + d.day)), dayTotal = new Map(); // store|day → sales (for sales per labor hour)
@@ -322,6 +324,19 @@ async function build(env, q) {
     const a = Date.parse(r.a), b = r.b ? Date.parse(r.b) : Infinity, lo = lb(a), hi = b === Infinity ? sorted.length : lb(b);
     if (hi <= lo) continue;
     for (const c of [bucketOf(r.s), 'open'].concat(r.s === 2 ? ['nto'] : [])) { const d = D(r.store, c); d[lo]++; d[hi]--; }
+  }
+  // Portal's audit trail often omits status 13, so status periods understate RFP; rfp_periods is the reliable record.
+  // Move each overlap of an RFP episode with a non-13 status period of the same WO from that status's bucket to 'rfp'
+  // (open unchanged; RFP time outside any status period is ignored so rfp never exceeds open; status-13 periods already count as rfp).
+  const spBy = new Map();
+  for (const r of sp) if (r.s !== 13) { const k = r.store + '|' + r.wo; (spBy.get(k) || spBy.set(k, []).get(k)).push([Date.parse(r.a), r.b ? Date.parse(r.b) : Infinity, r.s]); }
+  for (const r of rfpP) {
+    const ra = Date.parse(r.a), rb = r.b ? Date.parse(r.b) : Infinity;
+    for (const [a, b, s] of spBy.get(r.store + '|' + r.wo) || []) {
+      const x = Math.max(a, ra), y = Math.min(b, rb), lo = lb(x), hi = y === Infinity ? sorted.length : lb(y);
+      if (y <= x || hi <= lo) continue;
+      const from = D(r.store, bucketOf(s)), to = D(r.store, 'rfp'); from[lo]--; from[hi]++; to[lo]++; to[hi]--;
+    }
   }
   const counts = new Map();
   for (const [k, d] of diffs) { const c = new Int32Array(sorted.length); let run = 0; for (let i = 0; i < sorted.length; i++) { run += d[i]; c[i] = run; } counts.set(k, c); }
