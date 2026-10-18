@@ -105,6 +105,7 @@ export const WAYMARK_SQL = [
   'CREATE TABLE IF NOT EXISTS usage (day TEXT NOT NULL, store INTEGER NOT NULL, store_name TEXT, user_id INTEGER NOT NULL, user_name TEXT, feature TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (day, store, user_id, feature))',
   'CREATE TABLE IF NOT EXISTS store_access (store INTEGER PRIMARY KEY, name TEXT, added_by TEXT, added_at TEXT)',
   'CREATE TABLE IF NOT EXISTS auto_marks (store INTEGER NOT NULL, wo INTEGER NOT NULL, due TEXT NOT NULL, created_at TEXT NOT NULL, removed_at TEXT, kind TEXT, PRIMARY KEY (store, wo))',
+  'CREATE TABLE IF NOT EXISTS wo_closed (store INTEGER NOT NULL, wo INTEGER NOT NULL, closed_at TEXT NOT NULL, PRIMARY KEY (store, wo))',
   'CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL)',
 ];
 

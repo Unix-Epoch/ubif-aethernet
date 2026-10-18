@@ -252,7 +252,8 @@ async function build(env, q) {
     A.prepare(`SELECT store, day, COUNT(DISTINCT user_id) AS n FROM usage WHERE day BETWEEN ? AND ? AND store ${IN} AND feature = 'active' GROUP BY store, day`).bind(prevFrom, to, S),
     A.prepare(`SELECT day, COUNT(DISTINCT user_id) AS n FROM usage WHERE day BETWEEN ? AND ? AND store ${IN} AND feature = 'active' GROUP BY day`).bind(prevFrom, to, S),
     A.prepare(`SELECT store, SUM(CASE WHEN due < ? THEN 1 ELSE 0 END) AS over, SUM(CASE WHEN due = ? THEN 1 ELSE 0 END) AS due, SUM(CASE WHEN due > ? THEN 1 ELSE 0 END) AS up
-      FROM auto_marks WHERE removed_at IS NULL AND store ${IN} GROUP BY store`).bind(today, today, today, S),
+      FROM auto_marks m WHERE removed_at IS NULL AND store ${IN}
+        AND NOT EXISTS (SELECT 1 FROM wo_closed c WHERE c.store = m.store AND c.wo = m.wo) GROUP BY store`).bind(today, today, today, S), // open WOs only, like Waymark's badge (marks stay 7 days after a WO closes)
     A.prepare("SELECT value FROM config WHERE key = 'cleaningTarget'"),
   ] : [];
   const [tr, dm, ae] = await Promise.all([

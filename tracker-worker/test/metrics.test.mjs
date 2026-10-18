@@ -67,7 +67,8 @@ await T.batch([
 await A.batch([
   A.prepare("INSERT INTO store_access (store, name) VALUES (914, 'Newport News'), (326, 'Lynnhaven'), (536, 'Lexington')"),
   A.prepare("INSERT INTO usage (day, store, user_id, feature, count) VALUES ('2026-10-14', 914, 1, 'active', 1), ('2026-10-14', 914, 2, 'active', 1), ('2026-10-14', 326, 1, 'active', 1), ('2026-10-14', 914, 1, 'waymark:board', 5), ('2026-10-14', 914, 2, 'cleaningRate', 3), ('2026-10-14', 326, 1, 'waymark:board', 4)"),
-  A.prepare("INSERT INTO auto_marks (store, wo, due, created_at) VALUES (914, 1, '2026-10-14', 'x'), (914, 2, '2026-10-15', 'x'), (914, 3, '2026-10-20', 'x')"),
+  A.prepare("INSERT INTO auto_marks (store, wo, due, created_at) VALUES (914, 1, '2026-10-14', 'x'), (914, 2, '2026-10-15', 'x'), (914, 3, '2026-10-20', 'x'), (914, 4, '2026-10-13', 'x')"),
+  A.prepare("INSERT INTO wo_closed (store, wo, closed_at) VALUES (914, 4, 'x')"), // a closed WO's mark (kept 7 days) isn't counted
   A.prepare("INSERT INTO config (key, value, updated_at) VALUES ('cleaningTarget', '60', 'x')"),
 ]);
 
