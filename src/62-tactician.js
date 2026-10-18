@@ -111,7 +111,35 @@ AE.tactician = (() => {
   }
   const summary = () => { const g = settings && settings.gm; return g && g.userIds && g.userIds.length ? 'General manager: ' + g.userIds.map((id) => (g.names || {})[id] || id).join(', ') : 'General manager not set'; };
 
-  return { ymd, monday, canManage, loadSettings, gmIds, saveGm, punches, people, gmEditor, summary };
+  // Daily labor for the admin Metrics page: the last 7 days' hours (GM apart) and headcount, same rules as the
+  // Sales per labor hour card (this store's punches; a forgotten clock-out on a past day isn't counted; today runs
+  // to now and is replaced by later uploads). AE.tracker.daily skips numbers it already sent. Never throws.
+  let uploading = null;
+  function uploadDaily() {
+    if (uploading || !AE.tracker || !AE.tracker.daily) return uploading;
+    return (uploading = (async () => {
+      try {
+        const store = Number((await AE.profile()).storeId);
+        if (!store) return;
+        const t = new Date(), f = new Date(t); f.setDate(f.getDate() - 6);
+        const today = ymd(t), [ps, gm] = await Promise.all([punches(ymd(f), today), gmIds()]);
+        const days = new Map();
+        for (const pu of ps) {
+          if (pu.s !== store || pu.c === 2 || !pu.i) continue;
+          const day = ymd(new Date(pu.i));
+          if (day < ymd(f) || day > today || (!pu.o && day !== today)) continue;
+          const d = days.get(day) || days.set(day, { hrs: 0, gm: 0, who: new Set() }).get(day);
+          const hrs = Math.max(0, ((pu.o ? Date.parse(pu.o) : Date.now()) - Date.parse(pu.i)) / 3600000);
+          if (gm.has(pu.u)) d.gm += hrs; else d.hrs += hrs;
+          d.who.add(pu.u);
+        }
+        for (const [day, d] of days) await AE.tracker.daily(store, day, { labor_hours: d.hrs, labor_hours_gm: d.gm, headcount: d.who.size }, 'tactician');
+      } catch (e) { console.warn('[Aethernet] Tactician daily upload failed', e); AE.noteError('Tactician daily upload', e); }
+      finally { uploading = null; }
+    })());
+  }
+
+  return { ymd, monday, canManage, loadSettings, gmIds, saveGm, punches, people, gmEditor, summary, uploadDaily };
 })();
 
 AE.crystal({
