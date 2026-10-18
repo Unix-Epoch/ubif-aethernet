@@ -173,6 +173,7 @@ async function salesDays(env, visible, from, to) {
   there. Kept from each changed snapshot: in RFP → open a period (start = Portal's rfpAt, else the WO's
   updatedAt, else now) or update its value; anything else → close the open one (end = updatedAt / now).
 */
+const closeRfpPeriod = (T, store, wo, at) => T.prepare('UPDATE rfp_periods SET end_at = ? WHERE store = ? AND wo = ? AND end_at IS NULL').bind(at, store, wo);
 async function rfpPeriodStmts(T, store, wo, plain, at) {
   const w = (plain && plain.workorder) || {}, inRfp = Number(w.statusId) === 13;
   const open = await T.prepare('SELECT start_at FROM rfp_periods WHERE store = ? AND wo = ? AND end_at IS NULL').bind(store, wo).first();
@@ -365,16 +366,20 @@ async function storeApi(req, env, url, store) {
     // Open WOs missing from the list: fetched in full to see whether they really closed. A short or
     // failed list (Waymark saw one report 14 WOs closed at once) is ignored rather than trusted.
     const open = [...known.values()].filter((k) => k.is_open);
-    const missing = open.filter((k) => !listed.has(k.wo));
+    const oldestFirst = (x, y) => String(x.last_detail_at || '').localeCompare(String(y.last_detail_at || ''));
+    const missing = open.filter((k) => !listed.has(k.wo)).sort(oldestFirst);
+    // WOs Portal already answered 404 for don't count toward "short": otherwise enough of them lock the
+    // store the same way, since a short list never lets a 404 close them.
+    const counted = open.filter((k) => !(k.gone_seen_at && !listed.has(k.wo))).length;
     let note = null;
     // Short = empty, or under half of what we have open (WOs that really closed are fine: each one is
     // checked in Portal before it's recorded closed, so a list can only ever cause extra checks).
     // A short list still sends a few of them for a full check, oldest first, without marking them missing
     // (so a 404 can't close them): skipping them outright locked a busy store once closed WOs passed half
     // of what was on record, and they piled up as ghosts (Lynnhaven, Oct 2026).
-    if (!rows.length || (open.length >= 10 && rows.length < open.length / 2)) {
+    if (!rows.length || (counted >= 10 && rows.length < counted / 2)) {
       note = 'list looks short (' + rows.length + ' rows, ' + open.length + ' open on record): checking missing WOs a few at a time';
-      missing.filter((k) => !claimed(k)).sort((x, y) => String(x.last_detail_at || '').localeCompare(String(y.last_detail_at || ''))).slice(0, STALE_MAX)
+      missing.filter((k) => !claimed(k)).slice(0, STALE_MAX)
         .forEach((k) => need.push({ wo: k.wo, why: 'missing' }));
     } else for (const k of missing) {
       if (!k.missing_since) stmts.push(T.prepare('UPDATE workorders SET missing_since = ? WHERE store = ? AND wo = ?').bind(at, store, k.wo));
@@ -499,6 +504,16 @@ async function storeApi(req, env, url, store) {
       incomplete: { count: r.incomplete || 0, value: r.incomplete_value || 0 }, unknown: r.unknown || 0, updatedAt: (sc && sc.at) || null });
   }
 
+  const mv = path.match(/^\/wo\/(\d{1,12})\/moved$/);
+  if (mv && req.method === 'POST') {
+    const wo = Number(mv[1]), at = now(), b = await readJson(req, MAX.wo), to = int(b.to);
+    if (!to || to === store) return fail(400, 'to (the other store) required');
+    const k = await T.prepare('SELECT is_open FROM workorders WHERE store = ? AND wo = ?').bind(store, wo).first();
+    if (!k || !k.is_open) return json({ ok: true, ignored: 'not open' });
+    await T.batch([T.prepare('UPDATE workorders SET is_open = 0, closed_at = ?, closed_reason = ?, claimed_until = NULL, last_detail_at = ? WHERE store = ? AND wo = ?')
+      .bind(at, 'moved to store ' + to, at, store, wo), closeStatusPeriod(T, store, wo, at), closeRfpPeriod(T, store, wo, at)]);
+    return json({ ok: true, closed: true });
+  }
   const wm = path.match(/^\/wo\/(\d{1,12})(\/gone)?$/);
   if (wm && req.method === 'POST') {
     const wo = Number(wm[1]), at = now();
@@ -509,13 +524,16 @@ async function storeApi(req, env, url, store) {
       // WO that's also missing from the list (a WO from another store, or a Portal hiccup, is never closed).
       const k = await T.prepare('SELECT is_open, missing_since, gone_seen_at FROM workorders WHERE store = ? AND wo = ?').bind(store, wo).first();
       if (!k || !k.is_open) return json({ ok: true, ignored: 'not open' });
-      if (!k.missing_since) return json({ ok: true, ignored: 'still in the list' });
+      if (!k.missing_since) { // not trusted missing (short list): note the 404, send it to the back of the line
+        await T.prepare('UPDATE workorders SET gone_seen_at = COALESCE(gone_seen_at, ?), last_detail_at = ?, claimed_until = NULL WHERE store = ? AND wo = ?').bind(at, at, store, wo).run();
+        return json({ ok: true, ignored: 'not confirmed missing' });
+      }
       if (!k.gone_seen_at || Date.parse(at) - Date.parse(k.gone_seen_at) < GONE_MIN * 60000) {
         if (!k.gone_seen_at) await T.prepare('UPDATE workorders SET gone_seen_at = ?, claimed_until = NULL WHERE store = ? AND wo = ?').bind(at, store, wo).run();
         else await T.prepare('UPDATE workorders SET claimed_until = NULL WHERE store = ? AND wo = ?').bind(store, wo).run();
         return json({ ok: true, pending: 'confirm later' });
       }
-      await T.batch([T.prepare("UPDATE workorders SET is_open = 0, closed_at = ?, closed_reason = 'gone', claimed_until = NULL, last_detail_at = ? WHERE store = ? AND wo = ?").bind(at, at, store, wo), closeStatusPeriod(T, store, wo, at)]);
+      await T.batch([T.prepare("UPDATE workorders SET is_open = 0, closed_at = ?, closed_reason = 'gone', claimed_until = NULL, last_detail_at = ? WHERE store = ? AND wo = ?").bind(at, at, store, wo), closeStatusPeriod(T, store, wo, at), closeRfpPeriod(T, store, wo, at)]);
       return json({ ok: true, closed: true });
     }
     const hash = clean(b.hash, 64), plain = b.plain;

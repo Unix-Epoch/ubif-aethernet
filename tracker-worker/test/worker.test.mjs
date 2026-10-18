@@ -119,7 +119,8 @@ assert.ok(lg.some((l) => l.email === 'mgr@x.com' && l.action === 'list'));
 // --- safety: another store's WO is refused; "gone" needs two 404s 10+ min apart while missing from the list
 const other = plain(5001, 2, 'Work in progress'); other.workorder.storeId = 326;
 assert.equal((await call('POST', '/v1/914/tracker/wo/5001', { hash: 'h2', plain: other, sealed: await C.sealJson({}, sk, C.aad.snapshot(914, 5001)) })).status, 409, 'other store refused');
-assert.equal((await call('POST', '/v1/914/tracker/wo/5001/gone', {})).j.ignored, 'still in the list');
+assert.equal((await call('POST', '/v1/914/tracker/wo/5001/gone', {})).j.ignored, 'not confirmed missing');
+await env.TR.prepare('UPDATE workorders SET gone_seen_at = NULL WHERE wo = 5001').run();
 await env.TR.prepare("UPDATE workorders SET missing_since = '2026-10-12T00:00:00Z' WHERE wo = 5001").run();
 assert.equal((await call('POST', '/v1/914/tracker/wo/5001/gone', {})).j.pending, 'confirm later');
 assert.equal((await call('POST', '/v1/914/tracker/wo/5001/gone', {})).j.pending, 'confirm later', 'second 404 too soon');
@@ -145,6 +146,39 @@ await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
 s = await call('POST', '/v1/914/tracker/scan', { rows: rows2.concat(Array.from({ length: 8 }, (_, i) => ({ wo: 6000 + i, statusId: 2, status: 'Work in progress', updatedAt: '2026-10-12T00:00:00Z' }))) });
 assert.ok(!s.j.note, 'more than half listed → missing WOs get checked: ' + s.j.note);
 assert.ok(s.j.need.filter((n) => n.why === 'missing').length >= 4);
+
+// 404 ghosts on a short list: noted and sent to the back of the line, then no longer counted toward "short",
+// so the normal path can confirm and close them (and their RFP time stops)
+await env.TR.prepare("UPDATE workorders SET is_open = 0 WHERE wo >= 6000 AND wo < 7000").run();
+for (let i = 0; i < 14; i++) {
+  await env.TR.prepare("INSERT INTO workorders (store, wo, is_open, status_id, last_detail_at) VALUES (914, ?, 1, 13, ?)").bind(7000 + i, '2026-10-11T00:00:' + String(10 + i) + 'Z').run();
+  await env.TR.prepare("INSERT INTO rfp_periods (store, wo, start_at) VALUES (914, ?, '2026-10-10T00:00:00Z')").bind(7000 + i).run();
+}
+await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
+s = await call('POST', '/v1/914/tracker/scan', { rows: rows2 });
+assert.ok(/short/.test(s.j.note || ''), 'ghosts make it short: ' + s.j.note);
+const first10 = s.j.need.filter((n) => n.why === 'missing').map((n) => n.wo);
+assert.deepEqual(first10, Array.from({ length: 10 }, (_, i) => 7000 + i), 'oldest first');
+for (const wo of first10) assert.equal((await call('POST', '/v1/914/tracker/wo/' + wo + '/gone', {})).j.ignored, 'not confirmed missing');
+s = await call('POST', '/v1/914/tracker/scan', { rows: rows2 });
+const next = s.j.need.filter((n) => n.why === 'missing').map((n) => n.wo);
+assert.ok(next.slice(0, 4).every((wo) => wo >= 7010), '404s went to the back: ' + next);
+for (const wo of next.filter((w) => w >= 7010)) await call('POST', '/v1/914/tracker/wo/' + wo + '/gone', {});
+await env.TR.prepare("UPDATE workorders SET gone_seen_at = '2026-10-12T00:00:00Z', claimed_until = NULL WHERE wo >= 7000").run();
+s = await call('POST', '/v1/914/tracker/scan', { rows: rows2 });
+assert.ok(!s.j.note, '404 ghosts no longer count toward short: ' + s.j.note);
+assert.equal((await call('POST', '/v1/914/tracker/wo/7000/gone', {})).j.closed, true, 'confirmed missing → closes');
+assert.ok((await env.TR.prepare('SELECT end_at FROM rfp_periods WHERE wo = 7000').first()).end_at, 'RFP time closed with it');
+// moved to another store: closed here with its periods
+assert.equal((await call('POST', '/v1/914/tracker/wo/7001/moved', { to: 914 })).status, 400);
+assert.equal((await call('POST', '/v1/914/tracker/wo/7001/moved', { to: 326 })).j.closed, true);
+const mvd = await env.TR.prepare('SELECT is_open, closed_reason FROM workorders WHERE wo = 7001').first();
+assert.equal(mvd.is_open, 0); assert.equal(mvd.closed_reason, 'moved to store 326');
+assert.ok((await env.TR.prepare('SELECT end_at FROM rfp_periods WHERE wo = 7001').first()).end_at);
+assert.equal((await call('POST', '/v1/914/tracker/wo/7001/moved', { to: 326 })).j.ignored, 'not open');
+await env.TR.prepare('DELETE FROM workorders WHERE wo >= 7000 AND wo < 8000').run();
+await env.TR.prepare('UPDATE workorders SET is_open = 1 WHERE wo >= 6000 AND wo < 7000').run();
+await env.TR.prepare('DELETE FROM rfp_periods WHERE wo >= 7000 AND wo < 8000').run();
 
 // --- RFP value ignores Partner Credit Tax Exempt lines; outcome splits complete / incomplete
 await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();

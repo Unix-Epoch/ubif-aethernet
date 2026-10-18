@@ -79,7 +79,7 @@ AE.tracker = (() => {
   async function prepare(store, wo, listRow, jwk) {
     const d = await detailOf(wo);
     const own = d.workorder && d.workorder.workorder;
-    if (own && own.storeId != null && Number(own.storeId) !== Number(store)) throw Object.assign(new Error("another store's work order"), { otherStore: true });
+    if (own && own.storeId != null && Number(own.storeId) !== Number(store)) throw Object.assign(new Error("another store's work order"), { otherStore: Number(own.storeId) });
     if (listRow) d.list_row = scrub(listRow);
     const plain = plainPart(d, listRow), card = cardOf(d, listRow);
     const out = { plain, card, detail: d, hash: await C.hashJson([plain, d]), detailBytes: JSON.stringify(d).length };
@@ -113,7 +113,10 @@ AE.tracker = (() => {
           if (j.same) result.same++; else result.sent++;
         } catch (e) {
           if (/session expired/i.test(e.message || '') || e.storeChanged) throw e; // signed out or store switched: stop
-          if (e.otherStore) continue; // never upload another store's work order
+          if (e.otherStore) { // never upload another store's work order; one on record here was moved there
+            try { await call('POST', '/v1/' + store + '/tracker/wo/' + n.wo + '/moved', { to: e.otherStore, by: p.name }); } catch (_) {}
+            continue;
+          }
           if (e.gone) { // Portal no longer has it
             try { await call('POST', '/v1/' + store + '/tracker/wo/' + n.wo + '/gone', { by: p.name }); result.gone++; continue; } catch (_) {}
           }
