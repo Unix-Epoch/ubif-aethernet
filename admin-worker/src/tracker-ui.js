@@ -247,7 +247,7 @@ async function drawWos(m) {
     h('div', { class: 'card k' }, h('div', { class: 'n' }, String(sum('open'))), h('div', { class: 'l' }, 'Open work orders · ' + st.length + ' store' + (st.length === 1 ? '' : 's'))),
     h('div', { class: 'card k' }, h('div', { class: 'n' }, String(sum('rfp'))), h('div', { class: 'l' }, 'Ready for pickup · ' + sum('rfp_complete') + ' complete · ' + sum('rfp_other') + ' incomplete' + (sum('rfp_unknown') ? ' · ' + sum('rfp_unknown') + ' not known yet' : ''))),
     h('div', { class: 'card k', title: 'Cart lines before tax, with Partner Credit Tax Exempt (PCEXEMPT) lines ignored, so partner repairs count at their value' },
-      h('div', { class: 'n' }, money(sum('rfp_value'))), h('div', { class: 'l' }, 'Value on the RFP table · complete ' + money(sum('rfp_complete_value')) + ' · incomplete ' + money(sum('rfp_other_value')) + ' · ' + money(sum('rfp_due')) + ' due from customers')),
+      h('div', { class: 'n' }, money(sum('rfp_value'))), h('div', { class: 'l' }, 'RFP total · complete ' + money(sum('rfp_complete_value')) + ' · incomplete ' + money(sum('rfp_other_value')) + ' · ' + money(sum('rfp_due')) + ' due from customers')),
     h('div', { class: 'card k' }, h('div', { class: 'n' }, !newest ? '—' : Date.now() - Date.parse(newest) < 60000 ? 'Just now' : ago(newest) + ' ago'), h('div', { class: 'l' }, 'Last update · ' + st.map((s) => s.store + ' ' + ago(s.last_scan_at)).join(' · '))));
 
   const q = h('input', { class: 'qq', value: F.q, placeholder: plain ? 'Search WO #, status, program or device' : 'Search name, phone, email, IMEI/serial, claim, WO #' + (F.notes ? ', or note text' : ''), oninput: (e) => { F.q = e.target.value; clearTimeout(q.t); q.t = setTimeout(run, 200); } });

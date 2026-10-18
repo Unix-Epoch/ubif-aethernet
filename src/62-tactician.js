@@ -339,7 +339,7 @@ AE.crystal({
       #${RP} .bar { position:relative; }
       #${RP} .ghoststat .big { color:color-mix(in srgb, var(--aui-primary, #8223d2) 70%, var(--aui-on-surface, #1a1c1e)); }
       #${RP} .bar { width:100%; border-radius:3px 3px 0 0; color:var(--aui-primary, #8223d2); background:currentColor; }
-      /* At or over the target: green. Just below it (within 10%) or would have made it with the RFP table picked up: yellow. Otherwise red. */
+      /* At or over the target: green. Just below it (within 10%) or would have made it with the RFP total picked up: yellow. Otherwise red. */
       #${RP} .bar.good { color:var(--aui-status-success, #136d31); } #${RP} .bar.near { color:#d6a000; } #${RP} .bar.miss { color:var(--aui-status-error, #b91a24); }
       #${RP} .bar.est { background:repeating-linear-gradient(-45deg, currentColor 0 5px, transparent 5px 9px); opacity:.75; }
       #${RP}-tip { position:fixed; z-index:2147483646; transform:translate(-50%, calc(-100% - 12px)); min-width:220px; max-width:340px; padding:10px 12px; border-radius:12px;
@@ -369,7 +369,7 @@ AE.crystal({
       const today = T.ymd(new Date()), days = new Map();
       for (let d = new Date(f); T.ymd(d) <= to; d.setDate(d.getDate() + 1)) days.set(T.ymd(d), { day: T.ymd(d), sales: null, source: null, hours: 0, gmHours: 0, open: 0, rfp: 0, rfpCount: 0, people: new Map() });
       for (const x of sd.days) if (days.has(x.day)) Object.assign(days.get(x.day), { sales: x.total, source: x.source });
-      for (const x of rd.days || []) if (days.has(x.day)) Object.assign(days.get(x.day), { rfp: x.value || 0, rfpCount: x.count || 0 }); // the RFP table at the end of the day
+      for (const x of rd.days || []) if (days.has(x.day)) Object.assign(days.get(x.day), { rfp: x.value || 0, rfpCount: x.count || 0 }); // the RFP total at the end of the day
       for (const pu of ps) {
         if (pu.s !== store || pu.c === 2 || !pu.i) continue;
         const day = T.ymd(new Date(pu.i)), d = days.get(day);
@@ -383,7 +383,7 @@ AE.crystal({
       setTimeout(() => T.uploadDaily(), 3000);
       return { from, to, rows: [...days.values()], gmSet: gm.size > 0 };
     }
-    // Bar color: at/over the target's low end = good; within 10% below, or over it with the RFP table picked up = near; else miss.
+    // Bar color: at/over the target's low end = good; within 10% below, or over it with the RFP total picked up = near; else miss.
     const grade = (r, lo) => (r.splh >= lo ? 'good' : r.splh >= lo * 0.9 || (r.ghost && r.ghost >= lo) ? 'near' : 'miss');
     // Hover a day: a speech bubble with who worked it (this store) and their hours. (No overtime here: Garrett, Oct 12, 2026.)
     function bubble(col, r, leaveOut) {
@@ -393,7 +393,7 @@ AE.crystal({
       const tip = h('div', { id: RP + '-tip', role: 'tooltip' },
         h('div', { class: 't' }, fmtD),
         h('div', { class: 's' }, [r.sales != null ? money(r.sales) + ' sales' + (r.source === 'estimated' ? ' (estimated)' : '') : 'No sales data', r.hrs ? r.hrs.toFixed(2) + 'h' : null,
-          r.splh != null ? money(r.splh) + '/h' : null, r.ghost ? money(r.ghost) + '/h with the RFP table (' + r.rfpCount + ')' : null].filter(Boolean).join(' · ')),
+          r.splh != null ? money(r.splh) + '/h' : null, r.ghost ? money(r.ghost) + '/h with the RFP total (' + r.rfpCount + ' devices)' : null].filter(Boolean).join(' · ')),
         people.length ? h('table', null, ...people.map((p) => h('tr', null,
           h('td', null, p.name, p.gm ? h('span', { class: 'gmt' }, leaveOut ? 'GM, left out' : 'GM') : null, p.open ? h('span', { class: 'gmt' }, 'still clocked in') : null),
           h('td', null, p.hrs.toFixed(2) + 'h'))))
@@ -419,7 +419,7 @@ AE.crystal({
       const withBoth = rows.filter((r) => r.splh != null), tS = withBoth.reduce((n, r) => n + r.sales, 0), tH = withBoth.reduce((n, r) => n + r.hrs, 0);
       const gmOut = leaveOut ? rows.reduce((n, r) => n + r.gmHours, 0) : 0, best = withBoth.slice().sort((a, b) => b.splh - a.splh)[0];
       const [tLo, tHi] = leaveOut ? TARGET.withoutGm : TARGET.withGm, max = Math.max(best ? best.splh : 0, ...withBoth.map((r) => r.ghost || 0), tHi * 1.1); // room for the target band and ghosts
-      const lastRfp = rows.slice().reverse().find((r) => r.rfp || r.rfpCount) || null; // the RFP table at the end of the range
+      const lastRfp = rows.slice().reverse().find((r) => r.rfp || r.rfpCount) || null; // the RFP total at the end of the range
       const ghostAll = lastRfp && tH ? (tS + lastRfp.rfp) / tH : null;
       const atTarget = withBoth.filter((r) => r.splh >= tLo).length;
       const fmtDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
@@ -429,7 +429,7 @@ AE.crystal({
           h('div', null, h('div', { class: 'big' }, money(tS)), h('div', { class: 'sg-soft' }, 'sales')),
           h('div', null, h('div', { class: 'big' }, tH.toFixed(1) + 'h'), h('div', { class: 'sg-soft' }, 'labor' + (leaveOut ? (data.gmSet ? ' (general managers left out: ' + gmOut.toFixed(1) + 'h)' : ' (no general manager set: Settings → Tactician)') : ''))),
           best ? h('div', null, h('div', { class: 'big' }, money(best.splh)), h('div', { class: 'sg-soft' }, 'best day · ' + fmtDay(best.day))) : null,
-          ghostAll ? h('div', { class: 'ghoststat' }, h('div', { class: 'big' }, money(ghostAll)), h('div', { class: 'sg-soft' }, 'if the RFP table were picked up (' + lastRfp.rfpCount + ' devices, ' + money(lastRfp.rfp) + ')')) : null,
+          ghostAll ? h('div', { class: 'ghoststat' }, h('div', { class: 'big' }, money(ghostAll)), h('div', { class: 'sg-soft' }, 'if the RFP total were picked up (' + money(lastRfp.rfp) + ', ' + lastRfp.rfpCount + ' devices)')) : null,
           h('div', null, h('div', { class: 'big' }, atTarget + ' of ' + withBoth.length), h('div', { class: 'sg-soft' }, 'days at target ($' + tLo + '–$' + tHi + (leaveOut ? ', without GM' : ', with GM') + ')'))),
         h('div', { class: 'chart' }, h('div', { class: 'band', style: 'bottom:' + (tLo / max * 100) + '%;height:' + ((tHi - tLo) / max * 100) + '%', title: 'Target: $' + tLo + '–$' + tHi + ' per labor hour' }), ...rows.map((r) => h('div', { class: 'col', onmouseenter: (e) => bubble(e.currentTarget, r, leaveOut), onmouseleave: () => document.getElementById(RP + '-tip')?.remove() },
           r.ghost ? h('div', { class: 'ghost', style: 'height:' + Math.round(r.ghost / max * 100) + '%' }) : null,
@@ -439,11 +439,11 @@ AE.crystal({
           h('table', null, h('tr', null, ['Day', 'Sales', 'Labor hours', 'Per labor hour', 'If RFP picked up', ''].map((x) => h('th', null, x))),
             ...rows.slice().reverse().map((r) => h('tr', null, h('td', null, fmtDay(r.day)), h('td', null, r.sales != null ? money(r.sales) : '—'), h('td', null, r.hrs ? r.hrs.toFixed(2) + 'h' : '—'),
               h('td', null, h('b', null, r.splh != null ? money(r.splh) : '—')),
-              h('td', { class: 'sg-soft', title: r.rfpCount ? r.rfpCount + ' devices on the RFP table at the end of the day, ' + money(r.rfp) : null }, r.ghost ? money(r.ghost) : '—'),
+              h('td', { class: 'sg-soft', title: r.rfpCount ? 'RFP total at the end of the day: ' + money(r.rfp) + ' (' + r.rfpCount + ' devices)' : null }, r.ghost ? money(r.ghost) : '—'),
               h('td', { class: 'sg-soft' }, [r.source === 'estimated' ? 'Sales estimated from work orders' : null, leaveOut && r.gmHours ? 'GM ' + r.gmHours.toFixed(2) + 'h left out' : null,
                 r.open ? r.open + ' punch' + (r.open === 1 ? '' : 'es') + ' without a clock-out not counted' : null, r.sales == null && !r.hrs ? 'Closed or no data' : null].filter(Boolean).join(' · ')))),
             h('tr', { class: 'tot' }, h('td', null, 'Total'), h('td', null, money(tS)), h('td', null, tH.toFixed(2) + 'h'), h('td', null, tH ? money(tS / tH) : '—'), h('td', null, ghostAll ? money(ghostAll) : '—'), h('td'))),
-          h('p', { class: 'sg-soft', style: 'font-size:12px;margin:8px 0 0' }, 'Sales = Portal\'s daily sales (partner credits included; striped days are estimated from work orders). Labor = hours clocked in at this store, breaks not counted, from the Store time sheet. Days without both aren\'t in the totals. Ghost bars = that day\'s sales plus everything on the RFP table at the end of the day (value before tax, partner credits ignored), as if it had all been picked up; for the range, the RFP table at its end.')));
+          h('p', { class: 'sg-soft', style: 'font-size:12px;margin:8px 0 0' }, 'Sales = Portal\'s daily sales (partner credits included; striped days are estimated from work orders). Labor = hours clocked in at this store, breaks not counted, from the Store time sheet. Days without both aren\'t in the totals. Ghost bars = that day\'s sales plus the RFP total at the end of the day (before tax, partner credits ignored), as if it had all been picked up; for the range, the RFP total at its end.')));
       return card;
     }
     function showSplh() {

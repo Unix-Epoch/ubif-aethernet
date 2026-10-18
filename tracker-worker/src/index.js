@@ -23,7 +23,7 @@
     POST /v1/:store/tracker/daily { day, metrics, source, by }   plain daily numbers for the Metrics page (src/daily.js)
     POST /v1/:store/tracker/sales { day, rows }  Portal's sales history for one business day (see the route)
     GET  /v1/:store/tracker/sales/days?from&to   daily sales totals (Tactician)
-    GET  /v1/:store/tracker/rfp/days?from&to     the RFP table's value at the end of each day (Tactician)
+    GET  /v1/:store/tracker/rfp/days?from&to     the RFP total at the end of each day (Tactician)
     GET  /v1/:store/tracker/settings             store settings (general managers, …); PUT …/settings/gm
 
   Agents (programs with their own key, e.g. the Mac's work order audit; x-aethernet-key too):
@@ -194,7 +194,7 @@ function dayEnd(day, tz) {
   const asLocal = Date.parse(g.year + '-' + g.month + '-' + g.day + 'T' + g.hour + ':' + g.minute + ':' + g.second + '.999Z');
   return new Date(guess + (guess - asLocal)).toISOString();
 }
-// The RFP table's value at the end of each day in [from, to] (today: now). [{ day, count, value }]
+// The RFP total at the end of each day in [from, to] (today: now). [{ day, count, value }]
 async function rfpDays(env, store, from, to) {
   const tz = env.STORE_TZ || 'America/New_York', today = localDay(new Date().toISOString(), tz);
   const r = await env.TR.prepare('SELECT wo, start_at, end_at, value FROM rfp_periods WHERE store = ? AND start_at <= ? AND (end_at IS NULL OR end_at >= ?)')
@@ -456,7 +456,7 @@ async function storeApi(req, env, url, store) {
     return json({ ok: true, count: rows.length, written, removed, total });
   }
 
-  // The RFP table's value at the end of each day (Tactician: "if every RFP device were picked up").
+  // The RFP total at the end of each day (Tactician: "if every RFP device were picked up").
   if (path === '/rfp/days' && req.method === 'GET') {
     const from = clean(url.searchParams.get('from'), 10), to = clean(url.searchParams.get('to'), 10);
     if (!DAY_RE.test(from) || !DAY_RE.test(to) || to < from || (Date.parse(to) - Date.parse(from)) > 400 * 86400000) return fail(400, 'from/to required');
