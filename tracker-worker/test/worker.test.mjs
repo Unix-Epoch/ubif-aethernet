@@ -79,7 +79,8 @@ assert.equal((await env.TR.prepare('SELECT is_open, closed_reason FROM workorder
 // a short list isn't trusted
 await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
 s = await call('POST', '/v1/914/tracker/scan', { rows: [] });
-assert.ok(s.j.note && /short/.test(s.j.note)); assert.equal(s.j.need.filter((n) => n.why === 'missing').length, 0);
+assert.ok(s.j.note && /short/.test(s.j.note));
+assert.equal((await env.TR.prepare('SELECT COUNT(*) n FROM workorders WHERE is_open = 1 AND missing_since IS NOT NULL AND wo <> 5002').first()).n, 0, 'short list marks nothing missing');
 
 // --- admin: owner unlocks and reads; a 914-only person can't see 326
 const me = (await admin('owner@x.com', 'GET', '/me')).j;
@@ -135,6 +136,12 @@ await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
 for (let i = 0; i < 12; i++) await env.TR.prepare("INSERT INTO workorders (store, wo, is_open, status_id, last_detail_at) VALUES (914, ?, 1, 2, '2026-10-12T00:00:00Z')").bind(6000 + i).run();
 s = await call('POST', '/v1/914/tracker/scan', { rows: rows2 });
 assert.ok(/short/.test(s.j.note || ''), 'under half → short');
+// ...but a short list still sends a few missing WOs for a full check (oldest first), so ghosts can't lock it
+const few = s.j.need.filter((n) => n.why === 'missing');
+assert.ok(few.length > 0 && few.length <= 10, 'short list checks a few: ' + few.length);
+assert.ok(few.every((n) => n.wo >= 6000), 'oldest detail first');
+assert.equal((await env.TR.prepare('SELECT COUNT(*) n FROM workorders WHERE wo >= 6000 AND missing_since IS NOT NULL').first()).n, 0, 'not marked missing');
+await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
 s = await call('POST', '/v1/914/tracker/scan', { rows: rows2.concat(Array.from({ length: 8 }, (_, i) => ({ wo: 6000 + i, statusId: 2, status: 'Work in progress', updatedAt: '2026-10-12T00:00:00Z' }))) });
 assert.ok(!s.j.note, 'more than half listed → missing WOs get checked: ' + s.j.note);
 assert.ok(s.j.need.filter((n) => n.why === 'missing').length >= 4);

@@ -369,8 +369,14 @@ async function storeApi(req, env, url, store) {
     let note = null;
     // Short = empty, or under half of what we have open (WOs that really closed are fine: each one is
     // checked in Portal before it's recorded closed, so a list can only ever cause extra checks).
-    if (!rows.length || (open.length >= 10 && rows.length < open.length / 2)) note = 'list looks short (' + rows.length + ' rows, ' + open.length + ' open on record): missing WOs not checked';
-    else for (const k of missing) {
+    // A short list still sends a few of them for a full check, oldest first, without marking them missing
+    // (so a 404 can't close them): skipping them outright locked a busy store once closed WOs passed half
+    // of what was on record, and they piled up as ghosts (Lynnhaven, Oct 2026).
+    if (!rows.length || (open.length >= 10 && rows.length < open.length / 2)) {
+      note = 'list looks short (' + rows.length + ' rows, ' + open.length + ' open on record): checking missing WOs a few at a time';
+      missing.filter((k) => !claimed(k)).sort((x, y) => String(x.last_detail_at || '').localeCompare(String(y.last_detail_at || ''))).slice(0, STALE_MAX)
+        .forEach((k) => need.push({ wo: k.wo, why: 'missing' }));
+    } else for (const k of missing) {
       if (!k.missing_since) stmts.push(T.prepare('UPDATE workorders SET missing_since = ? WHERE store = ? AND wo = ?').bind(at, store, k.wo));
       if (!claimed(k)) need.push({ wo: k.wo, why: 'missing' });
     }
