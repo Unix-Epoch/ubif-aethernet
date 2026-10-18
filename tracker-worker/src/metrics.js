@@ -16,8 +16,10 @@
 
 const DAY_RE = /^\d{4}-\d\d-\d\d$/;
 const CLOSED = new Set([14, 15, 25]); // Sale complete, Closed, Cancelled
-// Store hours, same block as Assize (src/65-assize.js STORE_HOURS): open 10–19, closed Thursday and Sunday.
-export const STORE_HOURS = { open: 10, close: 19, closedDays: [0, 4] };
+// Store hours, same as Assize (src/65-assize.js STORE_HOURS / hoursFor): open 10–19 Monday–Saturday; Lexington every day.
+export const STORE_HOURS = { open: 10, close: 19, closedDays: [0] };
+const OPEN_DAILY = new Set([536]);
+export const hoursFor = (store) => (OPEN_DAILY.has(Number(store)) ? Object.assign({}, STORE_HOURS, { closedDays: [] }) : STORE_HOURS);
 const H0 = 8, H1 = 20; // hourly buckets 8 AM … 8 PM (anything outside folds into the first/last)
 // Status → chart bucket (Open work orders by status).
 const BUCKETS = ['bench', 'parts', 'wait', 'rfp', 'other'];
@@ -303,11 +305,11 @@ async function build(env, q) {
       if (gran === 'hour') { const t = localToUtc(b.from, b.hour, tz); if (p === 'prev' && t > prevCut) return; want.push([p, 'main', i, [pushS(Math.min(localToUtc(b.from, b.hour + 1, tz) - 1, p === 'prev' ? prevCut : nowMs))]]); }
       else { const ids = []; for (let d = b.from; d <= b.to; d = addDays(d, 1)) ids.push(pushS(endOf(d))); want.push([p, 'main', i, ids]); }
     });
-    // Need to order overnight: at store close on open days (today: now, until close)
+    // Need to order overnight: at store close on each store's open days (today: now, until close)
     g.day.forEach((b, i) => {
-      const ids = [];
-      for (let d = b.from; d <= b.to; d = addDays(d, 1)) if (!STORE_HOURS.closedDays.includes(dowOf(d))) ids.push(pushS(Math.min(localToUtc(d, STORE_HOURS.close, tz), nowMs)));
-      if (ids.length) want.push([p, 'nto', i, ids]);
+      const ids = [], dows = [];
+      for (let d = b.from; d <= b.to; d = addDays(d, 1)) { ids.push(pushS(Math.min(localToUtc(d, STORE_HOURS.close, tz), nowMs))); dows.push(dowOf(d)); }
+      if (ids.length) want.push([p, 'nto', i, ids, dows]);
     });
   }
   const latest = { cur: pushS(Math.min(localToUtc(addDays(to, 1), 0, tz) - 1, nowMs)), prev: pushS(Math.min(localToUtc(from, 0, tz) - 1, prevCut)) };
@@ -325,11 +327,12 @@ async function build(env, q) {
   for (const [k, d] of diffs) { const c = new Int32Array(sorted.length); let run = 0; for (let i = 0; i < sorted.length; i++) { run += d[i]; c[i] = run; } counts.set(k, c); }
   const at = (st, c, sIdx) => { const a = counts.get(st + '|' + c); return a ? a[rank[sIdx]] : 0; };
   const lvl = { cur: { main: {}, day: {} }, prev: { main: {}, day: {} } };
-  for (const st of stores) for (const [p, g, i, ids] of want) {
+  for (const st of stores) for (const [p, g, i, all, dows] of want) {
     const cats = g === 'nto' ? ['nto'] : ['open', ...BUCKETS], grid = g === 'nto' ? 'day' : 'main';
+    const ids = dows ? all.filter((_, k) => !hoursFor(st).closedDays.includes(dows[k])) : all;
     for (const c of cats) {
       const m = c === 'nto' ? 'nto' : c, o = lvl[p][grid][m] = lvl[p][grid][m] || {};
-      (o[st] = o[st] || new Array(G[p][grid].length).fill(null))[i] = ids.reduce((s, x) => s + at(st, c, x), 0) / ids.length;
+      (o[st] = o[st] || new Array(G[p][grid].length).fill(null))[i] = ids.length ? ids.reduce((s, x) => s + at(st, c, x), 0) / ids.length : null;
     }
   }
   for (const p of ['cur', 'prev']) for (const g of ['main', 'day']) Object.assign(out[p][g], lvl[p][g]);
@@ -390,12 +393,12 @@ async function build(env, q) {
   for (const r of aging) { const o = rfpAging[r.store] = rfpAging[r.store] || { buckets: AGE.map((x) => ({ label: x[2], n: 0 })), value: 0, count: 0 }; const b = AGE.findIndex((x) => r.age >= x[0] && r.age <= x[1]); o.buckets[b < 0 ? 0 : b].n += r.n; o.value = r2(o.value + r.v); o.count += r.n; }
   for (const r of oldest) if (rfpAging[r.store]) Object.assign(rfpAging[r.store], { oldestWo: r.wo, oldestDays: Math.floor((nowMs - Date.parse(r.a)) / 86400000) });
   const waymarks = {}; for (const r of marks || []) waymarks[r.store] = { over: r.over || 0, due: r.due || 0, up: r.up || 0 };
-  const lt = local(nowMs, tz), openNow = !STORE_HOURS.closedDays.includes(lt.dow) && lt.hour >= STORE_HOURS.open && lt.hour < STORE_HOURS.close;
+  const lt = local(nowMs, tz), openNow = (st) => { const h = hoursFor(st); return !h.closedDays.includes(lt.dow) && lt.hour >= h.open && lt.hour < h.close; };
   const freshness = {};
   for (const s of scans) {
     const age = s.last ? Math.round((nowMs - Date.parse(s.last)) / 60000) : null;
     freshness[s.store] = { last: s.last, ageMin: age, today: s.today, open: s.open, note: s.note,
-      state: age == null ? 'critical' : age < 20 ? 'good' : !openNow ? 'closed' : age < 120 ? 'warning' : 'critical' };
+      state: age == null ? 'critical' : age < 20 ? 'good' : !openNow(s.store) ? 'closed' : age < 120 ? 'warning' : 'critical' };
   }
   let target = 75; try { const v = cfg && cfg[0] ? JSON.parse(cfg[0].value) : null; if (Number.isFinite(v)) target = v; } catch (_) {}
 

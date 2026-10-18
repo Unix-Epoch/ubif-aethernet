@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, rmSync } from 'node:fs';
 import { getPlatformProxy } from 'wrangler';
+import * as M from '../src/metrics.js';
 import { metricsApi, buildMetrics, statusPeriodsOf, statusPeriodStmts, closeStatusPeriod, deviceType, localToUtc } from '../src/metrics.js';
 import { WAYMARK_SQL } from './metrics-seed.mjs';
 
@@ -97,9 +98,10 @@ assert.equal(m.tot.prev.sales[914], 70, 'previous period stops at the same time 
 assert.equal(m.tot.cur.completed[914], 2); assert.equal(m.tot.cur.created[914], 2);
 assert.equal(m.tot.cur.rpN[914], 1); assert.ok(Math.abs(m.tot.cur.rpSum[914] - (26 / 24)) < 0.01, 'RFP → pickup: 26 hours');
 assert.deepEqual(m.devices[914], { 'Samsung Galaxy': 1, iPhone: 1 });
-// levels from status periods: end of each day; Need to order at store close (Thursday is closed → none)
+// levels from status periods: end of each day; Need to order at store close (Thursday counts now)
 assert.deepEqual(m.cur.main.open[914], [2, 1, 1]); assert.deepEqual(m.cur.main.rfp[914], [1, 1, 1]); assert.deepEqual(m.cur.main.parts[914], [1, 0, 0]);
-assert.deepEqual(m.cur.day.nto[914], [1, 0, null]); assert.equal(m.tot.cur.open[914], 1); assert.equal(m.tot.cur.nto[914], 0);
+assert.deepEqual(m.cur.day.nto[914], [1, 0, 0]);
+assert.deepEqual(M.hoursFor(914).closedDays, [0], 'closed Sunday'); assert.deepEqual(M.hoursFor(536).closedDays, [], 'Lexington open every day'); assert.equal(m.tot.cur.open[914], 1); assert.equal(m.tot.cur.nto[914], 0);
 // before tracking: 326 has no scans → its tracker numbers are gaps, not zeros
 assert.deepEqual(m.cur.main.open[326], [null, null, null]); assert.equal(m.tot.cur.open[326], null);
 assert.deepEqual(m.rfpAging[914].buckets.map((b) => b.n), [1, 0, 0, 0, 0]); assert.equal(m.rfpAging[914].value, 150); assert.equal(m.rfpAging[914].oldestWo, 9002);

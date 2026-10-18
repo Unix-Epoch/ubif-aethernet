@@ -56,8 +56,10 @@
 */
 AE.assizeRules = (() => {
   // Store hours for "after close" (TVs, buyouts) and "last business night" (Need to order). Local time.
-  // One block, no settings yet: open 10:00–19:00, closed Thursday and Sunday (getDay(): 0 = Sunday, 4 = Thursday).
-  const STORE_HOURS = { open: 10, close: 19, closedDays: [0, 4] };
+  // Open 10:00–19:00 Monday–Saturday (getDay(): 0 = Sunday); Lexington (536) is open every day.
+  const STORE_HOURS = { open: 10, close: 19, closedDays: [0] };
+  const OPEN_DAILY = new Set([536]);
+  const hoursFor = (store) => (OPEN_DAILY.has(Number(store)) ? Object.assign({}, STORE_HOURS, { closedDays: [] }) : STORE_HOURS);
   const MORNING_ENDS = 12; // the "morning audit" for Need to order: before 12:00 local
   const DAY = 86400000, HOUR = 3600000;
 
@@ -475,7 +477,7 @@ AE.assizeRules = (() => {
     const worst = n.fail ? 'fail' : n.flag ? 'flag' : n.note ? 'note' : n.remind ? 'remind' : 'ok';
     return Object.assign(n, { worst, act: n.fail + n.flag });
   }
-  return { STORE_HOURS, MORNING_ENDS, CHECKS, KINDS, programOf, deviceOf, nickDate, closeAfter, closeBefore, facts, audit, orphanCleanings, summarize, sort, sigOf, dismissKey };
+  return { STORE_HOURS, hoursFor, MORNING_ENDS, CHECKS, KINDS, programOf, deviceOf, nickDate, closeAfter, closeBefore, facts, audit, orphanCleanings, summarize, sort, sigOf, dismissKey };
 })();
 
 AE.crystal({
@@ -704,9 +706,9 @@ AE.crystal({
       let list = [];
       // rowFresher: this tab's list row was read after the detail was fetched, so the row's status / nickname / bin win (see facts()).
       const dOf = (x) => (x ? Object.assign({}, x.d, { rowFresher: (x.at || 0) <= rows.at }) : null);
-      for (const r of rows.rows) list.push(...R.audit(r, dOf(details[r.workorderId]), { now, hours: R.STORE_HOURS, priceFor }));
+      for (const r of rows.rows) list.push(...R.audit(r, dOf(details[r.workorderId]), { now, hours: R.hoursFor(storeId), priceFor }));
       // An order fetched on its own page that wasn't open at the last pass (new since)
-      for (const [id, x] of Object.entries(details)) if (!seen.has(String(id))) list.push(...R.audit(null, x.d, { now, hours: R.STORE_HOURS, priceFor }));
+      for (const [id, x] of Object.entries(details)) if (!seen.has(String(id))) list.push(...R.audit(null, x.d, { now, hours: R.hoursFor(storeId), priceFor }));
       list.push(...R.orphanCleanings(rows.rows, rows.closed || [], AE.data.belongs));
       list = R.sort(list);
       // Dismissed for the store (the rules stay pure; this is where a dismissal applies): out of every count, chip, pill and marker.
