@@ -115,10 +115,12 @@ export async function statusPeriodStmts(T, store, wo, plain, at) {
 export const closeStatusPeriod = (T, store, wo, at) => T.prepare('UPDATE status_periods SET end_at = ? WHERE store = ? AND wo = ? AND end_at IS NULL').bind(at, store, wo);
 
 // One-time backfill from what's stored: 300 work orders per call, resumable by rowid.
-async function backfill(env, after) {
+async function backfill(env, after, email) {
   const T = env.TR, at = new Date().toISOString();
   const rows = (await T.prepare('SELECT rowid AS id, store, wo, status_id, is_open, created_at, first_seen_at, closed_at, sold_at, api_updated_at, plain FROM workorders WHERE rowid > ? ORDER BY rowid LIMIT 300').bind(after).all()).results;
-  if (!rows.length) return { done: true, next: after, processed: 0, written: 0 };
+  // Finished (a short or empty chunk): recorded, so the page knows the history is whole, not just started by uploads.
+  const finished = () => T.prepare('INSERT INTO access_log (email, action, detail, at) VALUES (?, ?, ?, ?)').bind(email || 'system', 'metrics:backfill', 'status history built', at).run();
+  if (!rows.length) { await finished(); return { done: true, next: after, processed: 0, written: 0 }; }
   const have = new Map();
   for (const h of (await T.prepare('SELECT store, wo, status_id, start_at, end_at FROM status_periods WHERE (store, wo) IN (SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?))')
     .bind(JSON.stringify(rows.map((r) => [r.store, r.wo]))).all()).results) (have.get(h.store + '|' + h.wo) || have.set(h.store + '|' + h.wo, []).get(h.store + '|' + h.wo)).push(h);
@@ -143,6 +145,7 @@ async function backfill(env, after) {
     stmts.push(...syncStmts(T, r.store, r.wo, have.get(r.store + '|' + r.wo) || [], want));
   }
   for (let i = 0; i < stmts.length; i += 100) await T.batch(stmts.slice(i, i + 100));
+  if (rows.length < 300) await finished();
   return { done: rows.length < 300, next: rows[rows.length - 1].id, processed: rows.length, written: stmts.length };
 }
 
@@ -240,7 +243,8 @@ async function build(env, q) {
     T.prepare(`SELECT value AS store, (SELECT MIN(at) FROM scans WHERE store = j.value) AS first, (SELECT MAX(at) FROM scans WHERE store = j.value) AS last,
         (SELECT COUNT(*) FROM scans WHERE store = j.value AND at >= ?) AS today, (SELECT note FROM scans WHERE store = j.value ORDER BY at DESC LIMIT 1) AS note,
         (SELECT COUNT(*) FROM workorders WHERE store = j.value AND is_open = 1) AS open FROM json_each(?) j`).bind(new Date(localToUtc(today, 0, tz)).toISOString(), S),
-    T.prepare('SELECT COUNT(*) AS n FROM (SELECT 1 FROM status_periods LIMIT 1)'),
+    // Built = the one-time backfill finished (uploads alone only start it for the WOs they touch).
+    T.prepare("SELECT COUNT(*) AS n FROM access_log WHERE action = 'metrics:backfill'"),
   ];
   const aeQ = A ? [
     A.prepare(`SELECT store, day, CASE WHEN instr(feature, ':') > 0 THEN substr(feature, 1, instr(feature, ':') - 1) ELSE feature END AS c, SUM(count) AS n
@@ -412,7 +416,7 @@ export async function metricsApi(req, env, url, path, me) {
   if (!me) return fail(403, 'not on the tracker list');
   if (req.method === 'POST' && path === '/metrics/backfill') {
     if (!full(me)) return fail(403, 'full access only');
-    return json(await backfill(env, Number(url.searchParams.get('after')) || 0));
+    return json(await backfill(env, Number(url.searchParams.get('after')) || 0, me.email));
   }
   if (req.method !== 'GET' || path !== '/metrics') return fail(404, 'not found');
   const A = env.DB || env.AE, qs = url.searchParams, tz = env.STORE_TZ || 'America/New_York';
