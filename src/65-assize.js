@@ -265,7 +265,10 @@ AE.assizeRules = (() => {
   // The cart's lines as the rules see them (what, price, quantity, whether a child), so a changed cart is a new signature.
   const cartSig = (cart) => sigOf(lines(cart).map((l) => [l.sku || l.itemNumber || l.name || '', price(l).toFixed(2), l.quantity == null ? 1 : l.quantity, l.parentLineId ? 'c' : ''].join(':')).sort().join('|') || 'empty');
   const money = (n) => '$' + (Math.round(n * 100) % 100 ? n.toFixed(2) : String(Math.round(n)));
-  const cartSum = (cart) => lines(cart).filter((l) => !neverFlag(l)).reduce((s, l) => s + price(l), 0);
+  // A deposit (the diagnostic fee, a parts deposit) comes back as a negative offset line, so a cart with a deposit nets to $0
+  // or less. The rules judge what the items are priced at, not what's still owed, so offsets stay out of the sum.
+  const isDeposit = (l) => /^srv0006$/i.test(l.sku || l.itemNumber || '') || /deposit/i.test(l.name || '');
+  const cartSum = (cart) => lines(cart).filter((l) => !neverFlag(l) && !isDeposit(l)).reduce((s, l) => s + price(l), 0);
   const cartTotal = (cart) => { const p = cart && cart.payment; const v = p && (p.subtotal != null ? Number(p.subtotal) : Number(p.total)); return Number.isFinite(v) ? v : cartSum(cart); };
   const repairFrom = (issues) => {
     const m = issues.map((i) => (/battery/i.test(i) ? 'Battery' : /screen|display|lcd|front glass/i.test(i) && !/back/i.test(i) ? 'Screen' : null));
@@ -333,7 +336,7 @@ AE.assizeRules = (() => {
           const repair = repairFrom(f.issues);
           const sheet = repair ? opts.priceFor(f.device, repair) : null;
           if (sheet && sheet.length) {
-            const charged = lines(cart).filter((l) => price(l) > 0 && !isCredit(l) && !neverFlag(l) && !/diagnostic|deposit/i.test(l.name || '')).reduce((s, l) => s + price(l), 0);
+            const charged = lines(cart).filter((l) => price(l) > 0 && !isCredit(l) && !neverFlag(l) && !isDeposit(l) && !/diagnostic/i.test(l.name || '')).reduce((s, l) => s + price(l), 0);
             if (charged > 0 && !sheet.some((p) => Math.abs(p - charged) <= 1.01)) {
               const near = sheet.slice().sort((a, b) => Math.abs(a - charged) - Math.abs(b - charged))[0];
               add('cart', 'note', 'Price off the sheet', 'Cart is ' + money(charged) + '; the price sheet says ' + money(near) + ' for ' + f.device + ' ' + repair.toLowerCase(), who, 'price-off-sheet', cartSig(cart), near);
