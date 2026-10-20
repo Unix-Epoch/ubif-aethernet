@@ -34,10 +34,13 @@
 
   Cost: Portal's open list once a pass (+1 page of closed orders, for 4b), then each in-scope open
   order's detail (GET /api/workorder/:id, /api/note?workorderId=… (30 a page), /api/workorder-audit-
-  trail/:id and /api/get-cart/:csuCartId: 4 calls) when its updatedAt changed, when the copy is older
-  than 30 minutes (updatedAt does NOT move for a new note or a nickname edit), on the panel's Refresh
-  (every open order, cache ignored: about 4 calls each plus the list), and right away after a text, a
-  Recitation note or a Waymark nickname change on that order; one after another 300 ms apart. The list
+  trail/:id and /api/get-cart/:csuCartId: 4 calls, made together) when its updatedAt changed, when the
+  copy is older than 30 minutes (updatedAt does NOT move for a new note or a nickname edit), on the
+  panel's Refresh (every open order, cache ignored: about 4 calls each plus the list), and right away
+  after a text, a Recitation note or a Waymark nickname change on that order; one order after another,
+  300 ms apart. The detail comes through AE.woDetail (27-tracker.js), shared with the tracker: a copy
+  either one fetched in the last 10 minutes (2 for the order on screen) with the same updatedAt is
+  used without asking Portal again (not on Refresh or after a change). The list
   row's status, nickname, bin and dates are re-read every pass and win over a cached detail. One pass per 10 minutes, shared by every tab (a timestamp
   in GM storage, like Waymark's scan), plus the order being viewed (at most every 2 minutes). Rows
   and details are kept in GM storage per store, so every tab shows the same findings without
@@ -489,7 +492,7 @@ AE.crystal({
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h, esc } = AE, R = AE.assizeRules;
-    const SCAN_MS = 10 * 60 * 1000, GAP_MS = 300, NOTE_PAGE = 30, NOTE_PAGES = 10, WO_MS = 2 * 60 * 1000, DETAIL_TTL = 30 * 60 * 1000;
+    const SCAN_MS = 10 * 60 * 1000, GAP_MS = 300, WO_MS = 2 * 60 * 1000, DETAIL_TTL = 30 * 60 * 1000;
     const PANEL_ID = 'ae-as-panel', PILL_ID = 'ae-as-pill', POP_ID = 'ae-as-pop', MK = 'ae-as-mk';
     const CHECK_NAME = Object.fromEntries(R.CHECKS);
     const orders = (n) => n + (n === 1 ? ' open order' : ' open orders');
@@ -533,28 +536,15 @@ AE.crystal({
     }
 
     // ------------------------------------------------------------ Portal reads (GET only)
-    async function notesOf(wo) {
-      const all = [];
-      for (let off = 0, i = 0; i < NOTE_PAGES; i++) {
-        const p = await AE.api('GET', '/api/note?workorderId=' + wo + '&offset=' + off + '&limit=' + NOTE_PAGE);
-        const rows = (p && p.notes) || [];
-        all.push(...rows);
-        const total = p && Number.isInteger(p.total) ? p.total : rows.length;
-        off += rows.length;
-        if (!rows.length || off >= total) break;
-        await AE.sleep(GAP_MS);
-      }
-      return all;
-    }
-    async function detailOf(wo) {
-      const core = await AE.api('GET', '/api/workorder/' + wo); await AE.sleep(GAP_MS);
-      const w = (core && core.workorder) || {};
-      const notes = await notesOf(wo); await AE.sleep(GAP_MS);
-      const audit = await AE.api('GET', '/api/workorder-audit-trail/' + wo).catch(() => null);
-      let cart = null;
-      if (w.csuCartId) { await AE.sleep(GAP_MS); cart = await AE.api('GET', '/api/get-cart/' + w.csuCartId).catch(() => null); }
+    // Portal's detail through AE.woDetail (shared with the tracker: a copy it fetched in the last few minutes is used
+    // as is). Notes are required: a failed notes fetch is an error, never "no intake note".
+    async function detailOf(wo, opts = {}) {
+      const asked = Date.now();
+      const x = await AE.woDetail.get(storeId, wo, opts);
+      if (!x.notes) throw new Error('notes did not load');
+      const w = (x.workorder && x.workorder.workorder) || {};
       if (w.storeId != null && storeId != null && Number(w.storeId) !== Number(storeId)) throw Object.assign(new Error("another store's work order"), { otherStore: true });
-      return trimDetail(core, notes, audit, cart);
+      return { d: trimDetail(x.workorder, x.notes.notes, x.audit_trail, x.cart), at: x.at, fetched: x.at >= asked }; // at: when Portal answered
     }
     // Orders worth a detail fetch: open, in a status with rules, not a cleaning.
     const inScope = (r) => !/sale complete|cancel|repair summary|awaiting diag|partner approval/i.test(r.workorderStatusName || '') && R.programOf(r.programId, r.programName).key !== 'cleaning';
@@ -588,10 +578,12 @@ AE.crystal({
         progress = { done: 0, total: stale.length };
         let n = 0;
         for (const r of stale) {
+          let fetched = true;
           try {
-            const d = await detailOf(r.workorderId);
+            const x = await detailOf(r.workorderId, full ? { force: true } : { updatedAt: r.updatedAt });
+            fetched = x.fetched;
             const cur = readDetails();
-            cur[r.workorderId] = { u: r.updatedAt, at: Date.now(), d };
+            cur[r.workorderId] = { u: r.updatedAt, at: x.at, d: x.d };
             GM_setValue(key('details'), cur);
           } catch (e) {
             if (/session expired/i.test(e.message || '') || e.storeChanged) throw e;
@@ -599,7 +591,7 @@ AE.crystal({
           }
           progress.done++;
           if (++n % 4 === 0) { compute(); render(); } else renderPanel();
-          await AE.sleep(GAP_MS);
+          if (fetched) await AE.sleep(GAP_MS);
         }
         lastError = null;
       } catch (e) {
@@ -638,14 +630,14 @@ AE.crystal({
       woLoading.add(woId);
       try {
         await AE.afterLoad();
-        const d = await detailOf(woId);
+        const { d, at } = await detailOf(woId, force ? { force: true } : { maxAge: WO_MS, updatedAt: row && row.updatedAt });
         if (!inScope({ workorderStatusName: d.wo.WorkorderStatus && d.wo.WorkorderStatus.name, programId: d.wo.programId, programName: d.wo.Program && d.wo.Program.name })) {
           const gone = readDetails();
           if (gone[woId]) { delete gone[woId]; GM_setValue(key('details'), gone); compute(); render(); } // moved out of scope: its old findings go
           return;
         }
         const all = readDetails();
-        all[woId] = { u: row ? row.updatedAt : d.wo.updatedAt, at: Date.now(), d };
+        all[woId] = { u: row ? row.updatedAt : d.wo.updatedAt, at, d };
         GM_setValue(key('details'), all);
         compute(); render();
       } catch (e) { if (!e.otherStore) AE.noteError('Assize WO ' + woId, e); }

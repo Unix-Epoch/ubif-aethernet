@@ -49,6 +49,21 @@ AE.tracker = (() => {
   const { scanRow, scrub, plainPart, cardOf } = (() => { /*__TRACKER_SHAPE__*/ })();
 
   // ---------------------------------------------------------------- Portal fetches
+  /*
+    One work order's detail from Portal, shared with Assize (AE.woDetail.get): the work order, its status audit
+    trail, every note and the cart, passcodes removed. Whichever asks first fetches it; the other reuses that copy
+    while it's recent and Portal's updatedAt still matches, so Portal isn't asked twice for the same order. Kept
+    per store in GM storage (every tab shares it), 2 hours at most. Customer data is never kept here: the tracker
+    fetches it on its own. The calls for one order run together (the cart waits only for the work order, which
+    names it); note pages after the first stay 300 ms apart. A fetch with a failed part isn't kept.
+      get(store, wo, { force, maxAge, updatedAt }) → { workorder, audit_trail, notes: { notes, total, latestManualNote } | null, cart, at }
+        force      always ask Portal (Refresh, just after a text or note, the tracker's missing-order check)
+        maxAge     how old a kept copy may be (ms, default 10 minutes)
+        updatedAt  Portal's list row updatedAt: a kept copy from before it is not used
+      A 404 on the work order throws with e.gone.
+  */
+  const WOD_MS = 10 * 60 * 1000, WOD_KEEP = 2 * 60 * 60 * 1000, wodKey = (store) => 'ae_wod_' + store;
+  const wodLoading = new Map();
   async function notesOf(wo) {
     const all = []; let total = null, latest = null;
     for (let off = 0, i = 0; i < NOTE_PAGES; i++) {
@@ -62,22 +77,43 @@ AE.tracker = (() => {
     }
     return { notes: all, total, latestManualNote: latest };
   }
-  async function detailOf(wo) {
-    let core;
-    try { core = await AE.api('GET', '/api/workorder/' + wo); }
-    catch (e) { if (/HTTP 404/.test(e.message || '')) e.gone = true; throw e; }
-    await AE.sleep(GAP_MS);
-    const w = (core && core.workorder) || {};
-    const audit = await AE.api('GET', '/api/workorder-audit-trail/' + wo).catch(() => null); await AE.sleep(GAP_MS);
-    const customer = await AE.api('GET', '/api/v1/workorder/' + wo + '/demographic/customer-data').catch(() => null); await AE.sleep(GAP_MS);
-    const notes = await notesOf(wo).catch(() => null); await AE.sleep(GAP_MS);
-    const cart = w.csuCartId ? await AE.api('GET', '/api/get-cart/' + w.csuCartId + '?includePartStatus=true').catch(() => null) : null;
-    return scrub({ workorder: core, audit_trail: audit, customer_data: customer, notes, cart });
+  async function fetchDetail(wo) {
+    let failed = false;
+    const soft = (pr) => pr.catch(() => { failed = true; return null; });
+    const coreP = AE.api('GET', '/api/workorder/' + wo).catch((e) => { if (/HTTP 404/.test(e.message || '')) e.gone = true; throw e; });
+    const cartP = coreP.then((core) => { const id = core && core.workorder && core.workorder.csuCartId; return id ? soft(AE.api('GET', '/api/get-cart/' + id + '?includePartStatus=true')) : null; }, () => null);
+    const [core, audit, notes, cart] = await Promise.all([coreP, soft(AE.api('GET', '/api/workorder-audit-trail/' + wo)), soft(notesOf(wo)), cartP]);
+    return { d: scrub({ workorder: core, audit_trail: audit, notes, cart }), failed };
+  }
+  function wodGet(store, wo, opts = {}) {
+    const id = String(wo), k = wodKey(store);
+    if (!opts.force) {
+      const hit = (GM_getValue(k, {}) || {})[id];
+      if (hit && Date.now() - hit.at < (opts.maxAge || WOD_MS) && (!opts.updatedAt || hit.u === opts.updatedAt)) return Promise.resolve(Object.assign({ at: hit.at }, hit.d));
+      if (wodLoading.has(k + ':' + id)) return wodLoading.get(k + ':' + id);
+    }
+    const run = fetchDetail(id).then(({ d, failed }) => {
+      const at = Date.now(), all = GM_getValue(k, {}) || {};
+      for (const [w, x] of Object.entries(all)) if (!x || at - x.at > WOD_KEEP) delete all[w];
+      const w = d.workorder && d.workorder.workorder;
+      if (!failed && w) all[id] = { at, u: w.updatedAt || null, d }; else delete all[id];
+      GM_setValue(k, all);
+      return Object.assign({ at }, d);
+    }).finally(() => { if (wodLoading.get(k + ':' + id) === run) wodLoading.delete(k + ':' + id); });
+    wodLoading.set(k + ':' + id, run);
+    return run;
+  }
+  AE.woDetail = { get: wodGet };
+
+  // The tracker's copy: the shared detail plus the customer record (fetched alongside, never kept).
+  async function detailOf(store, wo, opts) {
+    const [x, customer] = await Promise.all([wodGet(store, wo, opts), AE.api('GET', '/api/v1/workorder/' + wo + '/demographic/customer-data').catch(() => null)]);
+    return scrub({ workorder: x.workorder, audit_trail: x.audit_trail, customer_data: customer, notes: x.notes, cart: x.cart });
   }
 
   // One WO, ready to send (or to look at, for the dev tools' dry run).
-  async function prepare(store, wo, listRow, jwk) {
-    const d = await detailOf(wo);
+  async function prepare(store, wo, listRow, jwk, opts = {}) {
+    const d = await detailOf(store, wo, opts);
     const own = d.workorder && d.workorder.workorder;
     if (own && own.storeId != null && Number(own.storeId) !== Number(store)) throw Object.assign(new Error("another store's work order"), { otherStore: Number(own.storeId) });
     if (listRow) d.list_row = scrub(listRow);
@@ -108,7 +144,9 @@ AE.tracker = (() => {
       Object.assign(result, { open: rows.length, need: s.need.length, note: s.note || null });
       for (const n of s.need) {
         try {
-          const x = await prepare(store, n.wo, byId.get(n.wo) || null, jwk);
+          // A missing order needs Portal's own answer (a 404 closes it); the rest may use Assize's recent copy.
+          const row = byId.get(n.wo) || null;
+          const x = await prepare(store, n.wo, row, jwk, n.why === 'missing' ? { force: true } : { updatedAt: row && row.updatedAt });
           const j = await call('POST', '/v1/' + store + '/tracker/wo/' + n.wo, { hash: x.hash, trigger: n.why, plain: x.plain, sealed: x.sealed, card: x.cardSealed, by: p.name });
           if (j.same) result.same++; else result.sent++;
         } catch (e) {
@@ -210,7 +248,7 @@ AE.tracker = (() => {
     const row = rows.find((r) => Number(r.workorderId) === Number(wo)) || null;
     const master = configured() ? await call('GET', '/v1/tracker/master').then((j) => j.publicJwk).catch(() => null) : null;
     const jwk = master || (await C.newKeyPair()).publicJwk; // no Worker yet: a throwaway key, only to measure
-    const x = await prepare(p.storeId, wo, row, jwk);
+    const x = await prepare(p.storeId, wo, row, jwk, { force: true });
     const d = x.detail, notes = (d.notes && d.notes.notes) || [];
     const sealedParts = { notes: notes.length, noteChars: notes.reduce((n, t) => n + String(t.noteText || '').length, 0), customerRecord: !!d.customer_data,
       statusHistory: Array.isArray(d.audit_trail) ? d.audit_trail.length : 0, cartLines: d.cart ? (d.cart.cartItems || []).length : 0 };
