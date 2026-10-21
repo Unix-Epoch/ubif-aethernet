@@ -195,6 +195,112 @@ const K = (id, value) => ({ id, type: 'constant', settings: { type: 'bool', valu
   assert.deepEqual(inMacro.errors, ['m/bad (boom): kaboom']);
 }
 
+// Debug runs (the editor's): every node evaluated, states, the exec path and wires taken, the outcome in words,
+// what every finding would say, errors kept per node.
+{
+  const T = (id, value) => ({ id, type: 'constant', settings: { type: 'text', value } });
+  const g = { v: 1, rule: 'r', check: 'cart', title: 'Default', nodes: [{ id: 'start', type: 'start' }, K('c', false), K('d', true), T('word', 'deposit'),
+    { id: 'b', type: 'branch', label: 'Is OOP?' }, { id: 'skip', type: 'stop', label: 'Skip closed orders' }, { id: 'tp', type: 'template', settings: { text: 'Mentions {w}' } },
+    { id: 'f', type: 'finding', settings: { title: 'Exec', kind: 'fail' } }, { id: 'n', type: 'not' }, { id: 'unused', type: 'not' }, { id: 'fd', type: 'finding', settings: { title: 'Data' } }],
+  wires: [W('c.out', 'b.cond'), W('word.out', 'tp.w'), W('tp.out', 'f.evidence'), W('d.out', 'n.in'), W('n.out', 'fd.when'), W('c.out', 'unused.in')],
+  flow: [W('start.then', 'b.in'), W('b.yes', 'f.in'), W('b.no', 'skip.in')] };
+  const c = compile(g);
+  assert.deepEqual(c.errors, []);
+  const normal = run(c, ctx0), r = run(c, ctx0, { debug: true });
+  assert.deepEqual(r.findings, normal.findings, 'same findings as a normal run');
+  assert.deepEqual(r.path, normal.path);
+  for (const k of Object.keys(normal.trace)) assert.deepEqual(r.trace[k], normal.trace[k], 'same values: ' + k);
+  assert.deepEqual(r.path, ['start', 'b', 'skip']);
+  assert.deepEqual(r.steps.map((x) => [x.i, x.node, x.pin]), [[0, 'start', 'then'], [1, 'b', 'no'], [2, 'skip', null]]);
+  assert.ok(r.steps.every((x, i) => !i || x.at > r.steps[i - 1].at), 'at counts up');
+  assert.deepEqual(r.execWires, [{ from: 'start.then', to: 'b.in', index: 0 }, { from: 'b.no', to: 'skip.in', index: 2 }]);
+  const st = Object.fromEntries(Object.entries(r.nodes).map(([k, v]) => [k, v.state]));
+  assert.deepEqual(st, { start: 'ran', c: 'used', b: 'ran', skip: 'ran', d: 'idle', word: 'idle', tp: 'idle', n: 'idle', unused: 'idle', f: 'notReached', fd: 'notReached' });
+  assert.ok(r.nodes.c.order < r.nodes.b.order + 2 && r.nodes.b.order < r.nodes.c.order, 'b starts, then pulls c');
+  assert.equal(r.trace['tp.out'], 'Mentions deposit', 'every wire has a value, even ones nothing needed');
+  assert.equal(r.trace['unused.out'], true);
+  assert.deepEqual(r.outcome, { ended: 'stop', node: 'skip', text: 'Stopped at "Skip closed orders"', raised: 0 });
+  assert.deepEqual(r.results.f, { reached: false, raised: false, wouldRaise: true, check: 'cart', kind: 'fail', rule: 'r', title: 'Exec', sigBasis: [], evidence: 'Mentions deposit', who: R.GH.UNASSIGNED });
+  assert.deepEqual([r.results.fd.reached, r.results.fd.raised, r.results.fd.wouldRaise, r.results.fd.title], [false, false, false, 'Data'], 'data finding after a stop: not checked');
+  assert.equal(r.aborted, false); assert.deepEqual(r.errors, []);
+  // Same graph, the other way: yes → finding (raised), then the flow ends; the data finding is checked.
+  const c2 = compile(Object.assign({}, g, { nodes: g.nodes.map((n) => (n.id === 'c' ? K('c', true) : n)) }));
+  const r2 = run(c2, ctx0, { debug: true });
+  assert.deepEqual(r2.findings, run(c2, ctx0).findings);
+  assert.deepEqual(r2.outcome, { ended: 'end', node: 'f', text: 'Flow finished', raised: 1 });
+  assert.deepEqual([r2.results.f.reached, r2.results.f.raised], [true, true]);
+  assert.deepEqual([r2.nodes.fd.state, r2.results.fd.reached, r2.results.fd.wouldRaise, r2.nodes.n.state, r2.nodes.d.state], ['ran', true, false, 'used', 'used']);
+  assert.equal(r2.nodes.skip.state, 'notReached');
+}
+// No finding node at all; a branch with nothing wired after it; no flow at all.
+{
+  const g = { v: 1, rule: 'r', nodes: [{ id: 's', type: 'start' }, K('c', false), { id: 'b', type: 'branch', label: 'Is OOP?' }], wires: [W('c.out', 'b.cond')], flow: [W('s.then', 'b.in')] };
+  const r = run(compile(g), ctx0, { debug: true });
+  assert.deepEqual(r.outcome, { ended: 'branch', node: 'b', pin: 'no', text: 'Ended after "Is OOP?" → no', raised: 0 });
+  assert.deepEqual(r.results, {}); assert.deepEqual(r.findings, []);
+  const b = run(compile({ v: 1, rule: 'r', nodes: [{ id: 's', type: 'start' }, K('c', true), { id: 'b', type: 'branch' }], wires: [W('c.out', 'b.cond')], flow: [W('s.then', 'b.in')] }), ctx0, { debug: true });
+  assert.equal(b.outcome.text, 'Ended after "Branch" → yes', 'no label: the node type\'s title');
+  const d = run(compile({ v: 1, rule: 'r', nodes: [K('t', true), { id: 'f', type: 'finding' }], wires: [W('t.out', 'f.when')] }), ctx0, { debug: true });
+  assert.deepEqual(d.outcome, { ended: 'end', text: 'No flow: findings checked on their own', raised: 1 });
+  assert.deepEqual([d.nodes.f.state, d.nodes.t.state, d.results.f.raised], ['ran', 'used', true]);
+  const e = run(compile({ v: 1, rule: 'r', nodes: [] }), ctx0, { debug: true });
+  assert.deepEqual([e.outcome.ended, e.findings, e.results], ['end', [], {}], 'an empty graph');
+  const bad = run(compile({ v: 1, nodes: [{ id: 'x', type: 'nope' }] }), ctx0, { debug: true });
+  assert.equal(bad.outcome.ended, 'error'); assert.match(bad.outcome.text, /doesn't validate: x: unknown node type/);
+  assert.match(validate({ v: 1, rule: 'r', nodes: [{ id: 'x', type: 'not', label: 5 }] }).join(), /x: label must be text/);
+  assert.match(validate({ v: 1, rule: 'r', nodes: [{ id: 'x', type: 'stop', label: 'x'.repeat(81) }] }).join(), /80 characters/);
+}
+// A node that throws: kept on that node and on every node that needs it; the run goes on. Only errors a normal run
+// would hit mark it aborted.
+{
+  const g = (used) => ({ v: 1, rule: 'r', nodes: [{ id: 's', type: 'start' }, { id: 'bad', type: 'boom' }, { id: 'n', type: 'not' }, K('t', true), { id: 'b', type: 'branch', label: 'Check' },
+    { id: 'f', type: 'finding', settings: { title: 'F' } }, { id: 'n2', type: 'not' }],
+  wires: [W('bad.out', 'n.in'), W((used ? 'n' : 't') + '.out', 'b.cond'), W('n.out', 'n2.in')], flow: [W('s.then', 'b.in'), W('b.yes', 'f.in')] });
+  const idle = run(compile(g(false), lib(PROBE)), ctx0, { debug: true });
+  assert.equal(idle.aborted, false, 'nothing the run needed failed');
+  assert.deepEqual(idle.findings.map((x) => x.title), ['F']);
+  assert.deepEqual(run(compile(g(false), lib(PROBE)), ctx0).findings.map((x) => x.title), ['F'], 'and a normal run agrees');
+  assert.deepEqual([idle.nodes.bad.state, idle.nodes.bad.error, idle.nodes.n.state, idle.nodes.n.error, idle.nodes.n2.error], ['error', 'kaboom', 'error', 'needs bad, which failed', 'needs n, which failed']);
+  assert.deepEqual(idle.errors, ['bad (boom): kaboom', 'n (not): needs bad, which failed', 'n2 (not): needs n, which failed']);
+  const used = run(compile(g(true), lib(PROBE)), ctx0, { debug: true });
+  assert.equal(used.aborted, true); assert.deepEqual(run(compile(g(true), lib(PROBE)), ctx0).errors, ['bad (boom): kaboom'], 'a normal run stops there');
+  assert.deepEqual(used.outcome, { ended: 'error', node: 'b', text: 'Ended with an error at "Check": needs n, which failed', raised: 0 });
+  assert.deepEqual(used.steps.map((x) => [x.node, x.pin, x.error || null]), [['s', 'then', null], ['b', null, 'needs n, which failed']]);
+  assert.deepEqual([used.nodes.f.state, used.results.f.reached, used.results.f.wouldRaise], ['notReached', false, true]);
+  // A finding whose evidence fails: an error on it, the flow goes on past it.
+  const fe = run(compile({ v: 1, rule: 'r', nodes: [{ id: 's', type: 'start' }, { id: 'bad', type: 'boom' }, { id: 'tp', type: 'template', settings: { text: '{x}' } }, { id: 'f', type: 'finding' }, { id: 'f2', type: 'finding', settings: { title: 'After' } }],
+    wires: [W('bad.out', 'tp.x'), W('tp.out', 'f.evidence')], flow: [W('s.then', 'f.in'), W('f.then', 'f2.in')] }, lib(PROBE)), ctx0, { debug: true });
+  assert.deepEqual(fe.findings.map((x) => x.title), ['After']);
+  assert.deepEqual([fe.nodes.f.state, fe.results.f.error, fe.results.f.raised, fe.aborted, fe.outcome.ended], ['error', 'needs tp, which failed', false, true, 'end']);
+  // The step limit still ends it all.
+  const lim = run(compile({ v: 1, rule: 'r', nodes: [K('t', false), { id: 'a', type: 'not' }, { id: 'b2', type: 'not' }, { id: 'f', type: 'finding' }], wires: [W('t.out', 'a.in'), W('a.out', 'b2.in'), W('b2.out', 'f.when')] }), ctx0, { debug: true, limit: 2 });
+  assert.equal(lim.aborted, true); assert.match(lim.outcome.text, /Step limit \(2\)/);
+}
+// Macros: their insides are in nodes / trace as macroNodeId/innerId, idle ones too.
+{
+  const g = { v: 1, rule: 'r', nodes: [{ id: 's', type: 'start' }, { id: 'scope', type: 'macro', settings: { macro: 'checked' } }, { id: 'b', type: 'branch' }, { id: 'f', type: 'finding' },
+    { id: 'm2', type: 'macro', settings: { macro: 'cartSum' } }, { id: 'wo', type: 'wo' }], wires: [W('scope.yes', 'b.cond'), W('wo.cart', 'm2.lines')], flow: [W('s.then', 'b.in'), W('b.yes', 'f.in')] };
+  const ctx = Object.assign(Object.create(R.GH), { f: R.facts({ workorderId: 1, workorderStatusName: 'Ready for work', programId: 20001 }, { wo: { workorderId: 1 }, notes: [], cart: { cartItems: [{ sku: 'A', name: 'Part', price: 5 }] } }), opts: {} });
+  const r = run(compile(g), ctx, { debug: true });
+  assert.deepEqual(r.findings, run(compile(g), ctx).findings);
+  assert.equal(r.nodes['scope/out'].state, 'used'); assert.equal(r.nodes['scope/wo'].state, 'used');
+  assert.equal(r.nodes.m2.state, 'idle'); assert.equal(r.nodes['m2/add'].state, 'idle'); assert.equal(r.trace['m2/add.out'], 5);
+  assert.ok(Object.keys(r.nodes).filter((k) => k.startsWith('scope/')).length === MACROS.checked.nodes.length, 'every node inside the macro');
+}
+// Notes the host doesn't have (customer details off): flagged on the nodes that read them, and on the run when one
+// that ran or was used does.
+{
+  const g = (pin) => ({ v: 1, rule: 'r', nodes: [{ id: 'wo', type: 'wo' }, { id: 'in', type: 'intakeNote' }, { id: 'f', type: 'finding' }], wires: [W('wo.' + pin, 'f.when')] });
+  const noNotes = Object.assign(Object.create(R.GH), { f: R.facts({ workorderId: 1, workorderStatusName: 'Ready for work' }, { wo: { workorderId: 1 }, notes: null }), opts: {} });
+  const withNotes = Object.assign(Object.create(R.GH), { f: R.facts({ workorderId: 1, workorderStatusName: 'Ready for work' }, { wo: { workorderId: 1 }, notes: [] }), opts: {} });
+  let r = run(compile(g('hasNotes')), noNotes, { debug: true });
+  assert.equal(r.needsNotes, true); assert.deepEqual(r.nodes.wo.needsNotes, ['notes', 'manualNotes', 'noteText', 'hasNotes']); assert.equal(r.nodes.in.needsNotes, true);
+  r = run(compile(g('isActive')), noNotes, { debug: true });
+  assert.equal(r.needsNotes, false, 'the Work order node read only for its status: fine'); assert.equal(r.nodes.in.state, 'idle');
+  assert.equal(run(compile(g('hasNotes')), withNotes, { debug: true }).needsNotes, false, 'notes there');
+  assert.ok(!('needsNotes' in run(compile(g('hasNotes')), withNotes, { debug: true }).nodes.wo));
+}
+
 // Node library: every type has a title, a category, a description, and pins of known types.
 for (const [type, d] of Object.entries(NODE_TYPES)) {
   assert.ok(d.title && d.desc && ['fact', 'check', 'logic', 'text', 'num', 'assize', 'out'].includes(d.cat), type);
@@ -212,7 +318,7 @@ assert.ok(exec >= 1 && pure >= 1, 'both styles are used');
 
 const NOW = Date.parse('2026-10-21T15:00:00Z');
 const seenRules = new Set();
-const tally = { orders: 0, comparisons: 0, raised: {}, evidence: {} };
+const tally = { orders: 0, comparisons: 0, debug: 0, raised: {}, evidence: {} };
 const pick = (x) => ({ rule: x.rule, check: x.check, kind: x.kind, title: x.title, evidence: x.evidence, who: x.who.key, sig: x.sig });
 function compare(row, detail, label) {
   const opts = { now: NOW, hours: R.STORE_HOURS, priceFor: () => null };
@@ -225,6 +331,13 @@ function compare(row, detail, label) {
   for (const c of R.graphs.rules) {
     const r = run(c, ctx);
     assert.deepEqual(r.errors, [], label + ' ' + c.rule);
+    if (tally.comparisons % 37 === 0) {
+      const d = run(c, ctx, { debug: true });
+      assert.deepEqual([d.findings, d.path, d.aborted, d.errors], [r.findings, r.path, false, []], label + ' ' + c.rule + ': debug = normal');
+      for (const k of Object.keys(r.trace)) assert.deepEqual(d.trace[k], r.trace[k], label + ' ' + c.rule + ' ' + k);
+      for (const [id, x] of Object.entries(d.results)) assert.equal(x.raised, d.findings.length > 0 && x.reached && x.wouldRaise, label + ' ' + id);
+      tally.debug++;
+    }
     const graph = r.findings.map((x) => pick(Object.assign({}, x, { who: x.who || R.GH.UNASSIGNED, sig: R.sigOf(...x.sigBasis) })));
     const mine = code.filter((x) => x.rule === c.rule).map(pick);
     assert.deepEqual(graph, mine, label + ' ' + c.rule);
@@ -328,4 +441,4 @@ if (stateFile) {
 for (const rule of RULES) assert.ok(tally.raised[rule] > 0, rule + ' raised at least once');
 const oopVariants = Object.keys(tally.evidence).filter((k) => k.startsWith('oop-zero-cart'));
 assert.equal(oopVariants.length, 3, 'all three OOP evidence variants: ' + oopVariants.join(' | '));
-console.log('rulegraph: interpreter ok; parity ' + tally.orders + ' orders (' + synthetic + ' synthetic, ' + sandbox + ' sandbox × 2) × ' + RULES.length + ' rules = ' + tally.comparisons + ' comparisons, all equal; raised: ' + JSON.stringify(tally.raised));
+console.log('rulegraph: interpreter ok; parity ' + tally.orders + ' orders (' + synthetic + ' synthetic, ' + sandbox + ' sandbox × 2) × ' + RULES.length + ' rules = ' + tally.comparisons + ' comparisons, all equal (' + tally.debug + ' debug runs too); raised: ' + JSON.stringify(tally.raised));

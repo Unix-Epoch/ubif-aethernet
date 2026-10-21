@@ -9,7 +9,8 @@
       wires:  [{ from: 'n1.program', to: 'n2.key' }, ...]      data wires: output pin → input pin, typed
       flow:   [{ from: 'start.then', to: 'b1.in' }, ...]       exec wires (Blueprint's white wires), optional
       macros: { name: { title, inputs: [{name, type}], outputs: [{name, type}], nodes, wires } }   optional }
-    x / y are the editor's layout only. rule / check / title are the defaults for the graph's finding nodes.
+    x / y (and an optional label, the node's own name) are the editor's only. rule / check / title are the
+    defaults for the graph's finding nodes.
 
   How it runs (one order = one run):
     · Pure nodes (no exec pins) are evaluated lazily, when something downstream asks for one of their outputs,
@@ -30,6 +31,7 @@
 
   run(compiled, ctx, { trace, limit }) → { findings: [{ check, kind, rule, sigBasis, title, evidence, who }],
     errors: [...], trace: { 'nodeId.pin': value, 'macroNodeId/innerId.pin': value }, path: [executed node ids] }
+  run(compiled, ctx, { debug: true }) is the editor's: every node evaluated, errors kept per node (see debugRun).
   sigBasis is what the host hashes into the dismissal signature (Assize: sigOf(...sigBasis)), so it must list the
   same facts, in the same order, as the code rule it stands for.
 
@@ -74,7 +76,8 @@ const FINDING_SET = [opt('title', 'text'), opt('check', 'text'), opt('rule', 'te
   The node library. Each type: title (the editor's), cat (fact check logic text num assize out), desc, inputs /
   outputs (lists, or functions of the node's settings), settings (the editor's form: name, type text|num|bool|list|
   enum|pattern|macro, options, def), exec ({ in, outs }) for executed nodes, and eval(io, settings, ctx) → outputs
-  (pure nodes) or run(io, settings, ctx, state) → the exec output to follow (executed nodes).
+  (pure nodes) or run(io, settings, ctx, state) → the exec output to follow (executed nodes). notes: the node reads
+  the order's notes (true, or the outputs that come from them), which a debug run flags when the host has none.
   io.in(pin) evaluates what is wired to an input (lazily), io.wired(pin) says whether anything is.
 */
 export const NODE_TYPES = {
@@ -85,6 +88,7 @@ export const NODE_TYPES = {
     outputs: [p('id', 'text'), p('program', 'text'), p('programKey', 'text'), p('status', 'text'), p('statusId', 'num'), p('outcome', 'text'),
       p('isRfp', 'bool'), p('isActive', 'bool'), p('device', 'text'), p('cart', 'lines'), p('hasCart', 'bool'), p('notes', 'notes'),
       p('manualNotes', 'notes'), p('noteText', 'text'), p('hasNotes', 'bool')],
+    notes: ['notes', 'manualNotes', 'noteText', 'hasNotes'],
     eval(io, s, ctx) {
       const f = ctx.f, manual = (f.notes || []).filter((n) => Number(n.noteType) === ctx.MANUAL);
       // Ready for pickup by name or by id (13), as the rules decide it; everything else open is Active.
@@ -229,13 +233,13 @@ export const NODE_TYPES = {
   },
   intakeNote: {
     title: 'Intake note', cat: 'assize', desc: 'The check-in note: whether there is one, its text, and its own lines (blank and checklist lines left out).',
-    inputs: [], outputs: [p('exists', 'bool'), p('text', 'text'), p('ownLines', 'num')], settings: [],
+    inputs: [], outputs: [p('exists', 'bool'), p('text', 'text'), p('ownLines', 'num')], settings: [], notes: true,
     eval(io, s, ctx) {
       const n = ctx.intakeNote(ctx.f), text = n ? str(n.noteText) : '';
       return { exists: !!n, text, ownLines: text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !ctx.CHECKLIST_LINE.test(l)).length };
     },
   },
-  intakeAuthor: { title: 'Intake author', cat: 'assize', desc: "Who wrote the intake note (else who created the order, else Unassigned).", inputs: [], outputs: [p('who', 'person')], settings: [], eval: (io, s, ctx) => ({ who: ctx.intakeAuthor(ctx.f) }) },
+  intakeAuthor: { title: 'Intake author', cat: 'assize', desc: "Who wrote the intake note (else who created the order, else Unassigned).", inputs: [], outputs: [p('who', 'person')], settings: [], notes: true, eval: (io, s, ctx) => ({ who: ctx.intakeAuthor(ctx.f) }) },
   // ---------------------------------------------------------------- output and flow
   start: { title: 'Start', cat: 'out', desc: 'Where execution begins, once per order.', inputs: [], outputs: [], settings: [], exec: { in: false, outs: ['then'] }, run: () => 'then' },
   branch: {
@@ -262,6 +266,7 @@ export const NODE_TYPES = {
     inputs: (s, m) => (m ? m.inputs : []), outputs: (s, m) => (m ? m.outputs : []),
     eval(io, s, ctx, n, st, scope) {
       const sub = { c: n.macro, memo: new Map(), prefix: scope.prefix + n.id + '/', io };
+      if (st.dbg) st.dbg.scopes.push(sub);
       return outputsOf(st, sub, n.macro.outId);
     },
   },
@@ -391,6 +396,7 @@ function body(g, lib, inside, at, errs) {
     if ((n.type === 'macroIn' || n.type === 'macroOut') && !inside) { errs.push(at + n.id + ': ' + n.type + ' only goes inside a macro'); continue; }
     if (inside && def.exec) { errs.push(at + n.id + ': macros have no exec nodes (' + n.type + ')'); continue; }
     for (const f of def.settings || []) { const e = checkSetting(f, s[f.name]); if (e) errs.push(at + n.id + ': setting ' + f.name + ' ' + e); }
+    if (n.label != null && (typeof n.label !== 'string' || n.label.length > 80)) errs.push(at + n.id + ': label must be text, 80 characters at most');
     pins.set(n.id, pinsOf(n, lib, inside));
   }
   if (inside) {
@@ -463,10 +469,10 @@ function part(g, lib, inside, macroOf) {
   const nodes = {};
   for (const n of g.nodes) {
     const def = lib.nodes[n.type], s = n.settings || {};
-    nodes[n.id] = { id: n.id, type: n.type, def, s, ins: {}, next: {}, execIn: false, cache: {}, macro: n.type === 'macro' ? macroOf(s.macro) : null };
+    nodes[n.id] = { id: n.id, type: n.type, def, s, ins: {}, next: {}, wire: {}, execIn: false, cache: {}, macro: n.type === 'macro' ? macroOf(s.macro) : null, label: n.label || def.title };
   }
   for (const w of g.wires || []) { const [a, ap] = split(w.from), [b, bp] = split(w.to); nodes[b].ins[bp] = [a, ap]; }
-  for (const w of g.flow || []) { const [a, ap] = split(w.from), [b] = split(w.to); nodes[a].next[ap] = b; nodes[b].execIn = true; }
+  (g.flow || []).forEach((w, i) => { const [a, ap] = split(w.from), [b] = split(w.to); nodes[a].next[ap] = b; nodes[a].wire[ap] = i; nodes[b].execIn = true; });
   const all = Object.values(nodes);
   return {
     def: inside, nodes, start: (all.find((n) => n.type === 'start') || {}).id || null, outId: (all.find((n) => n.type === 'macroOut') || {}).id || null,
@@ -475,18 +481,25 @@ function part(g, lib, inside, macroOf) {
 }
 
 class Abort extends Error {}
-const BUSY = {};
+// Debug runs only: an input's node failed (its own error is kept on it); the message is that node's path.
+class Failed extends Error {}
+const BUSY = {}, FAILED = {};
 // A node's outputs, evaluated once per run (per macro call inside a macro).
 function outputsOf(st, scope, id) {
   const memo = scope.memo.get(id);
   if (memo === BUSY) throw new Abort(where(scope, id) + ': its inputs loop back to it');
+  if (memo === FAILED) throw new Failed(where(scope, id));
   if (memo) return memo;
   if (++st.steps > st.limit) throw new Abort('Step limit (' + st.limit + ') reached at ' + where(scope, id));
   const n = scope.c.nodes[id];
   scope.memo.set(id, BUSY);
+  if (st.dbg) st.dbg.seen(scope, n);
   let o;
   try { o = n.def.eval(ioOf(st, scope, n), n.s, st.ctx, n, st, scope) || {}; }
-  catch (e) { throw e instanceof Abort ? e : new Abort(where(scope, id) + ' (' + n.type + '): ' + ((e && e.message) || String(e))); }
+  catch (e) {
+    if (st.dbg && !(e instanceof Abort)) { scope.memo.set(id, FAILED); st.dbg.fail(scope, n, e); throw new Failed(where(scope, id)); }
+    throw e instanceof Abort ? e : new Abort(where(scope, id) + ' (' + n.type + '): ' + ((e && e.message) || String(e)));
+  }
   scope.memo.set(id, o);
   if (st.trace) for (const k of Object.keys(o)) st.trace[scope.prefix + id + '.' + k] = o[k];
   return o;
@@ -503,6 +516,7 @@ function ioOf(st, scope, n) {
   (a node threw, the step limit) has the error and no findings.
 */
 export function run(c, ctx, opts = {}) {
+  if (opts.debug) return debugRun(c, ctx, opts);
   const res = { findings: [], errors: [], trace: {}, path: [] };
   if (!c || (c.errors && c.errors.length)) { res.errors = (c && c.errors) || ['No graph']; return res; }
   const st = { ctx: ctx || {}, steps: 0, limit: opts.limit || STEP_LIMIT, trace: opts.trace === false ? null : res.trace, findings: res.findings, graph: c };
@@ -534,5 +548,141 @@ export function run(c, ctx, opts = {}) {
     res.errors.push(e instanceof Abort ? e.message : 'Graph error: ' + ((e && e.message) || String(e)));
     res.findings.length = 0;
   }
+  return res;
+}
+
+/*
+  debugRun (run(c, ctx, { debug: true })): the editor's run. The same flow as run() (same lazy order, same memo, so
+  every value matches what Assize computes), then every node nothing needed is evaluated too, so every wire has a
+  value, and every finding says what it would raise. A node that throws is kept as that node's error (and every node
+  that needs it says so) instead of ending the run. → run()'s { findings, errors, trace, path } plus:
+    steps      the exec path in order: [{ i, node, pin (the exec output taken; null at a stop or an error), at (the
+               evaluation count then: pure nodes pulled in between have nodes[id].order below it), error? }]
+    execWires  the exec wires taken: [{ from: 'b.yes', to: 'f.in', index (in graph.flow) }]
+    nodes      per node ({ 'macroNodeId/innerId' } inside macros): { state, order, error?, needsNotes? }
+               state: ran (an executed node execution reached, or a data-driven finding checked after the flow) ·
+               used (a pure node pulled by something that ran) · idle (evaluated only for the debug view) ·
+               notReached (an executed node execution never reached) · error (threw, or needs a node that did).
+               needsNotes: the node reads the order's notes and the host has none (ctx.f.notes null: customer
+               details off, or not loaded): true, or the outputs concerned (the Work order node).
+    outcome    how the run ended, in words: { ended: 'stop' | 'branch' | 'end' | 'error', node?, pin?, text, raised }
+               e.g. { ended: 'stop', node: 'n7', text: 'Stopped at "Skip closed orders"' }, { ended: 'branch',
+               node, pin: 'no', text: 'Ended after "Is OOP?" → no' }, { ended: 'end', text: 'Flow finished' }.
+    results    per finding / reminder node: { reached, raised, wouldRaise, kind, check, rule, title, evidence, who,
+               sigBasis, error? }; wouldRaise and the texts come from its inputs even when execution never got there.
+    aborted    a normal run would have hit an error (no findings from this graph on this order: Assize keeps the
+               code rule). findings still lists what the debug run raised.
+    needsNotes some node that ran or was used reads notes the host doesn't have.
+*/
+function debugRun(c, ctx, opts) {
+  const res = { findings: [], errors: [], trace: {}, path: [], steps: [], execWires: [], nodes: {}, results: {}, outcome: null, aborted: false, needsNotes: false };
+  if (!c || (c.errors && c.errors.length)) {
+    res.errors = (c && c.errors) || ['No graph'];
+    res.outcome = { ended: 'error', text: "The graph doesn't validate: " + res.errors[0], raised: 0 };
+    return res;
+  }
+  let seq = 0;
+  const limit = opts.limit || STEP_LIMIT, raisedBy = new Set(), reached = new Set();
+  const msg = (e) => (e instanceof Failed ? 'needs ' + e.message + ', which failed' : (e && e.message) || String(e));
+  const st = { ctx: ctx || {}, steps: 0, limit, trace: res.trace, findings: res.findings, graph: c, phase: 'real', dbg: {
+    scopes: [],
+    seen(scope, n) { res.nodes[scope.prefix + n.id] = { state: st.phase === 'real' ? 'used' : 'idle', order: ++seq }; },
+    fail(scope, n, e) { failed(scope.prefix + n.id, n, e); },
+  } };
+  const failed = (key, n, e) => {
+    const x = res.nodes[key] || (res.nodes[key] = { order: ++seq });
+    x.state = 'error'; x.error = msg(e);
+    res.errors.push(key + ' (' + n.type + '): ' + x.error);
+    if (st.phase === 'real') res.aborted = true;
+  };
+  const scope = { c, memo: new Map(), prefix: '' };
+  const label = (id) => '"' + c.nodes[id].label + '"';
+  let stopped = false, broke = false;
+  // 1. The flow, as run() does it.
+  try {
+    let id = c.start;
+    while (id) {
+      if (++st.steps > st.limit) throw new Abort('Step limit (' + st.limit + ') reached at ' + id);
+      const n = c.nodes[id], before = res.findings.length;
+      res.path.push(id); reached.add(id);
+      res.nodes[id] = { state: 'ran', order: ++seq };
+      let out, error = null;
+      try { out = n.def.run(ioOf(st, scope, n), n.s, st.ctx, st, n); }
+      catch (e) {
+        if (e instanceof Abort) throw e;
+        failed(id, n, e); error = res.nodes[id].error;
+        // A finding that failed still hands on (its one exec output); anything else ends the flow here.
+        if (n.def.exec.outs.length !== 1 || n.type === 'branch') {
+          res.steps.push({ i: res.steps.length, node: id, pin: null, at: st.steps, error });
+          res.outcome = { ended: 'error', node: id, text: 'Ended with an error at ' + label(id) + ': ' + error };
+          broke = true;
+          break;
+        }
+        out = n.def.exec.outs[0];
+      }
+      if (res.findings.length > before) raisedBy.add(id);
+      res.steps.push(Object.assign({ i: res.steps.length, node: id, pin: out, at: st.steps }, error ? { error } : null));
+      if (out === null) { stopped = true; res.outcome = { ended: 'stop', node: id, text: 'Stopped at ' + label(id) }; break; }
+      const next = n.next[out] || null;
+      if (next) res.execWires.push({ from: id + '.' + out, to: next + '.in', index: n.wire[out] });
+      else res.outcome = n.type === 'branch' ? { ended: 'branch', node: id, pin: out, text: 'Ended after ' + label(id) + ' → ' + out } : { ended: 'end', node: id, text: 'Flow finished' };
+      id = next;
+    }
+    if (!res.outcome) res.outcome = { ended: 'end', text: c.start ? 'Flow finished' : 'No flow: findings checked on their own' };
+    // 2. Data-driven findings, after the flow (not after a stop, nor after an error ended it).
+    if (!stopped && !broke) {
+      for (const fid of c.dataFindings) {
+        const n = c.nodes[fid], io = ioOf(st, scope, n), before = res.findings.length;
+        res.nodes[fid] = { state: 'ran', order: ++seq }; reached.add(fid);
+        let hit = false;
+        try { hit = !!io.in('when'); } catch (e) { if (e instanceof Abort) throw e; failed(fid, n, e); continue; }
+        if (!hit) continue;
+        if (++st.steps > st.limit) throw new Abort('Step limit (' + st.limit + ') reached at ' + fid);
+        try { res.findings.push(n.def.raise(io, n.s, st.ctx, c)); } catch (e) { if (e instanceof Abort) throw e; failed(fid, n, e); }
+        if (res.findings.length > before) raisedBy.add(fid);
+      }
+    }
+  } catch (e) {
+    const text = e instanceof Abort ? e.message : 'Graph error: ' + ((e && e.message) || String(e));
+    res.errors.push(text); res.aborted = true;
+    res.outcome = { ended: 'error', text };
+  }
+  // 3. Everything else, for the view: every pure node (macro insides too), then what each finding would say.
+  st.phase = 'idle'; st.limit = st.steps + limit;
+  const quiet = (fn) => { try { fn(); } catch (e) { if (!(e instanceof Failed)) throw e; } };
+  try {
+    for (const id of Object.keys(c.nodes)) if (!c.nodes[id].def.exec) quiet(() => outputsOf(st, scope, id));
+    for (let i = 0; i < st.dbg.scopes.length; i++) { const sub = st.dbg.scopes[i]; for (const id of Object.keys(sub.c.nodes)) quiet(() => outputsOf(st, sub, id)); }
+    for (const [id, n] of Object.entries(c.nodes)) {
+      if (!n.def.exec) continue;
+      if (!res.nodes[id]) res.nodes[id] = { state: 'notReached' };
+      if (n.type !== 'finding' && n.type !== 'reminder') continue;
+      const io = ioOf(st, scope, n), r = { reached: reached.has(id), raised: raisedBy.has(id), wouldRaise: false };
+      try {
+        r.wouldRaise = !io.wired('when') || !!io.in('when');
+        Object.assign(r, n.def.raise(io, n.s, st.ctx, c));
+      } catch (e) { if (e instanceof Abort) throw e; r.error = msg(e); }
+      res.results[id] = r;
+    }
+  } catch (e) {
+    if (!(e instanceof Abort)) throw e;
+    res.errors.push(e.message + ' (while evaluating the rest for the view)');
+  }
+  // 4. Notes the host doesn't have.
+  if (st.ctx.f && st.ctx.f.notes == null) {
+    const all = [[scope, c]].concat(st.dbg.scopes.map((x) => [x, x.c]));
+    for (const [sc, part] of all) {
+      for (const n of Object.values(part.nodes)) {
+        const need = n.def.notes, x = res.nodes[sc.prefix + n.id];
+        if (!need || !x) continue;
+        x.needsNotes = need === true ? true : need.slice();
+        // The Work order node: only when something that ran or was used reads one of its notes outputs.
+        const live = (k) => res.nodes[sc.prefix + k] && ['ran', 'used'].includes(res.nodes[sc.prefix + k].state);
+        const reads = need === true ? ['ran', 'used'].includes(x.state) : Object.values(part.nodes).some((m) => live(m.id) && Object.values(m.ins).some(([a, ap]) => a === n.id && need.includes(ap)));
+        if (reads) res.needsNotes = true;
+      }
+    }
+  }
+  res.outcome.raised = res.findings.length;
   return res;
 }
