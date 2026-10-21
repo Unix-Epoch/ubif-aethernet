@@ -21,6 +21,7 @@ export async function resolve(spec, ctx, next) {
   const r = await next(spec, ctx);
   // Same file imported as text by admin-worker and as code elsewhere: keep them apart.
   if (ctx.parentURL && ctx.parentURL.endsWith('/admin-worker/src/index.js') && /(tracker-ui|metrics-ui|crypto)\\.js$/.test(r.url)) return Object.assign({}, r, { url: r.url + '?as-text' });
+  if (ctx.importAttributes && ctx.importAttributes.type === 'text') return Object.assign({}, r, { url: r.url + '?as-text', importAttributes: {} });
   return r;
 }`));
 const { default: site } = await import('../../admin-worker/src/index.js');
@@ -74,6 +75,17 @@ const ow = (await call('owner@x.com', 'GET', '/api/tracker/wos')).j.wos;
 assert.equal(ow.length, 3); assert.ok(ow.every((w) => w.card), 'owner gets sealed cards');
 const om = (await call('owner@x.com', 'GET', '/api/tracker/me')).j.access;
 assert.equal(om.owner, true); assert.ok(om.pages.includes('people') && om.pages.includes('metrics'));
+
+// --- the Assize rules editor's engine, served to the page as modules (page 'rules'); the same code the Worker runs
+for (const [path, name] of [['/rulegraph.js', 'run'], ['/assize-rules.js', 'makeRules']]) {
+  const r = await call('owner@x.com', 'GET', path);
+  assert.equal(r.status, 200, path);
+  const mod = await import('data:text/javascript,' + encodeURIComponent(r.text));
+  assert.equal(typeof mod[name], 'function', path + ' works as a browser module');
+  assert.equal((await call('viewer@x.com', 'GET', path)).status, 403, 'no rules page: ' + path);
+}
+assert.equal((await call('owner@x.com', 'GET', '/api/tracker/assize/rules')).status, 200);
+for (const [m, p, b] of [['GET', '/api/tracker/assize/rules'], ['PUT', '/api/tracker/assize/rules/no-bin/draft', { scope: 914, graph: {} }], ['GET', '/api/tracker/assize/orders?store=914']]) assert.equal((await call('mgr@x.com', m, p, b)).status, 403, 'manager without the rules page: ' + p);
 
 // --- store viewer: only their store's work orders, nothing sealed, nothing else
 const vw = await call('viewer@x.com', 'GET', '/api/tracker/wos');

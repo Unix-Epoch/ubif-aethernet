@@ -25,6 +25,7 @@
     GET  /v1/:store/tracker/sales/days?from&to   daily sales totals (Tactician)
     GET  /v1/:store/tracker/rfp/days?from&to     the RFP total at the end of each day (Tactician)
     GET  /v1/:store/tracker/settings             store settings (general managers, …); PUT …/settings/gm
+    GET  /v1/:store/assize/rules?v=              the Assize rule graphs published for the store (src/assize.js)
 
   Agents (programs with their own key, e.g. the Mac's work order audit; x-aethernet-key too):
     POST /v1/agents/register { id, name, publicJwk, token }   → { id, fingerprint, status } (waits for approval)
@@ -51,6 +52,7 @@ import { daily } from './daily.js';
 
 import { PAGES, WIDE_PAGES, owners, cleanPages, presetOf, accessOf, check, stripSealed } from './access.js';
 import { metricsApi, statusPeriodStmts, closeStatusPeriod } from './metrics.js';
+import { assizeStore, assizeAdmin } from './assize.js';
 
 const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
@@ -587,7 +589,7 @@ async function storeApi(req, env, url, store) {
 async function log(env, email, action, store = null, wo = null, detail = null) {
   await env.TR.prepare('INSERT INTO access_log (email, action, store, wo, detail, at) VALUES (?, ?, ?, ?, ?, ?)').bind(email, action, store, wo, detail, now()).run();
 }
-const PAGE_NAME = { wos: 'work orders', sales: 'sales', metrics: 'metrics', data: 'store data', usage: 'usage', reports: 'reports', auto: 'auto-waymark', stores: 'stores' };
+const PAGE_NAME = { wos: 'work orders', sales: 'sales', metrics: 'metrics', data: 'store data', usage: 'usage', reports: 'reports', auto: 'auto-waymark', stores: 'stores', rules: 'assize rules' };
 // "pages +metrics -usage · stores +1276 · details on · role manager → custom" (access_log detail for access:change)
 function accessDiff(before, after) {
   const out = [], pm = (a, b, f) => [...b.filter((x) => !a.includes(x)).map((x) => '+' + f(x)), ...a.filter((x) => !b.includes(x)).map((x) => '-' + f(x))];
@@ -616,6 +618,8 @@ function accessDiff(before, after) {
   GET  /wos?store=&open=&status=&since=&limit=&offset=&detail=1   WO rows (plain + sealed card;
                                  detail=1 adds the latest sealed snapshot, for searching note text)
   GET  /wo/:store/:wo            one WO: row, snapshots (plain + sealed), changes
+  …    /assize/…                 Assize rules: list, drafts, publish, history, per-store overrides, test orders
+                                 (page 'rules'; src/assize.js has the routes)
   Owners only (People):
   GET  /people                   everyone + their key copies' kinds, pages, details, review; owners list
   POST /people { email, name, scope, stores, pages, details, keys, keysMode }   add/update. keys = invite
@@ -765,6 +769,8 @@ async function trackerRoutes(req, env, url, path, email, who) {
   }
   // Metrics (src/metrics.js): the gate above already required page 'metrics'; metricsApi limits stores to what `me` may see.
   if (path === '/metrics' || path.startsWith('/metrics/')) return metricsApi(req, env, url, path, me);
+  // Assize rules (src/assize.js): the gate above already required page 'rules'; edits check the scope there.
+  if (path.startsWith('/assize/')) return assizeAdmin(req, env, url, path, me, email, { json, fail, readJson, clean, int, now, log });
 
   if (!me.owner) return fail(403, 'owners only', false);
   if (req.method === 'GET' && path === '/people') {
@@ -949,10 +955,11 @@ export default {
         return r ? json({ publicJwk: JSON.parse(r.public_jwk) }) : fail(404, 'tracker not set up');
       }
       if (url.pathname.startsWith('/v1/agents/')) return await agentApi(req, env, url);
-      const m = url.pathname.match(/^\/v1\/(\d{1,6})\/tracker\//);
+      const m = url.pathname.match(/^\/v1\/(\d{1,6})\/(tracker|assize)\//);
       if (!m) return fail(404, 'not found');
       const store = Number(m[1]);
       if (!(await allowed(env, store))) return fail(403, 'store has no Aethernet access');
+      if (m[2] === 'assize') return await assizeStore(req, env, url, store, { json, fail });
       return await storeApi(req, env, url, store);
     } catch (e) {
       return fail(e.status || 500, e.status ? e.message : 'server error: ' + (e.message || e));

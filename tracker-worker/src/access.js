@@ -14,7 +14,7 @@
   Customer details (people.details 0/1): off = no key copies, and trackerAdmin strips every sealed
   field (SEALED_KEYS) from its responses to them.
 */
-export const PAGES = ['wos', 'sales', 'metrics', 'data', 'usage', 'reports', 'auto', 'stores'];
+export const PAGES = ['wos', 'sales', 'metrics', 'data', 'usage', 'reports', 'auto', 'stores', 'rules'];
 export const WIDE_PAGES = ['reports', 'auto', 'stores'];
 export const SEALED_KEYS = ['card', 'sealed', 'customerName'];
 
@@ -41,6 +41,9 @@ export const ROUTES = [
   ['*', /^\/api\/feedback(\/\d+)?$/, 'reports'],
   ['GET', /^\/api\/next-version$/, 'reports'],
   ['*', /^\/api\/auto-rules$/, 'auto'],
+  ['GET', /^\/api\/tracker\/assize\/orders$/, 'rules'],            // ?store= checked here (query)
+  ['*', /^\/api\/tracker\/assize\/rules(\/|$)/, 'rules'],         // scope of each edit checked in src/assize.js
+  ['GET', /^\/(rulegraph|assize-rules)\.js$/, 'rules'],              // the editor's engine, served to the page
 ];
 
 export const owners = (env) => String(env.TRACKER_OWNERS || '').toLowerCase().split(/[\s,]+/).filter(Boolean);
@@ -55,7 +58,7 @@ export function presetOf(a) {
   const same = (x, y) => x.length === y.length && x.every((p) => y.includes(p));
   if (a.scope === 'stores' && !a.details && same(a.pages, ['wos'])) return 'store viewer';
   if (a.scope === 'stores' && a.details && same(a.pages, ['wos', 'sales', 'metrics', 'data'])) return 'manager';
-  if (a.scope === 'all' && a.details && same(a.pages, PAGES)) return 'owner-level';
+  if (a.scope === 'all' && a.details && same(a.pages, PAGES.filter((p) => p !== 'rules'))) return 'owner-level';
   return 'custom';
 }
 

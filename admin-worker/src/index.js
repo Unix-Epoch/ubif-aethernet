@@ -19,6 +19,8 @@
   (TRACKER_OWNERS) bypass. Refusals are 403 { error, page } and an access_log 'denied' row. Pages
   are only drawn for what GET /api/tracker/me says the person has.
     GET  /metrics-ui.js  the Metrics page (loaded by page.js on first use; data from /api/tracker/metrics)
+    GET  /rulegraph.js, /assize-rules.js   the rule graph interpreter and Assize's rules engine as browser modules
+                      (page 'rules'; the same files the tracker Worker imports and build.py inlines into Aethernet)
   Local testing only: `wrangler dev --var LOCAL_TEST:1` lets requests to localhost in.
 */
 import { adminApi } from '../../worker/src/index.js';
@@ -29,6 +31,11 @@ import CRYPTO_SRC from '../../tracker-worker/src/crypto.js';
 import WORDS from './words.txt';
 import TRACKER_UI from './tracker-ui.js';
 import METRICS_UI from './metrics-ui.js';
+// Assize's rules engine and the graph interpreter, as text for the page (the Assize rules editor runs them in the
+// browser); the tracker Worker imports the same files as code.
+import RULEGRAPH_SRC from '../../tracker-worker/src/rulegraph.js' with { type: 'text' };
+import ASSIZE_RULES_SRC from '../../tracker-worker/src/assize-rules.js' with { type: 'text' };
+const SHARED = { '/rulegraph.js': RULEGRAPH_SRC, '/assize-rules.js': ASSIZE_RULES_SRC };
 
 const b64url = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 const parse = (s) => JSON.parse(new TextDecoder().decode(b64url(s)));
@@ -72,7 +79,7 @@ export default {
     if (url.pathname === '/crypto.js') return new Response(CRYPTO_SRC, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     if (url.pathname === '/tracker-ui.js') return new Response(TRACKER_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     if (url.pathname === '/words.txt') return new Response(WORDS, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'max-age=86400' } });
-    if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/metrics')) return new Response('Not found', { status: 404 });
+    if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/metrics') && !SHARED[url.pathname]) return new Response('Not found', { status: 404 });
     // The access gate: nothing below runs for a route, page or store this person wasn't given.
     if (!env.TR) return new Response(JSON.stringify({ error: 'tracker database not bound' }), { status: 503, headers: { 'content-type': 'application/json' } });
     const me = await accessOf(env, who.email);
@@ -80,6 +87,8 @@ export default {
     if (denied) return new Response(JSON.stringify(denied), { status: 403, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
     // The Metrics page's own script: after the gate, so only people with page 'metrics' get it.
     if (url.pathname === '/metrics-ui.js') return new Response(METRICS_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
+    // The Assize rules editor's engine (page 'rules'): import * as RG from '/rulegraph.js'; import { makeRules } from '/assize-rules.js'.
+    if (SHARED[url.pathname]) return new Response(SHARED[url.pathname], { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     if (!url.pathname.startsWith('/api/')) return new Response('Not found', { status: 404 });
     // The next public version (status.json's latest, minor + 1): the default "fixed in" for quoting a report.
     if (url.pathname === '/api/next-version') {

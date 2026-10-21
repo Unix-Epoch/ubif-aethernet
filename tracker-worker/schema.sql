@@ -1,5 +1,5 @@
 -- Work order tracker (database "aethernet-tracker"). Every WO row carries its store.
--- Customer data only ever arrives sealed (src/crypto.js); everything in plain columns is safe to read.
+-- Customer data only ever arrives sealed (src/crypto.js) · everything in plain columns is safe to read.
 
 CREATE TABLE IF NOT EXISTS master_key (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS people (
   added_by TEXT, added_at TEXT, last_seen_at TEXT,
   -- Oct 17, 2026: per-person access (admin-worker gate, tracker-worker/src/access.js). Owners (TRACKER_OWNERS) bypass all of it.
   pages TEXT NOT NULL DEFAULT '["wos"]',   -- JSON page ids: wos sales metrics data usage reports auto stores
-  details INTEGER NOT NULL DEFAULT 0,      -- 1 = may open sealed customer details (gets key copies); 0 = sealed fields stripped
+  details INTEGER NOT NULL DEFAULT 0,      -- 1 = may open sealed customer details (gets key copies) · 0 = sealed fields stripped
   review INTEGER NOT NULL DEFAULT 0,       -- 1 = carried over by the access migration, an owner should trim it
   updated_by TEXT, updated_at TEXT
 );
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS workorders (
   cart_value REAL,                     -- cart lines pre-tax, Partner Credit Tax Exempt (PCEXEMPT) ignored
   service_outcome TEXT,                -- Portal's outcome: Completed / Incomplete / Declined / No issue found (RFP complete vs incomplete)
   gone_seen_at TEXT,                   -- Portal's first 404 for it (closed only after a second one)
-  last_cart_value REAL, last_cart_tax REAL,  -- last non-empty cart (Portal empties it at sale): value before tax, partner credits ignored; its tax
+  last_cart_value REAL, last_cart_tax REAL,  -- last non-empty cart (Portal empties it at sale): value before tax, partner credits ignored · its tax
   sold_at TEXT,                        -- when it reached Sale complete (status history)
   plain TEXT,                          -- latest plain part (JSON)
   card TEXT,                           -- sealed search card: name, phones, emails, IMEI/serial, claim
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS access_log (
 );
 CREATE INDEX IF NOT EXISTS log_at ON access_log (at);
 
--- Daily sales. Portal's sales history (authoritative) per store; days without it are
+-- Daily sales. Portal's sales history (authoritative) per store · days without it are
 -- estimated from work orders that reached Sale complete (their last cart before checkout).
 CREATE TABLE IF NOT EXISTS sales (
   store INTEGER NOT NULL,
@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS sales_days (
 -- For estimates: each WO's last non-empty cart (value before tax, partner credits ignored + its tax) and
 -- when it reached Sale complete (from its status history).
 -- Oct 12, 2026: per-store settings set by managers in Aethernet (first: the store's general managers, for
--- Tactician's sales per labor hour; Store setup will set it too).
+-- Tactician's sales per labor hour · Store setup will set it too).
 CREATE TABLE IF NOT EXISTS store_settings (
   store INTEGER NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
   updated_by TEXT, updated_at TEXT,
@@ -136,13 +136,13 @@ CREATE TABLE IF NOT EXISTS store_settings (
 CREATE TABLE IF NOT EXISTS rfp_periods (
   store INTEGER NOT NULL, wo INTEGER NOT NULL,
   start_at TEXT NOT NULL,              -- reached Ready for pickup (Portal's rfpWorkorderStatusDate when known)
-  end_at TEXT,                         -- left it (picked up / moved back); NULL = still there
+  end_at TEXT,                         -- left it (picked up / moved back) · NULL = still there
   value REAL,                          -- cart value before tax, partner credits ignored (last seen while in RFP)
   PRIMARY KEY (store, wo, start_at)
 );
 CREATE INDEX IF NOT EXISTS rfp_open ON rfp_periods (store, end_at);
 -- Portal's work order status names (from Portal's own code: ubif-util-store's status enum).
--- Status IDs alone appear in status histories (auditTrail) and change rows; join this table for names.
+-- Status IDs alone appear in status histories (auditTrail) and change rows · join this table for names.
 CREATE TABLE IF NOT EXISTS statuses (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
 INSERT OR REPLACE INTO statuses (id, name) VALUES
   (1, 'Initial check-in'), (2, 'Need to order'), (3, 'Awaiting item'), (4, 'Awaiting device'), (5, 'Awaiting diagnostics'),
@@ -152,7 +152,7 @@ INSERT OR REPLACE INTO statuses (id, name) VALUES
   (25, 'Cancelled'), (26, 'Send to depot'), (27, 'Shipped by depot');
 
 -- Oct 14, 2026: agents, programs that read the tracker on their own (the Mac's work order audit).
--- An agent has its own key pair; an admin's unlocked browser seals each granted store's key to it.
+-- An agent has its own key pair · an admin's unlocked browser seals each granted store's key to it.
 CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY,                 -- 32 hex, made by the agent
   name TEXT NOT NULL, public_jwk TEXT NOT NULL,
@@ -160,8 +160,8 @@ CREATE TABLE IF NOT EXISTS agents (
   status TEXT NOT NULL DEFAULT 'pending',   -- pending | active
   stores TEXT NOT NULL DEFAULT '[]',   -- JSON array of granted store ids
   created_at TEXT NOT NULL, approved_by TEXT, approved_at TEXT, last_seen_at TEXT, last_note TEXT,
-  settings TEXT NOT NULL DEFAULT '{}',  -- audit settings set on the admin site (JSON; defaults filled when read)
-  run_now INTEGER NOT NULL DEFAULT 0,   -- admin asked for a run now; the agent clears it with its report
+  settings TEXT NOT NULL DEFAULT '{}',  -- audit settings set on the admin site (JSON · defaults filled when read)
+  run_now INTEGER NOT NULL DEFAULT 0,   -- admin asked for a run now · the agent clears it with its report
   last_run TEXT                         -- JSON as last reported by the agent
 );
 CREATE TABLE IF NOT EXISTS agent_keys (
@@ -171,12 +171,12 @@ CREATE TABLE IF NOT EXISTS agent_keys (
   PRIMARY KEY (agent_id, store)
 );
 
--- Oct 17, 2026: Metrics page. When each WO sat in each (open) status; kept from each WO upload (src/metrics.js).
+-- Oct 17, 2026: Metrics page. When each WO sat in each (open) status · kept from each WO upload (src/metrics.js).
 CREATE TABLE IF NOT EXISTS status_periods (
   store INTEGER NOT NULL, wo INTEGER NOT NULL,
   status_id INTEGER NOT NULL,
   start_at TEXT NOT NULL,              -- entered the status (UTC ISO)
-  end_at TEXT,                         -- left it; NULL = still in it
+  end_at TEXT,                         -- left it · NULL = still in it
   PRIMARY KEY (store, wo, start_at)
 );
 CREATE INDEX IF NOT EXISTS sp_end ON status_periods (store, end_at);
@@ -187,3 +187,29 @@ CREATE INDEX IF NOT EXISTS scans_at ON scans (store, at);
 -- One row per store, day and metric (labor_hours, labor_hours_gm, headcount, am_orders, cleanings_linked, assize_fail, assize_flag, assize_note).
 -- No customers, no staff names: `by_name` is only the uploader.
 CREATE TABLE IF NOT EXISTS daily_metrics (store INTEGER NOT NULL, day TEXT NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL, source TEXT, by_name TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (store, day, metric));
+-- Oct 21, 2026: Assize rules as node graphs, edited and published on the admin site (page 'rules' · src/assize.js).
+-- One row per rule and scope: 'all' (every store) or a store number as text ('914', that store's override).
+CREATE TABLE IF NOT EXISTS assize_rules (
+  rule TEXT NOT NULL,                  -- kebab-case rule id (Assize's code rules, or a graph-only rule made on the admin site)
+  scope TEXT NOT NULL,                 -- 'all' or a store number as text
+  draft TEXT,                          -- graph JSON being edited · NULL = none
+  draft_errors TEXT,                   -- JSON list of the draft's errors (drafts may be invalid · publishing refuses them)
+  draft_by TEXT, draft_at TEXT,
+  published TEXT,                      -- graph JSON Assize runs · NULL = the code rule (or nothing, for a graph-only rule)
+  published_version INTEGER NOT NULL DEFAULT 0,
+  published_by TEXT, published_at TEXT,
+  enabled INTEGER,                     -- 1 on, 0 off (raises nothing, code or graph), NULL = follow 'all' (for 'all': on)
+  note TEXT,
+  created_by TEXT, created_at TEXT,
+  PRIMARY KEY (rule, scope)
+);
+-- Every publish (with its graph, so any version can come back) and every other change to a rule.
+CREATE TABLE IF NOT EXISTS assize_rule_history (
+  id INTEGER PRIMARY KEY,
+  rule TEXT NOT NULL, scope TEXT NOT NULL,
+  version INTEGER,                     -- publish: the new version · revert: the version copied into the draft
+  graph TEXT,                          -- publish: the graph published · NULL for the other actions
+  by_email TEXT, at TEXT NOT NULL, note TEXT,
+  action TEXT NOT NULL                 -- publish | revert | delete | enable | disable | inherit | create
+);
+CREATE INDEX IF NOT EXISTS arh_rule ON assize_rule_history (rule, id);
