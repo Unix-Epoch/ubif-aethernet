@@ -274,7 +274,7 @@ AE.crystal({
         if (asked !== storeId || !j || j.same || !j.rules || typeof j.version !== 'string') return;
         GM_setValue(key('rules'), { at: Date.now(), version: j.version, rules: j.rules });
         compute(); render();
-      } catch (e) { if (!e.storeChanged) AE.noteError('Assize rules', e); }
+      } catch (e) { if (!e.storeChanged && e.status !== 404) AE.noteError('Assize rules', e); } // 404: a Worker without rules yet
       finally { pubBusy = false; }
     }
 
