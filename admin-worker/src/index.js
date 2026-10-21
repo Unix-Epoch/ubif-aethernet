@@ -15,7 +15,7 @@
                       as the signed-in Access user; needs the TR binding
 
   Per-person access (Oct 17, 2026): after the Access check, every /api/… and /metrics… request goes
-  through one gate (tracker-worker/src/access.js): route → page, deny by default, store scope, owners
+  through one gate (tracker-worker/src/access.js): route → page, deny by default, store scope, developers
   (TRACKER_OWNERS) bypass. Refusals are 403 { error, page } and an access_log 'denied' row. Pages
   are only drawn for what GET /api/tracker/me says the person has.
     GET  /metrics-ui.js  the Metrics page (loaded by page.js on first use; data from /api/tracker/metrics)

@@ -5,11 +5,12 @@
 
   Who: `accessOf(env, email)` →
     { email, owner, name, scope: 'all' | 'stores', stores: [914, …], pages: [ids], details, review, canSee(store) }
-    or null (not an owner and not on the people list: everything but GET /api/tracker/me is refused).
-  Owners (TRACKER_OWNERS) bypass every check: all pages, all stores, customer details. Only owners
-  reach People (people, agents, log) and so only owners can change anyone's access.
+    or null (not a developer and not on the people list: everything but GET /api/tracker/me is refused).
+  Developers (TRACKER_OWNERS; `owner` in the code and the API) bypass every check: all pages, all stores,
+  customer details. Only developers reach People (people, agents, log) and so only they can change anyone's access.
 
-  Pages a person can be given (people.pages, JSON). 'people' is owners only and never stored.
+  Pages a person can be given (people.pages, JSON). 'people' is developers only and never stored.
+  'rules' (Assize rules, Oct 21, 2026) is in no role: the roles below match people without it, and it adds to any.
   "All stores" pages (reports, auto, stores) are Aethernet-wide: not limited by the person's stores.
   Customer details (people.details 0/1): off = no key copies, and trackerAdmin strips every sealed
   field (SEALED_KEYS) from its responses to them.
@@ -20,7 +21,7 @@ export const SEALED_KEYS = ['card', 'sealed', 'customerName'];
 
 // Route → page. First match wins; anything not listed is refused (deny by default).
 // [method ('*' = any), path (as the admin site sees it), page(s) (any one is enough; null = everyone
-//  on the list; 'owner' = owners only), index of the path group holding a store number (optional)]
+//  on the list; 'owner' = developers only), index of the path group holding a store number (optional)]
 export const ROUTES = [
   ['GET', /^\/api\/tracker\/me$/, null],
   ['PUT', /^\/api\/tracker\/me\/keys$/, null],                 // details checked in trackerAdmin
@@ -53,12 +54,15 @@ export const cleanPages = (v) => {
   return Array.isArray(a) ? PAGES.filter((p) => a.includes(p)) : [];
 };
 
-// The role a set of access matches (the People list shows it; the editor's presets fill these in).
+// The role a set of access matches (the People list shows it; the editor's presets fill these in). Owner (key 'ol',
+// "Owner-level" before Oct 21, 2026): every page but People and Assize rules. Assize rules on top of a role: "<role> + assize rules".
+export const OWNER_PAGES = PAGES.filter((p) => p !== 'rules');
 export function presetOf(a) {
   const same = (x, y) => x.length === y.length && x.every((p) => y.includes(p));
-  if (a.scope === 'stores' && !a.details && same(a.pages, ['wos'])) return 'store viewer';
-  if (a.scope === 'stores' && a.details && same(a.pages, ['wos', 'sales', 'metrics', 'data'])) return 'manager';
-  if (a.scope === 'all' && a.details && same(a.pages, PAGES.filter((p) => p !== 'rules'))) return 'owner-level';
+  const pages = a.pages.filter((p) => p !== 'rules'), plus = pages.length < a.pages.length ? ' + assize rules' : '';
+  if (a.scope === 'stores' && !a.details && same(pages, ['wos'])) return 'store viewer' + plus;
+  if (a.scope === 'stores' && a.details && same(pages, ['wos', 'sales', 'metrics', 'data'])) return 'manager' + plus;
+  if (a.scope === 'all' && a.details && same(pages, OWNER_PAGES)) return 'owner' + plus;
   return 'custom';
 }
 
@@ -86,10 +90,10 @@ export function gate(who, method, pathname, search) {
   const r = ROUTES.find(([m, re]) => (m === '*' || m === method) && re.test(pathname));
   if (!r) return { status: 403, error: 'unknown route', page: null };
   const [, re, page, storeAt] = r;
-  if (!who) return page === null && method === 'GET' && pathname === '/api/tracker/me' ? null : { status: 403, error: 'not on the access list; ask an owner to add you', page };
+  if (!who) return page === null && method === 'GET' && pathname === '/api/tracker/me' ? null : { status: 403, error: 'not on the access list; ask whoever manages Aethernet access to add you', page };
   if (!who.owner) {
     const need = page === null ? [] : [].concat(page);
-    if (need.includes('owner')) return { status: 403, error: 'owners only', page: 'owner' };
+    if (need.includes('owner')) return { status: 403, error: 'developers only', page: 'owner' };
     if (need.length && !need.some((p) => who.pages.includes(p))) return { status: 403, error: 'no access to this page', page: need[0] };
     const fromPath = storeAt ? pathname.match(re)[storeAt] : null;
     const fromQuery = new URLSearchParams(search || '').get('store');

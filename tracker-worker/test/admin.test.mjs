@@ -1,7 +1,7 @@
 // Per-person access on the admin site (Oct 17, 2026): runs the real admin-worker (admin-worker/src/index.js)
 // against local D1 databases (wrangler getPlatformProxy), signed in through its LOCAL_TEST `?as=` switch.
 // Covers the gate (tracker-worker/src/access.js) for every kind of route: Waymark's adminApi, the tracker's
-// trackerAdmin, unknown routes; store scope; sealed fields stripped; owners only for access; the migration.
+// trackerAdmin, unknown routes; store scope; sealed fields stripped; developers (TRACKER_OWNERS) only for access; roles; the migration.
 import assert from 'node:assert/strict';
 import { readFileSync, rmSync } from 'node:fs';
 import { register } from 'node:module';
@@ -51,7 +51,7 @@ await T.prepare("INSERT INTO sales_days (store, day, source, count, total) VALUE
 const person = (email, scope, stores, pages, details) => T.prepare('INSERT INTO people (email, scope, stores, pages, details) VALUES (?, ?, ?, ?, ?)').bind(email, scope, JSON.stringify(stores), JSON.stringify(pages), details).run();
 await person('viewer@x.com', 'stores', [914], ['wos'], 0);                                         // Store viewer
 await person('mgr@x.com', 'stores', [914], ['wos', 'sales', 'metrics', 'data'], 1);                // Manager
-await person('ol@x.com', 'all', [], ['wos', 'sales', 'metrics', 'data', 'usage', 'reports', 'auto', 'stores'], 1); // Owner-level
+await person('ol@x.com', 'all', [], ['wos', 'sales', 'metrics', 'data', 'usage', 'reports', 'auto', 'stores'], 1); // Owner (was Owner-level)
 await person('rep@x.com', 'stores', [326], ['reports', 'usage'], 0);
 
 const call = async (as, method, path, body) => {
@@ -122,7 +122,7 @@ assert.equal((await W.prepare("SELECT state FROM auto_rules WHERE rule = 'callba
 for (const p of ['/api/ping', '/api/tracker/whatever', '/api/whatever', '/api/tracker/agents-x']) assert.equal((await call('ol@x.com', 'GET', p)).status, 403, 'unknown ' + p);
 assert.equal((await call('owner@x.com', 'GET', '/api/whatever')).status, 403, 'unknown route even for an owner');
 assert.ok((await denies()).some((d) => /unknown route/.test(d.detail)));
-// not on the list at all: only /me answers (so the page can say "ask an owner")
+// not on the list at all: only /me answers (so the page can say who to ask)
 assert.equal((await call('nobody@x.com', 'GET', '/api/tracker/me')).j.access, null);
 for (const p of ['/api/usage', '/api/stores', '/api/tracker/wos', '/api/feedback']) assert.equal((await call('nobody@x.com', 'GET', p)).status, 403, 'not listed ' + p);
 
@@ -139,12 +139,14 @@ assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/sales/day?store=326&d
 // reports/usage person on 326: Reports is Aethernet-wide, Usage is cut to their store
 assert.equal((await call('rep@x.com', 'GET', '/api/feedback')).status, 200);
 assert.deepEqual((await call('rep@x.com', 'GET', '/api/usage')).j.rows.map((r) => r.store), [326]);
-// Owner-level: every page but People
-for (const p of ['/api/usage', '/api/stores', '/api/feedback', '/api/auto-rules', '/api/store/326', '/api/tracker/wos']) assert.equal((await call('ol@x.com', 'GET', p)).status, 200, 'owner-level ' + p);
+// Owner: every page but People and Assize rules
+for (const p of ['/api/usage', '/api/stores', '/api/feedback', '/api/auto-rules', '/api/store/326', '/api/tracker/wos']) assert.equal((await call('ol@x.com', 'GET', p)).status, 200, 'owner ' + p);
+assert.equal((await call('ol@x.com', 'GET', '/api/tracker/assize/rules')).status, 403, 'Owner has no Assize rules page');
 assert.equal((await call('ol@x.com', 'GET', '/api/stores')).j.waiting.length, 1);
 
 // --- only owners change access
-assert.equal((await call('ol@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [914] })).status, 403, 'owner-level cannot add people');
+assert.equal((await call('ol@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [914] })).status, 403, 'owner cannot add people');
+assert.equal((await call('ol@x.com', 'GET', '/api/tracker/people')).j.error, 'developers only');
 assert.equal((await call('ol@x.com', 'POST', '/api/tracker/people/viewer%40x.com/remove')).status, 403);
 assert.equal((await call('mgr@x.com', 'POST', '/api/tracker/people', { email: 'mgr@x.com', scope: 'all', pages: ['stores'] })).status, 403, 'no raising your own access');
 assert.equal((await call('ol@x.com', 'GET', '/api/tracker/agents')).status, 403);
@@ -172,6 +174,23 @@ assert.equal((await T.prepare("SELECT COUNT(*) AS n FROM person_keys WHERE email
 assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people/new%40x.com/remove')).status, 200);
 assert.equal(await accessOf(E, 'new@x.com'), null);
 assert.ok((await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.log.some((l) => l.action === 'access:remove'));
+
+// --- roles: the four presets as before (Owner-level is now Owner, same pages); Assize rules adds to any of them
+{
+  const { presetOf } = await import('../src/access.js');
+  const P8 = ['wos', 'sales', 'metrics', 'data', 'usage', 'reports', 'auto', 'stores'];
+  assert.equal(presetOf({ scope: 'all', details: true, pages: P8 }), 'owner', 'existing Owner-level people show as Owner, no change');
+  assert.equal(presetOf({ scope: 'all', details: true, pages: [...P8, 'rules'] }), 'owner + assize rules');
+  assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data', 'rules'] }), 'manager + assize rules');
+  assert.equal(presetOf({ scope: 'stores', details: false, pages: ['wos'] }), 'store viewer');
+  assert.equal(presetOf({ scope: 'stores', details: false, pages: ['rules'] }), 'custom');
+  assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'ol@x.com', scope: 'all', pages: [...P8, 'rules'], details: true })).status, 200);
+  assert.deepEqual((await accessOf(E, 'ol@x.com')).pages, [...P8, 'rules']);
+  assert.ok((await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.log.some((l) => l.action === 'access:change' && l.detail === 'ol@x.com · pages +rules · role owner → owner + assize rules'), 'access change log names the page and the role');
+  assert.equal((await call('ol@x.com', 'GET', '/api/tracker/assize/rules')).status, 200, 'now they have it');
+  assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'ol@x.com', scope: 'all', pages: P8, details: true })).status, 200);
+  assert.deepEqual((await call('owner@x.com', 'GET', '/api/tracker/people')).j.pages, [...P8, 'rules'], 'the People page lists Assize rules');
+}
 
 // --- trackerAdmin gates on its own too (called directly, without the site's gate)
 const direct = async (email, path) => (await trackerAdmin(new Request('https://a.test/api/tracker' + path), E, new URL('https://a.test/api/tracker' + path), path.split('?')[0], email)).status;
@@ -203,7 +222,7 @@ assert.equal((await accessOf(M, 'gm@x.com')).details, true, 'key holders keep cu
 assert.equal((await accessOf(M, 'tech@x.com')).details, false, 'no copies, no details (they had nothing to open)');
 assert.equal((await accessOf(M, 'dm@x.com')).review, true);
 assert.equal((await accessOf(M, 'owner@x.com')).owner, true);
-assert.ok(gate(await accessOf(M, 'dm@x.com'), 'GET', '/api/tracker/people', ''), 'People editing is owners only now');
+assert.ok(gate(await accessOf(M, 'dm@x.com'), 'GET', '/api/tracker/people', ''), 'People editing is developers only now');
 assert.match((await W.prepare("SELECT detail FROM access_log WHERE action = 'access:migrate'").first()).detail, /^4 people kept/);
 for (const s of ['DROP TABLE people', 'DROP TABLE person_keys', 'DROP TABLE access_log']) await W.prepare(s).run();
 

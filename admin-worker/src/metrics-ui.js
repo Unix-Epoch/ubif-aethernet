@@ -336,7 +336,7 @@ const sumMap = (obj, list) => { const out = {}; for (const st of list) for (cons
 
 function drawAll() {
   root.dash.replaceChildren(); renders = []; hideTT();
-  if (!R.selected.length) { root.dash.append(node('<div class="empty"><b>No stores to show</b><div>Your access doesn’t include any store yet. Ask an owner to add one.</div></div>')); return; }
+  if (!R.selected.length) { root.dash.append(node('<div class="empty"><b>No stores to show</b><div>Your access doesn’t include any store yet. Ask whoever manages Aethernet access to add one.</div></div>')); return; }
   const list = ids(), cmpColor = S.compare && R.prev && !splitting() ? scopeColor() : null, split = splitting(), target = R.cleaningTarget / 100;
   const late = list.filter((st) => R.since[st] && R.since[st] > R.from);
   const sameStart = new Set(late.map((st) => R.since[st])).size === 1 && late.length === list.length;

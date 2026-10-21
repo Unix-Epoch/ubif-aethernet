@@ -129,7 +129,7 @@ export async function draw(which, m, helpers) {
   badge();
   if (me.canInit) return m.replaceChildren(await setupCard());
   if (!me.person || !me.master) return m.replaceChildren(ui.h('div', { class: 'card lockcard' }, ui.h('h3', null, 'Work orders'),
-    ui.h('div', null, me.master ? "You're not on the access list yet. Ask an owner to add you." : "The work order tracker hasn't been set up yet.")));
+    ui.h('div', null, me.master ? "You're not on the access list yet. Ask whoever manages Aethernet access to add you." : "The work order tracker hasn't been set up yet.")));
   // People needs no unlock to change pages and stores; it asks for the passphrase only when an invite needs key copies.
   if (which === 'people') return drawPeople(m);
   // Customer details off (or no key copies yet): no unlock wall, plain mode (the server sends nothing sealed).
@@ -199,10 +199,10 @@ function unlockCard(after) {
   const card = ui.h('div', { class: 'card lockcard', style: 'text-align:center' }, ui.h('div', { style: 'font-size:40px' }, '🔒'), ui.h('h2', { style: 'margin:6px 0' }, 'Work orders are locked'),
     ui.h('div', { class: 'soft', style: 'font-size:13px;margin-bottom:8px' }, 'Customer details, notes and history open only in this browser, with your passphrase. You can see ',
       ui.h('b', null, me.person.scope === 'all' ? 'all stores' : 'stores ' + me.person.stores.join(', ')), '.'),
-    p, go, ui.h('div', { class: 'soft', style: 'margin-top:10px' }, 'Locks again after 30 minutes without use, or when you close the tab. Forgot it? Ask an owner for a new invite code.'));
+    p, go, ui.h('div', { class: 'soft', style: 'margin-top:10px' }, 'Locks again after 30 minutes without use, or when you close the tab. Forgot it? Ask whoever manages Aethernet access for a new invite code.'));
   return card;
 }
-// An owner added stores (or all stores) to someone who already has a passphrase: those copies come locked with a
+// A developer added stores (or all stores) to someone who already has a passphrase: those copies come locked with a
 // new invite code. After unlocking, the code moves them onto the passphrase they just typed.
 function newInvite(phrase, after) {
   const code = ui.h('input', { type: 'text', placeholder: 'Invite code (e.g. otter maple crisp lantern)' });
@@ -223,7 +223,7 @@ function newInvite(phrase, after) {
     } catch (e) { go.disabled = false; ui.toast(/Wrong passphrase/.test(e.message) ? "That invite code doesn't match." : e.message); }
   } }, 'Add to my passphrase');
   return [ui.h('div', { style: 'font-size:40px' }, '🔑'), ui.h('h2', { style: 'margin:6px 0' }, 'You have new access'),
-    ui.h('div', { class: 'soft', style: 'font-size:13px;margin-bottom:8px' }, 'An owner gave you ' + inv.map((k) => (k.kind === 'master' ? 'all stores' : 'store ' + k.store)).join(', ') + '. Enter the invite code they sent you; your passphrase opens it from then on.'),
+    ui.h('div', { class: 'soft', style: 'font-size:13px;margin-bottom:8px' }, 'You were given ' + inv.map((k) => (k.kind === 'master' ? 'all stores' : 'store ' + k.store)).join(', ') + '. Enter the invite code they sent you; your passphrase opens it from then on.'),
     code, go, ui.h('button', { class: 'btn', style: 'margin-top:6px;width:100%', onclick: after }, 'Later')];
 }
 
@@ -409,7 +409,7 @@ async function showSalesDay(box, d) {
   box.replaceChildren(head, h('table', { class: 'tl' }, h('tr', null, ['Time', 'WO', 'Customer', 'Program', 'Total', 'Partner', 'Paid', 'By', 'Items'].map((x) => h('th', null, x))), rows));
 }
 
-// ------------------------------------------------------------------ People (owners only; the server refuses everyone else)
+// ------------------------------------------------------------------ People (developers only; the server refuses everyone else)
 // Per-person access: stores, pages, customer details. The server checks all of it on every request
 // (tracker-worker/src/access.js); this page only edits it. Presets just fill the boxes.
 const PAGE_DEFS = [
@@ -421,23 +421,27 @@ const PAGE_DEFS = [
   ['reports', 'Reports', 'Bug reports and ideas; set status, quote in patch notes', 'wide'],
   ['auto', 'Auto-Waymark', 'Stage and push rules live for every store', 'wide'],
   ['stores', 'Stores', 'Give or remove a store’s Aethernet access', 'wide'],
-  ['people', 'People', 'Owners only', 'owner'],
+  ['rules', 'Assize rules', 'Edit and publish Assize’s rules; a change for every store needs All stores', 'store', true],
+  ['people', 'People', 'Developers only', 'owner'],
 ];
 const GRANTABLE = PAGE_DEFS.filter((p) => p[3] !== 'owner').map((p) => p[0]);
+// Roles are presets; Assize rules is in none of them and adds to any (shown as "Owner + Assize rules").
+// Developers (TRACKER_OWNERS; `owner` in the API) have everything. Owner kept its key 'ol' (it was "Owner-level").
 const PRESETS = {
   viewer: ['Store viewer', 'Default for new people', { scope: 'stores', pages: ['wos'], details: false }],
   mgr: ['Manager', 'Their stores, with customer details', { scope: 'stores', pages: ['wos', 'sales', 'metrics', 'data'], details: true }],
-  ol: ['Owner-level', 'Every page but People', { scope: 'all', pages: GRANTABLE, details: true }],
+  ol: ['Owner', 'Every page but People and Assize rules', { scope: 'all', pages: GRANTABLE.filter((k) => k !== 'rules'), details: true }],
 };
-const ROLE = { owner: ['Owner', 'owner'], ol: ['Owner-level', 'ol'], mgr: ['Manager', 'mgr'], viewer: ['Store viewer', 'view'], custom: ['Custom', 'custom'] };
+const ROLE = { owner: ['Developer', 'owner'], ol: ['Owner', 'ol'], mgr: ['Manager', 'mgr'], viewer: ['Store viewer', 'view'], custom: ['Custom', 'custom'] };
 const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
-const roleOf = (a) => Object.keys(PRESETS).find((k) => { const p = PRESETS[k][2]; return a.scope === p.scope && a.details === p.details && sameSet(a.pages, p.pages); }) || 'custom';
+const roleOf = (a) => { const pages = a.pages.filter((k) => k !== 'rules'); return Object.keys(PRESETS).find((k) => { const p = PRESETS[k][2]; return a.scope === p.scope && a.details === p.details && sameSet(pages, p.pages); }) || 'custom'; };
+const roleName = (a) => { const r = roleOf(a); return ROLE[r][0] + (r !== 'custom' && a.pages.includes('rules') ? ' + Assize rules' : ''); };
 const KEY_SVG = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5.5" cy="10.5" r="3.5"/><path d="M8 8l6-6M12 4l2 2"/></svg>';
 const SHIELD_SVG = '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1.5l5.5 2v4c0 3.5-2.4 6-5.5 7-3.1-1-5.5-3.5-5.5-7v-4z"/><path d="M5.6 8l1.7 1.7 3.2-3.4"/></svg>';
 
 async function drawPeople(m) {
   const { h } = ui;
-  if (!me.access || !me.access.owner) return m.replaceChildren(h('div', { class: 'card' }, 'Only owners can change access.'));
+  if (!me.access || !me.access.owner) return m.replaceChildren(h('div', { class: 'card' }, 'Only developers can change access.'));
   const [pp, ts, as] = await Promise.all([ui.api('GET', '/tracker/people'), ui.api('GET', '/tracker/stores'), ui.api('GET', '/stores').catch(() => ({ allowed: [] }))]);
   const names = new Map();
   for (const x of as.allowed || []) if (x.name) names.set(x.store, x.name);
@@ -449,7 +453,7 @@ async function drawPeople(m) {
   const listCard = h('div', { class: 'card' }), edCard = h('div', { class: 'card' }), logCard = h('div', { class: 'card', style: 'margin-top:14px' });
   const actCard = h('div', { class: 'card' }), progs = h('div', { class: 'card' });
 
-  // Owners first (from TRACKER_OWNERS, with or without a people row), then everyone else.
+  // Developers first (from TRACKER_OWNERS, with or without a people row), then everyone else.
   const rows = () => {
     const byEmail = new Map(people.map((p) => [p.email, p]));
     const own = owners.map((e) => Object.assign({ email: e, name: null, scope: 'all', stores: [], pages: GRANTABLE, details: true, keys: [] }, byEmail.get(e) || {}, { owner: true }));
@@ -463,7 +467,7 @@ async function drawPeople(m) {
       h('div', { style: 'overflow-x:auto' }, h('table', { class: 'ppl', style: 'min-width:640px' }, h('tr', null, ['Person', 'Role', 'Stores', 'Pages', 'Customer details', 'Last used'].map((x) => h('th', null, x))),
         all.map((p) => { const r = p.owner ? 'owner' : roleOf(p); return h('tr', { class: 'pick' + (selected === p.email ? ' sel' : ''), onclick: () => open(p) },
           h('td', null, h('b', null, p.name || p.email.split('@')[0]), h('div', { class: 'soft' }, p.email)),
-          h('td', null, h('span', { class: 'role ' + ROLE[r][1] }, ROLE[r][0]), p.review && !p.owner ? h('div', { class: 'soft', style: 'margin-top:3px' }, 'Carried over: review') : null),
+          h('td', null, h('span', { class: 'role ' + ROLE[r][1] }, p.owner ? ROLE.owner[0] : roleName(p)), p.review && !p.owner ? h('div', { class: 'soft', style: 'margin-top:3px' }, 'Carried over: review') : null),
           h('td', null, p.scope === 'all' ? h('span', { class: 'sc' }, h('b', null, 'All stores')) : p.stores.map((s) => h('span', { class: 'sc' }, String(s)))),
           h('td', { class: 'soft', style: 'max-width:190px' }, p.owner ? 'All pages' : p.pages.map(pageName).join(', ') || 'None'),
           h('td', null, keyCell(p.owner || p.details)), h('td', { class: 'soft' }, lastUsed(p))); }))),
@@ -508,10 +512,10 @@ async function drawPeople(m) {
         h('input', { type: 'text', value: ed.name, placeholder: 'Name', oninput: (e) => { ed.name = e.target.value; } }))
         : h('div', { class: 'soft', style: 'margin:-4px 0 10px' }, ed.email + (orig && orig.added_at ? ' · added ' + new Date(orig.added_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) + (orig.added_by ? ' by ' + orig.added_by : '') : ''))];
     if (ed.owner) return edCard.replaceChildren(...head, h('div', { class: 'banner', style: 'margin:6px 0 0' }, h('span', { html: SHIELD_SVG }),
-      h('div', null, 'An owner (', h('b', null, 'TRACKER_OWNERS'), ') always has every page, every store and customer details. Owners are set in the admin site’s settings, not here.')));
+      h('div', null, 'A developer (', h('b', null, 'TRACKER_OWNERS'), ') always has every page, every store and customer details. Developers are set in the admin site’s settings, not here.')));
     const role = roleOf(ed);
     const seg = h('div', { class: 'seg' }, Object.entries(PRESETS).map(([k, [n, d, p]]) => h('button', { class: role === k ? 'on' : null,
-      onclick: set(() => { ed.pages = [...p.pages]; ed.details = p.details; ed.scope = p.scope; }) }, n, h('small', null, d))),
+      onclick: set(() => { ed.pages = [...p.pages, ...(ed.pages.includes('rules') ? ['rules'] : [])]; ed.details = p.details; ed.scope = p.scope; }) }, n, h('small', null, d))),
       h('button', { class: role === 'custom' ? 'on' : null, onclick: () => {} }, 'Custom', h('small', null, 'Edited by hand')));
     const chips = h('div', { class: 'schips' }, storeList().map((s) => { const on = ed.scope === 'stores' && ed.stores.includes(s);
       return h('button', { class: 'schip' + (on ? ' on' : ''), onclick: set(() => { if (ed.scope === 'all') { ed.scope = 'stores'; ed.stores = [s]; } else ed.stores = on ? ed.stores.filter((x) => x !== s) : [...ed.stores, s].sort((a, b) => a - b); }) },
@@ -538,7 +542,7 @@ async function drawPeople(m) {
     const actions = h('div', { style: 'display:flex;gap:8px;margin-top:12px;flex-wrap:wrap' }, save, h('button', { class: 'btn', onclick: () => { ed = orig = selected = null; invite = null; drawList(); drawEditor(); } }, 'Cancel'),
       ed.isNew || ed.email === me.email ? null : h('button', { class: 'btn', style: 'margin-left:auto;border-color:var(--err);color:var(--err)', onclick: doRemove }, 'Remove person'));
     edCard.replaceChildren(...head,
-      h('div', { class: 'lbl' }, 'Role', h('span', { class: 'soft' }, 'a starting point; any change below makes it Custom')), seg,
+      h('div', { class: 'lbl' }, 'Role', h('span', { class: 'soft' }, 'a starting point; any change below makes it Custom (Assize rules adds to any role)')), seg,
       h('div', { class: 'lbl' }, 'Stores', h('span', { class: 'soft' }, 'what every page shows them')), chips,
       h('div', { class: 'lbl' }, 'Pages', h('span', { class: 'soft' }, 'nav shows only these; the server refuses the rest')), pages,
       h('div', { class: 'soft', style: 'margin-top:4px' }, h('span', { class: 'tagw', style: 'margin:0' }, 'All stores'), ' = Aethernet-wide page: not limited by their store list.'),
@@ -587,7 +591,7 @@ async function drawPeople(m) {
   }
   await reload();
   drawList(); drawEditor(); drawAgents(progs);
-  m.replaceChildren(h('div', { class: 'banner' }, h('span', { html: SHIELD_SVG }), h('div', null, 'Only owners (', h('b', null, 'TRACKER_OWNERS'), ') can change access. Owners always see everything. Every change is checked on the server and recorded in the activity log.')),
+  m.replaceChildren(h('div', { class: 'banner' }, h('span', { html: SHIELD_SVG }), h('div', null, 'Only developers (', h('b', null, 'TRACKER_OWNERS'), ') can change access. Developers always see everything. Every change is checked on the server and recorded in the activity log.')),
     h('div', { class: 'pgrid' }, listCard, edCard), logCard, progs, actCard);
 }
 

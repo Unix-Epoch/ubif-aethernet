@@ -585,7 +585,7 @@ async function storeApi(req, env, url, store) {
 }
 
 // ------------------------------------------------------------------ admin side (Access-protected)
-// Who may open what: src/access.js (one gate for every admin route; owners bypass it).
+// Who may open what: src/access.js (one gate for every admin route; developers bypass it).
 async function log(env, email, action, store = null, wo = null, detail = null) {
   await env.TR.prepare('INSERT INTO access_log (email, action, store, wo, detail, at) VALUES (?, ?, ?, ?, ?, ?)').bind(email, action, store, wo, detail, now()).run();
 }
@@ -611,7 +611,7 @@ function accessDiff(before, after) {
 
   GET  /me                       { email, person, keys: [copies], master: publicJwk|null, canInit,
                                    access: { owner, pages, scope, stores, details, review } }
-  POST /init { publicJwk, copy } first setup (an owner from TRACKER_OWNERS): master key + their copy
+  POST /init { publicJwk, copy } first setup (a developer, TRACKER_OWNERS): master key + their copy
   PUT  /me/keys { keys }         replace your own copies (new passphrase / redeeming an invite); details on only
   GET  /store-keys               all stores + details: every store's { store, publicJwk, wrappedPrivate }
   GET  /stores                   stores you can see, with counts
@@ -620,8 +620,8 @@ function accessDiff(before, after) {
   GET  /wo/:store/:wo            one WO: row, snapshots (plain + sealed), changes
   …    /assize/…                 Assize rules: list, drafts, publish, history, per-store overrides, test orders
                                  (page 'rules'; src/assize.js has the routes)
-  Owners only (People):
-  GET  /people                   everyone + their key copies' kinds, pages, details, review; owners list
+  Developers only (People; TRACKER_OWNERS, `owner` in the API):
+  GET  /people                   everyone + their key copies' kinds, pages, details, review; owners: the developers
   POST /people { email, name, scope, stores, pages, details, keys, keysMode }   add/update. keys = invite
                                  copies (details on only); keysMode 'add' keeps their other copies, otherwise
                                  a new invite replaces them all. Details off deletes every copy.
@@ -667,7 +667,7 @@ async function trackerRoutes(req, env, url, path, email, who) {
   }
   if (req.method === 'POST' && path === '/init') {
     if (master) return fail(409, 'already set up', false);
-    if (!owners(env).includes(email)) return fail(403, 'only an owner can set up the tracker', false);
+    if (!owners(env).includes(email)) return fail(403, 'only a developer can set up the tracker', false);
     const b = await body();
     if (!isJwk(b.publicJwk) || !isCopy(b.copy)) return fail(400, 'publicJwk and copy required', false);
     await T.batch([
@@ -679,7 +679,7 @@ async function trackerRoutes(req, env, url, path, email, who) {
     await log(env, email, 'init');
     return json({ ok: true }, 200, false);
   }
-  if (!me) return fail(403, 'not on the access list; ask an owner to add you', false);
+  if (!me) return fail(403, 'not on the access list; ask whoever manages Aethernet access to add you', false);
 
   if (req.method === 'PUT' && path === '/me/keys') {
     if (!me.details) return fail(403, 'customer details are off for your account', false);
@@ -772,7 +772,7 @@ async function trackerRoutes(req, env, url, path, email, who) {
   // Assize rules (src/assize.js): the gate above already required page 'rules'; edits check the scope there.
   if (path.startsWith('/assize/')) return assizeAdmin(req, env, url, path, me, email, { json, fail, readJson, clean, int, now, log });
 
-  if (!me.owner) return fail(403, 'owners only', false);
+  if (!me.owner) return fail(403, 'developers only', false);
   if (req.method === 'GET' && path === '/people') {
     const [p, k] = await T.batch([T.prepare('SELECT * FROM people ORDER BY email'), T.prepare('SELECT email, kind, store, invite FROM person_keys')]);
     const own = owners(env);

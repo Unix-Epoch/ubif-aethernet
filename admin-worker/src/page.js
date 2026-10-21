@@ -40,7 +40,7 @@ a{color:var(--p);font-weight:700;text-decoration:none} .soft{color:var(--soft);f
 @media (max-width:640px){.top,main{padding-left:16px;padding-right:16px} .me{margin-left:0} .grid{grid-template-columns:1fr}}
 </style></head><body>
 <div class="top"><span class="logo"><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="11" rx="10.5" ry="3.2" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".55"/><path fill="currentColor" d="M12 1.5 6 10l6 12.5L18 10z"/></svg>Aethernet admin</span>
-<nav class="tabs" id="tabs"></nav><span class="me"><span class="ownr" id="ownr" style="display:none">Owner</span><span class="lock">Cloudflare Access</span><span>__EMAIL__</span></span></div>
+<nav class="tabs" id="tabs"></nav><span class="me"><span class="ownr" id="ownr" style="display:none">Developer</span><span class="lock">Cloudflare Access</span><span>__EMAIL__</span></span></div>
 <main id="main"><div class="soft">Loading…</div></main>
 <script>
 const $ = (s) => document.querySelector(s);
@@ -57,9 +57,9 @@ const fmt = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocal
 const fmtDay = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' });
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const woLink = (id) => h('a', { href: 'https://portal.ubreakifix.net/repair/workorder/' + id, target: '_blank', rel: 'noopener' }, id + ' ↗');
-// Every page there is; the nav shows only the ones GET /api/tracker/me says this person has (owners: all).
+// Every page there is; the nav shows only the ones GET /api/tracker/me says this person has (developers: all).
 // The server refuses the rest on its own (tracker-worker/src/access.js); this only keeps the page honest.
-const TABS_ALL = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['sales', 'Sales'], ['metrics', 'Metrics'], ['people', 'People']];
+const TABS_ALL = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['sales', 'Sales'], ['metrics', 'Metrics'], ['rules', 'Assize rules'], ['people', 'People']];
 let TABS = [], ACCESS = null;
 let tab = location.hash.slice(1).split('?')[0]; // #metrics?store=…: the Metrics page keeps its view after the ?
 function nav() { $('#tabs').replaceChildren(...TABS.map(([k, l]) => h('button', { class: k === tab ? 'on' : null, onclick: () => { tab = k; location.hash = k; draw(); } }, l))); }
@@ -67,7 +67,7 @@ const LOCK_SVG = '<svg width="26" height="26" viewBox="0 0 16 16" fill="none" st
 function noAccess(m) {
   const name = (TABS_ALL.find(([k]) => k === tab) || [])[1], first = TABS[0];
   m.replaceChildren(h('div', { class: 'card deny' }, h('div', { class: 'ic', html: LOCK_SVG }), h('h2', null, 'You don’t have access to this page'),
-    h('p', null, name ? '“' + name + '” isn’t part of your access. If you need it, ask an owner to add it on the People page.' : 'There’s no page at this link.'),
+    h('p', null, name ? '“' + name + '” isn’t part of your access. If you need it, ask whoever manages Aethernet access to add it.' : 'There’s no page at this link.'),
     first ? h('button', { class: 'btn p', onclick: () => { tab = first[0]; location.hash = tab; draw(); } }, 'Go to ' + first[1]) : null,
     h('div', { class: 'soft', style: 'margin-top:16px' }, 'Direct link: /#' + tab + (name ? ' · the server refuses its data too' : ''))));
 }
@@ -75,7 +75,7 @@ async function draw() {
   const m = $('#main');
   if (!ACCESS) {
     try { ACCESS = (await api('GET', '/tracker/me')).access; } catch (e) { return m.replaceChildren(h('div', { class: 'err' }, "Couldn't load: " + e.message)); }
-    if (!ACCESS) return m.replaceChildren(h('div', { class: 'card deny' }, h('div', { class: 'ic', html: LOCK_SVG }), h('h2', null, 'You’re not on the access list yet'), h('p', null, 'Ask an owner to add you on the People page.')));
+    if (!ACCESS) return m.replaceChildren(h('div', { class: 'card deny' }, h('div', { class: 'ic', html: LOCK_SVG }), h('h2', null, 'You’re not on the access list yet'), h('p', null, 'Ask whoever manages Aethernet access to add you.')));
     TABS = TABS_ALL.filter(([k]) => ACCESS.owner || ACCESS.pages.includes(k));
     $('#ownr').style.display = ACCESS.owner ? '' : 'none';
     if (!tab) tab = (TABS[0] || [''])[0];
@@ -83,7 +83,7 @@ async function draw() {
   nav();
   if (!TABS.some(([k]) => k === tab)) return noAccess(m); // a direct link to a page they don't have: no API call for it
   m.replaceChildren(h('div', { class: 'soft' }, 'Loading…')); m.style.maxWidth = tab === 'metrics' ? '1720px' : '';
-  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, metrics: drawMetrics, wos: (x) => drawTracker('wos', x), sales: (x) => drawTracker('sales', x), people: (x) => drawTracker('people', x) }[tab])(m); }
+  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, metrics: drawMetrics, rules: drawRules, wos: (x) => drawTracker('wos', x), sales: (x) => drawTracker('sales', x), people: (x) => drawTracker('people', x) }[tab])(m); }
   catch (e) { m.replaceChildren(h('div', { class: 'err' }, "Couldn't load: " + e.message)); } }
 // Metrics: the page itself lands with feat/metrics (metrics-ui); until then the tab only holds its place.
 function toast(t) { const el = h('div', { style: 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;z-index:9' }, t); document.body.append(el); setTimeout(() => el.remove(), 3500); }
@@ -225,6 +225,11 @@ async function drawTracker(which, m) {
 }
 // Metrics: the dashboard (metrics-ui.js), loaded on first use.
 async function drawMetrics(m) { const mod = await import('/metrics-ui.js'); await mod.draw(m, { h, api, toast }); }
+// Assize rules: the editor comes next; until then the tab holds its place.
+async function drawRules(m) {
+  m.replaceChildren(h('div', { class: 'card' }, h('h3', null, 'Assize rules'), h('p', null, 'The Assize rules editor is coming.'),
+    h('div', { class: 'soft' }, 'Assize’s rules as node graphs: edit them, test them on today’s open orders, and publish them to every store or one.')));
+}
 addEventListener('hashchange', () => { const t = location.hash.slice(1).split('?')[0]; if (t && t !== tab) { tab = t; draw(); } });
 draw();
 </script></body></html>`;
