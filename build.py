@@ -262,6 +262,11 @@ def tracker_module(root: Path, name: str) -> str:
     return re.sub(r"^export ", "", src, flags=re.M) + "\nreturn { " + ", ".join(names) + " };\n"
 
 
+def assize_graphs(root: Path) -> str:
+    # { rule: graph } from src/assize-graphs/<rule>.json, as one JS object literal.
+    return json.dumps({f.stem: json.loads(f.read_text()) for f in sorted((root / "src" / "assize-graphs").glob("*.json"))}, separators=(",", ":"), ensure_ascii=False)
+
+
 def waymark_key(root: Path) -> str:
     m = re.search(r'^APP_KEY\s*=\s*"([^"]+)"', (root / "worker" / "wrangler.toml").read_text(), re.M)
     return m.group(1) if m else ""
@@ -298,6 +303,9 @@ def build(root: Path, version: str = VERSION) -> Path:
         # The tracker's encryption and shaping (tracker-worker/src/crypto.js, shape.js), as plain function bodies.
         "/*__TRACKER_CRYPTO__*/": tracker_module(root, "crypto.js"),
         "/*__TRACKER_SHAPE__*/": tracker_module(root, "shape.js"),
+        # Assize's rule graphs: the interpreter (tracker-worker/src/rulegraph.js) and the built-in graphs (src/assize-graphs/*.json).
+        "/*__RULEGRAPH__*/": tracker_module(root, "rulegraph.js"),
+        "__ASSIZE_GRAPHS__": assize_graphs(root),
         # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), plus
         # UI pieces (assets/ui/*.png), as data URIs
         "__ACTION_ICONS__": action_icons(root),

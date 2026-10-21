@@ -1,0 +1,38 @@
+{
+ "v": 1,
+ "rule": "short-intake-note",
+ "title": "Short note",
+ "check": "intake",
+ "nodes": [
+  {"id": "start", "type": "start", "x": 30, "y": 40},
+  {"id": "scope", "type": "macro", "x": 30, "y": 180, "settings": {"macro": "checked"}},
+  {"id": "wo", "type": "wo", "x": 30, "y": 320},
+  {"id": "active", "type": "and", "x": 310, "y": 320},
+  {"id": "intake", "type": "intakeNote", "x": 310, "y": 560},
+  {"id": "author", "type": "intakeAuthor", "x": 870, "y": 560},
+  {"id": "inScope", "type": "branch", "x": 310, "y": 40},
+  {"id": "skip", "type": "stop", "x": 590, "y": 180},
+  {"id": "isActive", "type": "branch", "x": 590, "y": 40},
+  {"id": "hasIntake", "type": "branch", "x": 870, "y": 40},
+  {"id": "few", "type": "atMost", "x": 870, "y": 400, "settings": {"limit": 2}},
+  {"id": "find", "type": "finding", "x": 1150, "y": 40, "settings": {"kind": "note", "evidence": "Intake note is under 3 lines"}}
+ ],
+ "wires": [
+  {"from": "scope.yes", "to": "inScope.cond"},
+  {"from": "wo.isActive", "to": "active.a"},
+  {"from": "wo.hasNotes", "to": "active.b"},
+  {"from": "active.out", "to": "isActive.cond"},
+  {"from": "intake.exists", "to": "hasIntake.cond"},
+  {"from": "author.who", "to": "find.who"},
+  {"from": "intake.ownLines", "to": "few.value"},
+  {"from": "few.yes", "to": "find.when"},
+  {"from": "intake.text", "to": "find.sig1"}
+ ],
+ "flow": [
+  {"from": "start.then", "to": "inScope.in"},
+  {"from": "inScope.yes", "to": "isActive.in"},
+  {"from": "inScope.no", "to": "skip.in"},
+  {"from": "isActive.yes", "to": "hasIntake.in"},
+  {"from": "hasIntake.yes", "to": "find.in"}
+ ]
+}

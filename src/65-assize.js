@@ -51,6 +51,10 @@
   lookup → findings), no DOM, no fetching, no AE helpers, so it also runs in Node for tests. It never
   knows about dismissals.
 
+  Rule graphs (phase 1, shadow mode): some rules also exist as node graphs (src/assize-graphs/*.json, run by
+  tracker-worker/src/rulegraph.js). Every compute runs them next to the code rules and logs where the two disagree
+  (GM ae_assize_graphs_<store>, the last 50; dev tools shows it). What Assize shows still comes from the code.
+
   Phone / TV / wearable / foldable: from the work order's catalog entry when its detail is loaded
   (DeviceModel.DeviceType.name: "Cell Phone", "Tablet", "Computer", "Game Console", "Wearable"...;
   DeviceFamily.name "Samsung Galaxy Fold" / "Samsung Galaxy Z Flip", the two Portal itself treats
@@ -474,6 +478,47 @@ AE.assizeRules = (() => {
   const ago = (ms) => (ms < DAY ? plural(Math.floor(ms / HOUR), 'hour') : plural(Math.floor(ms / DAY), 'day'));
   const label2 = (s) => s || 'Open';
 
+  // ------------------------------------------------------------ rule graphs (shadow mode)
+  /*
+    Phase 1 of rules as node graphs (tracker-worker/src/rulegraph.js, inlined here by build.py): the built-in graphs
+    (src/assize-graphs/*.json) run next to the code rules, and shadow() reports every order where the two disagree.
+    The code's findings are still the ones Assize shows. A graph that doesn't validate is skipped (graphs.skipped).
+    The graphs read the same helpers the code does (GH), so a fact has one implementation.
+  */
+  const RG = (() => { /*__RULEGRAPH__*/ })();
+  const GH = { MANUAL, CHECKLIST_LINE, LIQUID_RE, DATA_RE, AGREE_RE, CONTACT_RE, DOLLAR_RE, OVERRIDE_RE, EXPLAIN_RE, STORE, UNASSIGNED,
+    programOf, deviceOf, sigOf, mentions, person, intakeNote, intakeAuthor, statusEntry, lines, price, isCredit, neverFlag, isDeposit, cartSum, cartSig, money };
+  const graphs = { rules: [], skipped: [] };
+  if (RG) {
+    for (const [name, g] of Object.entries(__ASSIZE_GRAPHS__)) {
+      try { const c = RG.compile(g); if (c.errors.length) graphs.skipped.push({ rule: name, errors: c.errors }); else graphs.rules.push(c); }
+      catch (e) { graphs.skipped.push({ rule: name, errors: [(e && e.message) || String(e)] }); }
+    }
+  }
+  // One finding as a line, for comparing (and for the mismatch log).
+  const brief = (x) => [x.kind, x.check, x.title, x.evidence, x.who && x.who.key, x.sig].join(' · ');
+  /*
+    shadow(row, detail, opts, code) → { compared, mismatches: [{ wo, rule, code, graph }], errors: [{ wo, rule, error }] }
+    code: audit()'s findings for the same order (computed here when left out). Compared per rule: the same findings
+    with the same kind, check, title, evidence, who and sig.
+  */
+  function shadow(row, detail, opts = {}, code) {
+    const res = { compared: 0, mismatches: [], errors: [] };
+    if (!graphs.rules.length) return res;
+    const f = facts(row, detail);
+    if (!code) code = audit(row, detail, opts);
+    const ctx = Object.assign(Object.create(GH), { f, opts });
+    for (const c of graphs.rules) {
+      const r = RG.run(c, ctx, { trace: false });
+      if (r.errors.length) { res.errors.push({ wo: f.id, rule: c.rule, error: r.errors.join('; ') }); continue; }
+      const mine = r.findings.map((x) => brief(Object.assign({}, x, { who: x.who || UNASSIGNED, sig: sigOf(...x.sigBasis) }))).sort();
+      const theirs = code.filter((x) => x.rule === c.rule).map(brief).sort();
+      res.compared++;
+      if (mine.join('\n') !== theirs.join('\n') || r.findings.some((x) => x.rule !== c.rule)) res.mismatches.push({ wo: f.id, rule: c.rule, code: theirs.join(' + ') || 'none', graph: mine.join(' + ') || 'none' });
+    }
+    return res;
+  }
+
   // A finding's identity for dismissals: the order, the rule and the facts behind it.
   const dismissKey = (wo, rule, sig) => wo + '|' + rule + '|' + sig;
   const order = (x) => CHECKS.findIndex(([k]) => k === x.check) * 10 + KINDS.indexOf(x.kind);
@@ -484,7 +529,7 @@ AE.assizeRules = (() => {
     const worst = n.fail ? 'fail' : n.flag ? 'flag' : n.note ? 'note' : n.remind ? 'remind' : 'ok';
     return Object.assign(n, { worst, act: n.fail + n.flag });
   }
-  return { STORE_HOURS, hoursFor, MORNING_ENDS, CHECKS, KINDS, programOf, deviceOf, nickDate, closeAfter, closeBefore, facts, audit, orphanCleanings, summarize, sort, sigOf, dismissKey };
+  return { STORE_HOURS, hoursFor, MORNING_ENDS, CHECKS, KINDS, programOf, deviceOf, nickDate, closeAfter, closeBefore, facts, audit, orphanCleanings, summarize, sort, sigOf, dismissKey, shadow, graphs, GH };
 })();
 
 AE.crystal({
@@ -702,9 +747,18 @@ AE.crystal({
       let list = [];
       // rowFresher: this tab's list row was read after the detail was fetched, so the row's status / nickname / bin win (see facts()).
       const dOf = (x) => (x ? Object.assign({}, x.d, { rowFresher: (x.at || 0) <= rows.at }) : null);
-      for (const r of rows.rows) list.push(...R.audit(r, dOf(details[r.workorderId]), { now, hours: R.hoursFor(storeId), priceFor }));
+      const opts = { now, hours: R.hoursFor(storeId), priceFor }, sh = { orders: 0, compared: 0, mismatches: [], errors: [] };
+      // Each order's code findings, then the rule graphs over the same order (shadow mode: compared, never shown).
+      const one = (r, d) => {
+        const found = R.audit(r, d, opts);
+        list.push(...found);
+        try { const x = R.shadow(r, d, opts, found); sh.orders++; sh.compared += x.compared; sh.mismatches.push(...x.mismatches); sh.errors.push(...x.errors); }
+        catch (e) { sh.errors.push({ wo: String((r && r.workorderId) || (d && d.wo && d.wo.workorderId) || ''), rule: '*', error: (e && e.message) || String(e) }); }
+      };
+      for (const r of rows.rows) one(r, dOf(details[r.workorderId]));
       // An order fetched on its own page that wasn't open at the last pass (new since)
-      for (const [id, x] of Object.entries(details)) if (!seen.has(String(id))) list.push(...R.audit(null, x.d, { now, hours: R.hoursFor(storeId), priceFor }));
+      for (const [id, x] of Object.entries(details)) if (!seen.has(String(id))) one(null, x.d);
+      try { recordShadow(sh); } catch (e) { AE.noteError('Assize graphs', e); } // shadow mode never stops Assize
       list.push(...R.orphanCleanings(rows.rows, rows.closed || [], AE.data.belongs));
       list = R.sort(list);
       // Dismissed for the store (the rules stay pure; this is where a dismissal applies): out of every count, chip, pill and marker.
@@ -715,6 +769,27 @@ AE.crystal({
       for (const x of list) { if (!byWo.has(x.wo)) byWo.set(x.wo, []); byWo.get(x.wo).push(x); }
       result = { at: rows.at, open: rows.rows.length, findings: list, byWo, sum: R.summarize(list), dismissed: gone };
     }
+
+    // ------------------------------------------------------------ rule graphs, shadow mode (R.shadow)
+    // Where the graphs and the code rules disagree (or a graph errs), per store, newest first, the last 50. Each
+    // disagreement is kept once: one that persists only moves its `last` time, written at most every 10 minutes.
+    let shadowStat = null;
+    function recordShadow(sh) {
+      const now = Date.now();
+      shadowStat = { at: now, orders: sh.orders, compared: sh.compared, mismatches: sh.mismatches.length, errors: sh.errors.length };
+      if (!sh.mismatches.length && !sh.errors.length) return;
+      const saved = GM_getValue(key('graphs'), []), log = Array.isArray(saved) ? saved : [];
+      let dirty = false;
+      for (const x of [...sh.mismatches, ...sh.errors]) {
+        const id = [x.wo, x.rule, x.code, x.graph, x.error].join('|'), e = log.find((y) => y.id === id);
+        if (e) { if (now - e.last > 10 * 60 * 1000) { e.last = now; dirty = true; } continue; }
+        log.unshift(Object.assign({ id, first: now, last: now }, x));
+        dirty = true;
+      }
+      if (dirty) GM_setValue(key('graphs'), log.slice(0, 50));
+    }
+    AE.hooks.assizeGraphs = () => ({ rules: R.graphs.rules.map((c) => c.rule), skipped: R.graphs.skipped, last: shadowStat,
+      log: storeId ? GM_getValue(key('graphs'), []) : [], clear: () => { if (storeId) GM_setValue(key('graphs'), []); } }); // dev tools
 
     // ------------------------------------------------------------ styles
     document.head.append(h('style', null, `

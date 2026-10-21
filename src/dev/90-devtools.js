@@ -320,6 +320,16 @@
       note('The dry run reads the WO from Portal exactly as a scan would, then shows what would be sent, without sending anything.'),
       trOut);
 
+    // Assize's rule graphs, shadow mode: how many run, and where they disagree with the code rules.
+    const ag = AE.hooks.assizeGraphs ? AE.hooks.assizeGraphs() : null;
+    const agLast = ag && ag.log[0];
+    const assizeGraphs = section('Assize graphs',
+      note(!ag ? 'Assize is off.' : 'Assize graphs: ' + ag.rules.length + ' rules, ' + ag.log.length + ' mismatches' + (agLast ? ' (last: WO ' + agLast.wo + ' ' + agLast.rule + ', ' + new Date(agLast.last).toLocaleString() + ')' : '') +
+        (ag.skipped.length ? '. Skipped (invalid): ' + ag.skipped.map((x) => x.rule).join(', ') : '') +
+        (ag.last ? '. Last check: ' + ag.last.orders + ' orders, ' + ag.last.compared + ' comparisons, ' + ag.last.mismatches + ' mismatches, ' + ag.last.errors + ' errors' : '')),
+      ag ? row(btn('Log mismatches to the console', () => console.log('Assize graphs', ag)), btn('Clear mismatches', () => { ag.clear(); AE.toast('Assize graphs', 'Mismatch log cleared.', 'ok'); }, { close: true })) : null,
+      note('The graphs run next to the code rules and never change what Assize shows.'));
+
     const perf = section('Performance',
       row(btn('Page watcher cost', () => {
         const st = AE.domStats, secs = (performance.now() - st.since) / 1000;
@@ -348,7 +358,7 @@
     const card = h('div', { class: 'sg sg-card sg-dev', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' dev tools' },
       h('div', { class: 'head' }, h('span', { style: 'color:#e0761a;line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Dev tools'), h('span', { class: 'tag' }, 'DEV v' + AE_VERSION),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
-      h('div', { class: 'scroll' }, updates, tracker, sharepoint, notices, access, settings, macro, waymark, rows, scans, recorder, perf, general));
+      h('div', { class: 'scroll' }, updates, tracker, assizeGraphs, sharepoint, notices, access, settings, macro, waymark, rows, scans, recorder, perf, general));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-dev', onclick: (e) => { if (e.target === scrim) close(); } }, card);
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }

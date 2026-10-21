@@ -2,6 +2,6 @@
   "name": "aethernet-tracker",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node test/crypto.test.mjs && node test/worker.test.mjs && node test/admin.test.mjs && node test/metrics.test.mjs" },
+  "scripts": { "test": "node test/crypto.test.mjs && node test/worker.test.mjs && node test/admin.test.mjs && node test/metrics.test.mjs && node test/rulegraph.test.mjs" },
   "devDependencies": { "wrangler": "4.149.0" }
 }
