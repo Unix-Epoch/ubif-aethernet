@@ -305,6 +305,8 @@ def build(root: Path, version: str = VERSION) -> Path:
         "/*__TRACKER_SHAPE__*/": tracker_module(root, "shape.js"),
         # Assize's rule graphs: the interpreter (tracker-worker/src/rulegraph.js) and the built-in graphs (src/assize-graphs/*.json).
         "/*__RULEGRAPH__*/": tracker_module(root, "rulegraph.js"),
+        # Assize's rules engine (tracker-worker/src/assize-rules.js), shared with the tracker Worker and the admin site.
+        "/*__ASSIZE_RULES__*/": tracker_module(root, "assize-rules.js"),
         "__ASSIZE_GRAPHS__": assize_graphs(root),
         # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), plus
         # UI pieces (assets/ui/*.png), as data URIs

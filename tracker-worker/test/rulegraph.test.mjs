@@ -1,33 +1,40 @@
 // Rule graphs (src/rulegraph.js): the interpreter on its own (lazy pure nodes, exec flow, both finding styles, macros,
-// validation, the step limit, a throwing node, the trace), then parity: Assize's real rules engine (src/65-assize.js,
-// with the graphs injected as build.py does) against the five built-in graphs over synthetic orders and the sandbox's.
+// validation, the step limit, a throwing node, the trace), then parity: Assize's real rules engine (src/assize-rules.js,
+// the module Aethernet inlines) against the five built-in graphs over synthetic orders and the sandbox's.
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import * as RG from '../src/rulegraph.js';
 import { NODE_TYPES, MACROS, validate, compile, run } from '../src/rulegraph.js';
+import * as AR from '../src/assize-rules.js';
+import { makeRules } from '../src/assize-rules.js';
 
 const ROOT = new URL('../../', import.meta.url).pathname;
 const GRAPHS = Object.fromEntries(readdirSync(ROOT + 'src/assize-graphs').filter((f) => f.endsWith('.json')).sort().map((f) => [f.replace(/\.json$/, ''), JSON.parse(readFileSync(ROOT + 'src/assize-graphs/' + f, 'utf8'))]));
 
-// ------------------------------------------------------------------ Assize's rules engine, injected like build.py does
-// tracker_module(): the ES module minus `export`, plus `return { names }`.
+// ------------------------------------------------------------------ Assize's rules engine (src/assize-rules.js), with the graphs
+const R = makeRules({ RG, graphs: GRAPHS });
+const unbuilt = makeRules();
+assert.equal(unbuilt.graphs.rules.length, 0, 'no interpreter: no graphs, no crash');
+assert.deepEqual(unbuilt.shadow({ workorderId: 1 }, null, {}), { compared: 0, mismatches: [], errors: [] });
+// What build.py inlines into Aethernet (tracker_module(): the ES module minus `export`, plus `return { names }`) works as
+// plain function bodies, exports the same names, and is the same engine.
 function trackerModule(name) {
   const src = readFileSync(ROOT + 'tracker-worker/src/' + name, 'utf8');
   const names = [...src.matchAll(/^export (?:async )?(?:const|function) (\w+)/gm)].map((m) => m[1]);
   return src.replace(/^export /gm, '') + '\nreturn { ' + names.join(', ') + ' };\n';
 }
+const injected = new Function(trackerModule('rulegraph.js'))();
+assert.deepEqual(Object.keys(injected).sort(), Object.keys(RG).sort(), 'rulegraph: injection exports the same names');
+const injectedRules = new Function(trackerModule('assize-rules.js'))();
+assert.deepEqual(Object.keys(injectedRules).sort(), Object.keys(AR).sort(), 'assize-rules: injection exports the same names');
 const assizeSrc = readFileSync(ROOT + 'src/65-assize.js', 'utf8');
 const from = assizeSrc.indexOf('AE.assizeRules = (() => {'), to = assizeSrc.indexOf('\nAE.crystal(', from);
 assert.ok(from >= 0 && to > from, 'found AE.assizeRules in 65-assize.js');
-const rulesBody = assizeSrc.slice(from, to).replace('/*__RULEGRAPH__*/', () => trackerModule('rulegraph.js')).replace('__ASSIZE_GRAPHS__', () => JSON.stringify(GRAPHS));
-const R = new Function('AE', rulesBody + '\nreturn AE.assizeRules;')({});
-const unbuilt = new Function('AE', assizeSrc.slice(from, to).replace('__ASSIZE_GRAPHS__', '{}') + '\nreturn AE.assizeRules;')({});
-assert.equal(unbuilt.graphs.rules.length, 0, 'unbuilt source (no rulegraph injected): no graphs, no crash');
-assert.deepEqual(unbuilt.shadow({ workorderId: 1 }, null, {}), { compared: 0, mismatches: [], errors: [] });
-// The injected body works as a plain function body too (what the bundle runs).
-const injected = new Function(trackerModule('rulegraph.js'))();
-assert.deepEqual(Object.keys(injected).sort(), Object.keys(RG).sort(), 'injection exports the same names');
+const bundled = new Function('AE', assizeSrc.slice(from, to).replace('/*__RULEGRAPH__*/', () => trackerModule('rulegraph.js')).replace('/*__ASSIZE_RULES__*/', () => trackerModule('assize-rules.js'))
+  .replace('__ASSIZE_GRAPHS__', () => JSON.stringify(GRAPHS)) + '\nreturn AE.assizeRules;')({});
+assert.deepEqual(Object.keys(bundled).sort(), Object.keys(R).sort(), 'the bundle has the same engine');
+assert.deepEqual(bundled.graphs.rules.map((c) => c.rule), R.graphs.rules.map((c) => c.rule));
 
 // ------------------------------------------------------------------ interpreter
 const ctx0 = Object.assign(Object.create(R.GH), { f: R.facts({ workorderId: 1, workorderStatusName: 'Ready for work', programId: 20001 }, null), opts: {} });
@@ -204,11 +211,14 @@ const exec = Object.values(GRAPHS).filter((g) => (g.flow || []).length).length, 
 assert.ok(exec >= 1 && pure >= 1, 'both styles are used');
 
 const NOW = Date.parse('2026-10-21T15:00:00Z');
+const seenRules = new Set();
 const tally = { orders: 0, comparisons: 0, raised: {}, evidence: {} };
 const pick = (x) => ({ rule: x.rule, check: x.check, kind: x.kind, title: x.title, evidence: x.evidence, who: x.who.key, sig: x.sig });
 function compare(row, detail, label) {
   const opts = { now: NOW, hours: R.STORE_HOURS, priceFor: () => null };
   const code = R.audit(row, detail, opts);
+  assert.deepEqual(bundled.audit(row, detail, opts), code, label + ': the bundle and the module agree');
+  for (const x of code) seenRules.add(x.rule);
   const f = R.facts(row, detail);
   const ctx = Object.assign(Object.create(R.GH), { f, opts });
   tally.orders++;
@@ -297,6 +307,21 @@ if (stateFile) {
     compare(row, null, 'sandbox row only ' + w.workorderId);
     sandbox++;
   }
+}
+
+// The catalog: every rule id the code can raise (each rule literal in audit() / orphanCleanings()), and every one
+// the corpus raised, is listed once, with a check Assize has.
+{
+  const ids = R.catalog.map((x) => x.rule), src = AR.makeRules.toString();
+  assert.equal(new Set(ids).size, ids.length, 'no rule listed twice');
+  const body = src.slice(src.indexOf('function audit('), src.indexOf('const plural ='));
+  const literals = new Set([...body.matchAll(/'([a-z0-9]+(?:-[a-z0-9]+)+)'/g)].map((m) => m[1]));
+  for (const id of ids) assert.ok(body.includes("'" + id + "'"), 'listed but not in the code: ' + id);
+  assert.deepEqual([...literals].filter((x) => !ids.includes(x)), ['priced-in-notes'], 'a kebab-case literal in the rules that is not listed (only a signature value may be)');
+  for (const r of seenRules) assert.ok(ids.includes(r), 'raised but not listed: ' + r);
+  for (const x of R.catalog) assert.ok(R.CHECKS.some(([k]) => k === x.check) && R.KINDS.includes(x.kind) && x.title, x.rule);
+  assert.deepEqual(R.catalog.filter((x) => x.builtInGraph).map((x) => x.rule).sort(), Object.keys(GRAPHS).sort());
+  assert.deepEqual(R.catalog.filter((x) => !x.perOrder).map((x) => x.rule), ['parent-closed-cleaning-open']);
 }
 
 // Every rule was raised, and every OOP evidence variant seen.
