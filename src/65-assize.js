@@ -328,7 +328,8 @@ AE.assizeRules = (() => {
     }
 
     // ---- 2 Cart and price (Active + RFP), 3 Quote (Active)
-    if (f.hasCart) {
+    // Ready for pickup, Incomplete: the cart isn't checked (Oct 21, 2026).
+    if (f.hasCart && !(rfp && /^incomplete$/i.test(f.outcome))) {
       const cart = f.cart, who = intakeAuthor(f);
       if (prog.key === 'oop') {
         const sum = cartSum(cart);
