@@ -10,10 +10,10 @@
   {"id": "active", "type": "and", "x": 310, "y": 320},
   {"id": "intake", "type": "intakeNote", "x": 310, "y": 560},
   {"id": "author", "type": "intakeAuthor", "x": 870, "y": 560},
-  {"id": "inScope", "type": "branch", "x": 310, "y": 40},
-  {"id": "skip", "type": "stop", "x": 590, "y": 180},
-  {"id": "isActive", "type": "branch", "x": 590, "y": 40},
-  {"id": "hasIntake", "type": "branch", "x": 870, "y": 40},
+  {"id": "inScope", "type": "branch", "label": "Checked order?", "x": 310, "y": 40},
+  {"id": "skip", "type": "stop", "label": "Skip this order", "x": 590, "y": 180},
+  {"id": "isActive", "type": "branch", "label": "Active, notes loaded?", "x": 590, "y": 40},
+  {"id": "hasIntake", "type": "branch", "label": "Has an intake note?", "x": 870, "y": 40},
   {"id": "find", "type": "finding", "x": 1150, "y": 40, "settings": {"kind": "note", "evidence": "Nothing was written at check-in"}}
  ],
  "wires": [

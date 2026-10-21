@@ -100,6 +100,26 @@ async function openDetail(store, wo, sealed) {
   return d;
 }
 
+// ------------------------------------------------------------------ the Assize rules editor (rules-ui.js)
+// It tests graphs on open orders with the same keys as this page: one unlock opens both.
+// keyState → { details: customer details on and key copies set up, unlocked, person }.
+export async function keyState(helpers) {
+  if (!ui) ui = helpers;
+  me = await helpers.api('GET', '/tracker/me');
+  badge();
+  return { details: !plainMode() && !!me.master && !!me.person && me.keys.some((k) => !k.invite), unlocked: unlocked(), person: me.person };
+}
+export const isUnlocked = () => unlocked();
+// The unlock card (passphrase); after() runs once the keys are open.
+export const unlockPrompt = (after) => unlockCard(after);
+// One snapshot's sealed detail, opened with the store's key (null when that store isn't unlocked).
+export async function openSnapshot(store, wo, sealed) {
+  const k = keys.stores.get(Number(store));
+  if (!k || !sealed) return null;
+  touch();
+  return C.openJson(sealed, k, C.aad.snapshot(Number(store), Number(wo)));
+}
+
 // ------------------------------------------------------------------ helpers
 const money = (n) => (n == null ? '—' : (Number(n) < 0 ? '-$' : '$') + Math.abs(Number(n)).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','));
 // Portal's work order statuses (its own status enum; the tracker's statuses table has the same list).

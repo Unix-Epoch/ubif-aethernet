@@ -82,7 +82,7 @@ async function draw() {
   }
   nav();
   if (!TABS.some(([k]) => k === tab)) return noAccess(m); // a direct link to a page they don't have: no API call for it
-  m.replaceChildren(h('div', { class: 'soft' }, 'Loading…')); m.style.maxWidth = tab === 'metrics' ? '1720px' : '';
+  m.replaceChildren(h('div', { class: 'soft' }, 'Loading…')); m.style.maxWidth = tab === 'metrics' ? '1720px' : tab === 'rules' ? 'none' : '';
   try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, metrics: drawMetrics, rules: drawRules, wos: (x) => drawTracker('wos', x), sales: (x) => drawTracker('sales', x), people: (x) => drawTracker('people', x) }[tab])(m); }
   catch (e) { m.replaceChildren(h('div', { class: 'err' }, "Couldn't load: " + e.message)); } }
 // Metrics: the page itself lands with feat/metrics (metrics-ui); until then the tab only holds its place.
@@ -225,11 +225,8 @@ async function drawTracker(which, m) {
 }
 // Metrics: the dashboard (metrics-ui.js), loaded on first use.
 async function drawMetrics(m) { const mod = await import('/metrics-ui.js'); await mod.draw(m, { h, api, toast }); }
-// Assize rules: the editor comes next; until then the tab holds its place.
-async function drawRules(m) {
-  m.replaceChildren(h('div', { class: 'card' }, h('h3', null, 'Assize rules'), h('p', null, 'The Assize rules editor is coming.'),
-    h('div', { class: 'soft' }, 'Assize’s rules as node graphs: edit them, test them on today’s open orders, and publish them to every store or one.')));
-}
+// Assize rules: the node editor (rules-ui.js), loaded on first use. It unlocks test orders through tracker-ui.js.
+async function drawRules(m) { const mod = await import('/rules-ui.js'); await mod.draw(m, { h, api, toast, fmt, access: ACCESS, tab: () => tab, redraw: draw }); }
 addEventListener('hashchange', () => { const t = location.hash.slice(1).split('?')[0]; if (t && t !== tab) { tab = t; draw(); } });
 draw();
 </script></body></html>`;

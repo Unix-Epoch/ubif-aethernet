@@ -85,6 +85,8 @@ export async function assizeStore(req, env, url, store, H) {
   POST /assize/rules/:rule/revert { scope, id, note? }   history version id → the draft → { ok, errors, draftAt }
   POST /assize/rules/:rule/enabled { scope, enabled: true | false | null }   null (stores only): follow all stores
   POST /assize/rules/:rule/delete { scope }               remove a store's override (row and all) → { ok }
+  GET  /assize/stores                    the stores the person can test on: { stores: [{ store, name, open }] } (the tracker's
+                                         stores they can see, and every store in their list even with no orders yet)
   GET  /assize/orders?store=&wos=1,2&limit=   the store's open orders for testing graphs: { store, details,
                                          last_scan_at, orders: [{ wo, status_id, status_name, program_name, device,
                                          api_updated_at, last_detail_at, snapshot_id, snapshot_at, plain, sealed }] }
@@ -136,6 +138,11 @@ export async function assizeAdmin(req, env, url, path, me, email, H) {
     ]);
     await logIt('create', rule, 'all', title);
     return H.json({ ok: true, rule }, 200, false);
+  }
+  if (sub === '/stores' && req.method === 'GET') {
+    const r = (await T.prepare('SELECT store, MAX(store_name) AS name, SUM(is_open) AS open FROM workorders GROUP BY store ORDER BY store').all()).results.filter((x) => me.canSee(x.store));
+    for (const s of me.scope === 'all' ? [] : me.stores) if (!r.some((x) => x.store === s)) r.push({ store: s, name: null, open: 0 });
+    return H.json({ stores: r.map((x) => ({ store: x.store, name: x.name || null, open: x.open || 0 })).sort((a, b) => a.store - b.store) }, 200, false);
   }
   if (sub === '/orders' && req.method === 'GET') {
     const q = url.searchParams, store = H.int(q.get('store'));

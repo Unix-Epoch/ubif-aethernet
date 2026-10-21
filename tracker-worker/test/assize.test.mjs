@@ -318,6 +318,15 @@ ok(od, 'orders, no details'); assert.equal(od.j.details, false); assert.ok(!/SEA
 assert.equal((await admin('st@x.com', 'GET', '/assize/orders?store=326')).status, 403, 'not their store');
 assert.equal((await admin('st@x.com', 'GET', '/assize/orders')).status, 403, 'a store is needed');
 assert.ok((await logs('assize:orders')).length >= 3);
+// The stores to test on: the tracker's stores they can see, and every store in their list (even with no orders yet).
+await person('st2@x.com', 'stores', [914, 1276], ['rules'], 0);
+assert.deepEqual((await admin('all@x.com', 'GET', '/assize/stores')).j.stores, [{ store: 914, name: null, open: 2 }]);
+assert.deepEqual((await admin('st2@x.com', 'GET', '/assize/stores')).j.stores.map((s) => [s.store, s.open]), [[914, 2], [1276, 0]]);
+assert.equal((await admin('wos@x.com', 'GET', '/assize/stores')).status, 403, 'no Assize rules page');
+// Unlocking test orders' notes: an all-stores person with Assize rules (and customer details) may read the store keys.
+await person('rulesall@x.com', 'all', [], ['rules'], 1);
+assert.equal((await admin('rulesall@x.com', 'GET', '/store-keys')).status, 200, 'rules page reaches store-keys');
+assert.equal((await admin('st@x.com', 'GET', '/store-keys')).status, 403, 'still all stores + details only');
 
 await dispose();
 rmSync('.wrangler-test-assize', { recursive: true, force: true });

@@ -27,7 +27,7 @@ export const ROUTES = [
   ['PUT', /^\/api\/tracker\/me\/keys$/, null],                 // details checked in trackerAdmin
   ['POST', /^\/api\/tracker\/init$/, 'owner'],
   ['*', /^\/api\/tracker\/(people|agents|log)(\/|$)/, 'owner'],
-  ['GET', /^\/api\/tracker\/store-keys$/, 'wos'],             // all-stores + details checked in trackerAdmin
+  ['GET', /^\/api\/tracker\/store-keys$/, ['wos', 'rules']],  // all-stores + details checked in trackerAdmin (rules: test orders' notes)
   ['GET', /^\/api\/tracker\/stores$/, ['wos', 'sales', 'metrics']],
   ['GET', /^\/api\/tracker\/wos$/, 'wos'],
   ['GET', /^\/api\/tracker\/wo\/(\d{1,6})\/\d{1,12}$/, 'wos', 1],
@@ -42,9 +42,9 @@ export const ROUTES = [
   ['*', /^\/api\/feedback(\/\d+)?$/, 'reports'],
   ['GET', /^\/api\/next-version$/, 'reports'],
   ['*', /^\/api\/auto-rules$/, 'auto'],
-  ['GET', /^\/api\/tracker\/assize\/orders$/, 'rules'],            // ?store= checked here (query)
+  ['GET', /^\/api\/tracker\/assize\/(orders|stores)$/, 'rules'],   // ?store= checked here (query)
   ['*', /^\/api\/tracker\/assize\/rules(\/|$)/, 'rules'],         // scope of each edit checked in src/assize.js
-  ['GET', /^\/(rulegraph|assize-rules)\.js$/, 'rules'],              // the editor's engine, served to the page
+  ['GET', /^\/(rulegraph|assize-rules|rules-ui)\.js$/, 'rules'],     // the editor and its engine, served to the page
 ];
 
 export const owners = (env) => String(env.TRACKER_OWNERS || '').toLowerCase().split(/[\s,]+/).filter(Boolean);

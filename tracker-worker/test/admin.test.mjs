@@ -13,14 +13,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 export async function load(url, ctx, next) {
   const asText = url.endsWith('.txt') || url.endsWith('?as-text') || (ctx.importAttributes && ctx.importAttributes.type === 'text')
-    || ((url.endsWith('/admin-worker/src/tracker-ui.js') || url.endsWith('/admin-worker/src/metrics-ui.js') || url.endsWith('/tracker-worker/src/crypto.js')) && ctx.parentURL && ctx.parentURL.endsWith('/admin-worker/src/index.js'));
+    || ((url.endsWith('/admin-worker/src/tracker-ui.js') || url.endsWith('/admin-worker/src/metrics-ui.js') || url.endsWith('/admin-worker/src/rules-ui.js') || url.endsWith('/tracker-worker/src/crypto.js')) && ctx.parentURL && ctx.parentURL.endsWith('/admin-worker/src/index.js'));
   if (!asText) return next(url, ctx);
   return { format: 'module', source: 'export default ' + JSON.stringify(readFileSync(fileURLToPath(url), 'utf8')), shortCircuit: true };
 }
 export async function resolve(spec, ctx, next) {
   const r = await next(spec, ctx);
   // Same file imported as text by admin-worker and as code elsewhere: keep them apart.
-  if (ctx.parentURL && ctx.parentURL.endsWith('/admin-worker/src/index.js') && /(tracker-ui|metrics-ui|crypto)\\.js$/.test(r.url)) return Object.assign({}, r, { url: r.url + '?as-text' });
+  if (ctx.parentURL && ctx.parentURL.endsWith('/admin-worker/src/index.js') && /(tracker-ui|metrics-ui|rules-ui|crypto)\\.js$/.test(r.url)) return Object.assign({}, r, { url: r.url + '?as-text' });
   if (ctx.importAttributes && ctx.importAttributes.type === 'text') return Object.assign({}, r, { url: r.url + '?as-text', importAttributes: {} });
   return r;
 }`));
@@ -77,6 +77,14 @@ const om = (await call('owner@x.com', 'GET', '/api/tracker/me')).j.access;
 assert.equal(om.owner, true); assert.ok(om.pages.includes('people') && om.pages.includes('metrics'));
 
 // --- the Assize rules editor's engine, served to the page as modules (page 'rules'); the same code the Worker runs
+// The Assize rules editor's page script, the same way (and only with page 'rules').
+{
+  const r = await call('owner@x.com', 'GET', '/rules-ui.js');
+  assert.equal(r.status, 200); assert.match(r.text, /export async function draw\(/); assert.match(r.text, /from '\/rulegraph\.js'/);
+  assert.equal((await call('viewer@x.com', 'GET', '/rules-ui.js')).status, 403, 'no rules page: /rules-ui.js');
+  assert.match((await call('owner@x.com', 'GET', '/')).text, /import\('\/rules-ui\.js'\)/, 'page.js loads the editor');
+  assert.doesNotMatch((await call('owner@x.com', 'GET', '/')).text, /editor is coming/, 'the placeholder is gone');
+}
 for (const [path, name] of [['/rulegraph.js', 'run'], ['/assize-rules.js', 'makeRules']]) {
   const r = await call('owner@x.com', 'GET', path);
   assert.equal(r.status, 200, path);
@@ -85,7 +93,7 @@ for (const [path, name] of [['/rulegraph.js', 'run'], ['/assize-rules.js', 'make
   assert.equal((await call('viewer@x.com', 'GET', path)).status, 403, 'no rules page: ' + path);
 }
 assert.equal((await call('owner@x.com', 'GET', '/api/tracker/assize/rules')).status, 200);
-for (const [m, p, b] of [['GET', '/api/tracker/assize/rules'], ['PUT', '/api/tracker/assize/rules/no-bin/draft', { scope: 914, graph: {} }], ['GET', '/api/tracker/assize/orders?store=914']]) assert.equal((await call('mgr@x.com', m, p, b)).status, 403, 'manager without the rules page: ' + p);
+for (const [m, p, b] of [['GET', '/api/tracker/assize/rules'], ['PUT', '/api/tracker/assize/rules/no-bin/draft', { scope: 914, graph: {} }], ['GET', '/api/tracker/assize/orders?store=914'], ['GET', '/api/tracker/assize/stores']]) assert.equal((await call('mgr@x.com', m, p, b)).status, 403, 'manager without the rules page: ' + p);
 
 // --- store viewer: only their store's work orders, nothing sealed, nothing else
 const vw = await call('viewer@x.com', 'GET', '/api/tracker/wos');
