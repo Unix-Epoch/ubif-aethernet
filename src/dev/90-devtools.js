@@ -328,7 +328,11 @@
         (ag.skipped.length ? '. Skipped (invalid): ' + ag.skipped.map((x) => x.rule).join(', ') : '') +
         (ag.last ? '. Last check: ' + ag.last.orders + ' orders, ' + ag.last.compared + ' comparisons, ' + ag.last.mismatches + ' mismatches, ' + ag.last.errors + ' errors' : '')),
       ag ? row(btn('Log mismatches to the console', () => console.log('Assize graphs', ag)), btn('Clear mismatches', () => { ag.clear(); AE.toast('Assize graphs', 'Mismatch log cleared.', 'ok'); }, { close: true })) : null,
-      note('The graphs run next to the code rules and never change what Assize shows.'));
+      note(!ag || !ag.published ? 'Published rules: none fetched for this store yet.' : 'Published rules (version ' + String(ag.published.version).slice(0, 8) + ', fetched ' + new Date(ag.published.at).toLocaleString() + '): '
+        + (ag.published.rules.length ? ag.published.rules.map((x) => x.rule + (x.enabled ? x.graph ? ' graph v' + x.version + ' (' + (x.scope === 'all' ? 'all stores' : 'this store') + ')' : ' code (graph invalid)' : ' off')).join(', ') : 'nothing published')
+        + (ag.published.skipped.length ? '. Skipped (invalid): ' + ag.published.skipped.map((x) => x.rule).join(', ') : '')),
+      ag ? row(btn('Fetch published rules now', () => ag.reloadRules())) : null,
+      note('Built-in graphs run next to the code rules (shadow mode, for rules with nothing published) and never change what Assize shows. A published graph replaces its code rule.'));
 
     const perf = section('Performance',
       row(btn('Page watcher cost', () => {

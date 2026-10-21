@@ -244,6 +244,40 @@ AE.crystal({
     // Restore: whoever dismissed it, or a manager (Waymark's role check).
     const canRestore = (d) => isManager || (d.byId != null && me && Number(d.byId) === Number(me.userId));
 
+    // ------------------------------------------------------------ published rules (rule graphs from the admin site)
+    // The tracker Worker's answer for this store (GET /v1/:store/assize/rules), at most every 10 minutes, shared by the
+    // store's tabs (GM: ae_assize_rules_<store> { at, version, rules }), compiled once per version (R.published). It
+    // sends back the version it has, so an unchanged set comes back as "same" without the graphs. A failed fetch
+    // keeps the last good copy; none yet = the code rules alone.
+    const RULES_MS = 10 * 60 * 1000;
+    let pub = null, pubBusy = false; // pub: { store, version, set }
+    const readPub = () => GM_getValue(key('rules'), null);
+    function pubSet() {
+      const x = storeId && readPub();
+      if (!x || !x.rules) return null;
+      if (!pub || pub.store !== storeId || pub.version !== x.version) {
+        try { pub = { store: storeId, version: x.version, set: R.published(x) }; }
+        catch (e) { AE.noteError('Assize rules', e); pub = { store: storeId, version: x.version, set: null }; }
+        if (pub.set && pub.set.skipped.length) AE.noteError('Assize rules', new Error('skipped (invalid): ' + pub.set.skipped.map((y) => y.rule + ': ' + y.errors[0]).join('; ')));
+      }
+      return pub.set;
+    }
+    async function loadRules(force) {
+      if (pubBusy || !storeId || !AE.tracker || !AE.tracker.configured() || AE.status.paused('assize')) return;
+      const lock = key('rules_at');
+      if (!force && Date.now() - GM_getValue(lock, 0) < RULES_MS - 30000) return;
+      GM_setValue(lock, Date.now());
+      pubBusy = true;
+      const asked = storeId, cur = readPub();
+      try {
+        const j = await AE.tracker.call('GET', '/v1/' + asked + '/assize/rules' + (cur && cur.version ? '?v=' + encodeURIComponent(cur.version) : ''));
+        if (asked !== storeId || !j || j.same || !j.rules || typeof j.version !== 'string') return;
+        GM_setValue(key('rules'), { at: Date.now(), version: j.version, rules: j.rules });
+        compute(); render();
+      } catch (e) { if (!e.storeChanged) AE.noteError('Assize rules', e); }
+      finally { pubBusy = false; }
+    }
+
     // ------------------------------------------------------------ findings
     let result = null; // { at, open, findings, byWo, sum }
     let sheet = null;
@@ -261,18 +295,27 @@ AE.crystal({
       // rowFresher: this tab's list row was read after the detail was fetched, so the row's status / nickname / bin win (see facts()).
       const dOf = (x) => (x ? Object.assign({}, x.d, { rowFresher: (x.at || 0) <= rows.at }) : null);
       const opts = { now, hours: R.hoursFor(storeId), priceFor }, sh = { orders: 0, compared: 0, mismatches: [], errors: [] };
-      // Each order's code findings, then the rule graphs over the same order (shadow mode: compared, never shown).
+      // Published rules: a graph (or "off") stands in for its code rule; shadow mode skips those.
+      const set = pubSet(), except = set ? new Set([...set.rules.values()].filter((x) => !x.enabled || x.c).map((x) => x.rule)) : null;
+      const woOf = (r, d) => String((r && r.workorderId) || (d && d.wo && d.wo.workorderId) || '');
+      // Each order's code findings, with the published graphs applied, then the built-in graphs over the same order
+      // (shadow mode: compared with the code, never shown).
       const one = (r, d) => {
-        const found = R.audit(r, d, opts);
+        const code = R.audit(r, d, opts);
+        let found = code;
+        if (set) {
+          try { const w = R.withGraphs(r, d, opts, set, code); found = w.findings; sh.errors.push(...w.errors.map((x) => Object.assign({}, x, { error: 'published graph: ' + x.error }))); }
+          catch (e) { sh.errors.push({ wo: woOf(r, d), rule: '*', error: 'published graphs: ' + ((e && e.message) || String(e)) }); } // the code's findings stand
+        }
         list.push(...found);
-        try { const x = R.shadow(r, d, opts, found); sh.orders++; sh.compared += x.compared; sh.mismatches.push(...x.mismatches); sh.errors.push(...x.errors); }
-        catch (e) { sh.errors.push({ wo: String((r && r.workorderId) || (d && d.wo && d.wo.workorderId) || ''), rule: '*', error: (e && e.message) || String(e) }); }
+        try { const x = R.shadow(r, d, opts, code, except); sh.orders++; sh.compared += x.compared; sh.mismatches.push(...x.mismatches); sh.errors.push(...x.errors); }
+        catch (e) { sh.errors.push({ wo: woOf(r, d), rule: '*', error: (e && e.message) || String(e) }); }
       };
       for (const r of rows.rows) one(r, dOf(details[r.workorderId]));
       // An order fetched on its own page that wasn't open at the last pass (new since)
       for (const [id, x] of Object.entries(details)) if (!seen.has(String(id))) one(null, x.d);
       try { recordShadow(sh); } catch (e) { AE.noteError('Assize graphs', e); } // shadow mode never stops Assize
-      list.push(...R.orphanCleanings(rows.rows, rows.closed || [], AE.data.belongs));
+      list.push(...R.orphanCleanings(rows.rows, rows.closed || [], AE.data.belongs).filter((x) => !R.isOff(set, x.rule)));
       list = R.sort(list);
       // Dismissed for the store (the rules stay pure; this is where a dismissal applies): out of every count, chip, pill and marker.
       const dm = new Map(dismissed.map((d) => [R.dismissKey(String(d.wo), d.rule, d.sig), d]));
@@ -302,6 +345,8 @@ AE.crystal({
       if (dirty) GM_setValue(key('graphs'), log.slice(0, 50));
     }
     AE.hooks.assizeGraphs = () => ({ rules: R.graphs.rules.map((c) => c.rule), skipped: R.graphs.skipped, last: shadowStat,
+      published: (() => { const x = storeId && readPub(), set = pubSet(); return x ? { at: x.at, version: x.version, rules: set ? [...set.rules.values()].map((y) => ({ rule: y.rule, scope: y.scope, version: y.version, enabled: y.enabled, graph: !!y.c })) : [], skipped: set ? set.skipped : [] } : null; })(),
+      reloadRules: () => loadRules(true),
       log: storeId ? GM_getValue(key('graphs'), []) : [], clear: () => { if (storeId) GM_setValue(key('graphs'), []); } }); // dev tools
 
     // ------------------------------------------------------------ styles
@@ -460,7 +505,7 @@ AE.crystal({
       const close = h('button', { type: 'button', class: 'sg-x', title: 'Close', 'aria-label': 'Close', onclick: () => p.remove() }, '✕');
       const sub = result ? 'Checked ' + fmtTime(result.at) + ' · ' + orders(result.open) : '';
       const head = h('div', { class: 'hd' }, h('span', { html: AE.actionIcon('assize', 26), style: 'line-height:0' }), h('b', null, 'Assize'), h('span', { class: 'sg-soft' }, busy ? (progress && progress.total ? 'Checking ' + Math.min(progress.done + 1, progress.total) + ' of ' + progress.total + '…' : 'Checking orders…') : sub), close);
-      const refresh = h('button', { type: 'button', class: 'sg-btn', disabled: busy || null, onclick: (e) => { e.stopPropagation(); AE.track('assize:refresh'); pass(true, true); } }, 'Refresh');
+      const refresh = h('button', { type: 'button', class: 'sg-btn', disabled: busy || null, onclick: (e) => { e.stopPropagation(); AE.track('assize:refresh'); loadRules(true); pass(true, true); } }, 'Refresh');
       const nGone = result ? result.dismissed.length : 0;
       const toggle = canDismiss() ? h('button', { type: 'button', class: 'sg-btn', 'aria-pressed': String(showDismissed), 'data-fk': 'dt', title: 'Findings dismissed at this store',
         onclick: (e) => { e.stopPropagation(); showDismissed = !showDismissed; actErr = null; dp = null; if (showDismissed) loadDismissed(true); renderPanel(); } }, showDismissed ? 'Back to findings' : 'Dismissed (' + nGone + ')') : null;
@@ -629,11 +674,12 @@ AE.crystal({
         loadDismissed(true);
       }
       if (AE.priceSheet && AE.waymark && AE.waymark.configured()) AE.priceSheet.get().then((v) => { sheet = v && v.data ? v : null; compute(); render(); }).catch(() => {});
-      AE.every(60 * 1000, () => { if (!document.hidden) pass(false); compute(); render(); }); // pass() waits out the shared 10 minutes
+      loadRules(false);
+      AE.every(60 * 1000, () => { if (!document.hidden) { pass(false); loadRules(false); } compute(); render(); }); // both wait out their shared 10 minutes
       // Another tab's pass: pick up its results.
       AE.every(5000, () => {
         const rows = readRows();
-        const dets = Object.values(readDetails()), stamp = (rows ? rows.at : 0) + ':' + dets.length + ':' + dets.reduce((m, x) => Math.max(m, x.at || 0), 0);
+        const dets = Object.values(readDetails()), rl = readPub(), stamp = (rows ? rows.at : 0) + ':' + dets.length + ':' + dets.reduce((m, x) => Math.max(m, x.at || 0), 0) + ':' + ((rl && rl.version) || '');
         if (stamp !== seenAt) { seenAt = stamp; compute(); render(); }
       });
       AE.every(1000, () => { const woId = currentWoId(); if (woId) refreshWo(woId); renderPill(); renderList(); });
