@@ -1,0 +1,38 @@
+{
+ "v": 1,
+ "rule": "awaiting-item",
+ "check": "remind",
+ "title": "Awaiting item",
+ "nodes": [
+  {"id": "scope", "type": "macro", "x": 330, "y": 295, "settings": {"macro": "audited"}},
+  {"id": "wo", "type": "wo", "x": 30, "y": 131},
+  {"id": "item", "type": "statusIs", "x": 330, "y": 85, "settings": {"statuses": ["awaiting item"]}},
+  {"id": "when", "type": "and", "x": 630, "y": 76},
+  {"id": "set", "type": "statusSetBy", "label": "Status set by (named)", "x": 30, "y": 500, "settings": {"byId": false}},
+  {"id": "known", "type": "above", "label": "Status time known", "x": 330, "y": 465},
+  {"id": "days", "type": "daysBetween", "x": 330, "y": 819},
+  {"id": "pos", "type": "max", "label": "Never below 0", "x": 630, "y": 304, "settings": {"b": 0}},
+  {"id": "n", "type": "plural", "x": 930, "y": 107, "settings": {"word": "day"}},
+  {"id": "waiting", "type": "template", "x": 1230, "y": 96, "settings": {"text": "Waiting {days}"}},
+  {"id": "text", "type": "chooseText", "x": 1530, "y": 30, "settings": {"else": "Waiting for the part"}},
+  {"id": "day", "type": "formatTime", "x": 330, "y": 653, "settings": {"format": "day", "blank": "unknown"}},
+  {"id": "find", "type": "reminder", "x": 1830, "y": 41}
+ ],
+ "wires": [
+  {"from": "wo.status", "to": "item.status"},
+  {"from": "scope.yes", "to": "when.a"},
+  {"from": "item.yes", "to": "when.b"},
+  {"from": "set.since", "to": "known.value"},
+  {"from": "set.since", "to": "days.a"},
+  {"from": "days.days", "to": "pos.a"},
+  {"from": "pos.out", "to": "n.count"},
+  {"from": "n.out", "to": "waiting.days"},
+  {"from": "known.yes", "to": "text.if1"},
+  {"from": "waiting.out", "to": "text.then1"},
+  {"from": "set.since", "to": "day.at"},
+  {"from": "when.out", "to": "find.when"},
+  {"from": "text.out", "to": "find.evidence"},
+  {"from": "set.who", "to": "find.who"},
+  {"from": "day.out", "to": "find.sig1"}
+ ]
+}

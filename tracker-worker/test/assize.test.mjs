@@ -78,7 +78,7 @@ const rules = (list) => list.map((x) => x.rule).sort();
   const wb = R.withGraphs(ORDERS[0].row, ORDERS[0].detail, opts, boom);
   assert.deepEqual(wb.findings, code); assert.deepEqual(wb.ran, []); assert.match(wb.errors[0].error, /kaboom/); assert.equal(wb.errors[0].rule, 'short-intake-note');
   // Shadow mode leaves out what's published.
-  assert.equal(R.shadow(ORDERS[0].row, ORDERS[0].detail, opts, code, new Set(['short-intake-note', 'oop-zero-cart'])).compared, 3);
+  assert.equal(R.shadow(ORDERS[0].row, ORDERS[0].detail, opts, code, new Set(['short-intake-note', 'oop-zero-cart'])).compared, Object.keys(GRAPHS).length - 2);
 }
 // checkGraph(): what may be published.
 {
@@ -260,8 +260,9 @@ ok(await admin('st@x.com', 'POST', '/assize/rules/oop-zero-cart/delete', { scope
 assert.deepEqual((await store(914)).j.rules['oop-zero-cart'], { graph: g2, version: 2, scope: 'all', enabled: true });
 assert.equal((await admin('all@x.com', 'GET', '/assize/rules/oop-zero-cart')).j.history[0].action, 'delete');
 
-// A rule that looks across orders: no graphs, but it can be turned off.
-assert.equal((await admin('all@x.com', 'PUT', '/assize/rules/parent-closed-cleaning-open/draft', { scope: 'all', graph: { v: 1, rule: 'parent-closed-cleaning-open', nodes: [] } })).status, 400);
+// The rule that looks across orders runs per order now (the store's closed rows come in through opts.closed): it takes
+// a graph like any other, and it can be turned off.
+ok(await admin('all@x.com', 'PUT', '/assize/rules/parent-closed-cleaning-open/draft', { scope: 'all', graph: GRAPHS['parent-closed-cleaning-open'] }), 'a draft for the cross-order rule');
 ok(await admin('all@x.com', 'POST', '/assize/rules/parent-closed-cleaning-open/enabled', { scope: 'all', enabled: false }), 'off');
 ok(await admin('all@x.com', 'POST', '/assize/rules/parent-closed-cleaning-open/enabled', { scope: 'all', enabled: true }), 'on');
 

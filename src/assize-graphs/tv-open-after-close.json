@@ -1,0 +1,48 @@
+{
+ "v": 1,
+ "rule": "tv-open-after-close",
+ "check": "partner",
+ "title": "TV open after close",
+ "nodes": [
+  {"id": "start", "type": "start", "x": 30, "y": 1136},
+  {"id": "scope", "type": "macro", "x": 30, "y": 1232, "settings": {"macro": "partnerChecked"}},
+  {"id": "wo", "type": "wo", "x": 30, "y": 30},
+  {"id": "author", "type": "intakeAuthor", "x": 930, "y": 1332},
+  {"id": "inScope", "type": "branch", "label": "Partner rules apply?", "x": 330, "y": 1114},
+  {"id": "skip", "type": "stop", "label": "Skip this order", "x": 630, "y": 822},
+  {"id": "tv", "type": "deviceIs", "x": 330, "y": 1505, "settings": {"kind": "tv"}},
+  {"id": "dates", "type": "orderDates", "x": 30, "y": 1719},
+  {"id": "known", "type": "above", "label": "Created time known", "x": 330, "y": 1649},
+  {"id": "close", "type": "macro", "x": 330, "y": 1837, "settings": {"macro": "afterClose"}},
+  {"id": "when", "type": "and", "label": "TV, the store has closed since", "x": 630, "y": 1463},
+  {"id": "clock", "type": "formatTime", "x": 630, "y": 1691, "settings": {"format": "clock"}},
+  {"id": "day", "type": "formatTime", "x": 630, "y": 1857, "settings": {"format": "when"}},
+  {"id": "key", "type": "formatTime", "x": 630, "y": 1297, "settings": {"format": "day"}},
+  {"id": "text", "type": "template", "x": 930, "y": 1568, "settings": {"text": "Still open; the store closed at {clock} {when}"}},
+  {"id": "test", "type": "branch", "label": "Open past close?", "x": 930, "y": 1428},
+  {"id": "find", "type": "finding", "x": 1230, "y": 1231, "settings": {"kind": "fail"}}
+ ],
+ "wires": [
+  {"from": "scope.yes", "to": "inScope.cond"},
+  {"from": "dates.createdAt", "to": "known.value"},
+  {"from": "dates.createdAt", "to": "close.at"},
+  {"from": "tv.yes", "to": "when.a"},
+  {"from": "known.yes", "to": "when.b"},
+  {"from": "close.closed", "to": "when.c"},
+  {"from": "close.close", "to": "clock.at"},
+  {"from": "close.close", "to": "day.at"},
+  {"from": "close.close", "to": "key.at"},
+  {"from": "clock.out", "to": "text.clock"},
+  {"from": "day.out", "to": "text.when"},
+  {"from": "when.out", "to": "test.cond"},
+  {"from": "text.out", "to": "find.evidence"},
+  {"from": "author.who", "to": "find.who"},
+  {"from": "key.out", "to": "find.sig1"}
+ ],
+ "flow": [
+  {"from": "start.then", "to": "inScope.in"},
+  {"from": "inScope.no", "to": "skip.in"},
+  {"from": "inScope.yes", "to": "test.in"},
+  {"from": "test.yes", "to": "find.in"}
+ ]
+}

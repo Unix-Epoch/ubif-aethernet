@@ -1,0 +1,43 @@
+{
+ "v": 1,
+ "rule": "phone-on-home-plus",
+ "check": "partner",
+ "title": "Phone on Home+",
+ "nodes": [
+  {"id": "start", "type": "start", "x": 30, "y": 155},
+  {"id": "scope", "type": "macro", "x": 30, "y": 251, "settings": {"macro": "partnerChecked"}},
+  {"id": "wo", "type": "wo", "x": 630, "y": 397},
+  {"id": "author", "type": "intakeAuthor", "x": 930, "y": 279},
+  {"id": "inScope", "type": "branch", "label": "Partner rules apply?", "x": 330, "y": 133},
+  {"id": "skip", "type": "stop", "label": "Skip this order", "x": 630, "y": 30},
+  {"id": "program", "type": "program", "x": 30, "y": 565},
+  {"id": "phone", "type": "deviceIs", "x": 30, "y": 421, "settings": {"kind": "phone"}},
+  {"id": "when", "type": "and", "x": 330, "y": 273},
+  {"id": "noName", "type": "isBlank", "x": 330, "y": 592, "settings": {"trim": false}},
+  {"id": "name", "type": "chooseText", "x": 630, "y": 515, "settings": {"then1": "Home+"}},
+  {"id": "text", "type": "template", "x": 930, "y": 375, "settings": {"text": "{device}: {program} takes no phones"}},
+  {"id": "test", "type": "branch", "label": "Phone on Home+?", "x": 630, "y": 257},
+  {"id": "find", "type": "finding", "x": 1230, "y": 178, "settings": {"kind": "fail"}}
+ ],
+ "wires": [
+  {"from": "scope.yes", "to": "inScope.cond"},
+  {"from": "program.isHomePlus", "to": "when.a"},
+  {"from": "phone.yes", "to": "when.b"},
+  {"from": "program.name", "to": "noName.text"},
+  {"from": "noName.yes", "to": "name.if1"},
+  {"from": "program.name", "to": "name.else"},
+  {"from": "wo.device", "to": "text.device"},
+  {"from": "name.out", "to": "text.program"},
+  {"from": "when.out", "to": "test.cond"},
+  {"from": "text.out", "to": "find.evidence"},
+  {"from": "author.who", "to": "find.who"},
+  {"from": "program.name", "to": "find.sig1"},
+  {"from": "wo.device", "to": "find.sig2"}
+ ],
+ "flow": [
+  {"from": "start.then", "to": "inScope.in"},
+  {"from": "inScope.no", "to": "skip.in"},
+  {"from": "inScope.yes", "to": "test.in"},
+  {"from": "test.yes", "to": "find.in"}
+ ]
+}

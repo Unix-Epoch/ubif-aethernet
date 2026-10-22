@@ -35,9 +35,11 @@
   sigBasis is what the host hashes into the dismissal signature (Assize: sigOf(...sigBasis)), so it must list the
   same facts, in the same order, as the code rule it stands for.
 
-  ctx (Assize): f (facts()), opts, and the rules engine's own helpers and constants (lines, price, cartSum,
-  cartSig, money, mentions, intakeNote, intakeAuthor, programOf, deviceOf, isCredit, neverFlag, isDeposit, MANUAL,
-  CHECKLIST_LINE, UNASSIGNED, the *_RE patterns...), so each fact has one implementation, the code's.
+  ctx (Assize): f (facts()), row (the list row, or null), opts ({ now, hours, priceFor, closed, belongs }: the
+  store's hours, price sheet and closed rows reach graphs only through here), and the rules engine's own helpers and
+  constants (lines, price, cartSum, cartSig, money, mentions, intakeNote, intakeAuthor, programOf, deviceOf, nickDate,
+  closeAfter / closeBefore / openAfter, dayKey, clock, relatedOrder, MANUAL, CHECKLIST_LINE, UNASSIGNED, the *_RE
+  patterns...), so each fact has one implementation, the code's. Time is local, and "now" is opts.now (else the clock).
 */
 export const FORMAT = 1;
 export const STEP_LIMIT = 2000;
@@ -78,7 +80,7 @@ const FINDING_IN = [p('when', 'bool'), p('evidence', 'text'), p('who', 'person')
 const FINDING_SET = [opt('title', 'text'), opt('check', 'text'), opt('rule', 'text'), opt('evidence', 'text', { desc: 'used when the evidence pin is not wired' })];
 
 /*
-  The node library. Each type: title (the editor's), cat (fact check logic text num people assize out), desc, inputs /
+  The node library. Each type: title (the editor's), cat (fact check logic text num time people assize out), desc, inputs /
   outputs (lists, or functions of the node's settings), settings (the editor's form: name, type text|num|bool|list|
   enum|pattern|macro, options, def), exec ({ in, outs }) for executed nodes, and eval(io, settings, ctx) → outputs
   (pure nodes) or run(io, settings, ctx, state) → the exec output to follow (executed nodes). notes: the node reads
@@ -112,6 +114,24 @@ export const NODE_TYPES = {
     eval(io, s, ctx) {
       const f = ctx.f;
       return { createdAt: f.createdAt || 0, updatedAt: f.updatedAt || 0, nextUpdate: f.nextUpdate || 0, rfpAt: f.rfpAt || 0, bin: str(f.bin), nickname: str(f.nickname), issues: (f.issues || []).map(str), deviceType: str(f.deviceType) };
+    },
+  },
+  program: {
+    title: 'Program', cat: 'fact', desc: "The order's program as Assize reads it: its key (oop, cci, asurion…), its name (\"Program <id>\" when Portal gave none for an unknown one), and whether it is a partner, Asurion Home+ or an Xbox OOP.",
+    inputs: [], settings: [], outputs: [p('key', 'text'), p('name', 'text'), p('isPartner', 'bool'), p('isHomePlus', 'bool'), p('isXbox', 'bool')],
+    eval(io, s, ctx) { const g = ctx.programOf(ctx.f.programId, ctx.f.programName); return { key: g.key, name: str(g.name), isPartner: !!g.partner, isHomePlus: !!g.homePlus, isXbox: !!g.xbox }; },
+  },
+  lastActivity: {
+    title: 'Last activity', cat: 'fact', desc: "The newest thing on record (ms; 0 when none): the order's last update, any note, any status change.",
+    inputs: [], outputs: [p('at', 'num')], settings: [], notes: true, eval: (io, s, ctx) => ({ at: ctx.lastActivity(ctx.f) || 0 }),
+  },
+  relatedOrder: {
+    title: 'Related order', cat: 'fact', desc: "Another of the store's orders that goes with this one: the first recently closed order (the list Assize has) on one of these program ids (none: any), in a status containing one of these (none: any), created within this many hours of this one (0: any time), for the same device or customer. Only Assize's own pass has that list: anywhere else (the editor's test orders) none is found.",
+    inputs: [], outputs: [p('found', 'bool'), p('id', 'text'), p('status', 'text'), p('program', 'text'), p('createdAt', 'num')],
+    settings: [opt('programIds', 'list', { def: [] }), opt('statuses', 'list', { def: [] }), opt('withinHours', 'num', { def: 48 }), opt('sameDevice', 'bool', { def: true })],
+    eval(io, s, ctx) {
+      const r = ctx.relatedOrder(ctx.row, ctx.opts, s);
+      return { found: !!r, id: r ? str(r.workorderId) : '', status: r ? str(r.workorderStatusName) : '', program: r ? str(r.programName) : '', createdAt: (r && Date.parse(r.createdAt)) || 0 };
     },
   },
   deviceIs: {
@@ -170,6 +190,31 @@ export const NODE_TYPES = {
     title: 'Subtract', cat: 'num', desc: 'a − b.', inputs: [p('a', 'num', true), p('b', 'num')], outputs: [p('out', 'num')], settings: [opt('b', 'num', { def: 0 })],
     eval: (io, s) => ({ out: io.in('a') - num(io, s, 'b') }),
   },
+  add: {
+    title: 'Add', cat: 'num', desc: 'a + b.', inputs: [p('a', 'num', true), p('b', 'num')], outputs: [p('out', 'num')], settings: [opt('b', 'num', { def: 0 })],
+    eval: (io, s) => ({ out: io.in('a') + num(io, s, 'b') }),
+  },
+  max: {
+    title: 'Larger', cat: 'num', desc: 'The larger of a and b.', inputs: [p('a', 'num', true), p('b', 'num')], outputs: [p('out', 'num')], settings: [opt('b', 'num', { def: 0 })],
+    eval: (io, s) => ({ out: Math.max(io.in('a'), num(io, s, 'b')) }),
+  },
+  min: {
+    title: 'Smaller', cat: 'num', desc: 'The smaller of a and b.', inputs: [p('a', 'num', true), p('b', 'num')], outputs: [p('out', 'num')], settings: [opt('b', 'num', { def: 0 })],
+    eval: (io, s) => ({ out: Math.min(io.in('a'), num(io, s, 'b')) }),
+  },
+  above: {
+    title: 'Above', cat: 'num', desc: 'value > limit.', inputs: [p('value', 'num', true), p('limit', 'num')], outputs: [p('yes', 'bool')], settings: [opt('limit', 'num', { def: 0 })],
+    eval: (io, s) => ({ yes: io.in('value') > num(io, s, 'limit') }),
+  },
+  below: {
+    title: 'Below', cat: 'num', desc: 'value < limit.', inputs: [p('value', 'num', true), p('limit', 'num')], outputs: [p('yes', 'bool')], settings: [opt('limit', 'num', { def: 0 })],
+    eval: (io, s) => ({ yes: io.in('value') < num(io, s, 'limit') }),
+  },
+  chooseNum: {
+    title: 'Choose number', cat: 'num', desc: 'then when if is true, else else (a then / else not wired uses its setting).',
+    inputs: [p('if', 'bool', true), p('then', 'num'), p('else', 'num')], outputs: [p('out', 'num')], settings: [opt('then', 'num', { def: 0 }), opt('else', 'num', { def: 0 })],
+    eval: (io, s) => ({ out: io.in('if') ? num(io, s, 'then') : num(io, s, 'else') }),
+  },
   hoursSince: {
     title: 'Hours since', cat: 'num', desc: 'Hours from a time (ms) to now, never below 0. An unwired or 0 time reads as 1000000 hours (never happened).',
     inputs: [p('at', 'num', true)], outputs: [p('hours', 'num')], settings: [], eval: (io, s, ctx) => ({ hours: hoursSince(ctx, Number(io.in('at')) || 0) }),
@@ -180,6 +225,59 @@ export const NODE_TYPES = {
     outputs: (s) => [p('out', ['num', 'text', 'bool'].includes(s.type) ? s.type : 'num')],
     settings: [opt('type', 'enum', { options: ['num', 'text', 'bool'], def: 'num' }), opt('value', 'text')],
     eval: (io, s) => ({ out: s.type === 'text' ? str(s.value) : s.type === 'bool' ? s.value === true || s.value === 'true' : Number(s.value) || 0 }),
+  },
+  // ---------------------------------------------------------------- time and store hours (local time; "now" is ctx.opts.now)
+  now: { title: 'Now', cat: 'time', desc: "The run's time (ms): fixed in tests and debug runs, else the clock.", inputs: [], outputs: [p('at', 'num')], settings: [], eval: (io, s, ctx) => ({ at: nowOf(ctx) }) },
+  timeOfDay: {
+    title: 'Time of day', cat: 'time', desc: 'The local hour (0–23), minute and weekday (0 Sunday … 6 Saturday) of a time.',
+    inputs: [p('at', 'num', true)], outputs: [p('hour', 'num'), p('minute', 'num'), p('weekday', 'num')], settings: [],
+    eval(io) { const d = new Date(Number(io.in('at')) || 0); return { hour: d.getHours(), minute: d.getMinutes(), weekday: d.getDay() }; },
+  },
+  dayTime: {
+    title: 'Day and time', cat: 'time', desc: 'A time moved by whole calendar days, then (with an hour) set to that hour of its day; no hour: the same time of day.',
+    inputs: [p('at', 'num', true), p('days', 'num')], outputs: [p('out', 'num')],
+    settings: [opt('days', 'num', { def: 0 }), opt('hour', 'num', { desc: '0–23; blank: keep the time of day' }), opt('minute', 'num', { def: 0 })],
+    eval(io, s, ctx) {
+      let t = ctx.addDays(Number(io.in('at')) || 0, num(io, s, 'days'));
+      if (s.hour != null && s.hour !== '') t = ctx.at(t, Number(s.hour), Number(s.minute) || 0);
+      return { out: t };
+    },
+  },
+  daysBetween: {
+    title: 'Days between', cat: 'time', desc: 'Calendar days from a to b (local dates, whatever the hour): 0 the same day, 1 the day after, negative before. b not wired: today.',
+    inputs: [p('a', 'num', true), p('b', 'num')], outputs: [p('days', 'num')], settings: [],
+    eval: (io, s, ctx) => ({ days: ctx.daysBetween(Number(io.in('a')) || 0, io.wired('b') ? Number(io.in('b')) || 0 : nowOf(ctx)) }),
+  },
+  elapsed: {
+    title: 'Time since', cat: 'time', desc: "From a time to now (or to: to): hours, whole days, and in words ('5 hours' under a day, else '3 days').",
+    inputs: [p('from', 'num', true), p('to', 'num')], outputs: [p('hours', 'num'), p('days', 'num'), p('text', 'text')], settings: [],
+    eval(io, s, ctx) {
+      const ms = (io.wired('to') ? Number(io.in('to')) || 0 : nowOf(ctx)) - (Number(io.in('from')) || 0);
+      return { hours: ms / ctx.HOUR, days: Math.floor(ms / ctx.DAY), text: ctx.ago(ms) };
+    },
+  },
+  storeHours: {
+    title: 'Store hours', cat: 'time', desc: "The store's hours around a time (closed days skipped): its next opening (at or after it), next close (after it) and last close (at or before it), and whether its day is an open day.",
+    inputs: [p('at', 'num', true)], outputs: [p('nextOpen', 'num'), p('nextClose', 'num'), p('lastClose', 'num'), p('openDay', 'bool')], settings: [],
+    eval(io, s, ctx) {
+      const t = Number(io.in('at')) || 0, h = (ctx.opts && ctx.opts.hours) || ctx.STORE_HOURS;
+      return { nextOpen: ctx.openAfter(t, h), nextClose: ctx.closeAfter(t, h), lastClose: ctx.closeBefore(t, h), openDay: !(h.closedDays || []).includes(new Date(t).getDay()) };
+    },
+  },
+  formatTime: {
+    title: 'Format time', cat: 'time', desc: "A time in words: clock '7:00 PM', date '10/21', day '2026-10-21' (a steady key for signatures), or when 'today' / 'yesterday' / 'on 10/21'. No time (0): the blank setting.",
+    inputs: [p('at', 'num', true)], outputs: [p('out', 'text')],
+    settings: [opt('format', 'enum', { options: ['clock', 'date', 'day', 'when'], def: 'date' }), opt('blank', 'text', { desc: 'the text when there is no time' })],
+    eval(io, s, ctx) {
+      const t = Number(io.in('at')) || 0, f = s.format || 'date';
+      if (!t) return { out: str(s.blank) };
+      return { out: f === 'clock' ? ctx.clock(t) : f === 'day' ? ctx.dayKey(t) : f === 'when' ? ctx.whenWord(t, nowOf(ctx)) : ctx.md(t) };
+    },
+  },
+  dateInText: {
+    title: 'Date in text', cat: 'time', desc: "The last m/d (or m/d/yy) date written in a text, e.g. a nickname 'IPHONE 13 SCREEN 10/17', in the year nearest today: whether there is one, and the date (ms, local midnight; 0 when none).",
+    inputs: [p('text', 'text', true)], outputs: [p('found', 'bool'), p('at', 'num')], settings: [],
+    eval(io, s, ctx) { const d = ctx.nickDate(str(io.in('text')), nowOf(ctx)); return { found: d != null, at: d || 0 }; },
   },
   // ---------------------------------------------------------------- text
   notesMention: {
@@ -218,8 +316,38 @@ export const NODE_TYPES = {
     eval: (io, s) => ({ out: str(s.text).replace(/\{(\w+)\}/g, (m, k) => str(io.in(k))) }),
   },
   money: { title: 'Money', cat: 'text', desc: '15 → "$15", 15.5 → "$15.50".', inputs: [p('value', 'num', true)], outputs: [p('out', 'text')], settings: [], eval: (io, s, ctx) => ({ out: ctx.money(Number(io.in('value')) || 0) }) },
+  textIs: {
+    title: 'Text is', cat: 'text', desc: 'The text (trimmed, any case) is one of these, contains one, or starts with one (a whole word or phrase). None listed: no.',
+    inputs: [p('text', 'text', true)], outputs: [p('yes', 'bool')],
+    settings: [opt('values', 'list', { def: [] }), opt('match', 'enum', { options: ['exact', 'contains', 'starts'], def: 'exact' })],
+    eval(io, s) {
+      const x = str(io.in('text')).trim().toLowerCase(), m = s.match || 'exact';
+      const ys = (s.values || []).map((v) => str(v).trim().toLowerCase()).filter(Boolean);
+      return { yes: ys.some((y) => (m === 'contains' ? x.includes(y) : m === 'starts' ? x.startsWith(y) && !/\w/.test(x.charAt(y.length)) : x === y)) };
+    },
+  },
+  statusTag: {
+    title: 'Status tag', cat: 'text', desc: "A status as Portal's note tag: 'Ready for pickup' → 'ready_for_pickup' (lower case; anything else between words → _).",
+    inputs: [p('text', 'text', true)], outputs: [p('tag', 'text')], settings: [], eval: (io, s, ctx) => ({ tag: ctx.statusTag(str(io.in('text'))) }),
+  },
+  checklistField: {
+    title: 'Checklist field', cat: 'text', desc: "A check-in checklist line, **Label:** value, in the text: whether it is there, and its value (trimmed).",
+    inputs: [p('text', 'text', true)], outputs: [p('found', 'bool'), p('value', 'text')], settings: [opt('label', 'text', { req: true })],
+    eval(io, s, ctx, n) {
+      const re = n.cache.re || (n.cache.re = new RegExp('\\*\\*\\s*' + esc(str(s.label).trim()) + '\\s*:\\s*\\*\\*\\s*([^\\n]+)', 'i'));
+      const m = str(io.in('text')).match(re);
+      return { found: !!m, value: m ? m[1].trim() : '' };
+    },
+  },
+  plural: {
+    title: 'Count and word', cat: 'text', desc: 'A number and its word: 1 day, 3 days.', inputs: [p('count', 'num', true)], outputs: [p('out', 'text')], settings: [opt('word', 'text', { def: 'day' })],
+    eval: (io, s, ctx) => ({ out: ctx.plural(Number(io.in('count')) || 0, str(s.word) || 'day') }),
+  },
   lowercase: { title: 'Lowercase', cat: 'text', desc: 'The text in lower case.', inputs: [p('text', 'text', true)], outputs: [p('out', 'text')], settings: [], eval: (io) => ({ out: str(io.in('text')).toLowerCase() }) },
-  isBlank: { title: 'Is blank', cat: 'text', desc: 'The text is empty (spaces count as empty).', inputs: [p('text', 'text', true)], outputs: [p('yes', 'bool')], settings: [], eval: (io) => ({ yes: !str(io.in('text')).trim() }) },
+  isBlank: {
+    title: 'Is blank', cat: 'text', desc: 'The text is empty (spaces count as empty, unless trim is off).', inputs: [p('text', 'text', true)], outputs: [p('yes', 'bool')],
+    settings: [opt('trim', 'bool', { def: true, desc: 'spaces only count as blank' })], eval: (io, s) => ({ yes: s.trim === false ? !str(io.in('text')) : !str(io.in('text')).trim() }),
+  },
   // ---------------------------------------------------------------- people and notes (who did what, and when)
   lastNote: {
     title: 'Last note', cat: 'people', desc: 'The newest note of a kind (manual, system or any), optionally with one tag: whether there is one, who wrote it, its text, tag, when (ms) and how many hours ago. None: found is no, author Unassigned, at 0, hoursAgo 1000000.',
@@ -234,10 +362,38 @@ export const NODE_TYPES = {
     eval: (io, s, ctx) => noteOut(ctx, ctx.firstNote(ctx.f, s)),
   },
   filterNotes: {
-    title: 'Filter notes', cat: 'people', desc: 'Keep notes by kind, tag, author (name contains) and age (written within this many hours; 0: any). Notes not loaded: none.',
-    inputs: [p('notes', 'notes', true)], outputs: [p('out', 'notes')],
+    title: 'Filter notes', cat: 'people', desc: 'Keep notes by kind, tag, author (name contains) and age (written within this many hours; 0: any; or at or after the since time, when wired). Notes not loaded: none.',
+    inputs: [p('notes', 'notes', true), p('since', 'num')], outputs: [p('out', 'notes')],
     settings: [opt('kind', 'enum', { options: NOTE_KINDS, def: 'any' }), opt('tag', 'text'), opt('author', 'text', { desc: 'author name contains (any case)' }), opt('withinHours', 'num', { def: 0 })],
-    eval: (io, s, ctx) => ({ out: ctx.filterNotes(io.in('notes') || [], { kind: s.kind || 'any', tag: s.tag, author: s.author, since: Number(s.withinHours) > 0 ? nowOf(ctx) - Number(s.withinHours) * 3600000 : 0 }) }),
+    eval(io, s, ctx) {
+      const within = Number(s.withinHours) > 0 ? nowOf(ctx) - Number(s.withinHours) * 3600000 : 0, since = io.wired('since') ? Number(io.in('since')) || 0 : 0;
+      return { out: ctx.filterNotes(io.in('notes') || [], { kind: s.kind || 'any', tag: s.tag, author: s.author, since: Math.max(within, since) }) };
+    },
+  },
+  findNote: {
+    title: 'Find note', cat: 'people', desc: 'The first (oldest) or last (newest) of these notes that has this tag or whose text has the pattern or one of the words (nothing set: any note): whether there is one, who wrote it, its text, the words that matched, and when (ms, and as Portal wrote it).',
+    inputs: [p('notes', 'notes', true)], outputs: [p('found', 'bool'), p('author', 'person'), p('text', 'text'), p('match', 'text'), p('at', 'num'), p('stamp', 'text')],
+    settings: [opt('which', 'enum', { options: ['first', 'last'], def: 'first' }), opt('tag', 'text', { desc: 'a note with this noteTag counts' }), opt('pattern', 'pattern', { options: PATTERN_NAMES, desc: 'a note whose text has this pattern counts' }),
+      opt('words', 'list', { def: [], desc: 'or one of these words (when no pattern)' }), opt('skipNegated', 'bool', { def: false })],
+    eval(io, s, ctx, n) {
+      const tag = str(s.tag).trim();
+      let re = null;
+      if (s.pattern) { re = ctx[s.pattern]; if (!(re instanceof RegExp)) throw new Error('no pattern ' + s.pattern + ' here'); }
+      else re = n.cache.re === undefined ? (n.cache.re = wordsRe(s.words)) : n.cache.re;
+      const last = s.which === 'last';
+      let best = null, bestAt = 0, match = '';
+      for (const x of io.in('notes') || []) {
+        if (!x) continue;
+        let hit = !tag && !re, w = null;
+        if (tag && x.noteTag === tag) hit = true;
+        if (re) { w = find(str(x.noteText), re, !!s.skipNegated, ctx); if (w != null) hit = true; }
+        if (!hit) continue;
+        const at = Date.parse(x.createdAt) || 0;
+        // ties: the earlier in the list (notes come oldest first)
+        if (!best || (last ? at > bestAt : at < bestAt)) { best = x; bestAt = at; match = str(w); }
+      }
+      return Object.assign(noteOut(ctx, best), { match, stamp: best ? str(best.createdAt) : '' });
+    },
   },
   noteAuthors: {
     title: 'Note authors', cat: 'people', desc: 'Who wrote these notes: their names, each once (oldest first), and how many.',
@@ -258,9 +414,9 @@ export const NODE_TYPES = {
     eval(io, s, ctx) { const e = ctx.createdByEntry(ctx.f); return { who: e.who, at: e.at || 0, hoursAgo: hoursSince(ctx, e.at) }; },
   },
   statusSetBy: {
-    title: 'Status set by', cat: 'people', desc: 'Who moved the order into its current status, and since when (the status note or audit trail; Unassigned and 0 when neither says).',
-    inputs: [], outputs: [p('who', 'person'), p('since', 'num'), p('hoursAgo', 'num')], settings: [], notes: true,
-    eval(io, s, ctx) { const e = ctx.statusSetBy(ctx.f); return { who: e.who, since: e.since || 0, hoursAgo: hoursSince(ctx, e.since) }; },
+    title: 'Status set by', cat: 'people', desc: 'Who moved the order into its current status, and since when (the status note or audit trail; Unassigned and 0 when neither says). By user id off: only a person a note names (the contact, age and reminder rules\' "who"), never "User #id".',
+    inputs: [], outputs: [p('who', 'person'), p('since', 'num'), p('hoursAgo', 'num')], settings: [opt('byId', 'bool', { def: true, desc: 'no note names them: the audit trail\'s user id' })], notes: true,
+    eval(io, s, ctx) { const e = s.byId === false ? ctx.statusEntry(ctx.f) : ctx.statusSetBy(ctx.f); return { who: e.who, since: e.since || 0, hoursAgo: hoursSince(ctx, e.since) }; },
   },
   personIs: {
     title: 'Person is', cat: 'people', desc: "The person's name contains one of these (any case). None listed: no.",
@@ -272,6 +428,14 @@ export const NODE_TYPES = {
     inputs: [p('a', 'person', true), p('b', 'person', true)], outputs: [p('yes', 'bool')], settings: [],
     eval(io, s, ctx) { const a = io.in('a'), b = io.in('b'); return { yes: !!a && !!b && a.key === b.key && !unassigned(a, ctx) }; },
   },
+  orPerson: {
+    title: 'Person or else', cat: 'people', desc: 'a, unless a is Unassigned (or nobody): then b.', inputs: [p('a', 'person', true), p('b', 'person', true)], outputs: [p('who', 'person')], settings: [],
+    eval(io, s, ctx) { const a = io.in('a'); return { who: unassigned(a, ctx) ? io.in('b') : a }; },
+  },
+  namedPerson: {
+    title: 'Store or Unassigned', cat: 'people', desc: 'A fixed "who": Store (the whole store owns it) or Unassigned.', inputs: [], outputs: [p('who', 'person')],
+    settings: [opt('who', 'enum', { options: ['Store', 'Unassigned'], def: 'Store' })], eval: (io, s, ctx) => ({ who: s.who === 'Unassigned' ? ctx.UNASSIGNED : ctx.STORE }),
+  },
   personName: { title: 'Person name', cat: 'people', desc: "The person's full name (blank for nobody).", inputs: [p('person', 'person', true)], outputs: [p('name', 'text')], settings: [], eval: (io) => ({ name: personName(io.in('person')) }) },
   isUnassigned: {
     title: 'Is unassigned', cat: 'people', desc: 'The person is Unassigned (or nobody).', inputs: [p('person', 'person', true)], outputs: [p('yes', 'bool')], settings: [],
@@ -279,20 +443,26 @@ export const NODE_TYPES = {
   },
   // ---------------------------------------------------------------- cart lines and Assize's own
   filterLines: {
-    title: 'Filter lines', cat: 'assize', desc: 'Keep or drop cart lines: partner credits, never-flag lines (misc labor, buybacks), deposits, by price sign, by SKU or name words.',
+    title: 'Filter lines', cat: 'assize', desc: 'Keep or drop cart lines: partner credits, never-flag lines (misc labor, buybacks), deposits, by price (sign, or above an amount), by SKU, name (whole words, or any part) or line type (labor, item, trade_credit…).',
     inputs: [p('lines', 'lines', true)], outputs: [p('out', 'lines')],
     settings: [opt('credit', 'enum', { options: TRI, def: 'any' }), opt('neverFlag', 'enum', { options: TRI, def: 'any' }), opt('deposit', 'enum', { options: TRI, def: 'any' }),
-      opt('price', 'enum', { options: ['any', 'positive', 'negative', 'nonzero'], def: 'any' }), opt('skus', 'list', { def: [] }), opt('names', 'list', { def: [] }),
-      opt('match', 'enum', { options: ['keep', 'drop'], def: 'keep', desc: 'what happens to lines whose SKU or name matches' })],
+      opt('price', 'enum', { options: ['any', 'positive', 'negative', 'nonzero', 'above'], def: 'any' }), opt('above', 'num', { def: 0, desc: 'price: above this amount' }),
+      opt('skus', 'list', { def: [] }), opt('names', 'list', { def: [] }), opt('nameMatch', 'enum', { options: ['words', 'contains'], def: 'words', desc: 'names: whole words, or anywhere in the name' }),
+      opt('types', 'list', { def: [], desc: "line types (Portal's lineType)" }),
+      opt('match', 'enum', { options: ['keep', 'drop'], def: 'keep', desc: 'what happens to lines whose SKU, name or type matches' })],
     eval(io, s, ctx, n) {
-      const skus = (s.skus || []).map((x) => str(x).toLowerCase()), re = n.cache.re === undefined ? (n.cache.re = wordsRe(s.names)) : n.cache.re;
-      const byWhat = skus.length || re;
+      const skus = (s.skus || []).map((x) => str(x).toLowerCase()), types = (s.types || []).map((x) => str(x).trim()).filter(Boolean);
+      const contains = s.nameMatch === 'contains', parts = (s.names || []).map((x) => str(x).trim().toLowerCase()).filter(Boolean);
+      const re = contains ? null : n.cache.re === undefined ? (n.cache.re = wordsRe(s.names)) : n.cache.re;
+      const byWhat = skus.length || re || (contains && parts.length) || types.length;
       return { out: (io.in('lines') || []).filter((l) => {
+        if (!l) return false;
         const pr = ctx.price(l);
         if (!tri(s.credit, ctx.isCredit(l)) || !tri(s.neverFlag, ctx.neverFlag(l)) || !tri(s.deposit, ctx.isDeposit(l))) return false;
-        if (s.price === 'positive' ? !(pr > 0) : s.price === 'negative' ? !(pr < 0) : s.price === 'nonzero' ? !pr : false) return false;
+        if (s.price === 'positive' ? !(pr > 0) : s.price === 'negative' ? !(pr < 0) : s.price === 'nonzero' ? !pr : s.price === 'above' ? !(pr > (Number(s.above) || 0)) : false) return false;
         if (!byWhat) return true;
-        const hit = skus.includes(str(l.sku || l.itemNumber).toLowerCase()) || !!(re && re.test(str(l.name)));
+        const name = str(l.name);
+        const hit = skus.includes(str(l.sku || l.itemNumber).toLowerCase()) || !!(re && re.test(name)) || (contains && parts.some((x) => name.toLowerCase().includes(x))) || types.includes(str(l.lineType));
         return (s.match || 'keep') === 'keep' ? hit : !hit;
       }) };
     },
@@ -301,6 +471,28 @@ export const NODE_TYPES = {
   cartSum: {
     title: 'Cart sum', cat: 'assize', desc: "What the items are priced at: every line but misc labor, buybacks and deposit offsets (the rules' cartSum).",
     inputs: [p('lines', 'lines', true)], outputs: [p('sum', 'num')], settings: [], eval: (io, s, ctx) => ({ sum: ctx.cartSum({ cartItems: io.in('lines') || [] }) }),
+  },
+  cartTotal: {
+    title: 'Cart total', cat: 'assize', desc: "What Portal says the cart comes to (its payment subtotal, else total), else the cart sum.",
+    inputs: [], outputs: [p('total', 'num')], settings: [], eval: (io, s, ctx) => ({ total: ctx.cartTotal(ctx.f.cart) }),
+  },
+  repairKind: {
+    title: 'Repair kind', cat: 'assize', desc: "Screen or Battery when the order has exactly one issue and it is one of those (the price sheet's columns); else blank.",
+    inputs: [p('issues', 'textList', true)], outputs: [p('found', 'bool'), p('repair', 'text')], settings: [],
+    eval(io, s, ctx) { const r = ctx.repairFrom((io.in('issues') || []).map(str)); return { found: !!r, repair: str(r) }; },
+  },
+  priceSheet: {
+    title: 'Price sheet', cat: 'assize', desc: "The store's price sheet for a device and repair: whether it lists prices, whether one is within the tolerance of price, and the listed price nearest it. No sheet here (or no row): found is no.",
+    inputs: [p('device', 'text', true), p('repair', 'text', true), p('price', 'num')], outputs: [p('found', 'bool'), p('matches', 'bool'), p('nearest', 'num')],
+    settings: [opt('tolerance', 'num', { def: 1.01 })],
+    eval(io, s, ctx) {
+      const pf = ctx.opts && ctx.opts.priceFor, repair = str(io.in('repair'));
+      const sheet = typeof pf === 'function' && repair ? pf(str(io.in('device')), repair) : null;
+      if (!Array.isArray(sheet) || !sheet.length) return { found: false, matches: false, nearest: 0 };
+      const v = Number(io.in('price')) || 0, tol = s.tolerance == null ? 1.01 : Number(s.tolerance) || 0;
+      const near = sheet.slice().sort((a, b) => Math.abs(a - v) - Math.abs(b - v))[0];
+      return { found: true, matches: sheet.some((x) => Math.abs(x - v) <= tol), nearest: near };
+    },
   },
   cartSig: {
     title: 'Cart signature', cat: 'assize', desc: "A short hash of the cart's lines, so a changed cart is a new finding.",
@@ -372,7 +564,9 @@ function find(text, re, skipNegated, ctx) {
 }
 
 /*
-  Built-in macros: a native node rebuilt from primitives (cartSum), and the scope every field check shares.
+  Built-in macros: a native node rebuilt from primitives (cartSum), and the gates and time sums the built-in graphs
+  share (checked, audited, cartChecked, partnerChecked, contactStatus, nickDue, afterClose, lastBusinessNight), so
+  a rule reads as its own test, with the shared part collapsed.
 */
 export const MACROS = {
   cartSum: {
@@ -400,6 +594,104 @@ export const MACROS = {
     wires: [{ from: 'wo.id', to: 'blank.text' }, { from: 'wo.status', to: 'closed.status' }, { from: 'wo.status', to: 'item.status' }, { from: 'wo.programKey', to: 'clean.key' },
       { from: 'blank.yes', to: 'any.a' }, { from: 'closed.yes', to: 'any.b' }, { from: 'item.yes', to: 'any.c' }, { from: 'clean.yes', to: 'any.d' },
       { from: 'any.out', to: 'no.in' }, { from: 'no.out', to: 'out.yes' }],
+  },
+  // Every rule's scope: what audit() looks at at all (Awaiting item included: it gets its reminder).
+  audited: {
+    title: 'Audited order', desc: 'Assize looks at the order at all: open and not closing, not Awaiting diag / Partner approval, not a cleaning program. Awaiting item counts (its reminder).',
+    inputs: [], outputs: [{ name: 'yes', type: 'bool' }],
+    nodes: [
+      { id: 'wo', type: 'wo', x: 30, y: 40 },
+      { id: 'blank', type: 'isBlank', x: 310, y: 40 },
+      { id: 'closed', type: 'statusIs', x: 310, y: 170, settings: { statuses: ['sale complete', 'cancel', 'repair summary', 'awaiting diag', 'partner approval'], match: 'contains' } },
+      { id: 'clean', type: 'programIs', x: 310, y: 400, settings: { programs: ['cleaning'] } },
+      { id: 'any', type: 'or', x: 590, y: 200 },
+      { id: 'no', type: 'not', x: 870, y: 200 },
+      { id: 'out', type: 'macroOut', x: 1150, y: 200 },
+    ],
+    wires: [{ from: 'wo.id', to: 'blank.text' }, { from: 'wo.status', to: 'closed.status' }, { from: 'wo.programKey', to: 'clean.key' },
+      { from: 'blank.yes', to: 'any.a' }, { from: 'closed.yes', to: 'any.b' }, { from: 'clean.yes', to: 'any.c' }, { from: 'any.out', to: 'no.in' }, { from: 'no.out', to: 'out.yes' }],
+  },
+  // The cart rules' gate: there is a cart (the detail is in), and it isn't Ready for pickup with an Incomplete outcome.
+  cartChecked: {
+    title: 'Cart checked', desc: 'The cart rules look at the cart: the detail (with its cart) is in, and the order is not Ready for pickup with the outcome Incomplete.',
+    inputs: [], outputs: [{ name: 'yes', type: 'bool' }],
+    nodes: [
+      { id: 'wo', type: 'wo', x: 30, y: 40 },
+      { id: 'incomplete', type: 'statusIs', x: 310, y: 300, settings: { outcomes: ['Incomplete'] } },
+      { id: 'rfpIncomplete', type: 'and', x: 590, y: 200 },
+      { id: 'no', type: 'not', x: 870, y: 200 },
+      { id: 'ok', type: 'and', x: 1150, y: 40 },
+      { id: 'out', type: 'macroOut', x: 1430, y: 40 },
+    ],
+    wires: [{ from: 'wo.outcome', to: 'incomplete.outcome' }, { from: 'wo.isRfp', to: 'rfpIncomplete.a' }, { from: 'incomplete.yes', to: 'rfpIncomplete.b' }, { from: 'rfpIncomplete.out', to: 'no.in' },
+      { from: 'wo.hasCart', to: 'ok.a' }, { from: 'no.out', to: 'ok.b' }, { from: 'ok.out', to: 'out.yes' }],
+  },
+  // The partner rules' gate.
+  partnerChecked: {
+    title: 'Partner checked', desc: 'The partner rules look at the order: a checked order, Active (not Ready for pickup), and not out of pocket.',
+    inputs: [], outputs: [{ name: 'yes', type: 'bool' }],
+    nodes: [
+      { id: 'scope', type: 'macro', x: 30, y: 40, settings: { macro: 'checked' } },
+      { id: 'wo', type: 'wo', x: 30, y: 180 },
+      { id: 'oop', type: 'programIs', x: 310, y: 300, settings: { programs: ['oop'] } },
+      { id: 'notOop', type: 'not', x: 590, y: 300 },
+      { id: 'all', type: 'and', x: 870, y: 40 },
+      { id: 'out', type: 'macroOut', x: 1150, y: 40 },
+    ],
+    wires: [{ from: 'wo.programKey', to: 'oop.key' }, { from: 'oop.yes', to: 'notOop.in' }, { from: 'scope.yes', to: 'all.a' }, { from: 'wo.isActive', to: 'all.b' }, { from: 'notOop.out', to: 'all.c' }, { from: 'all.out', to: 'out.yes' }],
+  },
+  // The contact rules' statuses.
+  contactStatus: {
+    title: 'Contact status', desc: 'The status has a contact date in the nickname: Ready for pickup, Awaiting callback or Awaiting device.',
+    inputs: [], outputs: [{ name: 'yes', type: 'bool' }],
+    nodes: [
+      { id: 'wo', type: 'wo', x: 30, y: 40 },
+      { id: 'waiting', type: 'statusIs', x: 310, y: 180, settings: { statuses: ['awaiting callback', 'awaiting device'], match: 'contains' } },
+      { id: 'any', type: 'or', x: 590, y: 40 },
+      { id: 'out', type: 'macroOut', x: 870, y: 40 },
+    ],
+    wires: [{ from: 'wo.status', to: 'waiting.status' }, { from: 'wo.isRfp', to: 'any.a' }, { from: 'waiting.yes', to: 'any.b' }, { from: 'any.out', to: 'out.yes' }],
+  },
+  // The date in the nickname, and how far past it today is.
+  nickDue: {
+    title: 'Nickname date', desc: "The contact date in the nickname ('IPHONE 13 10/17'): whether there is one, the date, and the days since it (0 today, 1 yesterday, negative ahead).",
+    inputs: [], outputs: [{ name: 'found', type: 'bool' }, { name: 'due', type: 'num' }, { name: 'daysPast', type: 'num' }],
+    nodes: [
+      { id: 'dates', type: 'orderDates', x: 30, y: 40 },
+      { id: 'date', type: 'dateInText', x: 310, y: 40 },
+      { id: 'past', type: 'daysBetween', x: 590, y: 160 },
+      { id: 'out', type: 'macroOut', x: 870, y: 40 },
+    ],
+    wires: [{ from: 'dates.nickname', to: 'date.text' }, { from: 'date.at', to: 'past.a' }, { from: 'date.found', to: 'out.found' }, { from: 'date.at', to: 'out.due' }, { from: 'past.days', to: 'out.daysPast' }],
+  },
+  // A time, then the store's next close after it: has it come? (TVs.)
+  afterClose: {
+    title: 'After close', desc: "The store's first close after a time (closed days skipped), and whether it has come.",
+    inputs: [{ name: 'at', type: 'num' }], outputs: [{ name: 'closed', type: 'bool' }, { name: 'close', type: 'num' }],
+    nodes: [
+      { id: 'in', type: 'macroIn', x: 30, y: 40 },
+      { id: 'hours', type: 'storeHours', x: 310, y: 40 },
+      { id: 'now', type: 'now', x: 310, y: 240 },
+      { id: 'past', type: 'atLeast', x: 590, y: 160 },
+      { id: 'out', type: 'macroOut', x: 870, y: 40 },
+    ],
+    wires: [{ from: 'in.at', to: 'hours.at' }, { from: 'now.at', to: 'past.value' }, { from: 'hours.nextClose', to: 'past.limit' }, { from: 'past.yes', to: 'out.closed' }, { from: 'hours.nextClose', to: 'out.close' }],
+  },
+  // The morning audit's view of "last night": the store's last close before now (or before noon today, whichever is earlier).
+  lastBusinessNight: {
+    title: 'Last business night', desc: "The last store close the morning audit counts: the close before now, or before noon today when it is later than that; and whether that was last night (yesterday's close).",
+    inputs: [], outputs: [{ name: 'close', type: 'num' }, { name: 'lastNight', type: 'bool' }],
+    nodes: [
+      { id: 'now', type: 'now', x: 30, y: 40 },
+      { id: 'noon', type: 'dayTime', x: 310, y: 160, settings: { hour: 12 } },
+      { id: 'ref', type: 'min', x: 590, y: 40 },
+      { id: 'hours', type: 'storeHours', x: 870, y: 40 },
+      { id: 'ago', type: 'daysBetween', x: 1150, y: 200 },
+      { id: 'yesterday', type: 'equals', x: 1430, y: 200, settings: { b: 1 } },
+      { id: 'out', type: 'macroOut', x: 1710, y: 40 },
+    ],
+    wires: [{ from: 'now.at', to: 'noon.at' }, { from: 'now.at', to: 'ref.a' }, { from: 'noon.out', to: 'ref.b' }, { from: 'ref.out', to: 'hours.at' }, { from: 'hours.lastClose', to: 'ago.a' },
+      { from: 'ago.days', to: 'yesterday.a' }, { from: 'hours.lastClose', to: 'out.close' }, { from: 'yesterday.yes', to: 'out.lastNight' }],
   },
 };
 

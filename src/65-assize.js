@@ -294,7 +294,8 @@ AE.crystal({
       let list = [];
       // rowFresher: this tab's list row was read after the detail was fetched, so the row's status / nickname / bin win (see facts()).
       const dOf = (x) => (x ? Object.assign({}, x.d, { rowFresher: (x.at || 0) <= rows.at }) : null);
-      const opts = { now, hours: R.hoursFor(storeId), priceFor }, sh = { orders: 0, compared: 0, mismatches: [], errors: [] };
+      // closed + belongs: parent-closed-cleaning-open, checked per open cleaning row against the store's closed rows.
+      const opts = { now, hours: R.hoursFor(storeId), priceFor, closed: rows.closed || [], belongs: AE.data.belongs }, sh = { orders: 0, compared: 0, mismatches: [], errors: [] };
       // Published rules: a graph (or "off") stands in for its code rule; shadow mode skips those.
       const set = pubSet(), except = set ? new Set([...set.rules.values()].filter((x) => !x.enabled || x.c).map((x) => x.rule)) : null;
       const woOf = (r, d) => String((r && r.workorderId) || (d && d.wo && d.wo.workorderId) || '');
@@ -315,7 +316,6 @@ AE.crystal({
       // An order fetched on its own page that wasn't open at the last pass (new since)
       for (const [id, x] of Object.entries(details)) if (!seen.has(String(id))) one(null, x.d);
       try { recordShadow(sh); } catch (e) { AE.noteError('Assize graphs', e); } // shadow mode never stops Assize
-      list.push(...R.orphanCleanings(rows.rows, rows.closed || [], AE.data.belongs).filter((x) => !R.isOff(set, x.rule)));
       list = R.sort(list);
       // Dismissed for the store (the rules stay pure; this is where a dismissal applies): out of every count, chip, pill and marker.
       const dm = new Map(dismissed.map((d) => [R.dismissKey(String(d.wo), d.rule, d.sig), d]));

@@ -1,0 +1,28 @@
+{
+ "v": 1,
+ "rule": "no-quote",
+ "check": "quote",
+ "title": "No quote",
+ "nodes": [
+  {"id": "scope", "type": "macro", "x": 630, "y": 256, "settings": {"macro": "checked"}},
+  {"id": "wo", "type": "wo", "x": 30, "y": 293},
+  {"id": "oop", "type": "programIs", "x": 330, "y": 258, "settings": {"programs": ["oop"]}},
+  {"id": "price", "type": "matchesPattern", "label": "A price in the notes", "x": 330, "y": 424, "settings": {"pattern": "DOLLAR_RE"}},
+  {"id": "noPrice", "type": "not", "x": 630, "y": 426},
+  {"id": "author", "type": "intakeAuthor", "x": 930, "y": 131},
+  {"id": "when", "type": "and", "x": 930, "y": 227},
+  {"id": "find", "type": "finding", "x": 1230, "y": 30, "settings": {"kind": "note", "evidence": "OOP; no price in any note"}}
+ ],
+ "wires": [
+  {"from": "wo.programKey", "to": "oop.key"},
+  {"from": "wo.noteText", "to": "price.text"},
+  {"from": "price.found", "to": "noPrice.in"},
+  {"from": "scope.yes", "to": "when.a"},
+  {"from": "wo.isActive", "to": "when.b"},
+  {"from": "oop.yes", "to": "when.c"},
+  {"from": "wo.hasNotes", "to": "when.d"},
+  {"from": "noPrice.out", "to": "when.e"},
+  {"from": "when.out", "to": "find.when"},
+  {"from": "author.who", "to": "find.who"}
+ ]
+}

@@ -1,0 +1,45 @@
+{
+ "v": 1,
+ "rule": "vzew-damage",
+ "check": "partner",
+ "title": "Damage on VZ EW",
+ "nodes": [
+  {"id": "start", "type": "start", "x": 30, "y": 158},
+  {"id": "scope", "type": "macro", "x": 30, "y": 254, "settings": {"macro": "partnerChecked"}},
+  {"id": "wo", "type": "wo", "x": 30, "y": 564},
+  {"id": "author", "type": "intakeAuthor", "x": 1530, "y": 167},
+  {"id": "inScope", "type": "branch", "label": "Partner rules apply?", "x": 330, "y": 136},
+  {"id": "skip", "type": "stop", "label": "Skip this order", "x": 630, "y": 30},
+  {"id": "vzew", "type": "programIs", "x": 330, "y": 464, "settings": {"programs": ["vzew"]}},
+  {"id": "intake", "type": "intakeNote", "x": 30, "y": 424},
+  {"id": "damage", "type": "checklistField", "x": 330, "y": 276, "settings": {"label": "Physical damage"}},
+  {"id": "none", "type": "textIs", "label": "Says no issues", "x": 630, "y": 314, "settings": {"values": ["no issues"], "match": "starts"}},
+  {"id": "damaged", "type": "not", "x": 930, "y": 274},
+  {"id": "when", "type": "and", "x": 1230, "y": 219},
+  {"id": "text", "type": "template", "x": 630, "y": 126, "settings": {"text": "Intake checklist: Physical damage: {damage}. Close it as unrepairable"}},
+  {"id": "test", "type": "branch", "label": "Damage on VZ EW?", "x": 1530, "y": 263},
+  {"id": "find", "type": "finding", "x": 1830, "y": 66, "settings": {"kind": "fail"}}
+ ],
+ "wires": [
+  {"from": "scope.yes", "to": "inScope.cond"},
+  {"from": "wo.programKey", "to": "vzew.key"},
+  {"from": "intake.text", "to": "damage.text"},
+  {"from": "damage.value", "to": "none.text"},
+  {"from": "none.yes", "to": "damaged.in"},
+  {"from": "vzew.yes", "to": "when.a"},
+  {"from": "intake.exists", "to": "when.b"},
+  {"from": "damage.found", "to": "when.c"},
+  {"from": "damaged.out", "to": "when.d"},
+  {"from": "damage.value", "to": "text.damage"},
+  {"from": "when.out", "to": "test.cond"},
+  {"from": "text.out", "to": "find.evidence"},
+  {"from": "author.who", "to": "find.who"},
+  {"from": "damage.value", "to": "find.sig1"}
+ ],
+ "flow": [
+  {"from": "start.then", "to": "inScope.in"},
+  {"from": "inScope.no", "to": "skip.in"},
+  {"from": "inScope.yes", "to": "test.in"},
+  {"from": "test.yes", "to": "find.in"}
+ ]
+}

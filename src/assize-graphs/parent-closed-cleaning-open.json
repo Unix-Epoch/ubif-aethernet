@@ -1,0 +1,29 @@
+{
+ "v": 1,
+ "rule": "parent-closed-cleaning-open",
+ "check": "cleaning",
+ "title": "Parent closed, cleaning open",
+ "nodes": [
+  {"id": "wo", "type": "wo", "x": 30, "y": 260},
+  {"id": "cleaning", "type": "programIs", "label": "A cleaning?", "x": 330, "y": 527, "settings": {"programs": ["cleaning"]}},
+  {"id": "parent", "type": "relatedOrder", "label": "Closed Asurion parent", "x": 330, "y": 273, "settings": {"programIds": [5062], "statuses": ["sale complete"], "withinHours": 48, "sameDevice": true}},
+  {"id": "when", "type": "and", "x": 630, "y": 350},
+  {"id": "noStatus", "type": "isBlank", "x": 330, "y": 107, "settings": {"trim": false}},
+  {"id": "status", "type": "chooseText", "x": 630, "y": 30, "settings": {"then1": "open"}},
+  {"id": "text", "type": "template", "x": 930, "y": 85, "settings": {"text": "Parent {parent} is closed; this cleaning is still {status}"}},
+  {"id": "find", "type": "finding", "x": 1230, "y": 41, "settings": {"kind": "fail"}}
+ ],
+ "wires": [
+  {"from": "wo.programKey", "to": "cleaning.key"},
+  {"from": "cleaning.yes", "to": "when.a"},
+  {"from": "parent.found", "to": "when.b"},
+  {"from": "wo.status", "to": "noStatus.text"},
+  {"from": "noStatus.yes", "to": "status.if1"},
+  {"from": "wo.status", "to": "status.else"},
+  {"from": "parent.id", "to": "text.parent"},
+  {"from": "status.out", "to": "text.status"},
+  {"from": "when.out", "to": "find.when"},
+  {"from": "text.out", "to": "find.evidence"},
+  {"from": "parent.id", "to": "find.sig1"}
+ ]
+}

@@ -1,0 +1,40 @@
+{
+ "v": 1,
+ "rule": "data-risk-no-agreement",
+ "check": "intake",
+ "title": "Data risk, no agreement",
+ "nodes": [
+  {"id": "scope", "type": "macro", "x": 30, "y": 94, "settings": {"macro": "checked"}},
+  {"id": "wo", "type": "wo", "x": 30, "y": 304},
+  {"id": "active", "type": "and", "label": "Active, notes loaded", "x": 330, "y": 65},
+  {"id": "agree", "type": "findNote", "label": "A note says they agreed", "x": 330, "y": 293, "settings": {"pattern": "AGREE_RE"}},
+  {"id": "noAgree", "type": "not", "x": 630, "y": 120},
+  {"id": "hit", "type": "findNote", "label": "First note about data risk", "x": 330, "y": 591, "settings": {"pattern": "DATA_RE", "skipNegated": true}},
+  {"id": "word", "type": "lowercase", "x": 630, "y": 378},
+  {"id": "author", "type": "intakeAuthor", "x": 330, "y": 889},
+  {"id": "who", "type": "orPerson", "x": 630, "y": 238, "settings": "Its author, else intake"},
+  {"id": "when", "type": "and", "x": 930, "y": 65},
+  {"id": "find", "type": "finding", "x": 1230, "y": 30, "settings": {"kind": "note"}},
+  {"id": "text", "type": "template", "x": 930, "y": 293, "settings": {"text": "Note says {what}; no note says the customer agreed"}}
+ ],
+ "wires": [
+  {"from": "scope.yes", "to": "active.a"},
+  {"from": "wo.isActive", "to": "active.b"},
+  {"from": "wo.hasNotes", "to": "active.c"},
+  {"from": "wo.manualNotes", "to": "agree.notes"},
+  {"from": "agree.found", "to": "noAgree.in"},
+  {"from": "wo.manualNotes", "to": "hit.notes"},
+  {"from": "hit.match", "to": "word.text"},
+  {"from": "hit.author", "to": "who.a"},
+  {"from": "author.who", "to": "who.b"},
+  {"from": "active.out", "to": "when.a"},
+  {"from": "noAgree.out", "to": "when.b"},
+  {"from": "hit.found", "to": "when.c"},
+  {"from": "word.out", "to": "text.what"},
+  {"from": "text.out", "to": "find.evidence"},
+  {"from": "when.out", "to": "find.when"},
+  {"from": "who.who", "to": "find.who"},
+  {"from": "hit.stamp", "to": "find.sig1"},
+  {"from": "word.out", "to": "find.sig2"}
+ ]
+}

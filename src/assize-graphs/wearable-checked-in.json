@@ -1,0 +1,32 @@
+{
+ "v": 1,
+ "rule": "wearable-checked-in",
+ "check": "partner",
+ "title": "Wearable checked in",
+ "nodes": [
+  {"id": "start", "type": "start", "x": 30, "y": 439},
+  {"id": "scope", "type": "macro", "x": 30, "y": 535, "settings": {"macro": "partnerChecked"}},
+  {"id": "wo", "type": "wo", "x": 30, "y": 120},
+  {"id": "author", "type": "intakeAuthor", "x": 630, "y": 131},
+  {"id": "inScope", "type": "branch", "label": "Partner rules apply?", "x": 330, "y": 417},
+  {"id": "skip", "type": "stop", "label": "Skip this order", "x": 630, "y": 367},
+  {"id": "wearable", "type": "deviceIs", "x": 330, "y": 273, "settings": {"kind": "wearable"}},
+  {"id": "text", "type": "template", "x": 330, "y": 85, "settings": {"text": "{device}: partners don't take wearables or hearables"}},
+  {"id": "test", "type": "branch", "label": "A wearable?", "x": 630, "y": 227},
+  {"id": "find", "type": "finding", "x": 930, "y": 30, "settings": {"kind": "fail"}}
+ ],
+ "wires": [
+  {"from": "scope.yes", "to": "inScope.cond"},
+  {"from": "wo.device", "to": "text.device"},
+  {"from": "wearable.yes", "to": "test.cond"},
+  {"from": "text.out", "to": "find.evidence"},
+  {"from": "author.who", "to": "find.who"},
+  {"from": "wo.device", "to": "find.sig1"}
+ ],
+ "flow": [
+  {"from": "start.then", "to": "inScope.in"},
+  {"from": "inScope.no", "to": "skip.in"},
+  {"from": "inScope.yes", "to": "test.in"},
+  {"from": "test.yes", "to": "find.in"}
+ ]
+}

@@ -13,11 +13,11 @@ const CHECK_NAME = Object.fromEntries(R.CHECKS);
 
 const STYLE = `
 .rx{--muted:#7c7b80;--grid:#dedce4;--canvas:#f1f0f4;--exec:#3a3940;--run:#8223d2;--errs:#fde8eb;--yes:#0b7f2a;--yess:#dff7e3;--no:#6c6b71;--nos:#efeef2;
-  --c-fact:#2a78d6;--c-check:#6250d6;--c-logic:#6c6b71;--c-assize:#8223d2;--c-text:#b8336f;--c-num:#0b7f57;--c-people:#0a7d8c;--c-out:#b97700;
+  --c-fact:#2a78d6;--c-check:#6250d6;--c-logic:#6c6b71;--c-assize:#8223d2;--c-text:#b8336f;--c-num:#0b7f57;--c-people:#0a7d8c;--c-time:#b5531c;--c-out:#b97700;
   --t-bool:#d03b3b;--t-num:#14a06d;--t-text:#d9549a;--t-lines:#2a78d6;--t-notes:#0f8fa3;--t-textList:#6a5bd6;--t-person:#c77700;--t-any:#8b8a90;
   --shadow:0 1px 2px rgba(20,10,40,.06),0 4px 14px rgba(20,10,40,.07)}
 @media (prefers-color-scheme:dark){.rx{--muted:#8b8a90;--grid:#2a292f;--canvas:#17161a;--exec:#e6e6ea;--run:#b88af2;--errs:#3a1a20;--yes:#5fd27a;--yess:#16361d;--no:#9a99a0;--nos:#26252a;--err:#ef6b7e;
-  --c-fact:#4b93ea;--c-check:#8d80ee;--c-logic:#8b8a90;--c-assize:#a66cf0;--c-text:#e0679e;--c-num:#2fbf88;--c-people:#3cc4d6;--c-out:#e0a020;
+  --c-fact:#4b93ea;--c-check:#8d80ee;--c-logic:#8b8a90;--c-assize:#a66cf0;--c-text:#e0679e;--c-num:#2fbf88;--c-people:#3cc4d6;--c-time:#ef8a52;--c-out:#e0a020;
   --t-bool:#ef6b6b;--t-num:#2fbf88;--t-text:#ec7ab5;--t-lines:#4b93ea;--t-notes:#34b7c9;--t-textList:#9a8ff0;--t-person:#e8a33a;--t-any:#8b8a90;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.35)}}
 .rx [hidden]{display:none!important}
@@ -147,8 +147,8 @@ const STYLE = `
 `;
 
 // ------------------------------------------------------------------ words
-const CAT = { fact: ['Facts', 'Fact'], check: ['Checks', 'Check'], logic: ['Logic', 'Logic'], num: ['Numbers', 'Number'], people: ['People and notes', 'People'], text: ['Text', 'Text'], assize: ['Assize', 'Assize'], out: ['Flow and output', 'Flow'] };
-const CAT_ORDER = ['fact', 'check', 'text', 'num', 'people', 'logic', 'assize', 'out'];
+const CAT = { fact: ['Facts', 'Fact'], check: ['Checks', 'Check'], logic: ['Logic', 'Logic'], num: ['Numbers', 'Number'], people: ['People and notes', 'People'], time: ['Time and store hours', 'Time'], text: ['Text', 'Text'], assize: ['Assize', 'Assize'], out: ['Flow and output', 'Flow'] };
+const CAT_ORDER = ['fact', 'check', 'text', 'time', 'num', 'people', 'logic', 'assize', 'out'];
 const TYPE_NAME = { bool: 'Yes / no', num: 'Number', text: 'Text', lines: 'Cart lines', notes: 'Notes', textList: 'Text list', person: 'Person', any: 'Anything' };
 const PIN_LABEL = { id: 'WO number', programKey: 'Program key', statusId: 'Status id', isRfp: 'Ready for pickup', isActive: 'Active', hasCart: 'Has a cart', manualNotes: 'Manual notes', noteText: 'Note text',
   hasNotes: 'Notes loaded', cond: 'Condition', who: 'Blame', sig1: 'Signature 1', sig2: 'Signature 2', sig3: 'Signature 3', if1: 'If 1', if2: 'If 2', if3: 'If 3', then1: 'Then 1', then2: 'Then 2', then3: 'Then 3',
@@ -936,14 +936,33 @@ function summary(n, def, lv) {
     case 'chooseText': return box(['then1', 'then2', 'then3', 'else'].filter((k) => unwired(k) && s[k] != null && s[k] !== '').map((k) => esc(pinLabel(k)) + ' → “' + esc(s[k]) + '”').join('<br>') || '<span class="mut">Texts come from the wires</span>');
     case 'filterLines': {
       const bits = ['credit', 'neverFlag', 'deposit'].filter((k) => s[k] && s[k] !== 'any').map((k) => (s[k] === 'drop' ? 'drop ' : 'keep only ') + { credit: 'partner credits', neverFlag: 'misc labor / buybacks', deposit: 'deposits' }[k]);
-      if (s.price && s.price !== 'any') bits.push(s.price + ' prices');
-      if ((s.skus || []).length || (s.names || []).length) bits.push((s.match === 'drop' ? 'drop ' : 'keep ') + [...(s.skus || []), ...(s.names || [])].join(', '));
+      if (s.price && s.price !== 'any') bits.push(s.price === 'above' ? 'prices above ' + (s.above ?? 0) : s.price + ' prices');
+      const what = [...(s.skus || []), ...(s.names || []).map((x) => (s.nameMatch === 'contains' ? '…' + x + '…' : x)), ...(s.types || []).map((x) => 'type ' + x)];
+      if (what.length) bits.push((s.match === 'drop' ? 'drop ' : 'keep ') + what.join(', '));
       return box(esc(bits.join(' · ') || 'Every line'));
     }
     case 'finding': case 'reminder': {
       const kind = n.type === 'reminder' ? 'remind' : s.kind || 'note';
       return box('<span class="pill ' + kind + '">' + KIND_NAME[kind] + '</span> <b>' + esc(s.title || g.title || '') + '</b><br><span class="mut">' + esc(CHECK_NAME[s.check || (n.type === 'reminder' ? 'remind' : g.check)] || s.check || g.check || 'No section') + (unwired('evidence') && s.evidence ? ' · “' + esc(s.evidence) + '”' : '') + '</span>');
     }
+    case 'above': case 'below': return unwired('limit') ? box((n.type === 'above' ? '> ' : '< ') + esc(s.limit ?? 0)) : '';
+    case 'add': case 'max': case 'min': return unwired('b') ? box({ add: '+ ', max: 'At least ', min: 'At most ' }[n.type] + esc(s.b ?? 0)) : '';
+    case 'chooseNum': return box(['then', 'else'].filter(unwired).map((k) => esc(pinLabel(k)) + ' → ' + esc(s[k] ?? 0)).join('<br>') || '<span class="mut">Numbers come from the wires</span>');
+    case 'isBlank': return s.trim === false ? box('Spaces are not blank') : '';
+    case 'textIs': return box('Text ' + ({ contains: 'contains', starts: 'starts with' }[s.match] || 'is') + ' ' + chips(s.values));
+    case 'checklistField': return box('**' + esc(s.label || '?') + ':** …');
+    case 'plural': return box('1 ' + esc(s.word || 'day') + ', 2 ' + esc(s.word || 'day') + 's');
+    case 'formatTime': return box(esc({ clock: 'Clock: 7:00 PM', day: 'Day key: 2026-10-21', when: 'today / yesterday / on 10/21' }[s.format] || 'Date: 10/21') + (s.blank ? '<br><span class="mut">No time: “' + esc(s.blank) + '”</span>' : ''));
+    case 'dayTime': return box((Number(s.days) ? (s.days > 0 ? '+' : '') + esc(s.days) + ' day' + (Math.abs(s.days) === 1 ? '' : 's') : 'Same day') + (s.hour != null && s.hour !== '' ? ', at ' + esc(s.hour) + ':' + String(s.minute || 0).padStart(2, '0') : ''));
+    case 'priceSheet': return box('Matches within ± ' + esc(s.tolerance ?? 1.01));
+    case 'namedPerson': return box(esc(s.who || 'Store'));
+    case 'statusSetBy': return s.byId === false ? box('Named in a note only') : '';
+    case 'filterNotes': { const b = [s.kind && s.kind !== 'any' ? s.kind + ' notes' : 'Any notes', s.tag ? 'tag ' + s.tag : '', s.author ? 'by ' + s.author : '', Number(s.withinHours) ? 'last ' + s.withinHours + ' h' : ''].filter(Boolean); return box(esc(b.join(' · '))); }
+    case 'findNote': {
+      const by = [s.tag ? 'tagged ' + esc(s.tag) : '', s.pattern ? esc(PATTERNS[s.pattern] || s.pattern) : (s.words || []).length ? 'any of ' + chips(s.words) : ''].filter(Boolean);
+      return box((s.which === 'last' ? 'Newest' : 'Oldest') + ' note' + (by.length ? ' ' + by.join(' or ') : '') + (s.skipNegated ? '<br><span class="mut">Skips negated</span>' : ''));
+    }
+    case 'relatedOrder': return box('Closed order' + ((s.programIds || []).length ? ', program ' + chips(s.programIds) : '') + ((s.statuses || []).length ? 'Status contains ' + chips(s.statuses) : '') + '<span class="mut">' + (Number(s.withinHours) ? 'Within ' + esc(s.withinHours) + ' h · ' : '') + (s.sameDevice === false ? 'any device' : 'same device or customer') + '</span>');
     case 'macro': { const m = lib().macros[s.macro]; return box(m ? (RG.MACROS[s.macro] && !(shown().macros || {})[s.macro] ? 'Built-in macro' : 'This graph’s macro') + ' · ' + plural((m.nodes || []).length, 'node') : 'Unknown macro ' + esc(s.macro || '')); }
     default: return '';
   }

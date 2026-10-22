@@ -1,0 +1,48 @@
+{
+ "v": 1,
+ "rule": "buyout-still-open",
+ "check": "partner",
+ "title": "Buyout still open",
+ "nodes": [
+  {"id": "start", "type": "start", "x": 30, "y": 333},
+  {"id": "scope", "type": "macro", "x": 30, "y": 429, "settings": {"macro": "partnerChecked"}},
+  {"id": "wo", "type": "wo", "x": 30, "y": 839},
+  {"id": "author", "type": "intakeAuthor", "x": 1230, "y": 518},
+  {"id": "inScope", "type": "branch", "label": "Partner rules apply?", "x": 330, "y": 311},
+  {"id": "skip", "type": "stop", "label": "Skip this order", "x": 630, "y": 30},
+  {"id": "amazon", "type": "programIs", "x": 330, "y": 815, "settings": {"programs": ["amazon"]}},
+  {"id": "dates", "type": "orderDates", "x": 30, "y": 957},
+  {"id": "known", "type": "above", "label": "Created time known", "x": 330, "y": 981},
+  {"id": "days", "type": "daysBetween", "label": "Days since created", "x": 330, "y": 1169},
+  {"id": "older", "type": "above", "label": "Before today", "x": 630, "y": 660},
+  {"id": "when", "type": "and", "x": 930, "y": 570},
+  {"id": "ago", "type": "formatTime", "x": 330, "y": 483, "settings": {"format": "when"}},
+  {"id": "key", "type": "formatTime", "x": 330, "y": 649, "settings": {"format": "day"}},
+  {"id": "text", "type": "template", "x": 630, "y": 472, "settings": {"text": "Created {when}; buyouts finish the same day"}},
+  {"id": "test", "type": "branch", "label": "Buyout from an earlier day?", "x": 1230, "y": 614},
+  {"id": "find", "type": "finding", "x": 1530, "y": 417, "settings": {"kind": "fail"}}
+ ],
+ "wires": [
+  {"from": "scope.yes", "to": "inScope.cond"},
+  {"from": "wo.programKey", "to": "amazon.key"},
+  {"from": "dates.createdAt", "to": "known.value"},
+  {"from": "dates.createdAt", "to": "days.a"},
+  {"from": "days.days", "to": "older.value"},
+  {"from": "amazon.yes", "to": "when.a"},
+  {"from": "known.yes", "to": "when.b"},
+  {"from": "older.yes", "to": "when.c"},
+  {"from": "dates.createdAt", "to": "ago.at"},
+  {"from": "dates.createdAt", "to": "key.at"},
+  {"from": "ago.out", "to": "text.when"},
+  {"from": "when.out", "to": "test.cond"},
+  {"from": "text.out", "to": "find.evidence"},
+  {"from": "author.who", "to": "find.who"},
+  {"from": "key.out", "to": "find.sig1"}
+ ],
+ "flow": [
+  {"from": "start.then", "to": "inScope.in"},
+  {"from": "inScope.no", "to": "skip.in"},
+  {"from": "inScope.yes", "to": "test.in"},
+  {"from": "test.yes", "to": "find.in"}
+ ]
+}

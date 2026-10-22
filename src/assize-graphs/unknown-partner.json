@@ -1,0 +1,33 @@
+{
+ "v": 1,
+ "rule": "unknown-partner",
+ "check": "partner",
+ "title": "Unknown partner",
+ "nodes": [
+  {"id": "start", "type": "start", "x": 30, "y": 369},
+  {"id": "scope", "type": "macro", "x": 30, "y": 465, "settings": {"macro": "partnerChecked"}},
+  {"id": "wo", "type": "wo", "x": 30, "y": 635},
+  {"id": "author", "type": "intakeAuthor", "x": 30, "y": 1039},
+  {"id": "inScope", "type": "branch", "label": "Partner rules apply?", "x": 330, "y": 347},
+  {"id": "skip", "type": "stop", "label": "Skip this order", "x": 630, "y": 30},
+  {"id": "program", "type": "program", "x": 30, "y": 1135},
+  {"id": "unknown", "type": "programIs", "x": 330, "y": 673, "settings": {"programs": ["unknown"]}},
+  {"id": "text", "type": "template", "x": 330, "y": 839, "settings": {"text": "{program}: Assize doesn't know this partner, so only the general rules were checked"}},
+  {"id": "test", "type": "branch", "label": "Unknown partner?", "x": 630, "y": 686},
+  {"id": "find", "type": "finding", "x": 930, "y": 607, "settings": {"kind": "note"}}
+ ],
+ "wires": [
+  {"from": "scope.yes", "to": "inScope.cond"},
+  {"from": "program.key", "to": "unknown.key"},
+  {"from": "program.name", "to": "text.program"},
+  {"from": "unknown.yes", "to": "test.cond"},
+  {"from": "text.out", "to": "find.evidence"},
+  {"from": "program.name", "to": "find.sig1"}
+ ],
+ "flow": [
+  {"from": "start.then", "to": "inScope.in"},
+  {"from": "inScope.no", "to": "skip.in"},
+  {"from": "inScope.yes", "to": "test.in"},
+  {"from": "test.yes", "to": "find.in"}
+ ]
+}

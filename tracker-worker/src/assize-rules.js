@@ -25,9 +25,11 @@ export const RULE_MAX = 60;
 export const ruleId = (v) => (typeof v === 'string' && v.length <= RULE_MAX && RULE_RE.test(v) ? v : null);
 
 /*
-  Every rule the code raises, in the panel's order: { rule, check, title, kind }. perOrder false: it looks across
-  orders (orphanCleanings), so a graph can't stand in for it (graphs run one order at a time); it can still be
-  turned off. not-started-3-days is a note instead of a fail when a later note may say why.
+  Every rule the code raises, in the panel's order: { rule, check, title, kind }. perOrder false would mean a rule
+  that looks across orders, so a graph couldn't stand in for it (graphs run one order at a time). None is now:
+  parent-closed-cleaning-open is checked per open cleaning, with the store's closed rows handed in through opts
+  (audit's opts.closed / opts.belongs; a graph reads them with the Related order node). not-started-3-days is a
+  note instead of a fail when a later note may say why.
 */
 export const CATALOG = [
   ['no-intake-note', 'intake', 'No intake note', 'note'], ['short-intake-note', 'intake', 'Short note', 'note'],
@@ -43,7 +45,7 @@ export const CATALOG = [
   ['no-date', 'contact', 'No date', 'fail'], ['date-not-updated', 'contact', 'Date not updated', 'flag'], ['contact-due', 'contact', 'Contact due', 'flag'], ['missed-contact', 'contact', 'Missed contact', 'fail'],
   ['no-bin', 'bin', 'No bin', 'fail'], ['not-started', 'start', 'Not started', 'fail'], ['not-started-3-days', 'start', 'Not started in 3 days', 'fail'],
   ['unresponsive', 'age', 'Unresponsive', 'flag'], ['not-ordered', 'order', 'Not ordered', 'fail'], ['awaiting-item', 'remind', 'Awaiting item', 'remind'],
-].map(([rule, check, title, kind]) => ({ rule, check, title, kind, perOrder: rule !== 'parent-closed-cleaning-open' }));
+].map(([rule, check, title, kind]) => ({ rule, check, title, kind, perOrder: true }));
 
 // ------------------------------------------------------------ what Assize keeps (GM storage; the editor's test orders)
 // Only what the rules read, so GM storage stays small (and no passcodes, phones or emails).
@@ -359,6 +361,8 @@ export function makeRules({ RG = null, graphs: builtIn = {} } = {}) {
   const lastNote = (f, flt) => filterNotes(f.notes, flt).pop() || null;
   const firstNote = (f, flt) => filterNotes(f.notes, flt)[0] || null;
   const repairText = (f) => f.issues.join(', ');
+  // The newest thing on record: the order's update time, any note, any status change (ms; 0 when none).
+  const lastActivity = (f) => Math.max(f.updatedAt || 0, ...(f.notes || []).map(t), ...(f.audit || []).map(t));
   const dayOf = (ms) => (ms ? dayKey(ms) : 'unknown');
 
   // ------------------------------------------------------------ cart
@@ -384,7 +388,8 @@ export function makeRules({ RG = null, graphs: builtIn = {} } = {}) {
     audit(row, detail, opts) → findings for one order.
       row     Portal's list row (may be null when only the detail is known)
       detail  { wo, notes[], audit[], cart } (null before it's fetched: detail-only checks wait)
-      opts    { now, hours (STORE_HOURS), priceFor(device, repair) → [prices] | null }
+      opts    { now, hours (STORE_HOURS), priceFor(device, repair) → [prices] | null, closed (the store's recently closed
+              list rows) and belongs(cleaning row, parent row) → bool: parent-closed-cleaning-open, checked when given }
     A finding: { wo, check, kind: fail|flag|note|remind, title, evidence, who: {key, label, name}, device, repair }.
   */
   function audit(row, detail, opts = {}) {
@@ -394,6 +399,8 @@ export function makeRules({ RG = null, graphs: builtIn = {} } = {}) {
     // rule = the finding's stable id; sig = a short hash of the facts behind it (see the top comment), so a dismissal stops applying when they change.
     const add = (check, kind, title, evidence, who, rule, ...basis) => out.push({ wo: f.id, check, kind, rule, sig: sigOf(...basis), title, evidence, who: who || UNASSIGNED, device: f.device, repair: repairText(f), program: f.programName, status: f.status });
     const st = f.status.toLowerCase();
+    // 4b, before anything else (any open cleaning row, whatever its status): its parent is closed.
+    if (row && opts.closed) out.push(...orphanCleanings([row], opts.closed, opts.belongs));
     if (!f.id || /sale complete|cancel/.test(st) || /repair summary/.test(st)) return out; // closed, cancelled, closing: never audited
     if (/awaiting diag|partner approval/.test(st)) return out; // no rules
     const prog = programOf(f.programId, f.programName);
@@ -520,7 +527,7 @@ export function makeRules({ RG = null, graphs: builtIn = {} } = {}) {
         const be = statusEntry(f), bsig = [statusTag(f.status), dayOf(be.since)];
         if (rfp) add('bin', 'fail', 'No bin', 'Ready for pickup, bin is blank', UNASSIGNED, 'no-bin', ...bsig);
         else {
-          const last = Math.max(f.updatedAt || 0, ...(f.notes || []).map(t), ...(f.audit || []).map(t));
+          const last = lastActivity(f);
           if (last && now - last >= HOUR) add('bin', 'fail', 'No bin', label2(f.status) + ' for ' + ago(now - last) + ' with no bin', UNASSIGNED, 'no-bin', ...bsig);
         }
       }
@@ -563,12 +570,26 @@ export function makeRules({ RG = null, graphs: builtIn = {} } = {}) {
     const out = [];
     for (const c of openRows || []) {
       if (programOf(c.programId, c.programName).key !== 'cleaning') continue;
-      const ct = Date.parse(c.createdAt) || 0;
-      const p = (closedRows || []).find((r) => Number(r.programId) === 5062 && /sale complete/i.test(r.workorderStatusName || '') && Math.abs((Date.parse(r.createdAt) || 0) - ct) < 2 * DAY && belongs(c, r));
+      const p = relatedOrder(c, { closed: closedRows, belongs }, { programIds: [5062], statuses: ['sale complete'], withinHours: 48 });
       if (p) out.push({ wo: String(c.workorderId), check: 'cleaning', kind: 'fail', rule: 'parent-closed-cleaning-open', sig: sigOf(p.workorderId), title: 'Parent closed, cleaning open', evidence: 'Parent ' + p.workorderId + ' is closed; this cleaning is still ' + (c.workorderStatusName || 'open'), who: UNASSIGNED,
         device: (c.deviceCatalog && c.deviceCatalog.name) || '', repair: c.programName || 'Cleaning', program: c.programName || '', status: c.workorderStatusName || '' });
     }
     return out;
+  }
+
+  /*
+    relatedOrder(row, opts, { programIds, statuses, withinHours, sameDevice }) → the first of opts.closed (the store's
+    closed list rows) on one of the program ids (none: any), whose status contains one of the statuses (none: any),
+    created less than withinHours from row (0: any time), and (sameDevice, the default) that opts.belongs(row, it)
+    says goes with row (same IMEI, or the customer without one). No row or no closed list: null.
+  */
+  function relatedOrder(row, opts, flt) {
+    const closed = opts && opts.closed, belongs = opts && opts.belongs;
+    if (!row || !Array.isArray(closed)) return null;
+    const ids = ((flt && flt.programIds) || []).map(Number), sts = ((flt && flt.statuses) || []).map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+    const within = Number(flt && flt.withinHours) || 0, ct = Date.parse(row.createdAt) || 0, same = !flt || flt.sameDevice !== false;
+    return closed.find((r) => r && (!ids.length || ids.includes(Number(r.programId))) && (!sts.length || sts.some((x) => String(r.workorderStatusName || '').toLowerCase().includes(x)))
+      && (!within || Math.abs((Date.parse(r.createdAt) || 0) - ct) < within * HOUR) && (!same || (typeof belongs === 'function' && !!belongs(row, r)))) || null;
   }
 
   const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
@@ -585,8 +606,9 @@ export function makeRules({ RG = null, graphs: builtIn = {} } = {}) {
     · Published graphs (phase 2): what the admin site published for the store (GET /v1/:store/assize/rules), compiled
       once per version by published() and run by withGraphs() in place of the code rule each stands for.
   */
-  const GH = { MANUAL, CHECKLIST_LINE, LIQUID_RE, DATA_RE, AGREE_RE, CONTACT_RE, DOLLAR_RE, OVERRIDE_RE, EXPLAIN_RE, STORE, UNASSIGNED,
-    programOf, deviceOf, sigOf, mentions, person, personById, intakeNote, intakeAuthor, statusEntry, statusSetBy, lastUser, lastUserEntry, createdByEntry, lastNote, firstNote, filterNotes, lines, price, isCredit, neverFlag, isDeposit, cartSum, cartSig, money };
+  const GH = { MANUAL, CHECKLIST_LINE, LIQUID_RE, DATA_RE, AGREE_RE, CONTACT_RE, DOLLAR_RE, OVERRIDE_RE, EXPLAIN_RE, STORE, UNASSIGNED, STORE_HOURS, DAY, HOUR,
+    programOf, deviceOf, sigOf, mentions, person, personById, intakeNote, intakeAuthor, statusEntry, statusSetBy, lastUser, lastUserEntry, createdByEntry, lastNote, firstNote, filterNotes, lines, price, isCredit, neverFlag, isDeposit, cartSum, cartSig, cartTotal, money,
+    repairFrom, statusTag, nickDate, at, addDays, dayKey, md, clock, whenWord, daysBetween, closeAfter, closeBefore, openAfter, plural, ago, lastActivity, relatedOrder };
   const graphs = { rules: [], skipped: [] };
   if (RG) {
     for (const [name, g] of Object.entries(builtIn || {})) {
@@ -606,7 +628,7 @@ export function makeRules({ RG = null, graphs: builtIn = {} } = {}) {
     if (!graphs.rules.length) return res;
     const f = facts(row, detail);
     if (!code) code = audit(row, detail, opts);
-    const ctx = Object.assign(Object.create(GH), { f, opts });
+    const ctx = Object.assign(Object.create(GH), { f, opts, row: row || null });
     for (const c of graphs.rules) {
       if (except && except.has(c.rule)) continue;
       const r = RG.run(c, ctx, { trace: false });
@@ -682,7 +704,7 @@ export function makeRules({ RG = null, graphs: builtIn = {} } = {}) {
     const res = { findings: code, errors: [], ran: [] };
     if (!set || !set.rules.size) return res;
     const f = facts(row, detail), drop = new Set(), add = [];
-    const ctx = Object.assign(Object.create(GH), { f, opts });
+    const ctx = Object.assign(Object.create(GH), { f, opts, row: row || null });
     for (const [rule, x] of set.rules) {
       if (!x.enabled) { drop.add(rule); continue; }
       if (!x.c || !f.id) continue;

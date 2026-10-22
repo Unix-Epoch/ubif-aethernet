@@ -161,4 +161,146 @@ const WIRE = (from, to) => ({ from, to });
   assert.ok(ui.includes("people: ['People and notes'") && ui.includes("'num', 'people', 'logic'") && ui.includes('--c-people:'));
   for (const t of ['lastNote', 'firstNote', 'lastUser', 'createdBy', 'statusSetBy']) assert.ok(NODE_TYPES[t].notes, t + ' declares notes');
 }
+
+// ---- the prefab nodes: time and store hours, text, numbers, notes, people, cart, the related order, and the macros
+{
+  const K = (id, type, value) => ({ id, type: 'constant', settings: { type, value } });
+  const L = (y, mo, d, h = 0, mi = 0) => new Date(y, mo - 1, d, h, mi).getTime();
+  const NOW2 = L(2026, 10, 22, 11, 30); // a Thursday, 11:30 local
+  const c2 = (row, detail, opts) => ctxOf(row || { workorderId: 1 }, detail || null, Object.assign({ now: NOW2 }, opts));
+  const one = (type, settings, ins, ctx) => {
+    const nodes = [], wires = [];
+    for (const [pin, v] of Object.entries(ins || {})) { const id = 'k_' + pin; nodes.push(typeof v === 'object' && v && v.node ? v.node(id) : K(id, typeof v === 'number' ? 'num' : typeof v === 'boolean' ? 'bool' : 'text', v)); wires.push(WIRE(id + '.' + (v && v.pin || 'out'), 'x.' + pin)); }
+    return node(type, settings, ctx || c2(), { nodes, wires });
+  };
+  // numbers
+  assert.equal(one('add', {}, { a: 2, b: 3 }).out, 5); assert.equal(one('add', { b: 4 }, { a: 2 }).out, 6);
+  assert.equal(one('max', {}, { a: 2, b: 3 }).out, 3); assert.equal(one('min', { b: 1 }, { a: 2 }).out, 1);
+  assert.equal(one('above', { limit: 2 }, { value: 2 }).yes, false); assert.equal(one('above', {}, { value: 0.1 }).yes, true);
+  assert.equal(one('below', {}, { value: 1, limit: 2 }).yes, true); assert.equal(one('below', { limit: 1 }, { value: 1 }).yes, false);
+  assert.equal(one('chooseNum', { then: 7, else: 9 }, { if: true }).out, 7); assert.equal(one('chooseNum', { else: 9 }, { if: false }).out, 9);
+  // time
+  assert.equal(one('now', {}).at, NOW2);
+  assert.deepEqual(one('timeOfDay', {}, { at: L(2026, 10, 18, 17, 5) }), { hour: 17, minute: 5, weekday: 0 });
+  assert.equal(one('dayTime', { days: 1, hour: 0 }, { at: L(2026, 10, 22, 18) }).out, L(2026, 10, 23));
+  assert.equal(one('dayTime', { hour: 12 }, { at: NOW2 }).out, L(2026, 10, 22, 12));
+  assert.equal(one('dayTime', { days: -2 }, { at: NOW2 }).out, L(2026, 10, 20, 11, 30), 'no hour: the same time of day');
+  assert.equal(one('daysBetween', {}, { a: L(2026, 10, 21, 23, 59) }).days, 1, 'b unwired: today; calendar days');
+  assert.equal(one('daysBetween', {}, { a: L(2026, 10, 22, 0, 1), b: L(2026, 10, 25, 23) }).days, 3);
+  assert.equal(one('daysBetween', {}, { a: L(2026, 10, 24) }).days, -2);
+  assert.deepEqual(one('elapsed', {}, { from: NOW2 - 5.5 * H }), { hours: 5.5, days: 0, text: '5 hours' });
+  assert.deepEqual(one('elapsed', {}, { from: NOW2 - 50 * H }), { hours: 50, days: 2, text: '2 days' });
+  assert.equal(one('elapsed', {}, { from: 0, to: H }).text, '1 hour');
+  // store hours: 10–7, closed Sundays (Lexington open daily)
+  let sh = one('storeHours', {}, { at: L(2026, 10, 17, 20) }); // Saturday 8 PM
+  assert.deepEqual([sh.nextOpen, sh.nextClose, sh.lastClose, sh.openDay], [L(2026, 10, 19, 10), L(2026, 10, 19, 19), L(2026, 10, 17, 19), true], 'Sunday skipped');
+  sh = one('storeHours', {}, { at: L(2026, 10, 18, 12) }, c2(null, null, { hours: R.hoursFor(536) }));
+  assert.deepEqual([sh.nextOpen, sh.nextClose, sh.openDay], [L(2026, 10, 19, 10), L(2026, 10, 18, 19), true], 'open daily');
+  assert.equal(one('storeHours', {}, { at: L(2026, 10, 22, 19) }).lastClose, L(2026, 10, 22, 19), 'last close: at or before');
+  assert.equal(one('storeHours', {}, { at: L(2026, 10, 22, 19) }).nextClose, L(2026, 10, 23, 19), 'next close: after');
+  const ft = (format, at, blank) => one('formatTime', { format, blank }, { at }).out;
+  assert.deepEqual([ft('clock', L(2026, 10, 21, 19)), ft('date', L(2026, 10, 21, 19)), ft('day', L(2026, 3, 5)), ft('when', L(2026, 10, 22, 8)), ft('when', L(2026, 10, 21, 8)), ft('when', L(2026, 10, 2))],
+    ['7:00 PM', '10/21', '2026-03-05', 'today', 'yesterday', 'on 10/2']);
+  assert.equal(ft('day', 0, 'unknown'), 'unknown'); assert.equal(ft('date', 0), '');
+  assert.deepEqual(one('dateInText', {}, { text: 'IPHONE 13 10/17 then 10/24' }), { found: true, at: L(2026, 10, 24) }, 'the last date');
+  assert.deepEqual(one('dateInText', {}, { text: 'X 1/2' }), { found: true, at: L(2027, 1, 2) }, 'the year nearest now');
+  assert.deepEqual(one('dateInText', {}, { text: 'X 13/40' }), { found: false, at: 0 });
+  // text
+  const ti = (values, match, text) => one('textIs', { values, match }, { text }).yes;
+  assert.deepEqual([ti(['.'], 'exact', ' . '), ti(['no issues'], 'starts', 'No issues found'), ti(['no issues'], 'starts', 'no issuesX'), ti(['damage'], 'contains', 'Some DAMAGE'), ti([], 'exact', ''), ti(['  '], 'exact', '')],
+    [true, true, false, true, false, false]);
+  assert.equal(one('statusTag', {}, { text: ' Ready for pickup!' }).tag, 'ready_for_pickup');
+  assert.deepEqual(one('checklistField', { label: 'Physical damage' }, { text: 'a\n• **Physical damage:**  Cracked back \nb' }), { found: true, value: 'Cracked back' });
+  assert.deepEqual(one('checklistField', { label: 'Water (any)' }, { text: '**Water (any):** none' }), { found: true, value: 'none' }, 'a label is text, not a regex');
+  assert.equal(one('checklistField', { label: 'Physical damage' }, { text: 'Physical damage: none' }).found, false);
+  assert.deepEqual([one('plural', {}, { count: 1 }).out, one('plural', { word: 'hour' }, { count: 3 }).out], ['1 day', '3 hours']);
+  assert.deepEqual([one('isBlank', {}, { text: '  ' }).yes, one('isBlank', { trim: false }, { text: '  ' }).yes, one('isBlank', { trim: false }, { text: '' }).yes], [true, false, true]);
+  // people
+  assert.equal(one('namedPerson', {}).who, R.GH.STORE); assert.equal(one('namedPerson', { who: 'Unassigned' }).who, R.GH.UNASSIGNED);
+  const person = (who) => ({ node: (id) => ({ id, type: 'namedPerson', settings: { who } }), pin: 'who' });
+  assert.equal(one('orPerson', {}, { a: person('Unassigned'), b: person('Store') }).who, R.GH.STORE);
+  assert.equal(one('orPerson', {}, { a: person('Store'), b: person('Unassigned') }).who, R.GH.STORE);
+  // statusSetBy, named in a note only: the audit trail's user id is not used
+  assert.equal(node('statusSetBy', { byId: false }, noNotes).who.key, 'unassigned');
+  assert.equal(node('statusSetBy', {}, noNotes).who.name, 'User #8');
+  // notes: Find note, Filter notes since
+  const notes = { node: (id) => ({ id, type: 'wo' }), pin: 'manualNotes' };
+  const T = (h, tag, text, u) => note(h, 2, tag, text, u);
+  const nctx = ctxOf(ROW, trimDetail(CORE, [T(40, 'note', 'Called her', ANN), T(30, 'contacted', 'x', BO), T(20, 'note', 'not wet at all', ANN), T(10, 'note', 'water inside', BO), T(10, 'note', 'water again', ANN)], AUDIT, null));
+  let fn = one('findNote', { pattern: 'LIQUID_RE', skipNegated: true }, { notes }, nctx);
+  assert.deepEqual([fn.found, fn.match, fn.author.name, fn.at, fn.stamp], [true, 'water', 'Bo Diaz', NOW - 10 * H, iso(10)], 'negated one skipped');
+  fn = one('findNote', { pattern: 'LIQUID_RE' }, { notes }, nctx); assert.equal(fn.text, 'not wet at all', 'negation kept when asked');
+  fn = one('findNote', { which: 'last', tag: 'contacted', pattern: 'CONTACT_RE' }, { notes }, nctx); assert.equal(fn.text, 'x');
+  fn = one('findNote', { which: 'last', words: ['water'] }, { notes }, nctx); assert.deepEqual([fn.text, fn.author.name], ['water inside', 'Bo Diaz'], 'ties: the earlier in the list');
+  fn = one('findNote', { which: 'last' }, { notes }, nctx); assert.equal(fn.text, 'water inside', 'nothing set: any note');
+  fn = one('findNote', { tag: 'nope' }, { notes }, nctx); assert.deepEqual([fn.found, fn.author.key, fn.stamp, fn.at], [false, 'unassigned', '', 0]);
+  assert.match(validate({ v: 1, rule: 'r', check: 'c', title: 't', nodes: [{ id: 'x', type: 'findNote', settings: { pattern: 'EVIL_RE' } }, { id: 'w', type: 'wo' }], wires: [WIRE('w.notes', 'x.notes')] }).join(), /pattern must be one of/);
+  const since = one('filterNotes', { kind: 'manual' }, { notes: { node: (id) => ({ id, type: 'wo' }), pin: 'notes' }, since: NOW - 20 * H }, nctx).out;
+  assert.deepEqual(since.map((x) => x.noteText), ['not wet at all', 'water inside', 'water again']);
+  // facts
+  const pr = (id, name) => node('program', {}, ctxOf({ workorderId: 1, programId: id, programName: name }, null));
+  assert.deepEqual(pr(8849, 'Asurion Home+ Repairs'), { key: 'asurion', name: 'Asurion Home+ Repairs', isPartner: true, isHomePlus: true, isXbox: false });
+  assert.deepEqual(pr(998, ''), { key: 'unknown', name: 'Program 998', isPartner: true, isHomePlus: false, isXbox: false });
+  assert.equal(pr(null, 'OOP Xbox repair').isXbox, true);
+  assert.equal(node('lastActivity', {}, withNotes).at, NOW - 2 * H); assert.equal(node('lastActivity', {}, ctxOf({ workorderId: 1 }, null)).at, 0);
+  // cart
+  const lines = [{ sku: 'A', name: 'Labor', price: 40, lineType: 'labor' }, { sku: 'B', name: 'Diagnostics fee', price: 89 }, { sku: 'C', name: 'Part', price: 0.005 }, { sku: 'PCEXEMPT', name: 'Credit', price: -15, lineType: 'trade_credit' }, { sku: 'D', name: 'Screen', price: 120 }];
+  const cctx = (payment) => ctxOf({ workorderId: 1 }, { wo: { workorderId: 1 }, notes: [], cart: { cartItems: lines, payment } });
+  const cart = { node: (id) => ({ id, type: 'wo' }), pin: 'cart' };
+  const fl = (settings) => one('filterLines', settings, { lines: cart }, cctx()).out.map((l) => l.sku).join('');
+  assert.equal(fl({ names: ['diagnostic'], nameMatch: 'contains', match: 'drop' }), 'ACPCEXEMPTD', 'name: any part');
+  assert.equal(fl({ names: ['diagnostic'], match: 'drop' }), 'ABCPCEXEMPTD', 'name: whole words (Diagnostics is not diagnostic)');
+  assert.equal(fl({ types: ['labor'] }), 'A'); assert.equal(fl({ types: ['labor', 'trade_credit'], match: 'drop' }), 'BCD');
+  assert.equal(fl({ price: 'above', above: 0.009 }), 'ABD'); assert.equal(fl({ price: 'positive' }), 'ABCD');
+  assert.equal(node('cartTotal', {}, cctx({ subtotal: 12, total: 30 })).total, 12); assert.equal(node('cartTotal', {}, cctx({ total: 30 })).total, 30);
+  assert.equal(node('cartTotal', {}, cctx(null)).total, R.GH.cartSum({ cartItems: lines }));
+  const issues = (list) => ({ node: (id) => ({ id, type: 'orderDates' }), pin: 'issues' });
+  const rk = (deviceIssues) => one('repairKind', {}, { issues: issues() }, ctxOf({ workorderId: 1, deviceIssues }, null));
+  assert.deepEqual([rk(['Screen']).repair, rk(['Battery']).repair, rk(['Back screen']).found, rk(['Screen', 'Battery']).found, rk([]).repair], ['Screen', 'Battery', false, false, '']);
+  const sheet = (opts, price, repair = 'Screen') => one('priceSheet', {}, { device: 'iPhone 13', repair, price }, c2(null, null, opts));
+  const priceFor = (d, r) => (d === 'iPhone 13' && r === 'Screen' ? [159, 199.99] : null);
+  assert.deepEqual(sheet({ priceFor }, 160), { found: true, matches: true, nearest: 159 });
+  assert.deepEqual(sheet({ priceFor }, 185), { found: true, matches: false, nearest: 199.99 });
+  assert.deepEqual(sheet({ priceFor }, 160, 'Battery'), { found: false, matches: false, nearest: 0 });
+  assert.deepEqual(sheet({}, 160), { found: false, matches: false, nearest: 0 }, 'no sheet here');
+  // the related order (the store's closed rows, through opts)
+  const row = { workorderId: 3, programId: 9470, programName: 'VZ Sanitization', createdAt: iso(5), customerDevice: { imei: '1' } };
+  const closed = [{ workorderId: 8, programId: 5062, workorderStatusName: 'Cancelled', createdAt: iso(10), customerDevice: { imei: '1' } },
+    { workorderId: 9, programId: 5062, programName: 'Asurion Mobility', workorderStatusName: 'Sale complete', createdAt: iso(10), customerDevice: { imei: '1' } }];
+  const belongs = (c, p) => c.customerDevice.imei === p.customerDevice.imei;
+  const rel = (opts, settings, r = row) => node('relatedOrder', Object.assign({ programIds: [5062], statuses: ['sale complete'], withinHours: 48 }, settings), Object.assign(ctxOf(r, null, Object.assign({ now: NOW }, opts)), { row: r }));
+  assert.deepEqual(rel({ closed, belongs }), { found: true, id: '9', status: 'Sale complete', program: 'Asurion Mobility', createdAt: NOW - 10 * H });
+  assert.equal(rel({ closed, belongs }, { withinHours: 4 }).found, false, 'too far apart');
+  assert.equal(rel({ closed, belongs: () => false }).found, false, 'another device');
+  assert.equal(rel({ closed, belongs: () => false }, { sameDevice: false }).found, true);
+  assert.equal(rel({ closed }).found, false, 'no belongs: nothing matches');
+  assert.equal(rel({}).found, false, 'no closed rows (the editor): none');
+  assert.equal(node('relatedOrder', {}, ctxOf(row, null, { closed, belongs })).found, false, 'no row in ctx: none');
+  // the code's orphan check is the same lookup
+  assert.deepEqual(R.orphanCleanings([row], closed, belongs).map((x) => x.evidence), ['Parent 9 is closed; this cleaning is still open']);
+  assert.deepEqual(R.audit(row, null, { now: NOW, closed, belongs }).map((x) => x.rule), ['parent-closed-cleaning-open'], 'audit checks it per order when given the closed rows');
+  assert.deepEqual(R.audit(row, null, { now: NOW }), [], '...and not without them');
+  // macros
+  const mac = (macro, ctx, ins) => one('macro', { macro }, ins, ctx);
+  let m = mac('afterClose', c2(), { at: L(2026, 10, 21, 18) }); assert.deepEqual([m.closed, m.close], [true, L(2026, 10, 21, 19)]);
+  m = mac('afterClose', c2(), { at: L(2026, 10, 22, 9) }); assert.deepEqual([m.closed, m.close], [false, L(2026, 10, 22, 19)]);
+  m = mac('lastBusinessNight', c2()); assert.deepEqual([m.close, m.lastNight], [L(2026, 10, 21, 19), true]);
+  m = mac('lastBusinessNight', c2(null, null, { now: L(2026, 10, 19, 15) })); assert.deepEqual([m.close, m.lastNight], [L(2026, 10, 17, 19), false], 'Monday afternoon: Saturday (noon is the cut-off)');
+  m = mac('lastBusinessNight', c2(null, null, { now: L(2026, 10, 22, 20) })); assert.deepEqual([m.close, m.lastNight], [L(2026, 10, 21, 19), true], 'evening: still last night (the morning audit\'s view)');
+  m = mac('nickDue', ctxOf({ workorderId: 1, customerDevice: { name: 'X 10/20' } }, null, { now: NOW2 })); assert.deepEqual([m.found, m.due, m.daysPast], [true, L(2026, 10, 20), 2]);
+  const st = (name, id, pname) => ctxOf({ workorderId: 1, workorderStatusName: name, workorderStatusId: id, programName: pname || 'Out Of Warranty' }, null);
+  assert.deepEqual(['Awaiting item', 'Ready for work', 'Cancelled', 'Awaiting diagnostics'].map((x) => mac('audited', st(x)).yes), [true, true, false, false]);
+  assert.deepEqual(['Awaiting callback', 'Ready for pickup', 'Work in progress'].map((x) => mac('contactStatus', st(x)).yes), [true, true, false]);
+  assert.deepEqual([mac('partnerChecked', st('Work in progress', 10, 'Asurion Mobility')).yes, mac('partnerChecked', st('Work in progress')).yes, mac('partnerChecked', st('Ready for pickup', 13, 'Asurion Mobility')).yes], [true, false, false]);
+  const cartCtx = (outcome) => ctxOf({ workorderId: 1, workorderStatusName: 'Ready for pickup', workorderStatusId: 13 }, { wo: { workorderId: 1, WorkorderAttributes: outcome ? [{ workorderAttributeTypeId: 22, value: outcome }] : [] }, notes: [], cart: { cartItems: [] } });
+  assert.deepEqual([mac('cartChecked', cartCtx('Completed')).yes, mac('cartChecked', cartCtx('Incomplete')).yes, mac('cartChecked', ctxOf({ workorderId: 1 }, null)).yes], [true, false, false]);
+  // every new node: in the library, with a category the editor knows
+  const PREFAB = ['program', 'lastActivity', 'relatedOrder', 'add', 'max', 'min', 'above', 'below', 'chooseNum', 'textIs', 'statusTag', 'checklistField', 'plural', 'now', 'timeOfDay', 'dayTime', 'daysBetween', 'elapsed',
+    'storeHours', 'formatTime', 'dateInText', 'findNote', 'orPerson', 'namedPerson', 'cartTotal', 'repairKind', 'priceSheet'];
+  const ui = (await import('node:fs')).readFileSync(new URL('../../admin-worker/src/rules-ui.js', import.meta.url), 'utf8');
+  for (const t of PREFAB) { const d = NODE_TYPES[t]; assert.ok(d && d.title && d.desc, t); assert.ok(ui.includes("'" + d.cat + "'") || ui.includes(d.cat + ': ['), t + ': editor knows ' + d.cat); }
+  assert.ok(ui.includes("time: ['Time and store hours'") && ui.includes('--c-time:'));
+  assert.ok(NODE_TYPES.findNote && !NODE_TYPES.findNote.notes, 'Find note reads notes it is given (wired), so it has no notes flag of its own');
+  assert.ok(NODE_TYPES.lastActivity.notes, 'Last activity reads the order\'s notes');
+}
 console.log('primitives: ok');

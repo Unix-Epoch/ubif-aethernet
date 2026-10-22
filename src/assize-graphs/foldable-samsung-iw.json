@@ -1,0 +1,37 @@
+{
+ "v": 1,
+ "rule": "foldable-samsung-iw",
+ "check": "partner",
+ "title": "Foldable on Samsung IW",
+ "nodes": [
+  {"id": "start", "type": "start", "x": 30, "y": 169},
+  {"id": "scope", "type": "macro", "x": 30, "y": 265, "settings": {"macro": "partnerChecked"}},
+  {"id": "wo", "type": "wo", "x": 30, "y": 435},
+  {"id": "author", "type": "intakeAuthor", "x": 930, "y": 189},
+  {"id": "inScope", "type": "branch", "label": "Partner rules apply?", "x": 330, "y": 147},
+  {"id": "skip", "type": "stop", "label": "Skip this order", "x": 630, "y": 30},
+  {"id": "iw", "type": "programIs", "x": 330, "y": 475, "settings": {"programs": ["samsungIW"]}},
+  {"id": "fold", "type": "deviceIs", "x": 330, "y": 641, "settings": {"kind": "foldable"}},
+  {"id": "when", "type": "and", "x": 630, "y": 241},
+  {"id": "text", "type": "template", "x": 330, "y": 287, "settings": {"text": "{device}: Samsung in-warranty takes no foldables"}},
+  {"id": "test", "type": "branch", "label": "Foldable on Samsung IW?", "x": 930, "y": 285},
+  {"id": "find", "type": "finding", "x": 1230, "y": 88, "settings": {"kind": "fail"}}
+ ],
+ "wires": [
+  {"from": "scope.yes", "to": "inScope.cond"},
+  {"from": "wo.programKey", "to": "iw.key"},
+  {"from": "iw.yes", "to": "when.a"},
+  {"from": "fold.yes", "to": "when.b"},
+  {"from": "wo.device", "to": "text.device"},
+  {"from": "when.out", "to": "test.cond"},
+  {"from": "text.out", "to": "find.evidence"},
+  {"from": "author.who", "to": "find.who"},
+  {"from": "wo.device", "to": "find.sig1"}
+ ],
+ "flow": [
+  {"from": "start.then", "to": "inScope.in"},
+  {"from": "inScope.no", "to": "skip.in"},
+  {"from": "inScope.yes", "to": "test.in"},
+  {"from": "test.yes", "to": "find.in"}
+ ]
+}

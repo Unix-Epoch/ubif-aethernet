@@ -1,0 +1,39 @@
+{
+ "v": 1,
+ "rule": "vzew-not-phone",
+ "check": "partner",
+ "title": "VZ EW not a phone",
+ "nodes": [
+  {"id": "start", "type": "start", "x": 30, "y": 168},
+  {"id": "scope", "type": "macro", "x": 30, "y": 264, "settings": {"macro": "partnerChecked"}},
+  {"id": "wo", "type": "wo", "x": 30, "y": 434},
+  {"id": "author", "type": "intakeAuthor", "x": 930, "y": 188},
+  {"id": "inScope", "type": "branch", "label": "Partner rules apply?", "x": 330, "y": 146},
+  {"id": "skip", "type": "stop", "label": "Skip this order", "x": 630, "y": 30},
+  {"id": "vzew", "type": "programIs", "x": 330, "y": 474, "settings": {"programs": ["vzew"]}},
+  {"id": "phone", "type": "deviceIs", "x": 30, "y": 627, "settings": {"kind": "phone"}},
+  {"id": "notPhone", "type": "not", "x": 330, "y": 640},
+  {"id": "when", "type": "and", "x": 630, "y": 240},
+  {"id": "text", "type": "template", "x": 330, "y": 286, "settings": {"text": "{device}: Verizon Extended Warranty is phones only"}},
+  {"id": "test", "type": "branch", "label": "VZ EW, not a phone?", "x": 930, "y": 284},
+  {"id": "find", "type": "finding", "x": 1230, "y": 87, "settings": {"kind": "fail"}}
+ ],
+ "wires": [
+  {"from": "scope.yes", "to": "inScope.cond"},
+  {"from": "wo.programKey", "to": "vzew.key"},
+  {"from": "phone.yes", "to": "notPhone.in"},
+  {"from": "vzew.yes", "to": "when.a"},
+  {"from": "notPhone.out", "to": "when.b"},
+  {"from": "wo.device", "to": "text.device"},
+  {"from": "when.out", "to": "test.cond"},
+  {"from": "text.out", "to": "find.evidence"},
+  {"from": "author.who", "to": "find.who"},
+  {"from": "wo.device", "to": "find.sig1"}
+ ],
+ "flow": [
+  {"from": "start.then", "to": "inScope.in"},
+  {"from": "inScope.no", "to": "skip.in"},
+  {"from": "inScope.yes", "to": "test.in"},
+  {"from": "test.yes", "to": "find.in"}
+ ]
+}

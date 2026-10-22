@@ -1,6 +1,7 @@
 // Rule graphs (src/rulegraph.js): the interpreter on its own (lazy pure nodes, exec flow, both finding styles, macros,
 // validation, the step limit, a throwing node, the trace), then parity: Assize's real rules engine (src/assize-rules.js,
-// the module Aethernet inlines) against the five built-in graphs over synthetic orders and the sandbox's.
+// the module Aethernet inlines) against every built-in graph (one per rule) over synthetic orders, a seeded random
+// corpus and the sandbox's.
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
@@ -303,7 +304,7 @@ const K = (id, value) => ({ id, type: 'constant', settings: { type: 'bool', valu
 
 // Node library: every type has a title, a category, a description, and pins of known types.
 for (const [type, d] of Object.entries(NODE_TYPES)) {
-  assert.ok(d.title && d.desc && ['fact', 'check', 'logic', 'text', 'num', 'people', 'assize', 'out'].includes(d.cat), type);
+  assert.ok(d.title && d.desc && ['fact', 'check', 'logic', 'text', 'num', 'time', 'people', 'assize', 'out'].includes(d.cat), type);
   const pins = RG.pinsOf({ id: 'x', type, settings: {} }, null, { inputs: [], outputs: [] });
   for (const x of [...pins.inputs, ...pins.outputs]) assert.ok(RG.TYPES.includes(x.type), type + '.' + x.name);
   assert.ok(typeof (d.exec ? d.run : d.eval) === 'function', type);
@@ -311,22 +312,39 @@ for (const [type, d] of Object.entries(NODE_TYPES)) {
 
 // ------------------------------------------------------------------ parity: graphs vs the code rules
 assert.deepEqual(R.graphs.skipped, [], 'every built-in graph validates');
-assert.deepEqual(R.graphs.rules.map((c) => c.rule).sort(), ['cci-not-15', 'cci-zero-cart', 'no-intake-note', 'oop-zero-cart', 'short-intake-note']);
+assert.deepEqual(R.graphs.rules.map((c) => c.rule).sort(), AR.CATALOG.map((x) => x.rule).sort(), 'a built-in graph for every rule');
 const RULES = R.graphs.rules.map((c) => c.rule);
 const exec = Object.values(GRAPHS).filter((g) => (g.flow || []).length).length, pure = Object.values(GRAPHS).length - exec;
 assert.ok(exec >= 1 && pure >= 1, 'both styles are used');
 
 const NOW = Date.parse('2026-10-21T15:00:00Z');
 const seenRules = new Set();
-const tally = { orders: 0, comparisons: 0, debug: 0, raised: {}, evidence: {} };
+const tally = { orders: 0, comparisons: 0, debug: 0, raised: {}, kinds: {}, evidence: {} };
 const pick = (x) => ({ rule: x.rule, check: x.check, kind: x.kind, title: x.title, evidence: x.evidence, who: x.who.key, sig: x.sig });
-function compare(row, detail, label) {
-  const opts = { now: NOW, hours: R.STORE_HOURS, priceFor: () => null };
+// The store's price sheet (opts.priceFor), its recently closed orders (opts.closed, for parent-closed-cleaning-open) and
+// AE.data.belongs's rule (same IMEI; the customer without one).
+const SHEET = { 'iPhone 13|Screen': [159, 199.99], 'iPhone 13|Battery': [89], 'Galaxy S23|Screen': [229, 279], 'Pixel 7|Screen': [149], 'Galaxy Z Fold5|Screen': [] };
+const priceFor = (device, repair) => SHEET[device + '|' + repair] || null;
+const CLOSED = [
+  { workorderId: 700001, programId: 5062, programName: 'Asurion Mobility', workorderStatusName: 'Sale complete', createdAt: '2026-10-19T20:00:00Z', customerDevice: { imei: '350000001' }, customer: { customerId: 77 } },
+  { workorderId: 700002, programId: 5062, programName: 'Asurion Mobility', workorderStatusName: 'Sale complete', createdAt: '2026-10-12T20:00:00Z', customerDevice: { imei: '350000002' }, customer: { customerId: 78 } },
+  { workorderId: 700003, programId: 5062, programName: 'Asurion Mobility', workorderStatusName: 'Cancelled', createdAt: '2026-10-20T12:00:00Z', customerDevice: { imei: '350000003' }, customer: { customerId: 79 } },
+  { workorderId: 700004, programId: 8849, programName: 'Asurion Home+ Repairs', workorderStatusName: 'Sale complete', createdAt: '2026-10-20T12:00:00Z', customerDevice: { imei: '350000004' }, customer: { customerId: 80 } },
+  { workorderId: 700005, programId: '5062', programName: 'Asurion Mobility', workorderStatusName: 'SALE COMPLETE', createdAt: '2026-10-21T10:00:00Z', customerDevice: { imei: '' }, customer: { customerId: 88 } },
+];
+const belongs = (c, p) => {
+  const ci = (c.customerDevice && c.customerDevice.imei) || '', pi = (p.customerDevice && p.customerDevice.imei) || '';
+  if (ci && pi) return ci === pi;
+  const pc = p.customer && p.customer.customerId;
+  return pc != null && (c.customer && c.customer.customerId) === pc;
+};
+function compare(row, detail, label, extra) {
+  const opts = Object.assign({ now: NOW, hours: R.STORE_HOURS, priceFor, closed: CLOSED, belongs }, extra);
   const code = R.audit(row, detail, opts);
   assert.deepEqual(bundled.audit(row, detail, opts), code, label + ': the bundle and the module agree');
   for (const x of code) seenRules.add(x.rule);
   const f = R.facts(row, detail);
-  const ctx = Object.assign(Object.create(R.GH), { f, opts });
+  const ctx = Object.assign(Object.create(R.GH), { f, opts, row: row || null });
   tally.orders++;
   for (const c of R.graphs.rules) {
     const r = run(c, ctx);
@@ -342,7 +360,7 @@ function compare(row, detail, label) {
     const mine = code.filter((x) => x.rule === c.rule).map(pick);
     assert.deepEqual(graph, mine, label + ' ' + c.rule);
     tally.comparisons++;
-    for (const x of mine) { tally.raised[x.rule] = (tally.raised[x.rule] || 0) + 1; tally.evidence[x.rule + ': ' + x.evidence.replace(/\$[\d.]+/, '$N').replace(/mentions \w+/, 'mentions W')] = 1; }
+    for (const x of mine) { tally.raised[x.rule] = (tally.raised[x.rule] || 0) + 1; tally.kinds[x.rule + ':' + x.kind] = 1; tally.evidence[x.rule + ': ' + x.evidence.replace(/\$[\d.]+/, '$N').replace(/mentions \w+/, 'mentions W')] = 1; }
   }
   const sh = R.shadow(row, detail, opts, code);
   assert.deepEqual([sh.mismatches, sh.errors, sh.compared], [[], [], RULES.length], label + ' shadow()');
@@ -381,7 +399,8 @@ const rfpLike = (sid, sname) => sid === 13 || /ready for pickup/i.test(sname);
 for (const [pid, pname] of PROGRAMS) for (const [sid, sname] of STATUSES) for (const [attr, listOutcome] of (rfpLike(sid, sname) ? OUTCOMES : OUTCOMES.slice(1, 3))) for (const [ck, cart] of Object.entries(CARTS)) for (const [nk, notes] of Object.entries(NOTES)) {
   const id = 800000 + (++n);
   const row = { workorderId: id, workorderStatusId: sid, workorderStatusName: sname, programId: pid, programName: pname, createdAt: '2026-10-20T14:00:00Z', updatedAt: '2026-10-20T16:00:00Z',
-    deviceCatalog: { name: 'iPhone 13' }, customerDevice: { name: 'IPHONE 13 10/22' }, locationBin: 'A1', serviceOutcome: listOutcome, createdBy: n % 3 ? { givenName: 'Cy', familyName: 'Row' } : null, deviceIssues: ['Screen'] };
+    deviceCatalog: { name: 'iPhone 13' }, customerDevice: { name: 'IPHONE 13 10/22', imei: n % 4 ? '35000000' + (n % 5) : '' }, customer: { customerId: n % 2 ? 77 : 88 }, locationBin: 'A1', serviceOutcome: listOutcome,
+    createdBy: n % 3 ? { givenName: 'Cy', familyName: 'Row' } : null, deviceIssues: ['Screen'] };
   let detail = null;
   if (notes !== undefined) {
     detail = { wo: { workorderId: id, workorderStatusId: sid, WorkorderStatus: { name: sname }, programId: pid, Program: { name: pname }, WorkorderAttributes: attr ? [{ workorderAttributeTypeId: 22, value: attr }] : [] },
@@ -395,6 +414,69 @@ compare({}, null, 'empty row');
 compare(null, { wo: { workorderStatusId: 10, WorkorderStatus: { name: 'Work in progress' }, programId: 20001, Program: { name: 'Out Of Warranty' } }, notes: [], cart: { cartItems: [] } }, 'detail without an id');
 compare(null, { wo: { workorderId: 5, workorderStatusId: 13, WorkorderStatus: { name: 'Ready for pickup' }, programName: 'x', Program: { name: 'Consumer Cellular' } }, notes: NOTES.short, cart: CARTS.twenty }, 'detail only');
 const synthetic = tally.orders;
+
+// A seeded random corpus: every field the rules read, varied on its own (programs, statuses, outcomes, devices and their
+// types, issues, nicknames with dates around "now", bins, check-in / update / pickup times, notes with the words the
+// rules look for, status notes and audit entries by named and unnamed users, carts, payment totals, "now" itself on
+// different days and hours, list row and detail either missing), so each rule's branches actually run.
+let seed = 20261022;
+const rnd = () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let x = Math.imul(seed ^ (seed >>> 15), 1 | seed); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; };
+const any = (a) => a[Math.floor(rnd() * a.length)];
+const chance = (p) => rnd() < p;
+const RPROGRAMS = [[20001, 'Out Of Warranty'], [null, 'OOP Xbox repair'], [7001, 'Consumer Cellular'], [5062, 'Asurion Mobility'], [8849, 'Asurion Home+ Repairs'], [20005, ''], [20005, '  '], [null, 'Samsung Care+'], [null, 'Servify Protection'],
+  [6494, 'Samsung In Warranty Repair'], [null, 'Google Pixel Care'], [null, 'Amazon Buyout'], [8379, 'Verizon Extended Warranty'], [null, 'Element Care'], [9470, 'VZ Sanitization'], [11009, 'AT&T Enhanced Cleaning'], [999, 'Mystery Partner'], [998, ''], [null, '']];
+const RSTATUSES = [[8, 'Ready for work'], [8, 'Ready for work'], [10, 'Work in progress'], [13, 'Ready for pickup'], [13, 'Ready for pickup'], [13, ''], [3, 'Awaiting item'], [7, 'Awaiting callback'], [4, 'Awaiting device'], [2, 'Need to order'], [2, 'Need to order'],
+  [11, 'Quality check'], [25, 'Cancelled'], [14, 'Sale complete'], [5, 'Awaiting diagnostics'], [12, 'Repair summary'], [1, 'Initial check-in']];
+const RDEVICES = [['iPhone 13', 'Cell Phone', ''], ['iPhone 13', '', ''], ['Galaxy S23', 'Cell Phone', ''], ['Galaxy Z Fold5', 'Cell Phone', 'Samsung Galaxy Fold'], ['Galaxy Z Flip 5', '', ''], ['Apple Watch Series 8', 'Wearable', ''],
+  ['AirPods Pro', '', ''], ['Samsung 55in TV', '', ''], ['LG OLED Television', 'Television', ''], ['iPad 9th gen', 'Tablet', ''], ['MacBook Air', 'Computer', ''], ['Pixel 7', '', ''], ['Razr 2023', '', ''], ['Xbox Series X', 'Game Console', ''], ['', '', '']];
+const RISSUES = [['Screen'], ['Screen'], ['Battery'], ['Screen', 'Battery'], ['Back glass'], [], ['Front Glass'], ['Back screen'], ['LCD']];
+const HRS = 3600000, DAYS = 24 * HRS;
+const USERS = [user(21, 'Ann', 'Lee'), user(22, 'Bo', 'Diaz'), user(23, 'Cy', ''), null];
+const iso = (ms) => new Date(ms).toISOString();
+const DAMAGE = ['No issues', 'no issues found', 'Cracked back', '   ', 'No issuesX', 'Dent on frame'];
+const WORDS = ['Customer dropped it in water', 'no water damage found', 'Corrosion on the board', 'Will need a factory reset', 'logic board swap, data may be lost', 'Customer is aware data may be lost',
+  'Called customer, no answer', 'left vm', 'texted the customer', 'Quoted $189 for the screen', 'OOP - 150$', 'took a deposit', 'fee waived - per gg', 'just a note', 'not wet', 'customer agrees to the price', 'spoke with her'];
+const RLINES = [['SCR', 'iPhone 13 Screen', 159.99], ['SCR2', 'Screen', 159.5], ['S15', 'CCI service', 15], ['T', 'Tiny', 0.005], ['LAB', 'Labor', 49, 'labor'], ['AR', 'Asurion Repair', 0], ['DIAG', 'Diagnostic fee', 89], ['DG2', 'Diagnostics', 49],
+  ['SRV0006', 'Deposit', -89], ['PCEXEMPT', 'Partner Credit Tax Exempt', -15, 'trade_credit'], ['ML', 'Miscellaneous Labor', 40], ['BB1', 'Buyback', -120], ['PRT', 'Charging port', 79], ['CRD', 'Store credit', 0, 'trade_credit'], ['B89', 'Battery', 89], ['Z', 'Zero', 0]];
+const md2 = (ms, year) => { const d = new Date(ms); return (d.getMonth() + 1) + '/' + d.getDate() + (year ? '/' + String(d.getFullYear()).slice(2) : ''); };
+let random = 0;
+for (let i = 0; i < 40000; i++) {
+  const now = new Date(2026, 9, 17 + Math.floor(rnd() * 9), any([8, 9, 11, 12, 13, 16, 18, 19, 20, 23]), any([0, 15, 59])).getTime();
+  const [pid, pname] = any(RPROGRAMS), [sid, sname] = any(RSTATUSES), [dev, dtype, dfam] = any(RDEVICES);
+  const created = chance(0.05) ? null : now - Math.floor(rnd() * any([6, 30, 80, 400, 900])) * HRS - Math.floor(rnd() * 60) * 60000;
+  const t0 = created || now - 50 * HRS, at = (h) => iso(t0 + h * HRS);
+  const nickDate = now + Math.round((rnd() * 24 - 18)) * DAYS;
+  const nick = any(['', '   ', dev.toUpperCase() + ' SCREEN', dev.toUpperCase() + ' ' + md2(nickDate), dev.toUpperCase() + ' ' + md2(nickDate, true), 'X ' + md2(now), 'X ' + md2(now - DAYS), 'X 13/40', 'X 2/30']);
+  const status = { id: sid, name: sname }, id = 900000 + i;
+  const statusAt = t0 + Math.floor(rnd() * Math.max(1, (now - t0) / HRS)) * HRS;
+  const row = chance(0.08) ? null : { workorderId: id, workorderStatusId: sid, workorderStatusName: sname, programId: pid, programName: pname, createdAt: created ? iso(created) : null,
+    updatedAt: chance(0.2) ? null : iso(Math.min(now, t0 + rnd() * (now - t0))), nextUpdate: chance(0.25) ? null : iso(t0 + Math.floor(rnd() * 72) * HRS), rfpWorkorderStatusDate: sid === 13 && chance(0.6) ? iso(statusAt) : null,
+    locationBin: any(['', ' ', '.', 'A1', ' . ', 'B12']), deviceCatalog: { name: dev }, deviceIssues: any(RISSUES), serviceOutcome: any(['', '', 'Completed', 'Incomplete', 'No issue found', 'Declined']),
+    customerDevice: { name: nick, imei: any(['', '350000001', '350000003', '350000004', '350000009']) }, customer: { customerId: any([77, 88, 99]) }, createdBy: chance(0.6) ? any(USERS.slice(0, 3)) : null, deviceTypeName: chance(0.3) ? dtype : undefined };
+  let detail = null;
+  if (!row || chance(0.85)) {
+    const notes = [];
+    const who = () => any(USERS);
+    if (chance(0.8)) notes.push({ noteType: chance(0.95) ? 2 : 1, noteTag: 'initial_checkin', createdAt: at(0), UserDatum: who(),
+      noteText: any(['Cracked screen', 'Line one\nLine two\nLine three', LONG, 'a\nb\n**Physical damage:** ' + any(DAMAGE) + '\nc', '**Physical damage:**' + any(DAMAGE), null]) });
+    for (let k = Math.floor(rnd() * 4); k > 0; k--) notes.push({ noteType: chance(0.85) ? 2 : 1, noteTag: chance(0.15) ? 'contacted' : chance(0.1) ? 'initial_checkin' : 'note', noteText: any(WORDS),
+      createdAt: chance(0.05) ? null : iso(Math.min(now, nickDate + Math.round(rnd() * 6 - 3) * DAYS + Math.floor(rnd() * 20) * HRS)), UserDatum: who() });
+    if (chance(0.6)) notes.push({ noteType: 1, noteTag: R.GH.statusTag ? R.GH.statusTag(sname) : sname, noteText: 'Status changed', createdAt: iso(statusAt), UserDatum: chance(0.7) ? who() : null });
+    const audit = chance(0.6) ? [{ workorderStatusId: sid, createdAt: iso(statusAt + any([0, -HRS, HRS])), createdBy: any([21, 22, 55, null]) }, { workorderStatusId: 8, createdAt: at(0.1), createdBy: 21 }] : [];
+    const items = [];
+    for (let k = any([0, 1, 1, 2, 3]); k > 0; k--) { const [sku, name, price, lineType] = any(RLINES); items.push({ lineId: sku + k, sku, itemNumber: sku, name, price, quantity: 1, lineType: lineType || 'item' }); }
+    detail = { wo: { workorderId: id, workorderStatusId: sid, WorkorderStatus: { name: sname }, programId: pid, Program: { name: pname }, createdAt: created ? iso(created) : undefined,
+      updatedAt: chance(0.5) ? iso(now - Math.floor(rnd() * 5) * HRS) : undefined, nextUpdate: row ? row.nextUpdate : undefined, createdBy: any([21, 22, null]), updatedBy: chance(0.3) ? any([21, 22, 55]) : undefined,
+      CustomerDevice: { name: nick, DeviceCatalog: { name: dev, DeviceModel: { DeviceType: dtype ? { name: dtype } : undefined, DeviceFamily: dfam ? { name: dfam } : undefined } } },
+      WorkorderBinDeviceLocation: chance(0.5) ? { WorkorderBin: { name: any(['', 'C3', '.']) } } : undefined,
+      WorkorderAttributes: chance(0.5) ? [{ workorderAttributeTypeId: 22, value: any(['Completed', 'Incomplete', 'Declined', 'No issue found']) }] : [],
+      WorkorderDeviceIssueServiceOptions: chance(0.5) ? any(RISSUES).map((x) => ({ DeviceIssueCategoryTypeOption: { DeviceIssue: { name: x } } })) : [] },
+      notes: chance(0.1) ? null : notes, audit, rowFresher: chance(0.2) ? false : undefined };
+    if (chance(0.9)) detail.cart = chance(0.05) ? null : { cartItems: items, payment: chance(0.3) ? { subtotal: any([0, 15, 120.5, null]), total: any([0, 30]) } : null };
+  }
+  compare(row, detail, 'random ' + i, { now, hours: chance(0.15) ? R.hoursFor(536) : R.STORE_HOURS, priceFor: chance(0.1) ? undefined : priceFor });
+  random++;
+}
 
 // The sandbox's orders (sandbox/state.json, git-ignored: from this checkout or the main one), shaped as sandbox/api.py serves them.
 let sandbox = 0;
@@ -416,7 +498,7 @@ if (stateFile) {
       notes: S.notes.filter((x) => String(x.workorderId) === String(w.workorderId)), audit: (w.history || []).map((x) => ({ workorderStatusId: x.statusId, createdAt: x.at, createdBy: x.by })),
       cart: { cartItems: items, payment: null },
     };
-    compare(row, detail, 'sandbox ' + w.workorderId);
+    compare(Object.assign({}, row, { customerDevice: Object.assign({}, row.customerDevice, { imei: d.imei || '' }), customer: { customerId: w.customerId } }), detail, 'sandbox ' + w.workorderId);
     compare(row, null, 'sandbox row only ' + w.workorderId);
     sandbox++;
   }
@@ -434,11 +516,13 @@ if (stateFile) {
   for (const r of seenRules) assert.ok(ids.includes(r), 'raised but not listed: ' + r);
   for (const x of R.catalog) assert.ok(R.CHECKS.some(([k]) => k === x.check) && R.KINDS.includes(x.kind) && x.title, x.rule);
   assert.deepEqual(R.catalog.filter((x) => x.builtInGraph).map((x) => x.rule).sort(), Object.keys(GRAPHS).sort());
-  assert.deepEqual(R.catalog.filter((x) => !x.perOrder).map((x) => x.rule), ['parent-closed-cleaning-open']);
+  assert.deepEqual(R.catalog.filter((x) => !x.perOrder).map((x) => x.rule), [], 'every rule runs one order at a time (the cross-order one through opts.closed)');
 }
 
 // Every rule was raised, and every OOP evidence variant seen.
 for (const rule of RULES) assert.ok(tally.raised[rule] > 0, rule + ' raised at least once');
+assert.ok(tally.kinds['not-started-3-days:note'] && tally.kinds['not-started-3-days:fail'], 'not-started-3-days as a note and as a fail');
+for (const v of ['no-bin: Ready for pickup, bin is blank', 'no-date: Ready for pickup; nickname is blank', 'no-date: Ready for pickup; nickname has no date', 'not-ordered: In Need to order since']) assert.ok(Object.keys(tally.evidence).some((k) => k.startsWith(v)), 'seen: ' + v);
 const oopVariants = Object.keys(tally.evidence).filter((k) => k.startsWith('oop-zero-cart'));
 assert.equal(oopVariants.length, 3, 'all three OOP evidence variants: ' + oopVariants.join(' | '));
-console.log('rulegraph: interpreter ok; parity ' + tally.orders + ' orders (' + synthetic + ' synthetic, ' + sandbox + ' sandbox × 2) × ' + RULES.length + ' rules = ' + tally.comparisons + ' comparisons, all equal (' + tally.debug + ' debug runs too); raised: ' + JSON.stringify(tally.raised));
+console.log('rulegraph: interpreter ok; parity ' + tally.orders + ' orders (' + synthetic + ' synthetic, ' + random + ' random, ' + sandbox + ' sandbox × 2) × ' + RULES.length + ' rules = ' + tally.comparisons + ' comparisons, all equal (' + tally.debug + ' debug runs too); raised: ' + JSON.stringify(tally.raised));
