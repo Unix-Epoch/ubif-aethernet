@@ -303,7 +303,7 @@ const K = (id, value) => ({ id, type: 'constant', settings: { type: 'bool', valu
 
 // Node library: every type has a title, a category, a description, and pins of known types.
 for (const [type, d] of Object.entries(NODE_TYPES)) {
-  assert.ok(d.title && d.desc && ['fact', 'check', 'logic', 'text', 'num', 'assize', 'out'].includes(d.cat), type);
+  assert.ok(d.title && d.desc && ['fact', 'check', 'logic', 'text', 'num', 'people', 'assize', 'out'].includes(d.cat), type);
   const pins = RG.pinsOf({ id: 'x', type, settings: {} }, null, { inputs: [], outputs: [] });
   for (const x of [...pins.inputs, ...pins.outputs]) assert.ok(RG.TYPES.includes(x.type), type + '.' + x.name);
   assert.ok(typeof (d.exec ? d.run : d.eval) === 'function', type);

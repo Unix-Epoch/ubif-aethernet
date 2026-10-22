@@ -53,9 +53,11 @@ export const trimRow = (r) => ({
   deviceCatalog: { name: (r.deviceCatalog && r.deviceCatalog.name) || '' }, deviceIssues: r.deviceIssues || [], serviceOutcome: r.serviceOutcome || '',
   customerDevice: { name: (r.customerDevice && r.customerDevice.name) || '', imei: (r.customerDevice && r.customerDevice.imei) || '', customerId: (r.customerDevice && r.customerDevice.customerId) || '' },
   customer: { customerId: r.customer && (r.customer.customerId ?? r.customer.id), fullName: (r.customer && r.customer.fullName) || '' },
-  createdBy: r.createdBy && typeof r.createdBy === 'object' ? { givenName: r.createdBy.givenName, familyName: r.createdBy.familyName } : null,
+  createdBy: r.createdBy && typeof r.createdBy === 'object' ? { userId: r.createdBy.userId, givenName: r.createdBy.givenName, familyName: r.createdBy.familyName } : null,
   deviceTypeName: r.deviceTypeName || (r.deviceType && r.deviceType.name) || undefined,
 });
+// A Portal user id from a number, a numeric string or a { userId } object; null when there is none.
+const uid = (v) => { const x = v != null && typeof v === 'object' ? (v.userId ?? v.id) : v; return x == null || x === '' ? null : x; };
 const user = (u) => (u ? { userId: u.userId, givenName: u.givenName, familyName: u.familyName } : null);
 // Portal's detail (GET /api/workorder/:id's answer, the notes, the audit trail, the cart) as the rules read it.
 export function trimDetail(core, notes, audit, cart) {
@@ -65,7 +67,7 @@ export function trimDetail(core, notes, audit, cart) {
   return {
     wo: {
       workorderId: w.workorderId, workorderStatusId: w.workorderStatusId, WorkorderStatus: w.WorkorderStatus && { name: w.WorkorderStatus.name },
-      programId: w.programId, Program: w.Program && { name: w.Program.name }, createdAt: w.createdAt, updatedAt: w.updatedAt, nextUpdate: w.nextUpdate, csuCartId: w.csuCartId,
+      programId: w.programId, Program: w.Program && { name: w.Program.name }, createdAt: w.createdAt, updatedAt: w.updatedAt, nextUpdate: w.nextUpdate, csuCartId: w.csuCartId, createdBy: uid(w.createdBy), updatedBy: uid(w.updatedBy),
       CustomerDevice: { name: cd.name || '', DeviceCatalog: { name: cat.name || '', DeviceModel: { DeviceType: m.DeviceType && { name: m.DeviceType.name }, DeviceFamily: m.DeviceFamily && { name: m.DeviceFamily.name } } } },
       WorkorderBinDeviceLocation: bin ? { WorkorderBin: { name: (bin.WorkorderBin && bin.WorkorderBin.name) || '' } } : null,
       WorkorderAttributes: (w.WorkorderAttributes || []).filter((a) => Number(a.workorderAttributeTypeId) === 22).map((a) => ({ workorderAttributeTypeId: 22, value: a.value })),
@@ -102,7 +104,7 @@ export function fromSnapshot(plain, sealed) {
   };
   const detail = {
     wo: { workorderId: w.workorderId, workorderStatusId: w.statusId, WorkorderStatus: { name: w.status || '' }, programId: w.programId, Program: { name: w.program || '' },
-      createdAt: w.createdAt, updatedAt: w.updatedAt, nextUpdate: w.nextUpdate, CustomerDevice: { DeviceCatalog: { name: w.device || '' } },
+      createdAt: w.createdAt, updatedAt: w.updatedAt, nextUpdate: w.nextUpdate, createdBy: uid(w.createdBy), updatedBy: uid(w.updatedBy), CustomerDevice: { DeviceCatalog: { name: w.device || '' } },
       WorkorderAttributes: w.outcome ? [{ workorderAttributeTypeId: 22, value: w.outcome }] : [] },
     notes: null,
     audit: ((plain && plain.auditTrail) || []).map((a) => ({ workorderStatusId: a.statusId, createdAt: a.createdAt, createdBy: a.createdBy, completed: a.completed })),
@@ -288,6 +290,8 @@ export function makeRules({ RG = null, graphs: builtIn = {} } = {}) {
       rfpAt: Date.parse(row.rfpWorkorderStatusDate) || null,
       outcome: outcomes.find((v) => ['Completed', 'Incomplete', 'Declined', 'No issue found'].includes(v)) || (row.serviceOutcome || ''),
       createdBy: row.createdBy && typeof row.createdBy === 'object' ? row.createdBy : null,
+      // Portal's user ids (null on a cached detail from before Assize kept them): who created / last updated the order.
+      createdById: uid(w.createdBy) ?? uid(row.createdBy), updatedById: uid(w.updatedBy),
       notes, audit: d && Array.isArray(d.audit) ? d.audit : null, cart: d ? d.cart || null : null, hasCart: !!(d && 'cart' in d),
       detail: !!d,
     };
@@ -313,6 +317,47 @@ export function makeRules({ RG = null, graphs: builtIn = {} } = {}) {
     const who = (sys && person(sys.UserDatum)) || (trail && trail.createdBy != null && ids.get(String(trail.createdBy))) || UNASSIGNED;
     return { since, who };
   }
+  // A person from a Portal user id: the name from a note by them, else the order's creator (the list row names them),
+  // else "User #id" (key user-<id>); no id at all is Unassigned. The audit trail carries ids only, never names.
+  function personById(f, id) {
+    id = uid(id);
+    if (id == null) return UNASSIGNED;
+    const named = people(f).get(String(id));
+    if (named) return named;
+    const c = f.createdBy && String(uid(f.createdBy)) === String(id) ? person(f.createdBy) : null;
+    return c || { key: 'user-' + id, label: 'User #' + id, name: 'User #' + id };
+  }
+  // Who last updated the order in Portal, and when: updatedBy (at the order's updatedAt); without it (an older cached
+  // detail), whoever did the latest thing on record: a note (manual or system) or an audit entry. { who, at, from }.
+  function lastUserEntry(f) {
+    if (f.updatedById != null) return { who: personById(f, f.updatedById), at: f.updatedAt || null, from: 'updatedBy' };
+    let best = null;
+    for (const n of f.notes || []) if (n.UserDatum && (!best || t(n) >= best.at)) best = { who: person(n.UserDatum) || personById(f, n.UserDatum.userId), at: t(n) };
+    for (const a of f.audit || []) if (uid(a.createdBy) != null && (!best || t(a) > best.at)) best = { who: personById(f, a.createdBy), at: t(a) };
+    return best ? { who: best.who, at: best.at || null, from: 'activity' } : { who: UNASSIGNED, at: null, from: null };
+  }
+  const lastUser = (f) => lastUserEntry(f).who;
+  // The order's creator, and when it was created.
+  const createdByEntry = (f) => ({ who: f.createdById != null ? personById(f, f.createdById) : person(f.createdBy) || UNASSIGNED, at: f.createdAt });
+  // Who moved the order into its current status (statusEntry's, else the audit entry's user id), and since when.
+  function statusSetBy(f) {
+    const e = statusEntry(f);
+    if (e.who !== UNASSIGNED) return e;
+    const trail = (f.audit || []).filter((a) => Number(a.workorderStatusId) === f.statusId && uid(a.createdBy) != null).sort((a, b) => t(b) - t(a))[0];
+    return trail ? { since: e.since, who: personById(f, trail.createdBy) } : e;
+  }
+  // Notes by kind (manual | system | any), tag, author name (contains) and since (ms, createdAt at or after).
+  function filterNotes(notes, flt) {
+    const k = (flt && flt.kind) || 'manual', tag = String((flt && flt.tag) || '').trim(), who = String((flt && flt.author) || '').trim().toLowerCase(), since = Number(flt && flt.since) || 0;
+    return (notes || []).filter((n) => {
+      if (k !== 'any' && (Number(n.noteType) === MANUAL) !== (k === 'manual')) return false;
+      if (tag && n.noteTag !== tag) return false;
+      if (who && !(person(n.UserDatum) || { name: '' }).name.toLowerCase().includes(who)) return false;
+      return !since || t(n) >= since;
+    }).slice().sort((a, b) => t(a) - t(b));
+  }
+  const lastNote = (f, flt) => filterNotes(f.notes, flt).pop() || null;
+  const firstNote = (f, flt) => filterNotes(f.notes, flt)[0] || null;
   const repairText = (f) => f.issues.join(', ');
   const dayOf = (ms) => (ms ? dayKey(ms) : 'unknown');
 
@@ -541,7 +586,7 @@ export function makeRules({ RG = null, graphs: builtIn = {} } = {}) {
       once per version by published() and run by withGraphs() in place of the code rule each stands for.
   */
   const GH = { MANUAL, CHECKLIST_LINE, LIQUID_RE, DATA_RE, AGREE_RE, CONTACT_RE, DOLLAR_RE, OVERRIDE_RE, EXPLAIN_RE, STORE, UNASSIGNED,
-    programOf, deviceOf, sigOf, mentions, person, intakeNote, intakeAuthor, statusEntry, lines, price, isCredit, neverFlag, isDeposit, cartSum, cartSig, money };
+    programOf, deviceOf, sigOf, mentions, person, personById, intakeNote, intakeAuthor, statusEntry, statusSetBy, lastUser, lastUserEntry, createdByEntry, lastNote, firstNote, filterNotes, lines, price, isCredit, neverFlag, isDeposit, cartSum, cartSig, money };
   const graphs = { rules: [], skipped: [] };
   if (RG) {
     for (const [name, g] of Object.entries(builtIn || {})) {

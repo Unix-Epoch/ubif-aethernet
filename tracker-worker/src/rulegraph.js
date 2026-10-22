@@ -49,6 +49,10 @@ export const PATTERN_NAMES = ['DOLLAR_RE', 'LIQUID_RE', 'DATA_RE', 'AGREE_RE', '
 const p = (name, type, req) => (req ? { name, type, req: true } : { name, type });
 const opt = (name, type, extra) => Object.assign({ name, type }, extra);
 const LETTERS = ['a', 'b', 'c', 'd', 'e', 'f'];
+// "Now" is the run's own (ctx.opts.now: tests and debug runs fix it), else the clock. A missing time reads as NEVER hours ago.
+const nowOf = (ctx) => Number(ctx.opts && ctx.opts.now) || Date.now();
+const NEVER = 1e6;
+const hoursSince = (ctx, at) => (at > 0 ? Math.max(0, (nowOf(ctx) - at) / 3600000) : NEVER);
 const str = (v) => (v == null ? '' : String(v));
 const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // A word / phrase list as one case-insensitive RegExp, matched on word boundaries (no user regex).
@@ -60,6 +64,7 @@ const inList = (v, list, mode) => {
   const x = str(v).toLowerCase();
   return list.some((w) => { const y = str(w).toLowerCase(); return mode === 'contains' ? x.includes(y) : x === y; });
 };
+const NOTE_KINDS = ['manual', 'any', 'system']; // Last / first / filter notes: which notes count
 const TRI = ['any', 'keep', 'drop']; // filterLines' flags: ignore, keep only these lines, drop these lines
 const tri = (mode, hit) => mode === 'keep' ? hit : mode === 'drop' ? !hit : true;
 const placeholders = (t) => [...new Set([...str(t).matchAll(/\{(\w+)\}/g)].map((m) => m[1]))];
@@ -73,7 +78,7 @@ const FINDING_IN = [p('when', 'bool'), p('evidence', 'text'), p('who', 'person')
 const FINDING_SET = [opt('title', 'text'), opt('check', 'text'), opt('rule', 'text'), opt('evidence', 'text', { desc: 'used when the evidence pin is not wired' })];
 
 /*
-  The node library. Each type: title (the editor's), cat (fact check logic text num assize out), desc, inputs /
+  The node library. Each type: title (the editor's), cat (fact check logic text num people assize out), desc, inputs /
   outputs (lists, or functions of the node's settings), settings (the editor's form: name, type text|num|bool|list|
   enum|pattern|macro, options, def), exec ({ in, outs }) for executed nodes, and eval(io, settings, ctx) → outputs
   (pure nodes) or run(io, settings, ctx, state) → the exec output to follow (executed nodes). notes: the node reads
@@ -98,6 +103,15 @@ export const NODE_TYPES = {
         outcome: str(f.outcome), isRfp: rfp, isActive: !rfp, device: str(f.device), cart: ctx.lines(f.cart), hasCart: !!f.hasCart, notes: f.notes,
         manualNotes: manual, noteText: manual.map((n) => String(n.noteText || '')).join('\n'), hasNotes: !!f.notes,
       };
+    },
+  },
+  orderDates: {
+    title: 'Order dates', cat: 'fact', desc: 'When the order was created, last updated, is due its next update and went Ready for pickup (ms; 0 when unknown), plus its bin, nickname, issues and device type.',
+    inputs: [], settings: [],
+    outputs: [p('createdAt', 'num'), p('updatedAt', 'num'), p('nextUpdate', 'num'), p('rfpAt', 'num'), p('bin', 'text'), p('nickname', 'text'), p('issues', 'textList'), p('deviceType', 'text')],
+    eval(io, s, ctx) {
+      const f = ctx.f;
+      return { createdAt: f.createdAt || 0, updatedAt: f.updatedAt || 0, nextUpdate: f.nextUpdate || 0, rfpAt: f.rfpAt || 0, bin: str(f.bin), nickname: str(f.nickname), issues: (f.issues || []).map(str), deviceType: str(f.deviceType) };
     },
   },
   deviceIs: {
@@ -156,6 +170,10 @@ export const NODE_TYPES = {
     title: 'Subtract', cat: 'num', desc: 'a − b.', inputs: [p('a', 'num', true), p('b', 'num')], outputs: [p('out', 'num')], settings: [opt('b', 'num', { def: 0 })],
     eval: (io, s) => ({ out: io.in('a') - num(io, s, 'b') }),
   },
+  hoursSince: {
+    title: 'Hours since', cat: 'num', desc: 'Hours from a time (ms) to now, never below 0. An unwired or 0 time reads as 1000000 hours (never happened).',
+    inputs: [p('at', 'num', true)], outputs: [p('hours', 'num')], settings: [], eval: (io, s, ctx) => ({ hours: hoursSince(ctx, Number(io.in('at')) || 0) }),
+  },
   count: { title: 'Count', cat: 'num', desc: 'How many items a list has.', inputs: [p('list', 'any', true)], outputs: [p('out', 'num')], settings: [], eval: (io) => ({ out: (io.in('list') || []).length }) },
   constant: {
     title: 'Constant', cat: 'num', desc: 'A fixed number, text or yes/no.', inputs: [],
@@ -202,6 +220,63 @@ export const NODE_TYPES = {
   money: { title: 'Money', cat: 'text', desc: '15 → "$15", 15.5 → "$15.50".', inputs: [p('value', 'num', true)], outputs: [p('out', 'text')], settings: [], eval: (io, s, ctx) => ({ out: ctx.money(Number(io.in('value')) || 0) }) },
   lowercase: { title: 'Lowercase', cat: 'text', desc: 'The text in lower case.', inputs: [p('text', 'text', true)], outputs: [p('out', 'text')], settings: [], eval: (io) => ({ out: str(io.in('text')).toLowerCase() }) },
   isBlank: { title: 'Is blank', cat: 'text', desc: 'The text is empty (spaces count as empty).', inputs: [p('text', 'text', true)], outputs: [p('yes', 'bool')], settings: [], eval: (io) => ({ yes: !str(io.in('text')).trim() }) },
+  // ---------------------------------------------------------------- people and notes (who did what, and when)
+  lastNote: {
+    title: 'Last note', cat: 'people', desc: 'The newest note of a kind (manual, system or any), optionally with one tag: whether there is one, who wrote it, its text, tag, when (ms) and how many hours ago. None: found is no, author Unassigned, at 0, hoursAgo 1000000.',
+    inputs: [], outputs: [p('found', 'bool'), p('author', 'person'), p('text', 'text'), p('tag', 'text'), p('at', 'num'), p('hoursAgo', 'num')],
+    settings: [opt('kind', 'enum', { options: NOTE_KINDS, def: 'manual' }), opt('tag', 'text', { desc: 'only notes with this noteTag (blank: any)' })], notes: true,
+    eval: (io, s, ctx) => noteOut(ctx, ctx.lastNote(ctx.f, s)),
+  },
+  firstNote: {
+    title: 'First note', cat: 'people', desc: 'The oldest note of a kind (manual, system or any), optionally with one tag: same outputs as Last note.',
+    inputs: [], outputs: [p('found', 'bool'), p('author', 'person'), p('text', 'text'), p('tag', 'text'), p('at', 'num'), p('hoursAgo', 'num')],
+    settings: [opt('kind', 'enum', { options: NOTE_KINDS, def: 'manual' }), opt('tag', 'text', { desc: 'only notes with this noteTag (blank: any)' })], notes: true,
+    eval: (io, s, ctx) => noteOut(ctx, ctx.firstNote(ctx.f, s)),
+  },
+  filterNotes: {
+    title: 'Filter notes', cat: 'people', desc: 'Keep notes by kind, tag, author (name contains) and age (written within this many hours; 0: any). Notes not loaded: none.',
+    inputs: [p('notes', 'notes', true)], outputs: [p('out', 'notes')],
+    settings: [opt('kind', 'enum', { options: NOTE_KINDS, def: 'any' }), opt('tag', 'text'), opt('author', 'text', { desc: 'author name contains (any case)' }), opt('withinHours', 'num', { def: 0 })],
+    eval: (io, s, ctx) => ({ out: ctx.filterNotes(io.in('notes') || [], { kind: s.kind || 'any', tag: s.tag, author: s.author, since: Number(s.withinHours) > 0 ? nowOf(ctx) - Number(s.withinHours) * 3600000 : 0 }) }),
+  },
+  noteAuthors: {
+    title: 'Note authors', cat: 'people', desc: 'Who wrote these notes: their names, each once (oldest first), and how many.',
+    inputs: [p('notes', 'notes', true)], outputs: [p('authors', 'textList'), p('count', 'num')], settings: [],
+    eval(io, s, ctx) {
+      const names = [...new Set((io.in('notes') || []).map((n) => (ctx.person(n.UserDatum) || {}).name).filter(Boolean))];
+      return { authors: names, count: names.length };
+    },
+  },
+  lastUser: {
+    title: 'Last user', cat: 'people', desc: "Who last updated the order in Portal (its updatedBy) and when. An older cached order without it: whoever made the latest note or status change on record; with nothing at all, Unassigned (at 0).",
+    inputs: [], outputs: [p('who', 'person'), p('at', 'num'), p('hoursAgo', 'num')], settings: [], notes: true,
+    eval(io, s, ctx) { const e = ctx.lastUserEntry(ctx.f); return { who: e.who, at: e.at || 0, hoursAgo: hoursSince(ctx, e.at) }; },
+  },
+  createdBy: {
+    title: 'Created by', cat: 'people', desc: 'Who created the order and when (Unassigned when Portal did not say).',
+    inputs: [], outputs: [p('who', 'person'), p('at', 'num'), p('hoursAgo', 'num')], settings: [], notes: true,
+    eval(io, s, ctx) { const e = ctx.createdByEntry(ctx.f); return { who: e.who, at: e.at || 0, hoursAgo: hoursSince(ctx, e.at) }; },
+  },
+  statusSetBy: {
+    title: 'Status set by', cat: 'people', desc: 'Who moved the order into its current status, and since when (the status note or audit trail; Unassigned and 0 when neither says).',
+    inputs: [], outputs: [p('who', 'person'), p('since', 'num'), p('hoursAgo', 'num')], settings: [], notes: true,
+    eval(io, s, ctx) { const e = ctx.statusSetBy(ctx.f); return { who: e.who, since: e.since || 0, hoursAgo: hoursSince(ctx, e.since) }; },
+  },
+  personIs: {
+    title: 'Person is', cat: 'people', desc: "The person's name contains one of these (any case). None listed: no.",
+    inputs: [p('person', 'person', true)], outputs: [p('yes', 'bool')], settings: [opt('names', 'list', { def: [] })],
+    eval: (io, s) => ({ yes: !!(s.names || []).filter((w) => str(w).trim()).length && inList(personName(io.in('person')), (s.names || []).filter((w) => str(w).trim()), 'contains') }),
+  },
+  samePerson: {
+    title: 'Same person', cat: 'people', desc: 'a and b are the same person (same key). Unassigned or nobody is never the same person.',
+    inputs: [p('a', 'person', true), p('b', 'person', true)], outputs: [p('yes', 'bool')], settings: [],
+    eval(io, s, ctx) { const a = io.in('a'), b = io.in('b'); return { yes: !!a && !!b && a.key === b.key && !unassigned(a, ctx) }; },
+  },
+  personName: { title: 'Person name', cat: 'people', desc: "The person's full name (blank for nobody).", inputs: [p('person', 'person', true)], outputs: [p('name', 'text')], settings: [], eval: (io) => ({ name: personName(io.in('person')) }) },
+  isUnassigned: {
+    title: 'Is unassigned', cat: 'people', desc: 'The person is Unassigned (or nobody).', inputs: [p('person', 'person', true)], outputs: [p('yes', 'bool')], settings: [],
+    eval: (io, s, ctx) => ({ yes: unassigned(io.in('person'), ctx) }),
+  },
   // ---------------------------------------------------------------- cart lines and Assize's own
   filterLines: {
     title: 'Filter lines', cat: 'assize', desc: 'Keep or drop cart lines: partner credits, never-flag lines (misc labor, buybacks), deposits, by price sign, by SKU or name words.',
@@ -279,6 +354,13 @@ export const NODE_TYPES = {
     eval(io, s, ctx, n, st, scope) { const o = {}; for (const x of scope.c.def.outputs) o[x.name] = io.in(x.name); return o; },
   },
 };
+const personName = (x) => (x && x.name ? str(x.name) : '');
+const unassigned = (x, ctx) => !x || x.key === 'unassigned' || x === ctx.UNASSIGNED;
+// Last / first note → outputs; no note: found no, Unassigned, blanks, at 0, hoursAgo NEVER.
+function noteOut(ctx, n) {
+  const at = n ? Date.parse(n.createdAt) || 0 : 0;
+  return { found: !!n, author: (n && ctx.person(n.UserDatum)) || ctx.UNASSIGNED, text: n ? str(n.noteText) : '', tag: n ? str(n.noteTag) : '', at, hoursAgo: hoursSince(ctx, at) };
+}
 function num(io, s, k) { return io.wired(k) ? io.in(k) : Number(s[k]) || 0; }
 function txt(io, s, k) { return io.wired(k) ? str(io.in(k)) : str(s[k]); }
 // The first match: skipping negated ones ("no water damage") through the host's mentions(), else a plain match.
