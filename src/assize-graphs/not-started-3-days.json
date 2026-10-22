@@ -26,7 +26,7 @@
   {"id": "why", "type": "chooseText", "x": 1530, "y": 238, "settings": {"then1": "; a note may say why", "else": ""}},
   {"id": "text", "type": "template", "x": 1830, "y": 293, "settings": {"text": "Still Ready for work {days} after check-in{why}"}},
   {"id": "key", "type": "formatTime", "x": 330, "y": 245, "settings": {"format": "day"}},
-  {"id": "note", "type": "finding", "label": "A note may say why", "x": 2130, "y": 328, "settings": {"kind": "note"}},
+  {"id": "note", "type": "finding", "label": "A note may say why", "x": 2130, "y": 374, "settings": {"kind": "note"}},
   {"id": "fail", "type": "finding", "label": "Nothing said", "x": 2130, "y": 30, "settings": {"kind": "fail"}}
  ],
  "wires": [

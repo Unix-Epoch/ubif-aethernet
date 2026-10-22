@@ -5,7 +5,7 @@
  "title": "Parent closed, cleaning open",
  "nodes": [
   {"id": "wo", "type": "wo", "x": 30, "y": 260},
-  {"id": "cleaning", "type": "programIs", "label": "A cleaning?", "x": 330, "y": 527, "settings": {"programs": ["cleaning"]}},
+  {"id": "cleaning", "type": "programIs", "label": "A cleaning?", "x": 330, "y": 572, "settings": {"programs": ["cleaning"]}},
   {"id": "parent", "type": "relatedOrder", "label": "Closed Asurion parent", "x": 330, "y": 273, "settings": {"programIds": [5062], "statuses": ["sale complete"], "withinHours": 48, "sameDevice": true}},
   {"id": "when", "type": "and", "x": 630, "y": 350},
   {"id": "noStatus", "type": "isBlank", "x": 330, "y": 107, "settings": {"trim": false}},

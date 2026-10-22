@@ -17,7 +17,7 @@
   {"id": "author", "type": "intakeAuthor", "x": 1150, "y": 420},
   {"id": "gate", "type": "and", "x": 870, "y": 40},
   {"id": "notZero", "type": "not", "x": 870, "y": 300},
-  {"id": "is15", "type": "equals", "x": 590, "y": 420, "settings": {"b": 15, "tolerance": 0.009}},
+  {"id": "is15", "type": "equals", "x": 590, "y": 469, "settings": {"b": 15, "tolerance": 0.009}},
   {"id": "not15", "type": "not", "x": 870, "y": 420},
   {"id": "money", "type": "money", "x": 870, "y": 540},
   {"id": "text", "type": "template", "x": 1150, "y": 540, "settings": {"text": "Cart is {sum}; a CCI service is $15"}},
