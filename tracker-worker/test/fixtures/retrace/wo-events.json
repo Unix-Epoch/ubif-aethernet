@@ -1,0 +1,10 @@
+{ "events": [
+  { "userId": 70001, "entityType": "WORKORDER", "metadata": { "ipAddress": "192.0.2.10", "correlationId": "c-1", "sessionId": "s-1", "storeId": 914, "xTraceId": "t-1" }, "eventType": "PARTS_UPDATED", "version": 1,
+    "eventData": { "type": "add", "version": 1, "items": [{ "itemId": 9180001, "quantity": 1, "item": { "itemCatalogId": 55, "name": "Galaxy S24 Battery", "itemNumber": "180001" } }] },
+    "entityId": "WORKORDER#500400002", "logEntryId": "le-1", "eventId": "ev-add-1", "timestamp": "2026-10-20T15:00:00.000Z", "bucket": "b", "user": { "userId": 70001, "givenName": "Tech", "familyName": "Alpha" } },
+  { "userId": 70002, "entityType": "WORKORDER", "metadata": { "ipAddress": "192.0.2.11", "correlationId": "c-2", "sessionId": "s-2", "storeId": 914, "xTraceId": "t-2" }, "eventType": "STATUS_UPDATED", "version": 1,
+    "eventData": { "from": 8, "to": 10 }, "entityId": "WORKORDER#500400002", "logEntryId": "le-2", "eventId": "ev-status-1", "timestamp": "2026-10-20T15:05:00.000Z", "bucket": "b", "user": { "userId": 70002, "givenName": "Tech", "familyName": "Bravo" } },
+  { "userId": 70002, "entityType": "WORKORDER", "metadata": { "ipAddress": "192.0.2.11", "correlationId": "c-3", "sessionId": "s-3", "storeId": 914, "xTraceId": "t-3" }, "eventType": "PARTS_UPDATED", "version": 1,
+    "eventData": { "type": "swap", "version": 1, "itemId": 9180001, "item": { "itemCatalogId": 55, "name": "Galaxy S24 Battery", "itemNumber": "180001" }, "oldSerialNumber": "180001-0000600002", "newSerialNumber": "180001-0000600004" },
+    "entityId": "WORKORDER#500400002", "logEntryId": "le-3", "eventId": "ev-swap-1", "timestamp": "2026-10-21T11:00:00.000Z", "bucket": "b", "user": { "userId": 70002, "givenName": "Tech", "familyName": "Bravo" } }
+] }

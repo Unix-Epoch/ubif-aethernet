@@ -1,0 +1,2 @@
+{ "RMAPurchId": "UBFPO000099005", "rma_order_status": "Shipped", "vendor_name": "Vendor One", "vendor_rma": "VRMA-1", "tracking_number": "1Z000",
+  "details": [{ "item_id": "180001", "item_name": "Galaxy S24 Battery", "serial_id": "180001-0000600003", "rma_line_status": "Accepted", "rma_reason": "Wrong item in package", "purchase_price": 30, "purchase_order_id": "UBFPO000099002", "is_service_item": false }] }

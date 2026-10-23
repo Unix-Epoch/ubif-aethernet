@@ -1,0 +1,5 @@
+{ "ItemNumber": "176255", "ProductName": "iPhone 15 Display Assembly", "SalesPrice": 199, "ItemCategory": "Parts", "ConsignmentStatus": "No", "WasConsignedAtPurchase": "Yes",
+  "PurchaseOrderNumber": "UBFPO000099001", "SalesOrderNumber": "FSO000011111", "CountingJournalNumber": "", "PurchasePrice": 88.5, "OEMSerialNumber": "OEM0001", "OEMInvoiceNumber": "",
+  "SerialStatus": "Sold", "AvailableInInventory": 0, "PhysicalInventory": 0, "InventQuarantineInfo": null, "SalvageInfo": null, "ArrivalId": "", "WorkOrderId": "500400001",
+  "Store": "914", "Vendor": "Vendor One", "Warehouse": "914", "WarehouseLocationType": "Main", "IMEI": "", "IsGeneric": false, "SpecialOrderMetadata": null, "Success": true, "ErrorMessage": null,
+  "SerialNumber": "176255-0000514371" }

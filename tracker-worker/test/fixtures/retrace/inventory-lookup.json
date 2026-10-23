@@ -1,0 +1,5 @@
+{ "value": [
+  { "ItemNumber": "180001", "ProductName": "Galaxy S24 Battery", "SiteId": "914", "WarehouseId": "914", "OnHandQuantity": 2, "InTransitQuantity": 0, "ReservedQuantity": 1, "SalesOnOrder": 1, "AvailableQuantity": 1, "BackOrderedQyantity": 0, "SalesPrice": 89, "RetailCategory": "Parts", "VanNickName": "", "LocalPrice": 89 },
+  { "ItemNumber": "180001", "ProductName": "Galaxy S24 Battery", "SiteId": "914", "WarehouseId": "914Q", "OnHandQuantity": 1, "InTransitQuantity": 0, "ReservedQuantity": 0, "SalesOnOrder": 0, "AvailableQuantity": 0, "BackOrderedQyantity": 0, "SalesPrice": 89, "RetailCategory": "Parts", "VanNickName": "", "LocalPrice": 89 },
+  { "ItemNumber": "176255", "ProductName": "iPhone 15 Display Assembly", "SiteId": "914", "WarehouseId": "914", "OnHandQuantity": 0, "InTransitQuantity": 1, "ReservedQuantity": 0, "SalesOnOrder": 0, "AvailableQuantity": 0, "BackOrderedQyantity": 0, "SalesPrice": 199, "RetailCategory": "Parts", "VanNickName": "", "LocalPrice": 199 }
+] }

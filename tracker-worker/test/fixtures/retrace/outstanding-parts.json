@@ -1,0 +1,3 @@
+{ "RMAParts": [{ "Store": "914", "ItemNumber": "180001", "PartName": "Galaxy S24 Battery", "SerialNumber": "180001-0000600003", "SerialStatus": "Defective", "WarehouseId": "914Q", "Manufacturer": "Maker One", "Vendor": "Vendor One", "PurchasePrice": 30 }],
+  "BuybackParts": [{ "Store": "914", "ItemNumber": "210004", "SerialNumber": "B-210004-0000000044", "SerialStatus": "Available", "Destination": "UROC", "EstimatedSalvage": 12, "WarehouseId": "914", "Vendor": "Vendor Two" }],
+  "SalvageParts": [] }

@@ -1,0 +1,2 @@
+{ "@odata.count": 1, "value": [{ "PurchaseOrderNumber": "UBFPO000099006", "PurchaseOrderStatus": "Backorder", "PurchaseOrderPoolId": "AUTO-ORDER", "DocumentApprovalStatus": "Approved", "DefaultReceivingWarehouseId": "914",
+  "VendorOrderReference": "VOR-1", "asuTrackingNumber": "", "AccountingDate": "2026-10-22T00:00:00Z", "UbifTotalAmount": 120, "UbifTotalRemainingQty": 2, "UbifTotalRegisteredQty": 0, "UbifPurchaseOrderType": "Auto", "UbifAutoReceiveDateTime": null }] }
