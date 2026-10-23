@@ -442,6 +442,7 @@ const PAGE_DEFS = [
   ['auto', 'Auto-Waymark', 'Stage and push rules live for every store', 'wide'],
   ['stores', 'Stores', 'Give or remove a store’s Aethernet access', 'wide'],
   ['rules', 'Assize rules', 'Edit and publish Assize’s rules; a change for every store needs All stores', 'store', true],
+  ['retrace', 'Retrace', 'Every movement of every item: labels, work orders, receipts, counts (their stores)', 'store'],
   ['people', 'People', 'Developers only', 'owner'],
 ];
 const GRANTABLE = PAGE_DEFS.filter((p) => p[3] !== 'owner').map((p) => p[0]);
@@ -449,12 +450,13 @@ const GRANTABLE = PAGE_DEFS.filter((p) => p[3] !== 'owner').map((p) => p[0]);
 // Developers (TRACKER_OWNERS; `owner` in the API) have everything. Owner kept its key 'ol' (it was "Owner-level").
 const PRESETS = {
   viewer: ['Store viewer', 'Default for new people', { scope: 'stores', pages: ['wos'], details: false }],
-  mgr: ['Manager', 'Their stores, with customer details', { scope: 'stores', pages: ['wos', 'sales', 'metrics', 'data'], details: true }],
+  mgr: ['Manager', 'Their stores, with customer details', { scope: 'stores', pages: ['wos', 'sales', 'metrics', 'data', 'retrace'], details: true }],
   ol: ['Owner', 'Every page but People and Assize rules', { scope: 'all', pages: GRANTABLE.filter((k) => k !== 'rules'), details: true }],
 };
 const ROLE = { owner: ['Developer', 'owner'], ol: ['Owner', 'ol'], mgr: ['Manager', 'mgr'], viewer: ['Store viewer', 'view'], custom: ['Custom', 'custom'] };
 const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
-const roleOf = (a) => { const pages = a.pages.filter((k) => k !== 'rules'); return Object.keys(PRESETS).find((k) => { const p = PRESETS[k][2]; return a.scope === p.scope && a.details === p.details && sameSet(pages, p.pages); }) || 'custom'; };
+// A role from before Retrace (Oct 23, 2026) still reads as that role (same as access.js presetOf).
+const roleOf = (a) => { const pages = a.pages.filter((k) => k !== 'rules'); return Object.keys(PRESETS).find((k) => { const p = PRESETS[k][2]; return a.scope === p.scope && a.details === p.details && (sameSet(pages, p.pages) || sameSet(pages, p.pages.filter((x) => x !== 'retrace'))); }) || 'custom'; };
 const roleName = (a) => { const r = roleOf(a); return ROLE[r][0] + (r !== 'custom' && a.pages.includes('rules') ? ' + Assize rules' : ''); };
 const KEY_SVG = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5.5" cy="10.5" r="3.5"/><path d="M8 8l6-6M12 4l2 2"/></svg>';
 const SHIELD_SVG = '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1.5l5.5 2v4c0 3.5-2.4 6-5.5 7-3.1-1-5.5-3.5-5.5-7v-4z"/><path d="M5.6 8l1.7 1.7 3.2-3.4"/></svg>';

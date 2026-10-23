@@ -11,11 +11,13 @@
 
   Pages a person can be given (people.pages, JSON). 'people' is developers only and never stored.
   'rules' (Assize rules, Oct 21, 2026) is in no role: the roles below match people without it, and it adds to any.
+  'retrace' (Retrace, the inventory movement ledger, Oct 23, 2026) is in the Manager and Owner roles; people given one
+  of those roles before it existed still show as that role (presetOf), they just don't have the page until it's added.
   "All stores" pages (reports, auto, stores) are Aethernet-wide: not limited by the person's stores.
   Customer details (people.details 0/1): off = no key copies, and trackerAdmin strips every sealed
   field (SEALED_KEYS) from its responses to them.
 */
-export const PAGES = ['wos', 'sales', 'metrics', 'data', 'usage', 'reports', 'auto', 'stores', 'rules'];
+export const PAGES = ['wos', 'sales', 'metrics', 'data', 'usage', 'reports', 'auto', 'stores', 'rules', 'retrace'];
 export const WIDE_PAGES = ['reports', 'auto', 'stores'];
 export const SEALED_KEYS = ['card', 'sealed', 'customerName'];
 
@@ -45,6 +47,8 @@ export const ROUTES = [
   ['GET', /^\/api\/tracker\/assize\/(orders|stores)$/, 'rules'],   // ?store= checked here (query)
   ['*', /^\/api\/tracker\/assize\/rules(\/|$)/, 'rules'],         // scope of each edit checked in src/assize.js
   ['GET', /^\/(rulegraph|assize-rules|rules-ui)\.js$/, 'rules'],     // the editor and its engine, served to the page
+  ['GET', /^\/api\/tracker\/retrace\/(item|label)\/(\d{1,6})\/[^/]{1,80}$/, 'retrace', 2],
+  ['GET', /^\/api\/tracker\/retrace\/(search|coverage)$/, 'retrace'],   // ?store= checked here (query); without it, their stores (src/retrace-api.js)
 ];
 
 export const owners = (env) => String(env.TRACKER_OWNERS || '').toLowerCase().split(/[\s,]+/).filter(Boolean);
@@ -57,12 +61,15 @@ export const cleanPages = (v) => {
 // The role a set of access matches (the People list shows it; the editor's presets fill these in). Owner (key 'ol',
 // "Owner-level" before Oct 21, 2026): every page but People and Assize rules. Assize rules on top of a role: "<role> + assize rules".
 export const OWNER_PAGES = PAGES.filter((p) => p !== 'rules');
+export const MANAGER_PAGES = ['wos', 'sales', 'metrics', 'data', 'retrace'];
 export function presetOf(a) {
   const same = (x, y) => x.length === y.length && x.every((p) => y.includes(p));
+  // A role with or without 'retrace' (the role from before Oct 23, 2026) is still that role.
+  const role = (x, y) => same(x, y) || same(x, y.filter((p) => p !== 'retrace'));
   const pages = a.pages.filter((p) => p !== 'rules'), plus = pages.length < a.pages.length ? ' + assize rules' : '';
   if (a.scope === 'stores' && !a.details && same(pages, ['wos'])) return 'store viewer' + plus;
-  if (a.scope === 'stores' && a.details && same(pages, ['wos', 'sales', 'metrics', 'data'])) return 'manager' + plus;
-  if (a.scope === 'all' && a.details && same(pages, OWNER_PAGES)) return 'owner' + plus;
+  if (a.scope === 'stores' && a.details && role(pages, MANAGER_PAGES)) return 'manager' + plus;
+  if (a.scope === 'all' && a.details && role(pages, OWNER_PAGES)) return 'owner' + plus;
   return 'custom';
 }
 

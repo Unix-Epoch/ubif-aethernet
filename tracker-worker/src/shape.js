@@ -4,7 +4,9 @@
     scanRow    the open-WO list row → the plain fields the Worker's /scan gets
     scrub      device passcodes removed anywhere in the detail
     plainPart  what the server can read: status, program, device model, bin, dates, staff ids,
-               status history, note count, cart lines and totals. Never customer details.
+               status history, note count, cart lines and totals, parts events. Never customer details.
+               Cart lines carry their inventory label (serial), its status and the line's part status,
+               warehouse and item id (Oct 23, 2026) for Retrace's WO movements (src/retrace.js woMovements).
     cardOf     the sealed search card: name, customer id, phones, emails, IMEI, serial, claim
 */
 export const scanRow = (r) => ({ wo: r.workorderId, statusId: r.workorderStatusId, status: r.workorderStatusName, programId: r.programId, program: r.programName,
@@ -52,10 +54,35 @@ export function plainPart(d, listRow) {
     auditTrail: (Array.isArray(d.audit_trail) ? d.audit_trail : []).map((a) => ({ statusId: a.workorderStatusId, createdAt: a.createdAt, createdBy: a.createdBy, completed: a.completed })),
     notes: { total: d.notes ? d.notes.total : null }, // the notes themselves are sealed
     cart: d.cart ? {
-      items: (d.cart.cartItems || []).map((i) => pick(i, ['lineId', 'parentLineId', 'name', 'sku', 'quantity', 'price', 'netPrice', 'totalPrice', 'originalPrice', 'discount', 'program', 'itemTypeId', 'itemCategoryId', 'productLineType', 'isRework', 'isRMA', 'reasonCode'])),
+      items: (d.cart.cartItems || []).map((i) => pick(i, CART_KEYS)),
       payment: d.cart.payment || null, salesId: d.cart.salesId || null, isCanceled: !!d.cart.isCanceled,
     } : null,
+    ...(eventList(d.events) ? { partEvents: partEvents(eventList(d.events)) } : {}),
   };
+}
+// serial = the line's inventory label (not the customer's device serial: that one is sealed in cardOf).
+const CART_KEYS = ['lineId', 'parentLineId', 'name', 'sku', 'quantity', 'price', 'netPrice', 'totalPrice', 'originalPrice', 'discount', 'program', 'itemTypeId', 'itemCategoryId',
+  'productLineType', 'isRework', 'isRMA', 'reasonCode', 'serial', 'serialStatus', 'partStatus', 'warehouseId', 'itemId', 'productId'];
+
+/*
+  The WO's parts events (GET workorder/{wo}/events → { events: [...] }: PARTS_UPDATED add / remove / swap,
+  SB_PART_UPDATED), when the detail has them (d.events: that answer or its list). Everything else on the list (status
+  updates, pickup contacts) stays out, and so does everything that isn't about the part: `metadata` (staff IP
+  addresses, session ids) is never kept; eventData keeps only the part fields (type, items' id / quantity / name /
+  item number, the swap's serials); the user only their id and name. Oldest first, at most 200.
+*/
+const eventList = (e) => (Array.isArray(e) ? e : e && Array.isArray(e.events) ? e.events : null);
+const PART_EVENTS = ['PARTS_UPDATED', 'SB_PART_UPDATED'];
+const partItem = (it) => (it && typeof it === 'object' ? { itemId: it.itemId ?? null, quantity: it.quantity ?? null, item: it.item ? pick(it.item, ['name', 'itemNumber']) : null } : null);
+export function partEvents(events) {
+  return events.filter((e) => e && PART_EVENTS.includes(e.eventType)).map((e) => {
+    const d = e.eventData && typeof e.eventData === 'object' ? e.eventData : {};
+    const data = pick(d, ['type', 'oldSerialNumber', 'newSerialNumber', 'serialNumber', 'status', 'partStatus', 'itemId']);
+    if (d.item) data.item = pick(d.item, ['name', 'itemNumber']);
+    if (Array.isArray(d.items)) data.items = d.items.map(partItem).filter(Boolean);
+    const u = e.user || {};
+    return { eventId: e.eventId, timestamp: e.timestamp, eventType: e.eventType, eventData: data, userId: e.userId ?? u.userId ?? null, user: [u.givenName, u.familyName].filter(Boolean).join(' ') || null };
+  }).sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp))).slice(-200);
 }
 
 // What search needs, sealed: who the customer is and which device.

@@ -26,6 +26,8 @@
     GET  /v1/:store/tracker/rfp/days?from&to     the RFP total at the end of each day (Tactician)
     GET  /v1/:store/tracker/settings             store settings (general managers, …); PUT …/settings/gm
     GET  /v1/:store/assize/rules?v=              the Assize rule graphs published for the store (src/assize.js)
+    POST /v1/:store/tracker/retrace/sweep|history|watch, GET …/retrace/cursor   Retrace, the inventory movement
+                                                 ledger (src/retrace-api.js; WO cart and parts movements come from POST /wo/:wo)
 
   Agents (programs with their own key, e.g. the Mac's work order audit; x-aethernet-key too):
     POST /v1/agents/register { id, name, publicJwk, token }   → { id, fingerprint, status } (waits for approval)
@@ -53,6 +55,7 @@ import { daily } from './daily.js';
 import { PAGES, WIDE_PAGES, owners, cleanPages, presetOf, accessOf, check, stripSealed } from './access.js';
 import { metricsApi, statusPeriodStmts, closeStatusPeriod } from './metrics.js';
 import { assizeStore, assizeAdmin } from './assize.js';
+import { retraceStore, retraceAdmin, woRetraceStmts } from './retrace-api.js';
 
 const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
@@ -325,6 +328,7 @@ async function storeApi(req, env, url, store) {
   }
 
   if (path === '/daily' && req.method === 'POST') return daily(req, env, store, { readJson, json, fail, clean });
+  if (path.startsWith('/retrace/')) return retraceStore(req, env, url, store, path, { readJson, json, fail, clean, now });
 
   if (path === '/scan' && req.method === 'POST') {
     const b = await readJson(req, MAX.scan);
@@ -558,7 +562,8 @@ async function storeApi(req, env, url, store) {
     const statusId = int(w.statusId), closed = CLOSED_IDS.has(statusId);
     const snap = await T.prepare('INSERT INTO snapshots (store, wo, fetched_at, trigger, by_name, hash, plain, sealed) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id')
       .bind(store, wo, at, clean(b.trigger, 20) || null, by, hash, plainText, b.sealed).first();
-    const changes = prev && prev.plain ? diff(JSON.parse(prev.plain), plain) : [];
+    const prevPlain = prev && prev.plain ? JSON.parse(prev.plain) : null;
+    const changes = prevPlain ? diff(prevPlain, plain) : [];
     const stmts = changes.slice(0, 1000).map(([field, o, n]) => T.prepare('INSERT INTO changes (store, wo, changed_at, field, old, new, snapshot_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind(store, wo, at, field.slice(0, 300), o == null ? null : String(o).slice(0, 4000), n == null ? null : String(n).slice(0, 4000), snap.id));
     stmts.push(T.prepare(`INSERT INTO workorders (store, wo, status_id, status_name, program_id, program_name, device, created_at, api_updated_at, is_open, first_seen_at,
@@ -578,6 +583,8 @@ async function storeApi(req, env, url, store) {
         hasItems ? value : null, hasItems ? num(pay.tax) : null, iso(soldAt)));
     stmts.push(...(await rfpPeriodStmts(T, store, wo, plain, at)));
     stmts.push(...(await statusPeriodStmts(T, store, wo, plain, at)));
+    // Retrace: cart lines' labels and parts events → inventory movements (never fails the upload).
+    stmts.push(...(await woRetraceStmts(T, store, wo, prevPlain, plain, at)));
     for (let i = 0; i < stmts.length; i += 100) await T.batch(stmts.slice(i, i + 100));
     return json({ ok: true, snapshot: snap.id, changes: changes.length });
   }
@@ -589,7 +596,7 @@ async function storeApi(req, env, url, store) {
 async function log(env, email, action, store = null, wo = null, detail = null) {
   await env.TR.prepare('INSERT INTO access_log (email, action, store, wo, detail, at) VALUES (?, ?, ?, ?, ?, ?)').bind(email, action, store, wo, detail, now()).run();
 }
-const PAGE_NAME = { wos: 'work orders', sales: 'sales', metrics: 'metrics', data: 'store data', usage: 'usage', reports: 'reports', auto: 'auto-waymark', stores: 'stores', rules: 'assize rules' };
+const PAGE_NAME = { wos: 'work orders', sales: 'sales', metrics: 'metrics', data: 'store data', usage: 'usage', reports: 'reports', auto: 'auto-waymark', stores: 'stores', rules: 'assize rules', retrace: 'retrace' };
 // "pages +metrics -usage · stores +1276 · details on · role manager → custom" (access_log detail for access:change)
 function accessDiff(before, after) {
   const out = [], pm = (a, b, f) => [...b.filter((x) => !a.includes(x)).map((x) => '+' + f(x)), ...a.filter((x) => !b.includes(x)).map((x) => '-' + f(x))];
@@ -620,6 +627,8 @@ function accessDiff(before, after) {
   GET  /wo/:store/:wo            one WO: row, snapshots (plain + sealed), changes
   …    /assize/…                 Assize rules: list, drafts, publish, history, per-store overrides, test orders
                                  (page 'rules'; src/assize.js has the routes)
+  GET  /retrace/…                Retrace: item movements, label timeline, search, coverage (page 'retrace';
+                                 src/retrace-api.js has the routes)
   Developers only (People; TRACKER_OWNERS, `owner` in the API):
   GET  /people                   everyone + their key copies' kinds, pages, details, review; owners: the developers
   POST /people { email, name, scope, stores, pages, details, keys, keysMode }   add/update. keys = invite
@@ -771,6 +780,8 @@ async function trackerRoutes(req, env, url, path, email, who) {
   if (path === '/metrics' || path.startsWith('/metrics/')) return metricsApi(req, env, url, path, me);
   // Assize rules (src/assize.js): the gate above already required page 'rules'; edits check the scope there.
   if (path.startsWith('/assize/')) return assizeAdmin(req, env, url, path, me, email, { json, fail, readJson, clean, int, now, log });
+  // Retrace (src/retrace-api.js): the gate above already required page 'retrace' and the store in the path / ?store=.
+  if (path.startsWith('/retrace/')) return retraceAdmin(req, env, url, path, me, email, { json, fail, clean, int, log });
 
   if (!me.owner) return fail(403, 'developers only', false);
   if (req.method === 'GET' && path === '/people') {
