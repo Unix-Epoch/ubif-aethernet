@@ -90,8 +90,11 @@ def tidy_title(t):
     return re.sub(r"\s+\)", ")", t)
 
 
-def is_message(t):
-    return bool(re.match(r"(hi|hello|here at)\b", t, re.I)) or len(t) > 110
+def is_message(t, plain=None):
+    """A message starts with a greeting, or is long. Length is judged without the red staff notes: a title can run
+    long with them ("First OOP Message (iPhone Display) (For obvious APPLE DISPLAY phone repairs – Quote BOTH 3rd
+    party display and OEM display costs."), and the APPOINTMENT LEADS titles did, Oct 24, 2026."""
+    return bool(re.match(r"(hi|hello|here at)\b", t, re.I)) or len(plain if plain is not None else t) > 110
 
 
 def parse_leads(docx):
@@ -104,7 +107,7 @@ def parse_leads(docx):
             items.append({"group": group, "title": title.rstrip(" -:"), "texts": list(texts)})
 
     for t, plain in paragraphs(docx):
-        if is_message(t):
+        if is_message(t, plain):
             texts.append(t)
             continue
         if title is not None and not texts:

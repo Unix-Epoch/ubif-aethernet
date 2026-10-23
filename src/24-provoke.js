@@ -46,7 +46,10 @@ AE.shard({
     // Sheet titles, matched loosely so small edits to the doc don't break them.
     const T = {
       iphone: /^iphone$/i, android: /^samsung and google/i, home: /^atc|home\+/i, verizon: /^verizon$/i,
-      oopPrice: /^first oop.*obvious/i, oopAsk: /^first oop.*(unclear|multi)/i, oopSecond: /^second oop/i,
+      // The priced first message has two versions (Oct 24, 2026): "(Everything else)" with one $price, and
+      // "(iPhone Display)" quoting a 3rd party display ($price) and an OEM one ($price).
+      oopPrice: /^first oop(?!.*iphone display).*obvious/i, oopIphone: /^first oop.*iphone display/i,
+      oopAsk: /^first oop.*(unclear|multi)/i, oopSecond: /^second oop/i,
     };
     const BY_PROGRAM = { 20004: 'mobility', 8849: T.home, 20005: T.home, 8379: T.verizon, 8367: /^servify/i, 8850: /^amazon buyout/i, 7384: /^element/i };
 
@@ -103,12 +106,23 @@ AE.shard({
       if (OOP.includes(prog) || (typeOf(a) === APPOINTMENT && !CLAIM_ONLY(prog))) {
         const sp = prices ? screenPrices(pricesFor(dev, prices)) : [];
         const pickPrice = sp.length && !sp[0].console; // consoles: no "obvious" repair, so no price until one is clicked
+        // iPhones: the iPhone Display message, priced with the lowest 3rd party display (Apple tab LCD / OLED) and the OEM one.
+        const iph = pickPrice && /iphone/i.test(dev) && find(items, T.oopIphone);
+        const third = sp.find((x) => !isOem(x)), oem = sp.find(isOem);
+        if (iph && third && oem) return { ready: false, call, item: iph, priced: iph, second: find(items, T.oopSecond), prices: sp, price: [third.price, oem.price], slots: [third, oem] };
         return { ready: false, call, item: find(items, pickPrice ? T.oopPrice : T.oopAsk), priced: find(items, T.oopPrice), second: find(items, T.oopSecond), prices: sp, price: pickPrice ? sp[0].price : null };
       }
       return { ready: false, call, item: null };
     }
     const CLAIM_ONLY = (prog) => !!BY_PROGRAM[prog] || prog === MOBILITY;
-    const fill = (text, price) => price == null ? text : text.replace(/\$\s?price\b/gi, money(price));
+    // A price chip's slot on the iPhone Display message: OEM (the second $price) or a 3rd party display (the first).
+    const isOem = (x) => /\boem\b/i.test(x.label) && !/lcd|oled/i.test(x.label);
+    // price: one number for every $price, or [first, second, …] in order (the last one repeats).
+    const fill = (text, price) => {
+      if (price == null) return text;
+      let i = 0;
+      return text.replace(/\$\s?price\b/gi, () => money(Array.isArray(price) ? price[Math.min(i++, price.length - 1)] : price));
+    };
 
     // ------------------------------------------------------------ sending
     const report = (what, e) => ' If you keep seeing this, ' + AE.bugLink('report a bug', { where: 'Provoke', error: what + ': ' + ((e && e.message) || e) }) + '!';
@@ -175,8 +189,10 @@ AE.shard({
       const setText = () => { ta.value = p.item ? fill(p.item.texts[0], price) : ''; btn.disabled = !ta.value.trim(); };
       const chips = p.prices && p.prices.length
         ? h('div', { class: 'chips' }, h('span', { class: 'sg-soft' }, p.prices.every((x) => x.console) ? 'Prices:' : 'Screen:'),
-          p.prices.map((x, i) => { const c = h('button', { type: 'button', class: 'chip' + (i === 0 && price != null ? ' on' : ''), title: x.raw, onclick: () => {
-            price = x.price; c.parentElement.querySelectorAll('.chip').forEach((o) => o.classList.toggle('on', o === c));
+          p.prices.map((x, i) => { const c = h('button', { type: 'button', class: 'chip' + ((p.slots ? p.slots.includes(x) : i === 0 && price != null) ? ' on' : ''), title: x.raw, 'data-slot': p.slots ? (isOem(x) ? 1 : 0) : '', onclick: () => {
+            // iPhone Display message: a chip sets its own slot (3rd party or OEM) and keeps the other; otherwise one price.
+            if (p.slots) { const slot = isOem(x) ? 1 : 0; price = price.slice(); price[slot] = x.price; c.parentElement.querySelectorAll('.chip[data-slot="' + slot + '"]').forEach((o) => o.classList.toggle('on', o === c)); }
+            else { price = x.price; c.parentElement.querySelectorAll('.chip').forEach((o) => o.classList.toggle('on', o === c)); }
             if (p.priced && p.item !== p.priced) { p.item = p.priced; sel.value = String(items.indexOf(p.priced)); }
             setText();
           } }, x.label + ' ' + money(x.price)); return c; }))
