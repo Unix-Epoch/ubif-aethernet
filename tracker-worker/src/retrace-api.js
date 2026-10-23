@@ -347,10 +347,17 @@ export async function retraceStore(req, env, url, store, path, H) {
   Behind the access gate (page 'retrace'; the store in the path, or ?store=, must be one of the person's stores).
   Paths below are under /api/tracker. Movements come back as stored, user_name as `user`.
 
-  GET /retrace/item/:store/:item?from&to&kinds&limit&offset   → { store, item, info: { name, category, qty, last_seen,
+  GET /retrace/item/:store/:item?from&to&kinds&user&limit&offset   → { store, item, info: { name, category, qty, last_seen,
         changed_at } | null, counts: [{ serial_status, wh_type, consignment, n }], labels: [{ label, serial_status, wh_type,
-        consignment, wo, po, last_seen, last_history_at, need_history }], movements: [...], total }
-        from / to: YYYY-MM-DD (UTC days) or ISO; kinds: comma list of KINDS; newest first; limit ≤ 1000 (200).
+        consignment, wo, po, last_seen, last_history_at, need_history }], movements: [...], total,
+        by_kind: [{ kind, n }], users: [{ user, n }], first_at, all_total, sold90 }
+        from / to: YYYY-MM-DD (UTC days) or ISO; kinds: comma list of KINDS; user: who made the movement; newest first;
+        limit ≤ 1000 (200). by_kind: the date range and user without the kinds filter (the page's filter chips); users:
+        the date range and kinds without the user filter (its person picker); first_at / all_total: every movement of the
+        item, no filter; sold90: 'sold' movements in the last 90 days.
+  GET /retrace/items?store=&limit=&offset=   → { items: [{ item, name, category, qty, on_hand, moves, last_at }], total }
+        items with movements at the store, most recent movement first; name from inv_items, else a label's product;
+        on_hand: inv_items qty summed over the store's warehouses (null when the item lookup hasn't seen it); limit ≤ 500 (100).
   GET /retrace/label/:store/:label   → { label: inv_labels row | null, movements: [...] } oldest first · 404 when neither
   GET /retrace/search?store=&q=      → { labels: [...], items: [...], refs: [{ store, ref_type, ref_id, n, first_at, last_at }],
         docs: [...] } · q (2+ chars): a label (or its start), OEM serial / IMEI, an item number or name, a PO / WO /
@@ -390,22 +397,32 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     if (q.get('to') && !to) return H.fail(400, 'to: YYYY-MM-DD or ISO', false);
     if (from) { where.push('m.at >= ?'); args.push(from); }
     if (to) { where.push('m.at <= ?'); args.push(to); }
+    // The date range alone (by_kind adds the user, users adds the kinds; the movement list has all three).
+    const base = [...where], baseArgs = [...args], kw = [], kwArgs = [], uw = [], uwArgs = [];
     if (q.get('kinds')) {
       const kinds = q.get('kinds').split(',').map((k) => k.trim()).filter(Boolean);
       if (!kinds.length || kinds.some((k) => !KINDS.includes(k))) return H.fail(400, 'kinds: ' + KINDS.join(', '), false);
-      where.push('m.kind IN (SELECT value FROM json_each(?))'); args.push(JSON.stringify(kinds));
+      kw.push('m.kind IN (SELECT value FROM json_each(?))'); kwArgs.push(JSON.stringify(kinds));
     }
+    const user = H.clean(q.get('user'), 80);
+    if (user) { uw.push('m.user_name = ?'); uwArgs.push(user); }
+    where.push(...kw, ...uw); args.push(...kwArgs, ...uwArgs);
     const limit = Math.min(H.int(q.get('limit')) || 200, 1000), offset = H.int(q.get('offset')) || 0;
-    const [info, counts, labels, moves, total] = await T.batch([
+    const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
+    const [info, counts, labels, moves, total, byKind, users, all] = await T.batch([
       T.prepare('SELECT name, category, qty, last_seen, changed_at FROM inv_items WHERE store = ? AND item = ?').bind(store, item),
       T.prepare('SELECT serial_status, wh_type, consignment, COUNT(*) AS n FROM inv_labels WHERE store = ? AND item = ? GROUP BY serial_status, wh_type, consignment ORDER BY n DESC').bind(store, item),
       T.prepare('SELECT label, serial_status, wh_type, consignment, wo, po, last_seen, last_history_at, need_history FROM inv_labels WHERE store = ? AND item = ? ORDER BY last_seen DESC LIMIT 1000').bind(store, item),
       T.prepare(`SELECT ${MV_COLS} FROM ${MV_FROM} WHERE ${where.join(' AND ')} ORDER BY m.at DESC, m.id DESC LIMIT ? OFFSET ?`).bind(...args, limit, offset),
       T.prepare(`SELECT COUNT(*) AS n FROM inv_movements m WHERE ${where.join(' AND ')}`).bind(...args),
+      T.prepare(`SELECT m.kind, COUNT(*) AS n FROM inv_movements m WHERE ${[...base, ...uw].join(' AND ')} GROUP BY m.kind ORDER BY n DESC`).bind(...baseArgs, ...uwArgs),
+      T.prepare(`SELECT m.user_name AS user, COUNT(*) AS n FROM inv_movements m WHERE ${[...base, ...kw].join(' AND ')} AND m.user_name IS NOT NULL GROUP BY m.user_name ORDER BY n DESC LIMIT 100`).bind(...baseArgs, ...kwArgs),
+      T.prepare("SELECT MIN(at) AS first_at, COUNT(*) AS n, SUM(CASE WHEN kind = 'sold' AND at >= ? THEN 1 ELSE 0 END) AS sold90 FROM inv_movements WHERE store = ? AND item = ?").bind(since90, store, item),
     ]);
-    const i = info.results[0] || null;
+    const i = info.results[0] || null, a = all.results[0] || {};
     await H.log(env, email, 'retrace:item', store, null, item);
-    return H.json({ store, item, info: i && Object.assign(i, { qty: parse(i.qty) }), counts: counts.results, labels: labels.results, movements: moves.results, total: total.results[0].n }, 200, false);
+    return H.json({ store, item, info: i && Object.assign(i, { qty: parse(i.qty) }), counts: counts.results, labels: labels.results, movements: moves.results, total: total.results[0].n,
+      by_kind: byKind.results, users: users.results, first_at: a.first_at || null, all_total: a.n || 0, sold90: a.sold90 || 0 }, 200, false);
   }
 
   const lm = path.match(/^\/retrace\/label\/(\d{1,6})\/([^/]{1,80})$/);
@@ -428,6 +445,27 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     if (me.scope === 'all') return { sql: '1 = 1', args: [] };
     return { sql: 'store IN (SELECT value FROM json_each(?))', args: [JSON.stringify(me.stores)] };
   };
+
+  // Items with movements at a store, most recent movement first (the page's item list).
+  if (path === '/retrace/items') {
+    const store = H.int(q.get('store'));
+    if (store == null) return H.fail(400, 'store required', false);
+    if (!canSee(store)) return H.fail(403, 'not your store', false);
+    const limit = Math.min(H.int(q.get('limit')) || 100, 500), offset = H.int(q.get('offset')) || 0;
+    const [rows, total] = await T.batch([
+      T.prepare(`SELECT m.item, m.moves, m.last_at, i.name, i.category, i.qty,
+          (SELECT l.product FROM inv_labels l WHERE l.store = ? AND l.item = m.item AND l.product IS NOT NULL LIMIT 1) AS product
+          FROM (SELECT item, COUNT(*) AS moves, MAX(at) AS last_at FROM inv_movements WHERE store = ? AND item IS NOT NULL GROUP BY item) m
+          LEFT JOIN inv_items i ON i.store = ? AND i.item = m.item ORDER BY m.last_at DESC, m.item LIMIT ? OFFSET ?`).bind(store, store, store, limit, offset),
+      T.prepare('SELECT COUNT(DISTINCT item) AS n FROM inv_movements WHERE store = ? AND item IS NOT NULL').bind(store),
+    ]);
+    const items = rows.results.map((r) => {
+      const qty = parse(r.qty);
+      const onHand = qty && typeof qty === 'object' ? Object.values(qty).reduce((n, w) => n + (w && typeof w.onHand === 'number' ? w.onHand : 0), 0) : null;
+      return { item: r.item, name: r.name || r.product || null, category: r.category || null, qty, on_hand: onHand, moves: r.moves, last_at: r.last_at };
+    });
+    return H.json({ items, total: total.results[0].n }, 200, false);
+  }
 
   if (path === '/retrace/search') {
     const s = scope(), term = H.clean(q.get('q'), 60);

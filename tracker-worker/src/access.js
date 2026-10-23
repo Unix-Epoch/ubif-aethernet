@@ -30,7 +30,7 @@ export const ROUTES = [
   ['POST', /^\/api\/tracker\/init$/, 'owner'],
   ['*', /^\/api\/tracker\/(people|agents|log)(\/|$)/, 'owner'],
   ['GET', /^\/api\/tracker\/store-keys$/, ['wos', 'rules']],  // all-stores + details checked in trackerAdmin (rules: test orders' notes)
-  ['GET', /^\/api\/tracker\/stores$/, ['wos', 'sales', 'metrics']],
+  ['GET', /^\/api\/tracker\/stores$/, ['wos', 'sales', 'metrics', 'retrace']],   // filtered to their stores in trackerAdmin (Retrace: its store picker)
   ['GET', /^\/api\/tracker\/wos$/, 'wos'],
   ['GET', /^\/api\/tracker\/wo\/(\d{1,6})\/\d{1,12}$/, 'wos', 1],
   ['GET', /^\/api\/tracker\/sales\/days?$/, 'sales'],
@@ -49,7 +49,8 @@ export const ROUTES = [
   ['GET', /^\/(rulegraph|assize-rules|rules-ui)\.js$/, 'rules'],     // the editor and its engine, served to the page
   ['GET', /^\/api\/tracker\/retrace\/(item|label)\/(\d{1,6})\/[^/]{1,80}$/, 'retrace', 2],
   ['GET', /^\/api\/tracker\/retrace\/po\/(\d{1,6})\/[^/]{1,80}$/, 'retrace', 1],
-  ['GET', /^\/api\/tracker\/retrace\/(search|coverage|pos)$/, 'retrace'],   // ?store= checked here (query); without it, their stores (src/retrace-api.js)
+  ['GET', /^\/api\/tracker\/retrace\/(search|coverage|pos|items)$/, 'retrace'],   // ?store= checked here (query); without it, their stores (src/retrace-api.js; items needs it)
+  ['GET', /^\/retrace-ui\.js$/, 'retrace'],                         // the Retrace page, served to the page
 ];
 
 export const owners = (env) => String(env.TRACKER_OWNERS || '').toLowerCase().split(/[\s,]+/).filter(Boolean);

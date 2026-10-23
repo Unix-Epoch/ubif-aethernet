@@ -22,6 +22,7 @@
     GET  /rulegraph.js, /assize-rules.js   the rule graph interpreter and Assize's rules engine as browser modules
                       (page 'rules'; the same files the tracker Worker imports and build.py inlines into Aethernet)
     GET  /rules-ui.js    the Assize rules editor (page 'rules'; loaded by page.js on first use)
+    GET  /retrace-ui.js  the Retrace page (page 'retrace'; loaded by page.js on first use; data from /api/tracker/retrace/…)
   Local testing only: `wrangler dev --var LOCAL_TEST:1` lets requests to localhost in.
 */
 import { adminApi } from '../../worker/src/index.js';
@@ -33,11 +34,12 @@ import WORDS from './words.txt';
 import TRACKER_UI from './tracker-ui.js';
 import METRICS_UI from './metrics-ui.js';
 import RULES_UI from './rules-ui.js';
+import RETRACE_UI from './retrace-ui.js';
 // Assize's rules engine and the graph interpreter, as text for the page (the Assize rules editor runs them in the
 // browser); the tracker Worker imports the same files as code.
 import RULEGRAPH_SRC from '../../tracker-worker/src/rulegraph.js' with { type: 'text' };
 import ASSIZE_RULES_SRC from '../../tracker-worker/src/assize-rules.js' with { type: 'text' };
-const SHARED = { '/rulegraph.js': RULEGRAPH_SRC, '/assize-rules.js': ASSIZE_RULES_SRC, '/rules-ui.js': RULES_UI };
+const SHARED = { '/rulegraph.js': RULEGRAPH_SRC, '/assize-rules.js': ASSIZE_RULES_SRC, '/rules-ui.js': RULES_UI, '/retrace-ui.js': RETRACE_UI };
 
 const b64url = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 const parse = (s) => JSON.parse(new TextDecoder().decode(b64url(s)));
@@ -90,6 +92,7 @@ export default {
     // The Metrics page's own script: after the gate, so only people with page 'metrics' get it.
     if (url.pathname === '/metrics-ui.js') return new Response(METRICS_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     // The Assize rules editor and its engine (page 'rules'): import * as RG from '/rulegraph.js'; import { makeRules } from '/assize-rules.js'.
+    // The Retrace page (page 'retrace'), the same way.
     if (SHARED[url.pathname]) return new Response(SHARED[url.pathname], { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     if (!url.pathname.startsWith('/api/')) return new Response('Not found', { status: 404 });
     // The next public version (status.json's latest, minor + 1): the default "fixed in" for quoting a report.

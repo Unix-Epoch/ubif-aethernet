@@ -382,6 +382,33 @@ assert.equal((await admin('owner@x.com', '/retrace/search?q=x')).status, 400);
 const cov = (await admin('owner@x.com', '/retrace/coverage')).j.stores;
 const c914 = cov.find((s) => s.store === 914);
 assert.ok(c914.labels >= 5 && c914.histories === 3 &&  c914.backlog > 0 && c914.movements > 10 && c914.last_sweep_at && c914.items === 2, JSON.stringify(c914));
+// item: chip counts, person picker, first movement, sold in 90 days; the item list
+{
+  const all = it.j;
+  assert.ok(all.by_kind.length && all.by_kind.reduce((n, k) => n + k.n, 0) === all.total, 'by_kind adds up to the movements');
+  assert.equal(all.all_total, all.total); assert.ok(all.first_at && all.first_at <= all.movements[all.movements.length - 1].at);
+  assert.equal(typeof all.sold90, 'number');
+  assert.ok(all.users.some((u) => u.user === 'Tech Alpha'), JSON.stringify(all.users));
+  const one = (await admin('owner@x.com', '/retrace/item/914/180001?user=' + encodeURIComponent('Tech Alpha'))).j;
+  assert.ok(one.movements.length && one.movements.every((m) => m.user === 'Tech Alpha'), 'user filter');
+  assert.deepEqual(one.users, all.users, 'users ignore the user filter');
+  assert.equal(one.by_kind.reduce((n, k) => n + k.n, 0), one.total, 'by_kind follows the user filter');
+  const rk = (await admin('owner@x.com', '/retrace/item/914/180001?kinds=reserved')).j;
+  assert.deepEqual(rk.by_kind, all.by_kind, 'by_kind ignores the kinds filter');
+  assert.equal(rk.all_total, all.all_total);
+  await T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, source, key, recorded_at) VALUES (914, '180001-0000600001', '180001', ?, 'sold', 'watch', 'test-sold90', ?), (914, '180001-0000600001', '180001', '2025-01-01T00:00:00.000Z', 'sold', 'watch', 'test-sold-old', ?)").bind(new Date().toISOString(), AT, AT).run();
+  const s90 = (await admin('owner@x.com', '/retrace/item/914/180001')).j.sold90;
+  assert.equal(s90, all.sold90 + 1, 'sold90: only the last 90 days');
+  const li = await admin('owner@x.com', '/retrace/items?store=914');
+  ok(li, 'items');
+  assert.ok(li.j.total >= 1 && li.j.items.length === li.j.total);
+  const i1 = li.j.items.find((x) => x.item === '180001');
+  assert.equal(i1.name, 'Galaxy S24 Battery'); assert.equal(i1.moves, all.all_total + 2); assert.equal(typeof i1.on_hand, 'number');
+  assert.ok(li.j.items.every((x, k, a) => k === 0 || a[k - 1].last_at >= x.last_at), 'most recent movement first');
+  assert.equal((await admin('owner@x.com', '/retrace/items?store=914&limit=1')).j.items.length, 1);
+  assert.equal((await admin('owner@x.com', '/retrace/items')).status, 400, 'store required');
+  assert.deepEqual((await admin('owner@x.com', '/retrace/items?store=555')).j.items, [], 'a store with nothing yet');
+}
 // PO page and list
 {
   const pg = await admin('owner@x.com', '/retrace/po/914/UBFPO000099007');
@@ -418,6 +445,10 @@ assert.equal((await admin('mgr@x.com', '/retrace/pos?store=326')).status, 403);
 assert.equal((await admin('viewer@x.com', '/retrace/pos?store=914')).status, 403, 'no Retrace page');
 assert.equal((await admin('viewer@x.com', '/retrace/item/914/180001')).status, 403, 'no Retrace page');
 assert.equal((await admin('viewer@x.com', '/retrace/coverage')).status, 403);
+assert.equal((await admin('mgr@x.com', '/retrace/items?store=914')).status, 200);
+assert.equal((await admin('mgr@x.com', '/retrace/items?store=326')).status, 403, 'items: other store');
+assert.equal((await admin('mgr@x.com', '/retrace/items')).status, 400);
+assert.equal((await admin('viewer@x.com', '/retrace/items?store=914')).status, 403, 'no Retrace page');
 assert.ok((await T.prepare("SELECT COUNT(*) AS n FROM access_log WHERE action = 'retrace:item' AND email = 'mgr@x.com'").first()).n >= 1, 'views logged');
 const { presetOf } = await import('../src/access.js');
 assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data', 'retrace'] }), 'manager');

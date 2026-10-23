@@ -59,7 +59,7 @@ const today = () => { const d = new Date(); return d.getFullYear() + '-' + Strin
 const woLink = (id) => h('a', { href: 'https://portal.ubreakifix.net/repair/workorder/' + id, target: '_blank', rel: 'noopener' }, id + ' ↗');
 // Every page there is; the nav shows only the ones GET /api/tracker/me says this person has (developers: all).
 // The server refuses the rest on its own (tracker-worker/src/access.js); this only keeps the page honest.
-const TABS_ALL = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['sales', 'Sales'], ['metrics', 'Metrics'], ['rules', 'Assize rules'], ['people', 'People']];
+const TABS_ALL = [['reports', 'Reports'], ['usage', 'Usage'], ['stores', 'Stores'], ['auto', 'Auto-Waymark'], ['data', 'Store data'], ['wos', 'Work orders'], ['sales', 'Sales'], ['metrics', 'Metrics'], ['rules', 'Assize rules'], ['retrace', 'Retrace'], ['people', 'People']];
 let TABS = [], ACCESS = null;
 let tab = location.hash.slice(1).split('?')[0]; // #metrics?store=…: the Metrics page keeps its view after the ?
 function nav() { $('#tabs').replaceChildren(...TABS.map(([k, l]) => h('button', { class: k === tab ? 'on' : null, onclick: () => { tab = k; location.hash = k; draw(); } }, l))); }
@@ -82,8 +82,8 @@ async function draw() {
   }
   nav();
   if (!TABS.some(([k]) => k === tab)) return noAccess(m); // a direct link to a page they don't have: no API call for it
-  m.replaceChildren(h('div', { class: 'soft' }, 'Loading…')); m.style.maxWidth = tab === 'metrics' ? '1720px' : tab === 'rules' ? 'none' : '';
-  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, metrics: drawMetrics, rules: drawRules, wos: (x) => drawTracker('wos', x), sales: (x) => drawTracker('sales', x), people: (x) => drawTracker('people', x) }[tab])(m); }
+  m.replaceChildren(h('div', { class: 'soft' }, 'Loading…')); m.style.maxWidth = tab === 'metrics' ? '1720px' : tab === 'rules' ? 'none' : tab === 'retrace' ? '1500px' : '';
+  try { await ({ reports: drawReports, usage: drawUsage, stores: drawStores, auto: drawAuto, data: drawData, metrics: drawMetrics, rules: drawRules, retrace: drawRetrace, wos: (x) => drawTracker('wos', x), sales: (x) => drawTracker('sales', x), people: (x) => drawTracker('people', x) }[tab])(m); }
   catch (e) { m.replaceChildren(h('div', { class: 'err' }, "Couldn't load: " + e.message)); } }
 // Metrics: the page itself lands with feat/metrics (metrics-ui); until then the tab only holds its place.
 function toast(t) { const el = h('div', { style: 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;z-index:9' }, t); document.body.append(el); setTimeout(() => el.remove(), 3500); }
@@ -227,6 +227,8 @@ async function drawTracker(which, m) {
 async function drawMetrics(m) { const mod = await import('/metrics-ui.js'); await mod.draw(m, { h, api, toast }); }
 // Assize rules: the node editor (rules-ui.js), loaded on first use. It unlocks test orders through tracker-ui.js.
 async function drawRules(m) { const mod = await import('/rules-ui.js'); await mod.draw(m, { h, api, toast, fmt, access: ACCESS, tab: () => tab, redraw: draw }); }
+// Retrace: the inventory movement ledger (retrace-ui.js), loaded on first use.
+async function drawRetrace(m) { const mod = await import('/retrace-ui.js'); await mod.draw(m, { h, api, toast, fmt, woLink, access: ACCESS, tab: () => tab, redraw: draw }); }
 addEventListener('hashchange', () => { const t = location.hash.slice(1).split('?')[0]; if (t && t !== tab) { tab = t; draw(); } });
 draw();
 </script></body></html>`;
