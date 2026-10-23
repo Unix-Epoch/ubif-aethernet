@@ -197,8 +197,24 @@ assert.ok((await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.l
   assert.ok((await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.log.some((l) => l.action === 'access:change' && l.detail === 'ol@x.com · pages +rules · role owner → owner + assize rules'), 'access change log names the page and the role');
   assert.equal((await call('ol@x.com', 'GET', '/api/tracker/assize/rules')).status, 200, 'now they have it');
   assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'ol@x.com', scope: 'all', pages: P8, details: true })).status, 200);
-  assert.deepEqual((await call('owner@x.com', 'GET', '/api/tracker/people')).j.pages, [...P8, 'rules'], 'the People page lists Assize rules');
+  assert.deepEqual((await call('owner@x.com', 'GET', '/api/tracker/people')).j.pages, [...P8, 'rules', 'retrace'], 'the People page lists Assize rules and Retrace');
+  // Retrace (Oct 23, 2026) joins the Manager and Owner roles; people given those roles before still show as them
+  assert.equal(presetOf({ scope: 'all', details: true, pages: [...P8, 'retrace'] }), 'owner');
+  assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data', 'retrace'] }), 'manager');
+  assert.equal(presetOf({ scope: 'stores', details: false, pages: ['wos', 'retrace'] }), 'custom');
 }
+
+// --- Retrace (page 'retrace', store-scoped): through the site's gate, like every tracker route
+await T.prepare("UPDATE people SET pages = ? WHERE email = 'mgr@x.com'").bind(JSON.stringify(['wos', 'sales', 'metrics', 'data', 'retrace'])).run();
+assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/item/914/180001')).status, 200, 'manager: their store');
+assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 403, 'manager: another store');
+assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/label/326/180001-0000600001')).status, 403);
+assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/search?store=326&q=180001')).status, 403);
+assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/coverage')).status, 200);
+assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/retrace/coverage')).status, 403, 'no Retrace page');
+assert.equal((await call('ol@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 403, 'an Owner from before Retrace needs the page added');
+assert.equal((await call('owner@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 200, 'developers: everything');
+assert.equal((await call('mgr@x.com', 'POST', '/api/tracker/retrace/coverage')).status, 403, 'read only: unknown route');
 
 // --- trackerAdmin gates on its own too (called directly, without the site's gate)
 const direct = async (email, path) => (await trackerAdmin(new Request('https://a.test/api/tracker' + path), E, new URL('https://a.test/api/tracker' + path), path.split('?')[0], email)).status;
