@@ -1,0 +1,11 @@
+{ "PurchaseOrderNumber": "UBFPO000099007", "OrderVendorAccountNumber": "V-0001", "PurchaseOrderPoolId": "AUTO-ORDER", "PurchaseOrderStatus": "Backorder", "DocumentApprovalStatus": "Confirmed",
+  "DefaultReceivingSiteId": "914", "DefaultReceivingWarehouseId": "914", "VendorOrderReference": "VOR-7", "asuTrackingNumber": "1Z999", "VendorPaymentMethodName": "Net 30",
+  "DeliveryModeId": "GND", "DeliveryModeDescription": "Ground", "AccountingDate": "2026-10-20T00:00:00Z", "CurrencyCode": "USD", "DeliveryAddressName": "Store 914 (made up)",
+  "UbifTotalAmount": 210.5, "UbifTotalRemainingQty": 3, "UbifTotalRegisteredQty": 0, "UbifIsJIT": false, "UbifIsFused": false, "UbifMergedIntoPurchId": "", "UbifPurchaseOrderType": "Auto",
+  "UbifAutoReceiveDateTime": "2026-10-25T12:00:00Z", "UbifIsAutoReceivePaused": false, "ConsignedAmount": 120, "OwnedAmount": 90.5, "StoreName": "Store 914", "IsCrossStore": false,
+  "PurchaseOrderLinesV2": [
+    { "PurchaseOrderNumber": "UBFPO000099007", "LineNumber": 1, "ItemNumber": "180001", "ExternalItemNumber": "EXT-1", "OrderedPurchaseQuantity": 2, "PurchasePrice": 60, "PurchaseUnitSymbol": "ea",
+      "LineAmount": 120, "RemainPurchPhysical": 2, "PurchReceivedNow": 0, "UBIFCancelQty": 0, "UBIFShippedQty": 2, "UbifShippedQtyPrice": 120, "UbifIsEnabledForConsignment": "Yes", "LineDescription": "Galaxy S24 Battery" },
+    { "PurchaseOrderNumber": "UBFPO000099007", "LineNumber": 2, "ItemNumber": "176255", "ExternalItemNumber": "EXT-2", "OrderedPurchaseQuantity": 1, "PurchasePrice": 90.5, "PurchaseUnitSymbol": "ea",
+      "LineAmount": 90.5, "RemainPurchPhysical": 1, "PurchReceivedNow": 0, "UBIFCancelQty": 0, "UBIFShippedQty": 1, "UbifShippedQtyPrice": 90.5, "UbifIsEnabledForConsignment": "No", "LineDescription": "iPhone 15 Display Assembly" }
+  ] }

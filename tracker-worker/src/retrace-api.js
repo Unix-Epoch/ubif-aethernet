@@ -20,6 +20,11 @@
            touched    labels a sweep saw on a document: queued for a history read
            cursors    { sweepName: value } where each sweep got to (JSON, 4000 chars max each) → GET /retrace/cursor
            need       how many labels to hand out for history reads (default NEED_MAX 60, at most NEED_CAP)
+           pos        purchase orders: [{ header, receive }] (header = a list row or GET boh/purchase-orders/{po};
+                      receive = …/receive-details) or bare list rows; at most 600. Kept in inv_docs (type 'po') with a status
+                      history (inv_doc_events), see the PO block in the route below.
+           poNeed     how many POs whose lines / receive details should be read next to hand out (default 0, at most 100)
+         pos: { seen, written, events, received, need: [po] }   need: POs to read in full (new, or tracked fields moved)
          need: labels whose serial history should be (re)read, changed > touched > backfill, claimed CLAIM_MIN minutes
          so a second browser skips them (the /scan pattern).
     POST /retrace/history { label, rows, by }   the label's serial-history rows (boh/serial-history/{label}: the rows,
@@ -31,14 +36,15 @@
 
   Admin side: retraceAdmin() below, mounted by trackerRoutes at /api/tracker/retrace/… (page 'retrace'; route list there).
 */
-import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, hash53, isoAt } from './retrace.js';
+import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements } from './retrace.js';
 
 export const NEED_MAX = 60;
 const NEED_CAP = 200, CLAIM_MIN = 10, WATCH_MAX = 50;
 // Per-request caps. Most rows become a statement and D1 counts queries per Worker invocation (1000 on paid plans,
 // batched or not), so a pass bigger than this goes up in several sweeps (only new / changed rows are written, so a
 // second pass over the same data is mostly reads).
-const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, rows: 500, cursors: 20 };
+const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, rows: 500, cursors: 20, pos: 600 };
+const PO_DATA_MAX = 200000, PO_NEED_CAP = 100;
 const MAX = { sweep: 4000000, history: 1000000, watch: 150000 };
 const SWEEP_SOURCES = ['sweep', 'transfer', 'count', 'rma', 'buyback', 'po', 'snapshot'];
 const CURSOR_RE = /^[a-z][a-z0-9_-]{0,30}$/, LAST_SWEEP = 'last_sweep';
@@ -149,7 +155,7 @@ export async function retraceStore(req, env, url, store, path, H) {
 
   if (path === '/retrace/sweep' && req.method === 'POST') {
     const b = await H.readJson(req, MAX.sweep);
-    for (const k of ['items', 'labels', 'docs', 'movements', 'touched']) if (b[k] != null && (!Array.isArray(b[k]) || b[k].length > LIMIT[k])) return H.fail(400, k + ': a list of at most ' + LIMIT[k]);
+    for (const k of ['items', 'labels', 'docs', 'movements', 'touched', 'pos']) if (b[k] != null && (!Array.isArray(b[k]) || b[k].length > LIMIT[k])) return H.fail(400, k + ': a list of at most ' + LIMIT[k]);
     if (b.cursors != null && (typeof b.cursors !== 'object' || Array.isArray(b.cursors) || Object.keys(b.cursors).length > LIMIT.cursors)) return H.fail(400, 'cursors: { sweep: value }');
     const at = H.now(), by = H.clean(b.by, 60) || null, stmts = [];
     let written = 0, skipped = 0;
@@ -238,8 +244,9 @@ export async function retraceStore(req, env, url, store, path, H) {
     stmts.push(...fromSweep.stmts);
     for (const t of new Set((b.touched || []).map(cleanLabel).filter(Boolean))) stmts.push(touchLabel(T, store, t, labelSnapshot({ label: t }).item || null, NEED.touched, at));
 
-    // Documents: written only when something about the header changed.
+    // Documents: written only when something about the header changed. POs have their own path below (status history).
     for (const d of b.docs || []) {
+      if (d && d.type === 'po') continue;
       const doc = normalize.doc(d && d.type, d);
       if (!doc) continue;
       const data = JSON.stringify(doc.data || {});
@@ -249,12 +256,74 @@ export async function retraceStore(req, env, url, store, path, H) {
           WHERE status IS NOT excluded.status OR data IS NOT excluded.data OR (excluded.at IS NOT NULL AND at IS NOT excluded.at) OR (excluded.counterpart IS NOT NULL AND counterpart IS NOT excluded.counterpart)`)
         .bind(store, doc.type, doc.id, doc.status, doc.at, doc.counterpart, data, at, at));
     }
+    /*
+      Purchase orders: { header, receive } (or a bare list row) → the stored PO (retrace.js poState / mergePo, in inv_docs
+      type 'po'), its status history (inv_doc_events: poEvents) and a 'received' movement per label going In Transit →
+      Received (poMovements; skipped when serial history already gave that label a received row on this PO). A reading
+      with lines or receive details clears need_detail; a list row that's new, or whose tracked fields moved, sets it.
+      Labels on the receive details: known from now on with the PO linked, and queued for a history read when new or
+      when their receive status changed. POs sent through `docs` (type 'po') come here as list rows.
+    */
+    const poIn = [...(b.pos || []), ...(b.docs || []).filter((d) => d && d.type === 'po')];
+    const poOut = { seen: 0, written: 0, events: 0, received: 0 };
+    if (poIn.length) {
+      const readings = new Map();
+      for (const x of poIn) {
+        const detail = !!(x && (x.receive || (x.header && Array.isArray(x.header.PurchaseOrderLinesV2))));
+        const st = x && poState(x.header || x, x.receive);
+        if (!st) continue;
+        const r = readings.get(st.id);
+        readings.set(st.id, r ? { st: mergePo(r.st, st), detail: r.detail || detail } : { st, detail });
+      }
+      poOut.seen = readings.size;
+      const known = new Map(readings.size ? (await T.prepare("SELECT id, data, need_detail FROM inv_docs WHERE store = ? AND type = 'po' AND id IN (SELECT value FROM json_each(?))")
+        .bind(store, JSON.stringify([...readings.keys()])).all()).results.map((r) => [r.id, r]) : []);
+      const poMoves = [];
+      for (const [id, { st, detail }] of readings) {
+        const k = known.get(id), prev = k ? parse(k.data) : null;
+        const next = mergePo(prev, st);
+        if (detail) next.detailAt = at;
+        const need = detail ? 0 : !prev || !prev.detailAt || poSig(prev) !== poSig(next) ? 1 : k.need_detail;
+        const evs = poEvents(prev, next);
+        for (const e of evs) stmts.push(T.prepare('INSERT OR IGNORE INTO inv_doc_events (store, type, id, at, field, old, new, by_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(store, 'po', id, at, e.field.slice(0, 80), e.old == null ? null : String(e.old).slice(0, 120), e.new == null ? null : String(e.new).slice(0, 120), detail ? 'detail' : 'list'));
+        poOut.events += evs.length;
+        poMoves.push(...poMovements(prev, next, at));
+        // Labels new to this PO or whose receive status changed: linked to the PO and queued.
+        const old = new Map(((prev && prev.labels) || []).map((l) => [l.label, l]));
+        for (const l of next.labels && st.labels ? next.labels : []) {
+          const o = old.get(l.label);
+          if (o && o.status === l.status) continue;
+          stmts.push(T.prepare(`INSERT INTO inv_labels (store, label, item, po, oem_serial, imei, first_seen, last_seen, need_history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT (store, label) DO UPDATE SET item = COALESCE(item, excluded.item), po = COALESCE(po, excluded.po), oem_serial = COALESCE(oem_serial, excluded.oem_serial),
+                imei = COALESCE(imei, excluded.imei), need_history = MAX(need_history, excluded.need_history)`)
+            .bind(store, l.label, l.item || null, id, l.oem || null, l.imei || null, at, at, NEED.touched));
+        }
+        const data = JSON.stringify(next);
+        if (k && k.data === data && need === k.need_detail) continue; // nothing new (a list row repeating the stored values)
+        if (data.length > PO_DATA_MAX) continue;
+        poOut.written++; written++;
+        const info = next.info || {};
+        stmts.push(T.prepare(`INSERT INTO inv_docs (store, type, id, status, at, counterpart, data, need_detail, first_seen, updated_at) VALUES (?, 'po', ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (store, type, id) DO UPDATE SET status = excluded.status, at = COALESCE(excluded.at, at), counterpart = COALESCE(excluded.counterpart, counterpart), data = excluded.data,
+              need_detail = excluded.need_detail, updated_at = excluded.updated_at`)
+          .bind(store, id, next.status || null, isoAt(info.accountingDate) || null, info.vendor || info.storeName || null, data, need, at, at));
+      }
+      if (poMoves.length) {
+        const have = new Set((await T.prepare(`SELECT ref_id || '|' || label AS k FROM inv_movements WHERE store = ? AND kind = 'received' AND ref_type = 'po'
+            AND label IN (SELECT value FROM json_each(?))`).bind(store, JSON.stringify(poMoves.map((m) => m.label))).all()).results.map((r) => r.k));
+        const fresh = await movementStmts(T, store, poMoves.filter((m) => !have.has(m.ref_id + '|' + m.label)), at, NEED.touched, null);
+        stmts.push(...fresh.stmts);
+        poOut.received = fresh.added;
+      }
+    }
+
     for (const [name, value] of Object.entries(b.cursors || {})) {
       const v = JSON.stringify(value === undefined ? null : value);
       if (!CURSOR_RE.test(name) || name === LAST_SWEEP || v.length > 4000) return H.fail(400, 'bad cursor ' + String(name).slice(0, 40));
       stmts.push(T.prepare('INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, sweep) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at').bind(store, name, v, at));
     }
-    const added = diffs.length + fromSweep.added;
+    const added = diffs.length + fromSweep.added + poOut.received;
     stmts.push(T.prepare('INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, sweep) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at')
       .bind(store, LAST_SWEEP, JSON.stringify({ by, items: items.size, labels: snaps.size, movements: added, changedItems: changedItems.length }), at));
     await chunks(T, stmts);
@@ -265,7 +334,10 @@ export async function retraceStore(req, env, url, store, path, H) {
       .bind(store, at, want + 1).all()).results.map((r) => r.label) : [];
     const need = q.slice(0, want);
     if (need.length) await T.prepare('UPDATE inv_labels SET claimed_until = ? WHERE store = ? AND label IN (SELECT value FROM json_each(?))').bind(later(CLAIM_MIN), store, JSON.stringify(need)).run();
-    return H.json({ need, more: q.length > need.length, changedItems, added, rejected, skipped, written });
+    // POs whose lines / receive details to read next (poNeed: how many, default none), newest first.
+    const poWant = Math.min(Math.max(Number.isInteger(b.poNeed) ? b.poNeed : 0, 0), PO_NEED_CAP);
+    poOut.need = poWant ? (await T.prepare("SELECT id FROM inv_docs WHERE store = ? AND type = 'po' AND need_detail = 1 ORDER BY at DESC, id DESC LIMIT ?").bind(store, poWant).all()).results.map((r) => r.id) : [];
+    return H.json({ need, more: q.length > need.length, changedItems, added, rejected, skipped, written, pos: poOut });
   }
   return H.fail(404, 'not found');
 }
@@ -283,6 +355,14 @@ export async function retraceStore(req, env, url, store, path, H) {
   GET /retrace/search?store=&q=      → { labels: [...], items: [...], refs: [{ store, ref_type, ref_id, n, first_at, last_at }],
         docs: [...] } · q (2+ chars): a label (or its start), OEM serial / IMEI, an item number or name, a PO / WO /
         transfer / RMA / buyback / count id. Without store: every store the person can see.
+  GET /retrace/po/:store/:po         → { po, header, lines, labels, events, movements } · 404 when neither the PO nor a movement
+        naming it is known. header: the PO's tracked fields + info (retrace.js poState); lines: { line, item, desc, ordered,
+        shipped, received, cancelled, remaining, price, … } (remaining worked out when Portal gave none); labels: each label's
+        receive status on the PO plus its inv_labels row now (serial_status, wh_type, consignment, wo, sales_order, last_seen);
+        events: status history oldest first; movements: inv_movements naming the PO (ref_type 'po'), oldest first.
+  GET /retrace/pos?store=&status=&from=&to=&limit=&offset=   → { pos: [{ store, po, status, approval, at, counterpart, pool, type,
+        total, remaining, registered, tracking, lines, labels, received, need_detail, updated_at, last_change }], total }
+        newest (accounting date) first; from / to on the accounting date; limit ≤ 500 (100). Without store: their stores.
   GET /retrace/coverage              → { stores: [{ store, labels, histories, backlog, claimed, items, movements,
         last_history_at, last_sweep_at, last_sweep }] } for the stores the person can see.
 */
@@ -366,6 +446,62 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     ]);
     await H.log(env, email, 'retrace:search', q.get('store') ? H.int(q.get('store')) : null, null, term);
     return H.json({ labels: labels.results, items: items.results, refs: refs.results, docs: docs.results }, 200, false);
+  }
+
+  const pm = path.match(/^\/retrace\/po\/(\d{1,6})\/([^/]{1,80})$/);
+  if (pm) {
+    const store = Number(pm[1]), po = H.clean(decodeURIComponent(pm[2]), 40);
+    if (!canSee(store)) return H.fail(403, 'not your store', false);
+    if (!po) return H.fail(400, 'po required', false);
+    const [doc, events, moves] = await T.batch([
+      T.prepare("SELECT status, at, counterpart, data, need_detail, first_seen, updated_at FROM inv_docs WHERE store = ? AND type = 'po' AND id = ?").bind(store, po),
+      T.prepare("SELECT at, field, old, new, by_source FROM inv_doc_events WHERE store = ? AND type = 'po' AND id = ? ORDER BY at, rowid").bind(store, po),
+      T.prepare(`SELECT ${MV_COLS} FROM ${MV_FROM} WHERE m.store = ? AND m.ref_type = 'po' AND m.ref_id = ? ORDER BY m.at, m.id LIMIT 2000`).bind(store, po),
+    ]);
+    const d = doc.results[0] || null;
+    if (!d && !moves.results.length) return H.fail(404, 'PO not seen at this store', false);
+    const data = (d && parse(d.data)) || { id: po };
+    const { lines: rawLines, labels: rawLabels, ...header } = data;
+    const num = (v) => (typeof v === 'number' ? v : null);
+    const lines = (rawLines || []).map((l) => Object.assign({}, l, { remaining: l.remaining != null ? l.remaining
+      : num(l.ordered) != null ? Math.max(0, num(l.ordered) - (num(l.received) || 0) - (num(l.cancelled) || 0)) : null }));
+    const list = rawLabels || [], now = new Map();
+    for (let i = 0; i < list.length; i += 500) {
+      const r = await T.prepare('SELECT label, serial_status, wh_type, consignment, wo, sales_order, last_seen, last_history_at FROM inv_labels WHERE store = ? AND label IN (SELECT value FROM json_each(?))')
+        .bind(store, JSON.stringify(list.slice(i, i + 500).map((l) => l.label))).all();
+      for (const x of r.results) now.set(x.label, x);
+    }
+    const labels = list.map((l) => Object.assign({}, l, { receive_status: l.status, now: now.get(l.label) || null }));
+    await H.log(env, email, 'retrace:po', store, null, po);
+    return H.json({ po, header: Object.assign(header, d ? { status: d.status, at: d.at, counterpart: d.counterpart, need_detail: d.need_detail, first_seen: d.first_seen, updated_at: d.updated_at } : {}),
+      lines, labels, events: events.results, movements: moves.results }, 200, false);
+  }
+
+  if (path === '/retrace/pos') {
+    const s = scope();
+    if (!s) return H.fail(403, 'not your store', false);
+    const where = [s.sql.replace(/\bstore\b/g, 'd.store'), "d.type = 'po'"], args = [...s.args];
+    const from = q.get('from') ? dayFrom(q.get('from')) : null, to = q.get('to') ? dayTo(q.get('to')) : null;
+    if ((q.get('from') && !from) || (q.get('to') && !to)) return H.fail(400, 'from / to: YYYY-MM-DD or ISO', false);
+    if (from) { where.push('d.at >= ?'); args.push(from); }
+    if (to) { where.push('d.at <= ?'); args.push(to); }
+    const status = H.clean(q.get('status'), 40);
+    if (status) { where.push('d.status = ?'); args.push(status); }
+    const limit = Math.min(H.int(q.get('limit')) || 100, 500), offset = H.int(q.get('offset')) || 0;
+    const [rows, total] = await T.batch([
+      T.prepare(`SELECT d.store, d.id, d.status, d.at, d.counterpart, d.data, d.need_detail, d.updated_at,
+          (SELECT MAX(e.at) FROM inv_doc_events e WHERE e.store = d.store AND e.type = 'po' AND e.id = d.id) AS last_change
+          FROM inv_docs d WHERE ${where.join(' AND ')} ORDER BY d.at DESC, d.id DESC LIMIT ? OFFSET ?`).bind(...args, limit, offset),
+      T.prepare(`SELECT COUNT(*) AS n FROM inv_docs d WHERE ${where.join(' AND ')}`).bind(...args),
+    ]);
+    const pos = rows.results.map((r) => {
+      const x = parse(r.data) || {}, info = x.info || {};
+      return { store: r.store, po: r.id, status: r.status, approval: x.approval ?? null, at: r.at, counterpart: r.counterpart, pool: info.pool ?? null, type: info.type ?? null,
+        total: info.total ?? null, remaining: x.remaining ?? null, registered: x.registered ?? null, tracking: x.tracking ?? null, lines: x.lines ? x.lines.length : null,
+        labels: x.labels ? x.labels.length : null, received: x.labels ? x.labels.filter((l) => /^received$/i.test(l.status || '')).length : null,
+        need_detail: r.need_detail, updated_at: r.updated_at, last_change: r.last_change || null };
+    });
+    return H.json({ pos, total: total.results[0].n }, 200, false);
   }
 
   if (path === '/retrace/coverage') {

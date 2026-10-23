@@ -55,10 +55,22 @@ CREATE TABLE IF NOT EXISTS inv_items (
 CREATE TABLE IF NOT EXISTS inv_docs (
   store INTEGER NOT NULL, type TEXT NOT NULL, id TEXT NOT NULL,
   status TEXT, at TEXT, counterpart TEXT,   -- counterpart: the other store, the vendor, the van
-  data TEXT,                           -- JSON of the header's small fields
+  data TEXT,                           -- JSON of the header's small fields (a PO: retrace.js poState, with its lines and labels' receive status)
+  need_detail INTEGER NOT NULL DEFAULT 0,   -- a PO whose lines / receive details should be (re)read (new, or its tracked fields changed)
   first_seen TEXT NOT NULL, updated_at TEXT NOT NULL,
   PRIMARY KEY (store, type, id)
 );
+CREATE INDEX IF NOT EXISTS inv_docs_need ON inv_docs (store, type, need_detail, at);
+-- A document's status history (POs so far): one row per tracked field that changed (header status, approval, quantities,
+-- tracking, auto-receive; 'line <n> received|shipped|cancelled|ordered'; 'label <label>' receive status). retrace.js poEvents.
+CREATE TABLE IF NOT EXISTS inv_doc_events (
+  store INTEGER NOT NULL, type TEXT NOT NULL, id TEXT NOT NULL,
+  at TEXT NOT NULL,                    -- when the change was seen (the server's time: Portal gives none)
+  field TEXT NOT NULL, old TEXT, new TEXT,
+  by_source TEXT,                      -- list (a PO list row) | detail (header + receive details)
+  UNIQUE (store, type, id, at, field)
+);
+CREATE INDEX IF NOT EXISTS inv_doc_events_doc ON inv_doc_events (store, type, id, at);
 -- Per store and sweep: where the browser's last pass got to (JSON: window, last ids, ...). 'last_sweep' is the server's own row.
 CREATE TABLE IF NOT EXISTS inv_cursors (
   store INTEGER NOT NULL, sweep TEXT NOT NULL,

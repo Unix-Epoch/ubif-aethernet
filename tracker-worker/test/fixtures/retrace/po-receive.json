@@ -1,0 +1,12 @@
+{ "PurchaseOrderId": "UBFPO000099007", "VendorOrderReference": "VOR-7", "Status": "Backorder", "TrackingNum": "1Z999", "IsDistro": false, "isJIT": false, "InventSiteId": "914",
+  "PurchaseOrderPoolId": "AUTO-ORDER", "AutoReceiveDateTime": "2026-10-25T12:00:00Z", "IsAutoReceivePaused": false,
+  "Lines": [
+    { "LineNum": 1, "ItemId": "180001", "ItemName": "Galaxy S24 Battery", "Qty": 2, "QtyCancelled": 0, "QtyScanned": 0, "QtyReceived": 0, "PurchaseQtyReceived": 0, "InventoryQty": 2, "InventoryQtyReceived": 0,
+      "InventoryQtyCancelled": 0, "PurchaseUnit": "ea", "InventoryUnit": "ea", "Price": 60, "IsSerialRequired": true, "IsOEMSerialRequired": false, "IsSerialized": true, "IsIMEIRequired": false, "IsGeneric": false, "Metadata": null,
+      "Serials": [
+        { "SerialNumber": "180001-0000600011", "Status": "In Transit", "OEMSerialNumber": "", "imei": "", "CancelledLine": false },
+        { "SerialNumber": "180001-0000600012", "Status": "In Transit", "OEMSerialNumber": "", "imei": "", "CancelledLine": false } ] },
+    { "LineNum": 2, "ItemId": "176255", "ItemName": "iPhone 15 Display Assembly", "Qty": 1, "QtyCancelled": 0, "QtyScanned": 0, "QtyReceived": 0, "PurchaseQtyReceived": 0, "InventoryQty": 1, "InventoryQtyReceived": 0,
+      "InventoryQtyCancelled": 0, "PurchaseUnit": "ea", "InventoryUnit": "ea", "Price": 90.5, "IsSerialRequired": true, "IsOEMSerialRequired": true, "IsSerialized": true, "IsIMEIRequired": false, "IsGeneric": false, "Metadata": null,
+      "Serials": [ { "SerialNumber": "176255-0000514399", "Status": "In Transit", "OEMSerialNumber": "OEM0099", "imei": "", "CancelledLine": false } ] }
+  ] }

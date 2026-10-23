@@ -48,7 +48,8 @@ export const ROUTES = [
   ['*', /^\/api\/tracker\/assize\/rules(\/|$)/, 'rules'],         // scope of each edit checked in src/assize.js
   ['GET', /^\/(rulegraph|assize-rules|rules-ui)\.js$/, 'rules'],     // the editor and its engine, served to the page
   ['GET', /^\/api\/tracker\/retrace\/(item|label)\/(\d{1,6})\/[^/]{1,80}$/, 'retrace', 2],
-  ['GET', /^\/api\/tracker\/retrace\/(search|coverage)$/, 'retrace'],   // ?store= checked here (query); without it, their stores (src/retrace-api.js)
+  ['GET', /^\/api\/tracker\/retrace\/po\/(\d{1,6})\/[^/]{1,80}$/, 'retrace', 1],
+  ['GET', /^\/api\/tracker\/retrace\/(search|coverage|pos)$/, 'retrace'],   // ?store= checked here (query); without it, their stores (src/retrace-api.js)
 ];
 
 export const owners = (env) => String(env.TRACKER_OWNERS || '').toLowerCase().split(/[\s,]+/).filter(Boolean);

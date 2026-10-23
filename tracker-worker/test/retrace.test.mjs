@@ -150,6 +150,76 @@ const ok = (r, what) => assert.ok(r.status < 300, what + ': ' + r.status + ' ' +
 const count = async (sql, ...args) => (await T.prepare(sql).bind(...args).first()).n;
 const unclaim = () => T.prepare('UPDATE inv_labels SET claimed_until = NULL').run();
 
+// ------------------------------------------------------------------ the in-page watcher's helpers (browser side; payloads GUESSED)
+{
+  assert.equal(R.watchPath('https://portal.ubreakifix.net/api/boh/inventory/176255-0000514371/adjust-in?x=1'), 'boh/inventory/176255-0000514371/adjust-in');
+  assert.equal(R.watchRule('GET', '/api/boh/inventory/176255-0000514371/adjust-in'), null, 'reads are never watched');
+  assert.equal(R.watchRule('POST', '/api/boh/inventory/176255-0000514371'), null, 'the label itself only on PATCH');
+  assert.equal(R.watchRule('PATCH', '/api/boh/inventory/176255-0000514371').kind, 'status_changed');
+  assert.equal(R.watchRule('POST', '/api/boh/purchase-orders'), null, 'POST reads (PO lists) are not writes');
+  assert.equal(R.watchRule('POST', '/api/boh/store-transfer-orders/TO-1/ship').kind, 'transfer_out');
+  assert.equal(R.watchRule('POST', '/api/boh/store-transfer-orders/receive').kind, 'transfer_in');
+  assert.equal(R.watchRule('POST', '/api/boh/rma-buyback/rma-orders').kind, 'order');
+  assert.deepEqual(R.labelsIn({ a: [{ SerialNumber: '180001-0000600001' }, '180001-0000600001'], b: { old: 'B-210004-0000000044' }, c: 'not a label' }),
+    [{ label: '180001-0000600001', key: 'SerialNumber' }, { label: 'B-210004-0000000044', key: 'old' }]);
+  const W = (method, url, body, response, ctx) => R.watchMovements({ method, url, body: body == null ? '' : JSON.stringify(body), response: response == null ? '' : JSON.stringify(response), at: AT }, ctx || { user: 'Tech Alpha', store: 914 });
+  let w = W('POST', '/api/boh/inventory/176255-0000514371/adjust-out', { qty: 1, reason: 'x' });
+  assert.deepEqual(w.map((m) => [m.label, m.kind, m.user, m.source]), [['176255-0000514371', 'adjusted_out', 'Tech Alpha', 'watch']]);
+  assert.ok(w.every((m) => R.normalize.watch(m)), 'what the watcher builds passes the server check');
+  assert.notEqual(W('POST', '/api/boh/inventory/176255-0000514371/adjust-out', {}, null)[0].key, R.watchMovements({ method: 'POST', url: '/api/boh/inventory/176255-0000514371/adjust-out', at: '2026-10-23T12:05:00Z' }, {})[0].key, 'two calls, two movements');
+  assert.equal(W('POST', '/api/boh/inventory/176255-0000514371/mark-defective-broken', {})[0].kind, 'defective');
+  w = W('POST', '/api/repair/swap-serial-on-item', { workorderId: 500400002, oldSerialNumber: '180001-0000600002', newSerialNumber: '180001-0000600004' });
+  assert.deepEqual(w.map((m) => m.label + ' ' + m.kind), ['180001-0000600002 swapped_out', '180001-0000600004 swapped_in']);
+  assert.equal(w[0].ref_type, 'wo'); assert.equal(w[0].ref_id, '500400002');
+  assert.deepEqual(kinds(W('POST', '/api/repair/swap-serial-on-item', { a: '180001-0000600002', b: '180001-0000600004' })), ['status_changed', 'status_changed'], 'unknown swap shape: kept, raw path in detail');
+  assert.match(W('POST', '/api/repair/swap-serial-on-item', { a: '180001-0000600002' })[0].detail, /swap-serial-on-item/);
+  assert.equal(W('POST', '/api/boh/remote-tech/transfer-inventory', { serialNumber: '180001-0000600001', toWarehouseId: 'VAN-3', fromWarehouseId: '914' })[0].kind, 'van_out');
+  assert.equal(W('POST', '/api/boh/remote-tech/transfer-inventory', { serialNumber: '180001-0000600001', toWarehouseId: '914', fromWarehouseId: 'VAN-3' })[0].kind, 'van_in');
+  w = W('POST', '/api/boh/counts/UBF-100001/itemSerial', { serialNumber: '180001-0000600001' });
+  assert.deepEqual([w[0].kind, w[0].ref_type, w[0].ref_id], ['count_found', 'count', 'UBF-100001']);
+  // a cart add answers with the whole cart: labels only found there are keyed per cart, so the next add repeats nothing
+  const cart = { cartItems: [{ lineId: 'L1', serial: '180001-0000600001' }, { lineId: 'L2', serial: '176255-0000514371' }] };
+  const a1 = W('POST', '/api/order/cart/item/add', { cartId: '914-1', cartLines: [{ ItemId: '180001' }] }, cart);
+  const a2 = R.watchMovements({ method: 'POST', url: '/api/order/cart/item/add', body: JSON.stringify({ cartId: '914-1' }), response: JSON.stringify(cart), at: '2026-10-23T13:00:00Z' }, {});
+  assert.deepEqual(kinds(a1), ['reserved', 'reserved']); assert.equal(a1[0].ref_type, 'cart'); assert.equal(a1[0].ref_id, '914-1');
+  assert.deepEqual(a1.map((m) => m.key), a2.map((m) => m.key), 'same cart, same labels: same keys');
+  assert.equal(W('POST', '/api/order/cart/item/add', { workorderId: 500400001, cartId: '914-1' }, cart)[0].ref_type, 'wo', 'a WO named in the body wins');
+  assert.deepEqual(W('POST', '/api/order/cart/item/remove', { cartId: '914-1', cartLines: ['L1'] }, cart), [], 'no label, no item: nothing (the recorder still keeps it)');
+  w = W('POST', '/api/order/cart/item/remove', { cartId: '914-1', itemId: '180001' }, null);
+  assert.deepEqual([w[0].label, w[0].item, w[0].kind], [null, '180001', 'status_changed']); assert.ok(R.normalize.watch(w[0]), 'item-level rows pass too');
+  assert.equal(W('POST', '/api/boh/rma-buyback/buyback-order/ship', { lines: [{ SerialNumber: 'B-210004-0000000044' }] })[0].kind, 'buyback');
+  assert.deepEqual(W('GET', '/api/boh/inventory/176255-0000514371/adjust-in', {}), []);
+  assert.deepEqual(R.rowsOf({ value: [1] }), [1]); assert.deepEqual(R.rowsOf([2]), [2]); assert.deepEqual(R.rowsOf({ x: 1 }), []);
+}
+
+// ------------------------------------------------------------------ purchase orders (status over time)
+const POH = fx('po-header'), POR = fx('po-receive'), POL = fx('po-list').value[0];
+{
+  const a = R.poState(POH, POR);
+  assert.equal(a.id, 'UBFPO000099007'); assert.equal(a.status, 'Backorder'); assert.equal(a.approval, 'Confirmed'); assert.equal(a.remaining, 3); assert.equal(a.autoReceivePaused, false);
+  assert.equal(a.info.pool, 'AUTO-ORDER'); assert.ok(!('address' in a.info) && !JSON.stringify(a).includes('Net 30'), 'no address or payment method');
+  assert.deepEqual(a.lines.map((l) => [l.line, l.item, l.ordered, l.shipped, l.received, l.cancelled, l.consignment]), [['1', '180001', 2, 2, 0, 0, 'Yes'], ['2', '176255', 1, 1, 0, 0, 'No']]);
+  assert.deepEqual(a.labels.map((l) => l.label + ' ' + l.status), ['180001-0000600011 In Transit', '180001-0000600012 In Transit', '176255-0000514399 In Transit']);
+  assert.equal(a.labels[2].oem, 'OEM0099');
+  const row = R.poState(POL);
+  assert.equal(row.lines, undefined); assert.equal(row.labels, undefined, 'a list row has no lines');
+  assert.deepEqual(R.poEvents(null, row), [{ field: 'status', old: null, new: 'Backorder' }], 'first sight: one status row');
+  // a list row on top of a full PO keeps its lines; same values = same signature, nothing changed
+  const kept = R.mergePo(a, R.poState(Object.assign({}, POH, { PurchaseOrderLinesV2: undefined })));
+  assert.equal(kept.lines.length, 2); assert.equal(R.poSig(kept), R.poSig(a)); assert.deepEqual(R.poEvents(a, kept), []);
+  // one label scanned in: header quantities, the line, the label's status; one received movement
+  const r2 = JSON.parse(JSON.stringify(POR)); r2.Lines[0].QtyReceived = 1; r2.Lines[0].Serials[0].Status = 'Received';
+  const b = R.mergePo(a, R.poState(Object.assign({}, POH, { UbifTotalRemainingQty: 2, UbifTotalRegisteredQty: 1 }), r2));
+  assert.notEqual(R.poSig(b), R.poSig(a));
+  assert.deepEqual(R.poEvents(a, b).map((e) => e.field + ' ' + e.old + '→' + e.new), ['remaining 3→2', 'registered 0→1', 'line 1 received 0→1', 'label 180001-0000600011 In Transit→Received']);
+  const mv = R.poMovements(a, b, AT);
+  assert.deepEqual(mv.map((m) => [m.label, m.kind, m.ref_type, m.ref_id, m.ref_line, m.source]), [['180001-0000600011', 'received', 'po', 'UBFPO000099007', '1', 'po']]);
+  assert.equal(mv[0].key, R.normalize.poReceive({ PurchaseOrderNumber: 'UBFPO000099007', Lines: [{ Serials: [{ SerialNumber: '180001-0000600011' }] }] }, { at: AT })[0].key, 'same key as poReceive');
+  assert.deepEqual(R.poMovements(null, b, AT), [], 'first reading: history has the past');
+  const c = R.mergePo(b, R.poState(Object.assign({}, POL, { PurchaseOrderNumber: 'UBFPO000099007', PurchaseOrderStatus: 'Received' })));
+  assert.ok(R.poEvents(b, c).some((e) => e.field === 'status' && e.old === 'Backorder' && e.new === 'Received'));
+}
+
 // ------------------------------------------------------------------ WO hook (POST /wo/:wo)
 await T.prepare("INSERT INTO store_keys (store, public_jwk, wrapped_private, created_at) VALUES (914, '{}', 'x', 'now'), (326, '{}', 'x', 'now')").run();
 const SEALED = 'v1.' + 'A'.repeat(200);
@@ -255,6 +325,34 @@ assert.equal((await call('POST', '/v1/914/tracker/retrace/watch', { movements: A
 assert.equal((await call('POST', '/v1/914/tracker/retrace/watch', { movements: [{ label: '180001-0000600001', at: AT, kind: 'teleported' }] })).status, 400, 'nothing valid');
 assert.equal((await T.prepare("SELECT need_history FROM inv_labels WHERE store = 914 AND label = '180001-0000600001'").first()).need_history, 2, 'watched label queued again');
 
+// ------------------------------------------------------------------ purchase orders: sweep (status history, receive movements, poNeed)
+{
+  let ps = await call('POST', '/v1/914/tracker/retrace/sweep', { pos: [POL, { header: Object.assign({}, POH, { PurchaseOrderLinesV2: undefined }) }], poNeed: 10, need: 0 });
+  ok(ps, 'PO list rows');
+  assert.equal(ps.j.pos.seen, 2); assert.deepEqual(ps.j.pos.need.slice().sort(), ['UBFPO000099006', 'UBFPO000099007'], 'new POs: read them in full');
+  assert.equal((await call('POST', '/v1/914/tracker/retrace/sweep', { pos: [POL], need: 0 })).j.pos.written, 0, 'same list row: no write');
+  ps = await call('POST', '/v1/914/tracker/retrace/sweep', { pos: [{ header: POH, receive: POR }], poNeed: 10, need: 0 });
+  assert.deepEqual(ps.j.pos.need, ['UBFPO000099006'], 'read in full: off the list');
+  const lab = await T.prepare("SELECT po, oem_serial, need_history FROM inv_labels WHERE store = 914 AND label = '176255-0000514399'").first();
+  assert.deepEqual([lab.po, lab.oem_serial, lab.need_history], ['UBFPO000099007', 'OEM0099', 2], 'receive-details labels: PO linked, history queued');
+  // history already gave 600012 its received row on this PO: the PO reading adds none for it
+  await call('POST', '/v1/914/tracker/retrace/history', { label: '180001-0000600012', rows: [{ InventSerialId: '180001-0000600012', ItemId: '180001', Store: '914', DateTime: '2026-10-23T11:00:00Z',
+    SerialEventType: 'ProductReceipt', SerialStatus: 'Received', RefTable: 'Purchase orders', SourceKey: 'UBFPO000099007', SourceKeyLineNum: 1, User: 'Tech Alpha', Message: '' }] });
+  const r2 = JSON.parse(JSON.stringify(POR)); r2.Lines[0].QtyReceived = 2; r2.Lines[0].Serials.forEach((x) => { x.Status = 'Received'; });
+  ps = await call('POST', '/v1/914/tracker/retrace/sweep', { pos: [{ header: Object.assign({}, POH, { UbifTotalRemainingQty: 1, UbifTotalRegisteredQty: 2 }), receive: r2 }], need: 0 });
+  assert.equal(ps.j.pos.received, 1, 'one received movement (the other label had one from history)');
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_movements WHERE store = 914 AND ref_type = 'po' AND ref_id = 'UBFPO000099007' AND kind = 'received'"), 2);
+  assert.equal(ps.j.pos.events, 5, 'remaining, registered, line 1 received, two labels');
+  ps = await call('POST', '/v1/914/tracker/retrace/sweep', { pos: [{ header: Object.assign({}, POH, { UbifTotalRemainingQty: 1, UbifTotalRegisteredQty: 2 }), receive: r2 }], need: 0 });
+  assert.equal(ps.j.pos.received, 0); assert.equal(ps.j.pos.events, 0, 'the same reading again: nothing new');
+  // a list row whose status moved asks for the PO again
+  ps = await call('POST', '/v1/914/tracker/retrace/sweep', { pos: [Object.assign({}, POH, { PurchaseOrderLinesV2: undefined, PurchaseOrderStatus: 'Received', UbifTotalRemainingQty: 0, UbifTotalRegisteredQty: 2 })], poNeed: 5, need: 0 });
+  assert.ok(ps.j.pos.need.includes('UBFPO000099007')); assert.equal(ps.j.pos.events, 2);
+  assert.equal((await call('POST', '/v1/326/tracker/retrace/sweep', { pos: [POL], poNeed: 5, need: 0 })).j.pos.need.length, 1, 'per store');
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_docs WHERE store = 326 AND type = 'po' AND id = 'UBFPO000099007'"), 0);
+  assert.equal((await call('POST', '/v1/914/tracker/retrace/sweep', { pos: Array(601).fill(POL) })).status, 400, 'capped');
+}
+
 // ------------------------------------------------------------------ admin routes + access
 const it = await admin('owner@x.com', '/retrace/item/914/180001');
 ok(it, 'item');
@@ -281,7 +379,28 @@ assert.equal((await admin('owner@x.com', '/retrace/search?q=UBFPO000099005')).j.
 assert.equal((await admin('owner@x.com', '/retrace/search?q=x')).status, 400);
 const cov = (await admin('owner@x.com', '/retrace/coverage')).j.stores;
 const c914 = cov.find((s) => s.store === 914);
-assert.ok(c914.labels >= 5 && c914.histories === 2 && c914.backlog > 0 && c914.movements > 10 && c914.last_sweep_at && c914.items === 2, JSON.stringify(c914));
+assert.ok(c914.labels >= 5 && c914.histories === 3 &&  c914.backlog > 0 && c914.movements > 10 && c914.last_sweep_at && c914.items === 2, JSON.stringify(c914));
+// PO page and list
+{
+  const pg = await admin('owner@x.com', '/retrace/po/914/UBFPO000099007');
+  ok(pg, 'PO page');
+  assert.equal(pg.j.header.status, 'Received'); assert.equal(pg.j.header.info.pool, 'AUTO-ORDER'); assert.ok(!('lines' in pg.j.header));
+  assert.deepEqual(pg.j.lines.map((l) => [l.line, l.ordered, l.received, l.remaining]), [['1', 2, 2, 2], ['2', 1, 0, 1]], 'remaining as Portal sent it');
+  const l11 = pg.j.labels.find((l) => l.label === '180001-0000600011');
+  assert.equal(l11.receive_status, 'Received'); assert.ok(l11.now && 'serial_status' in l11.now);
+  assert.deepEqual(pg.j.events.slice(0, 1).map((e) => e.field + ' ' + e.new), ['status Backorder'], 'oldest first');
+  assert.ok(pg.j.events.some((e) => e.field === 'status' && e.new === 'Received'));
+  assert.deepEqual(pg.j.movements.map((m) => m.kind), ['received', 'received']);
+  assert.equal((await admin('owner@x.com', '/retrace/po/914/UBFPO000000000')).status, 404);
+  const ls = await admin('owner@x.com', '/retrace/pos?store=914');
+  ok(ls, 'PO list');
+  assert.equal(ls.j.total, 2);
+  const p7 = ls.j.pos.find((p) => p.po === 'UBFPO000099007');
+  assert.deepEqual([p7.status, p7.lines, p7.labels, p7.received, p7.need_detail], ['Received', 2, 3, 2, 1]); assert.ok(p7.last_change);
+  assert.deepEqual((await admin('owner@x.com', '/retrace/pos?store=914&status=Backorder')).j.pos.map((p) => p.po), ['UBFPO000099006']);
+  assert.equal((await admin('owner@x.com', '/retrace/pos?store=914&from=2026-10-22&to=2026-10-22')).j.total, 1, 'by accounting date');
+  assert.equal((await admin('owner@x.com', '/retrace/pos?from=nope')).status, 400);
+}
 // people: a manager (the role includes Retrace) for 914 only; a store viewer without the page
 await T.prepare("INSERT INTO people (email, scope, stores, pages, details) VALUES ('mgr@x.com', 'stores', '[914]', ?, 1), ('viewer@x.com', 'stores', '[914]', '[\"wos\"]', 0)")
   .bind(JSON.stringify(['wos', 'sales', 'metrics', 'data', 'retrace'])).run();
@@ -290,6 +409,11 @@ assert.equal((await admin('mgr@x.com', '/retrace/item/326/180001')).status, 403,
 assert.equal((await admin('mgr@x.com', '/retrace/label/326/180001-0000600001')).status, 403);
 assert.equal((await admin('mgr@x.com', '/retrace/search?store=326&q=180001')).status, 403);
 assert.deepEqual((await admin('mgr@x.com', '/retrace/coverage')).j.stores.map((s) => s.store), [914], 'coverage cut to their stores');
+assert.equal((await admin('mgr@x.com', '/retrace/po/914/UBFPO000099007')).status, 200);
+assert.equal((await admin('mgr@x.com', '/retrace/po/326/UBFPO000099007')).status, 403, 'other store');
+assert.deepEqual((await admin('mgr@x.com', '/retrace/pos')).j.pos.map((p) => p.store).filter((x) => x !== 914), [], 'PO list cut to their stores');
+assert.equal((await admin('mgr@x.com', '/retrace/pos?store=326')).status, 403);
+assert.equal((await admin('viewer@x.com', '/retrace/pos?store=914')).status, 403, 'no Retrace page');
 assert.equal((await admin('viewer@x.com', '/retrace/item/914/180001')).status, 403, 'no Retrace page');
 assert.equal((await admin('viewer@x.com', '/retrace/coverage')).status, 403);
 assert.ok((await T.prepare("SELECT COUNT(*) AS n FROM access_log WHERE action = 'retrace:item' AND email = 'mgr@x.com'").first()).n >= 1, 'views logged');

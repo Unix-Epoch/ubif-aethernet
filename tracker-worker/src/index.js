@@ -627,7 +627,7 @@ function accessDiff(before, after) {
   GET  /wo/:store/:wo            one WO: row, snapshots (plain + sealed), changes
   …    /assize/…                 Assize rules: list, drafts, publish, history, per-store overrides, test orders
                                  (page 'rules'; src/assize.js has the routes)
-  GET  /retrace/…                Retrace: item movements, label timeline, search, coverage (page 'retrace';
+  GET  /retrace/…                Retrace: item movements, label timeline, POs (page and list), search, coverage (page 'retrace';
                                  src/retrace-api.js has the routes)
   Developers only (People; TRACKER_OWNERS, `owner` in the API):
   GET  /people                   everyone + their key copies' kinds, pages, details, review; owners: the developers

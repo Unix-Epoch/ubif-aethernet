@@ -526,3 +526,248 @@ export function woMovements(prevPlain, plain, ctx) {
   for (const e of events) out.push(...normalize.partsEvent(e, { wo }));
   return out;
 }
+
+// ------------------------------------------------------------------ the in-page watcher (Aethernet, src/28-retrace-collect.js)
+/*
+  Portal's own inventory writes, seen in the page as they happen (request and answer, never changed). Paths are
+  Portal's after /api/, query dropped. Every rule is a GUESS about the payload (no write captured yet): the dev
+  switch "Retrace: record Portal calls" keeps real ones to check against. A rule's kind applies to the labels the
+  call names: in the path (label: n = that group), else anywhere in the request body, else (fromAnswer) in Portal's
+  answer. kind 'swap' / 'van' are worked out from the body (swapLabels, vanKind); 'status_changed' with the method
+  and path in detail when they can't be. ref: the path group holding the document id (else the body's).
+*/
+export const WATCH_RULES = [
+  [/^boh\/inventory\/([^/]+)\/adjust-in$/i, { kind: 'adjusted_in', label: 1 }],
+  [/^boh\/inventory\/([^/]+)\/adjust-out$/i, { kind: 'adjusted_out', label: 1 }],
+  [/^boh\/inventory\/([^/]+)\/mark-defective-broken$/i, { kind: 'defective', label: 1 }],
+  [/^boh\/inventory\/([^/]+)$/i, { kind: 'status_changed', label: 1, methods: ['PATCH'] }],
+  [/^repair\/swap-serial-on-item$/i, { kind: 'swap', ref_type: 'wo' }],
+  [/^boh\/remote-tech\/transfer-inventory$/i, { kind: 'van', ref_type: 'van' }],
+  [/^boh\/store-transfer-orders(?:\/([^/]+))?\/ship$/i, { kind: 'transfer_out', ref_type: 'transfer', ref: 1 }],
+  [/^boh\/store-transfer-orders(?:\/([^/]+))?\/receive$/i, { kind: 'transfer_in', ref_type: 'transfer', ref: 1 }],
+  [/^boh\/store-transfer-orders(?:\/([^/]+))?\/cancel$/i, { kind: 'status_changed', ref_type: 'transfer', ref: 1 }],
+  [/^boh\/counts\/([^/]+)\/itemSerial$/i, { kind: 'count_found', ref_type: 'count', ref: 1 }],
+  [/^boh\/counts\/([^/]+)\/(?:post|submit|reject)$/i, { kind: 'status_changed', ref_type: 'count', ref: 1 }],
+  [/^order\/cart\/item\/add$/i, { kind: 'reserved', ref_type: 'cart', fromAnswer: true }],
+  [/^order\/cart\/item\/remove$/i, { kind: 'unreserved', ref_type: 'cart' }],
+  [/^repair\/scan-cart-line$/i, { kind: 'reserved', ref_type: 'cart', fromAnswer: true }],
+  [/^workorder\/save-part-scan$/i, { kind: 'reserved', ref_type: 'wo', fromAnswer: true }],
+  [/^workorder\/remove-cart-lines$/i, { kind: 'unreserved', ref_type: 'wo' }],
+  // RMA / buyback / salvage order writes (create, ship, lines): Portal's paths not captured, so any write under these.
+  [/^boh\/(?:rma-buyback\/)?(rma|buyback|salvage)(?:[-/][^?]*)?$/i, { kind: 'order', ref_type: 'order' }],
+];
+// Portal's path (full URL, /api/… or bare) → the part the rules match: no origin, no /api/, no query, no trailing /.
+export const watchPath = (u) => String(u == null ? '' : u).replace(/^https?:\/\/[^/]+/i, '').split(/[?#]/)[0].replace(/^\/?api\//i, '').replace(/^\/+|\/+$/g, '');
+// The rule for a call: writes only (GET never), PATCH-only rules for PATCH. → { re, ...rule, m } or null
+export function watchRule(method, url) {
+  const meth = String(method || 'GET').toUpperCase(), path = watchPath(url);
+  if (meth === 'GET' || meth === 'HEAD' || meth === 'OPTIONS') return null;
+  for (const [re, rule] of WATCH_RULES) {
+    const m = re.exec(path);
+    if (m && (!rule.methods || rule.methods.includes(meth))) return Object.assign({ re, m, path }, rule);
+  }
+  return null;
+}
+// Every label in a JSON value (depth ≤ 6), with the property it was under: [{ label, key }], each label once.
+export function labelsIn(v) {
+  const out = [], seen = new Set();
+  const walk = (x, key, d) => {
+    if (d > 6 || x == null) return;
+    if (typeof x === 'string' || typeof x === 'number') { const p = parseLabel(x); if (p && !seen.has(p.label)) { seen.add(p.label); out.push({ label: p.label, key: key || '' }); } return; }
+    if (Array.isArray(x)) { for (const y of x.slice(0, 500)) walk(y, key, d + 1); return; }
+    if (typeof x === 'object') for (const [k, y] of Object.entries(x)) walk(y, k, d + 1);
+  };
+  walk(v, '', 0);
+  return out;
+}
+const asJson = (v) => { if (typeof v !== 'string') return v == null ? null : v; try { return JSON.parse(v); } catch (_) { return v.trim() || null; } };
+// A shallow-ish search for the first value under a key matching re (depth ≤ 3).
+const findKey = (o, re, d = 0) => {
+  if (!o || typeof o !== 'object' || d > 3) return null;
+  for (const [k, v] of Object.entries(o)) if (re.test(k) && v != null && typeof v !== 'object' && String(v).trim() !== '') return v;
+  for (const v of Object.values(o)) { const x = v && typeof v === 'object' ? findKey(Array.isArray(v) ? v[0] : v, re, d + 1) : null; if (x != null) return x; }
+  return null;
+};
+
+/*
+  One Portal write call → movements for POST /retrace/watch (still checked there by normalize.watch).
+    call { method, url, body, response, at }   body / response: Portal's JSON as text or parsed
+    ctx  { user, store }                        the signed-in tech's name; the page's store (van direction)
+  Labels from the path or the body are keyed per call (adjusting the same label twice is two movements); labels
+  only found in Portal's answer (a cart add answers with the whole cart) are keyed per document, label and kind, so
+  the labels already on that cart add nothing the next time. A call naming no label but an item gives one
+  item-level 'status_changed'; a call naming neither gives nothing (the recorder still keeps it in dev).
+*/
+export function watchMovements(call, ctx) {
+  const x = call || {}, c = ctx || {}, rule = watchRule(x.method, x.url);
+  const at = isoAt(x.at);
+  if (!rule || !at) return [];
+  const method = String(x.method).toUpperCase(), body = asJson(x.body), resp = asJson(x.response);
+  const obj = body && typeof body === 'object' ? body : null;
+  const what = method + ' ' + rule.path;
+  // The document: the path's id, else the body's (cart / WO / transfer / count / order ids, GUESSED names).
+  let refType = rule.ref_type || null, refId = rule.ref ? rule.m[rule.ref] || null : null;
+  if (obj && rule.ref_type === 'cart') {
+    const wo = findKey(obj, /^(workorderId|workOrderId|woId)$/i);
+    if (wo != null) { refType = 'wo'; refId = wo; } else refId = findKey(obj, /^(cartId|csuCartId)$/i);
+  }
+  if (!refId && obj) refId = findKey(obj, rule.ref_type === 'wo' ? /^(workorderId|workOrderId|woId)$/i : rule.ref_type === 'transfer' ? /^(transferOrderId|transferId)$/i
+    : rule.ref_type === 'count' ? /^(countingJournalId|countId)$/i : /^(rmaPurchId|rmaOrderId|buybackOrderId|orderId|purchId|id)$/i);
+  if (rule.kind === 'order') { const t = rule.m[1].toLowerCase(); refType = t; }
+  // Labels: the path's, else the body's, else (fromAnswer rules) the answer's.
+  let found = [], fromAnswer = false;
+  if (rule.label) { const p = cleanLabel(decodeURIComponent(rule.m[rule.label] || '')); if (p) found.push({ label: p, key: 'path' }); }
+  if (!found.length) found = labelsIn(body);
+  if (!found.length && rule.fromAnswer) { found = labelsIn(resp); fromAnswer = found.length > 0; }
+  const base = { at, user: c.user || null, source: 'watch', ref_type: refType, ref_id: refId != null ? String(refId) : null, raw_event: what };
+  const callKey = [method, rule.path, refId, at].join('|');
+  const one = (label, kind, extra) => Object.assign({}, base, { label, item: itemOfLabel(label), kind }, extra || {},
+    { key: fromAnswer ? ['answer', rule.path, refType, refId, kind].join('|') : callKey + '|' + kind });
+  if (!found.length) {
+    const item = obj && findKey(obj, /^(itemId|itemNumber|ItemNumber|ItemId|sku)$/);
+    return item != null && str(item, 40) ? [Object.assign({}, base, { label: null, item: str(item, 40), kind: 'status_changed', detail: what, key: callKey + '|item' })] : [];
+  }
+  if (rule.kind === 'swap') {
+    const oldL = found.find((f) => /old|from|current|original|remove/i.test(f.key)), newL = found.find((f) => f !== oldL && /new|to|replace|add/i.test(f.key));
+    if (oldL && newL) return [one(oldL.label, 'swapped_out', { detail: 'swapped for ' + newL.label }), one(newL.label, 'swapped_in', { detail: 'replaces ' + oldL.label })];
+    return found.map((f) => one(f.label, 'status_changed', { detail: what + ' (' + (f.key || '?') + ')' }));
+  }
+  if (rule.kind === 'van') {
+    // GUESS: a destination that is the store's own warehouse = back from a van; anything else = out to a van.
+    const to = obj && findKey(obj, /^(to|dest|target)/i), from = obj && findKey(obj, /^(from|source)/i), st = String(c.store || '');
+    const kind = st && to != null && String(to).startsWith(st) ? 'van_in' : st && from != null && String(from).startsWith(st) ? 'van_out' : to != null ? 'van_out' : 'status_changed';
+    return found.map((f) => one(f.label, kind, { from_wh: from != null ? String(from) : null, to_wh: to != null ? String(to) : null, detail: kind === 'status_changed' ? what : null }));
+  }
+  if (rule.kind === 'order') return found.map((f) => one(f.label, refType, { detail: what }));
+  return found.map((f) => one(f.label, rule.kind, { detail: rule.kind === 'status_changed' ? what : null }));
+}
+
+// A list from any of Portal's envelopes: [rows], { value }, { data }, { results }, { items }, { rows } (else []).
+export function rowsOf(j) {
+  if (Array.isArray(j)) return j;
+  if (!j || typeof j !== 'object') return [];
+  for (const k of ['value', 'data', 'results', 'items', 'rows', 'orders', 'transferOrders']) if (Array.isArray(j[k])) return j[k];
+  return [];
+}
+
+// ------------------------------------------------------------------ purchase orders (status over time)
+/*
+  A PO as Retrace keeps it (inv_docs type 'po', data = this object), built from Portal's shapes (captured at 914, Oct 23):
+    header   POST boh/purchase-orders list rows, or GET boh/purchase-orders/{po} (the same plus PurchaseOrderLinesV2)
+    receive  GET boh/purchase-orders/{po}/receive-details ({ Status, TrackingNum, Lines: [{ LineNum, Qty, QtyReceived,
+             QtyCancelled, QtyScanned, Serials: [{ SerialNumber, Status ("In Transit" | "Received" | "N/A" | "UnRegistered"),
+             OEMSerialNumber, imei, CancelledLine }] }] })
+  → { id, status, approval, remaining, registered, tracking, autoReceiveAt, autoReceivePaused, mergedInto, info: {…},
+      lines?: [{ line, item, desc, ordered, shipped, received, scanned, cancelled, remaining, price, amount, consignment }],
+      labels?: [{ label, line, item, status, oem, imei, cancelled }] }
+  lines / labels only when the source had them: a list row (no lines) merged into a stored PO keeps its lines.
+  PO_FIELDS are tracked: a change is a status-history row (inv_doc_events), and a list row whose tracked fields
+  differ from the stored ones asks for the PO's lines and receive details again (poSig).
+*/
+const bool = (v) => (v === true || v === false ? v : /^(true|yes|1)$/i.test(String(v)) ? true : /^(false|no|0)$/i.test(String(v)) ? false : null);
+const isoOrStr = (v) => isoAt(v) || str(v, 40);
+// [field, the header's name, receive-details' name (used when the header has none), shape]
+export const PO_FIELDS = [
+  ['status', 'PurchaseOrderStatus', 'Status', (v) => str(v, 40)],
+  ['approval', 'DocumentApprovalStatus', null, (v) => str(v, 40)],
+  ['remaining', 'UbifTotalRemainingQty', null, n2],
+  ['registered', 'UbifTotalRegisteredQty', null, n2],
+  ['tracking', 'asuTrackingNumber', 'TrackingNum', (v) => str(v, 80)],
+  ['autoReceiveAt', 'UbifAutoReceiveDateTime', 'AutoReceiveDateTime', isoOrStr],
+  ['autoReceivePaused', 'UbifIsAutoReceivePaused', 'IsAutoReceivePaused', bool],
+  ['mergedInto', 'UbifMergedIntoPurchId', null, (v) => str(v, 40)],
+];
+// Shown, not tracked. Left out on purpose: addresses and payment method.
+const PO_INFO = [['pool', 'PurchaseOrderPoolId'], ['type', 'UbifPurchaseOrderType'], ['vendor', 'OrderVendorAccountNumber'], ['vendorRef', 'VendorOrderReference'],
+  ['site', 'DefaultReceivingSiteId'], ['warehouse', 'DefaultReceivingWarehouseId'], ['accountingDate', 'AccountingDate'], ['total', 'UbifTotalAmount'],
+  ['consignedAmount', 'ConsignedAmount'], ['ownedAmount', 'OwnedAmount'], ['jit', 'UbifIsJIT'], ['fused', 'UbifIsFused'], ['delivery', 'DeliveryModeDescription'],
+  ['storeName', 'StoreName'], ['crossStore', 'IsCrossStore'], ['currency', 'CurrencyCode'], ['distro', 'IsDistro']];
+const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+
+export function poState(header, receive) {
+  const h = header && typeof header === 'object' ? header : {}, r = receive && typeof receive === 'object' ? receive : null;
+  const id = str(first(h, ['PurchaseOrderNumber', 'PurchId', 'id']) || (r && first(r, ['PurchaseOrderId', 'PurchaseOrderNumber'])), 40);
+  if (!id) return null;
+  const out = { id };
+  for (const [k, hk, rk, f] of PO_FIELDS) {
+    if (h[hk] !== undefined && (h[hk] !== null || !(r && rk && r[rk] != null))) out[k] = h[hk] == null ? null : f(h[hk]);
+    else if (r && rk && r[rk] !== undefined) out[k] = r[rk] == null ? null : f(r[rk]);
+  }
+  const info = {};
+  for (const [k, key] of PO_INFO) { const v = h[key] !== undefined ? h[key] : r && key === 'IsDistro' ? r.IsDistro : undefined; if (v !== undefined && (v === null || typeof v !== 'object')) info[k] = typeof v === 'string' ? str(v, 120) : v; }
+  if (r && r.PurchaseOrderPoolId && !info.pool) info.pool = str(r.PurchaseOrderPoolId, 40);
+  if (Object.keys(info).length) out.info = info;
+  const lines = new Map();
+  const line = (n) => { const k = str(n, 12); if (!k) return null; if (!lines.has(k)) lines.set(k, { line: k }); return lines.get(k); };
+  if (Array.isArray(h.PurchaseOrderLinesV2)) for (const l of h.PurchaseOrderLinesV2) {
+    const x = line(l && l.LineNumber);
+    if (x) Object.assign(x, defined({ item: str(l.ItemNumber, 40) || undefined, desc: str(l.LineDescription, 120) || undefined, ordered: n2(l.OrderedPurchaseQuantity) ?? undefined,
+      shipped: n2(l.UBIFShippedQty) ?? undefined, cancelled: n2(l.UBIFCancelQty) ?? undefined, remaining: n2(l.RemainPurchPhysical) ?? undefined, price: n2(l.PurchasePrice) ?? undefined,
+      amount: n2(l.LineAmount) ?? undefined, consignment: str(l.UbifIsEnabledForConsignment, 10) || undefined }));
+  }
+  const labels = [];
+  if (r && Array.isArray(r.Lines)) for (const l of r.Lines) {
+    const x = line(l && l.LineNum);
+    if (!x) continue;
+    Object.assign(x, defined({ item: x.item || str(l.ItemId, 40) || undefined, desc: x.desc || str(l.ItemName, 120) || undefined, ordered: x.ordered ?? n2(l.Qty) ?? undefined,
+      received: n2(l.QtyReceived ?? l.PurchaseQtyReceived) ?? undefined, scanned: n2(l.QtyScanned) ?? undefined, cancelled: x.cancelled ?? n2(l.QtyCancelled) ?? undefined,
+      serialized: typeof l.IsSerialized === 'boolean' ? l.IsSerialized : undefined }));
+    for (const s of Array.isArray(l.Serials) ? l.Serials : []) {
+      const label = cleanLabel(s && s.SerialNumber);
+      if (label && !labels.some((y) => y.label === label)) labels.push(defined({ label, line: x.line, item: x.item || itemOfLabel(label), status: str(s.Status, 30), oem: str(s.OEMSerialNumber, 60) || undefined,
+        imei: str(s.imei, 30) || undefined, cancelled: s.CancelledLine ? true : undefined }));
+    }
+  }
+  if (lines.size) out.lines = [...lines.values()].sort((a, b) => Number(a.line) - Number(b.line) || (a.line < b.line ? -1 : 1));
+  if (r) out.labels = labels;
+  return out;
+}
+// The stored PO with a newer reading on top: fields the reading didn't carry keep their stored value; lines merge by number.
+export function mergePo(prev, next) {
+  if (!prev) return next;
+  if (!next) return prev;
+  const out = Object.assign({}, prev, defined(Object.assign({}, next, { lines: undefined, labels: undefined, info: undefined })));
+  if (next.info) out.info = Object.assign({}, prev.info || {}, next.info);
+  if (next.lines) {
+    const old = new Map((prev.lines || []).map((l) => [l.line, l]));
+    out.lines = next.lines.map((l) => Object.assign({}, old.get(l.line) || {}, l));
+  }
+  if (next.labels) out.labels = next.labels;
+  return out;
+}
+export const poSig = (po) => hash53(JSON.stringify(PO_FIELDS.map(([k]) => (po && po[k] !== undefined ? po[k] : null))));
+/*
+  What changed between two readings of a PO → status-history rows [{ field, old, new }]:
+    a tracked header field (PO_FIELDS) · a line's received / shipped / cancelled / ordered quantity ('line <n> received')
+    · a label's receive status ('label <label>'). First sight of the PO = one 'status' row from null; first sight of
+  its lines or labels (nothing stored to compare) adds nothing.
+*/
+const LINE_QTY = ['ordered', 'shipped', 'received', 'cancelled'];
+export function poEvents(prev, next) {
+  if (!next) return [];
+  const t = (v) => (v == null ? null : String(v));
+  if (!prev) return next.status != null ? [{ field: 'status', old: null, new: t(next.status) }] : [];
+  const out = [];
+  for (const [k] of PO_FIELDS) if (next[k] !== undefined && t(prev[k]) !== t(next[k]) && !(prev[k] === undefined && next[k] == null)) out.push({ field: k, old: t(prev[k]), new: t(next[k]) });
+  if (prev.lines && next.lines) {
+    const old = new Map(prev.lines.map((l) => [l.line, l]));
+    for (const l of next.lines) for (const q of LINE_QTY) {
+      const o = old.get(l.line);
+      if (l[q] !== undefined && (o ? t(o[q]) !== t(l[q]) && !(o[q] === undefined && !l[q]) : l[q])) out.push({ field: 'line ' + l.line + ' ' + q, old: o ? t(o[q]) : null, new: t(l[q]) });
+    }
+  }
+  if (prev.labels && next.labels) {
+    const old = new Map(prev.labels.map((l) => [l.label, l]));
+    for (const l of next.labels) { const o = old.get(l.label); if (!o || t(o.status) !== t(l.status)) out.push({ field: 'label ' + l.label, old: o ? t(o.status) : null, new: t(l.status) }); }
+  }
+  return out;
+}
+// Labels whose receive status went In Transit → Received between two readings: one 'received' movement each (same key
+// as normalize.poReceive, so a PO read twice adds nothing; the Worker also skips it when serial history already has one).
+export function poMovements(prev, next, at) {
+  if (!prev || !prev.labels || !next || !next.labels || !at) return [];
+  const old = new Map(prev.labels.map((l) => [l.label, l])), lineOf = new Map((next.lines || []).map((l) => [l.line, l]));
+  return next.labels.filter((l) => /^received$/i.test(l.status || '') && old.has(l.label) && /^in ?transit$/i.test(old.get(l.label).status || '')).map((l) => mv({
+    label: l.label, item: l.item, at, kind: 'received', raw_status: l.status, raw_event: 'po receive', ref_type: 'po', ref_id: next.id, ref_line: l.line, source: 'po',
+    detail: str(lineOf.get(l.line) && lineOf.get(l.line).desc, 120) }, [next.id, l.label]));
+}
