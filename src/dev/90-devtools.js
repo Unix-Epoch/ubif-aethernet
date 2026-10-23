@@ -139,17 +139,17 @@
       id: 'dev-' + severity + '-' + Date.now(), severity,
       title: { info: 'Heads up: Portal maintenance tonight', warning: 'Divination is showing the wrong rate', error: 'DO NOT RFP OR SALE COMPLETE WOs UNTIL FURTHER NOTICE.' }[severity],
       message: { info: 'Portal may be slow between 9 and 10 PM.', warning: "Pending cleanings are double-counted. We're on it.", error: 'All WOs will remove parts and get stuck in limbo if you attempt to Sale Complete.' }[severity],
-      crystals: severity === 'warning' ? ['cleaningRate'] : [], pause: [], fixedIn: null, updated: new Date().toISOString() }, extra) });
+      shards: severity === 'warning' ? ['cleaningRate'] : [], pause: [], fixedIn: null, updated: new Date().toISOString() }, extra) });
     const notices = section('Notices (simulated)',
       row(btn('Info', () => S.simulate(sample('info'))), btn('Warning', () => S.simulate(sample('warning'))), btn('Error', () => S.simulate(sample('error'))),
         btn('Warning + Swiftcast paused', () => S.simulate(sample('warning', { pause: ['autoClose'] }))),
         btn('Fixed in a newer version', () => S.simulate(Object.assign(sample('error', { fixedIn: nextVersion(AE_VERSION) }), { latest: { version: nextVersion(AE_VERSION), date: minsAgo(60) } })))),
       row(btn('Back to real status', () => S.refresh(true).then(() => AE.toast('Dev tools', 'Real status.json loaded.', 'ok')))),
-      note('A simulated pause blocks the crystal\'s actions right away; skipping it at page load needs a real notice and a reload.'));
+      note('A simulated pause blocks the shard\'s actions right away; skipping it at page load needs a real notice and a reload.'));
 
     // Settings
     const settings = section('Settings',
-      row(btn('New-crystal sheen on every crystal', () => { GM_setValue('ae_seen_crystals', []); AE.openSettings(); }, { close: true }),
+      row(btn('New-shard sheen on every shard', () => { GM_setValue('ae_seen_crystals', []) /* legacy stored key */; AE.openSettings(); }, { close: true }),
         btn('Updated sheen (as after updating from 2.16)', () => { GM_setValue('ae_updates_seen', '2.16.0'); AE.openSettings(); }, { close: true }),
         btn('Open Settings at Waymark', () => AE.openSettings('waymark'), { close: true }),
         btn('Feedback window', () => AE.feedback.openFeedback(), { close: true }),

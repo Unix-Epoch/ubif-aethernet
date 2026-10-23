@@ -30,7 +30,7 @@ assert.deepEqual(Object.keys(injected).sort(), Object.keys(RG).sort(), 'rulegrap
 const injectedRules = new Function(trackerModule('assize-rules.js'))();
 assert.deepEqual(Object.keys(injectedRules).sort(), Object.keys(AR).sort(), 'assize-rules: injection exports the same names');
 const assizeSrc = readFileSync(ROOT + 'src/65-assize.js', 'utf8');
-const from = assizeSrc.indexOf('AE.assizeRules = (() => {'), to = assizeSrc.indexOf('\nAE.crystal(', from);
+const from = assizeSrc.indexOf('AE.assizeRules = (() => {'), to = assizeSrc.indexOf('\nAE.shard(', from);
 assert.ok(from >= 0 && to > from, 'found AE.assizeRules in 65-assize.js');
 const bundled = new Function('AE', assizeSrc.slice(from, to).replace('/*__RULEGRAPH__*/', () => trackerModule('rulegraph.js')).replace('/*__ASSIZE_RULES__*/', () => trackerModule('assize-rules.js'))
   .replace('__ASSIZE_GRAPHS__', () => JSON.stringify(GRAPHS)) + '\nreturn AE.assizeRules;')({});

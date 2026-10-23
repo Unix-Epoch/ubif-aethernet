@@ -7,7 +7,7 @@
     store as "seen", so it shows up in the admin panel's Waiting list).
   - The answer is remembered per store, so a store that has access keeps
     working if the API can't be reached; a store never verified waits.
-  - Not allowed: one notice, and nothing else loads (no crystals, Settings,
+  - Not allowed: one notice, and nothing else loads (no shards, Settings,
     notices, feedback or Waymark). The Worker also refuses its services to
     stores without access.
   - The Sprinklr form (Macrocosmos' second half) isn't a Portal page; it

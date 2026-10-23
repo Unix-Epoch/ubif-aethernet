@@ -1,6 +1,6 @@
 /*
   Master's Mend — small fixes to Portal, each with its own switch under the
-  crystal in Settings (settings.fixes[id]). New fixes go in FIXES below.
+  shard in Settings (settings.fixes[id]). New fixes go in FIXES below.
 
   - logoLink: the ubreakifix logo (top left) is a <button> that routes to the
     dashboard ("/") on click, so it can't be middle-clicked or right-clicked
@@ -163,7 +163,7 @@ AE.fixesInfo = [
       'Show scan debugging (a log of every scan, bottom right; to find out why a scan didn\'t work)'))],
 ];
 
-AE.crystal({
+AE.shard({
   id: 'fixes',
   name: "Master's Mend",
   sites: ['portal.ubreakifix.net'],

@@ -19,7 +19,7 @@
   dropdowns, and the native value setter + input event for text fields
   (plain .value = doesn't register with React).
 */
-AE.crystal({
+AE.shard({
   id: 'galaxy',
   name: 'Macrocosmos',
   sites: ['portal.ubreakifix.net', 'forms-prod.sprinklr.com'],

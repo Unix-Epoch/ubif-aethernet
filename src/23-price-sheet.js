@@ -1,5 +1,5 @@
 /*
-  The Price sheet, shared by Provoke (lead replies) and Reassemble (price estimates). Not a crystal.
+  The Price sheet, shared by Provoke (lead replies) and Reassemble (price estimates). Not a shard.
 
   sheets/sync_sheets.py pushes the store's Price sheet (.xlsx tabs) to the Worker; get() reads it
   (GET /v1/:store/sheets/prices, cached 10 minutes) → { data: { tabs: [{ name, rows: [{ name, cells }] }] }, syncedAt }.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Bundle src/*.js into dist/aethernet.user.js — the one file to install.
 
-Edit the crystals in src/ (one file each, loaded in filename order: core,
-settings, then crystals), then:
+Edit the shards in src/ (one file each, loaded in filename order: core,
+settings, then shards), then:
 
   python3 build.py            build dist/ only (for testing): aethernet.user.js
                               (minified), aethernet.meta.js (header only, for
@@ -17,7 +17,7 @@ settings, then crystals), then:
                               DEV_BASE.N (e.g. 2.16.0.3).
   python3 build.py --demo     build the DEMO channel (dist-demo/) and publish it
                               to the demo Gist: a cut-down "Aethernet" with only
-                              the crystals in DEMO["crystals"], no patch notes,
+                              the shards in DEMO["shards"], no patch notes,
                               a minimal About, and no Worker traffic (no store
                               check, feedback, usage or Waymark). Built from the
                               `demo` git branch; bump DEMO["version"] first.
@@ -29,9 +29,9 @@ Workflow (Garrett, Sep 30, 2026): new work goes to the `dev` git branch and
 Notices (status.json on the same Gist, read live by every install within
 ~15 minutes; no release needed):
 
-  python3 build.py --status warning "Title" "Message" [--crystal ID]... [--pause ID]... [--tag "Badge text"]
+  python3 build.py --status warning "Title" "Message" [--shard ID]... [--pause ID]... [--tag "Badge text"]
                     [--mention ID]... [--chip ID "Badge text"]... [--chip-below VERSION]
-      --crystal: "Known issue" badge on every install (all versions understand it)
+      --shard: "Known issue" badge on every install (all versions understand it)
       --mention: icon + link to Settings in the title, no badge (2.22.0+)
       --chip:    badge only on installs older than --chip-below (default: VERSION, i.e. the version being pushed)
   Master's Mend bulletin rules (2.22.0+ installs, live in ~15 min, no update):
@@ -44,7 +44,7 @@ Notices (status.json on the same Gist, read live by every install within
   python3 build.py --status-show                   print what's live
 
 Severity is info, warning or error. --pause is the kill switch: those
-crystals stop acting everywhere until the notice is cleared or fixed.
+shards stop acting everywhere until the notice is cleared or fixed.
 
 Tampermonkey only takes an update whose @version is higher than the one
 installed, so --release refuses to publish unless VERSION is higher than
@@ -105,11 +105,11 @@ DEMO = {
     "namespace": "garrett.aethernet",  # its own install + storage (can sit beside the public one)
     "dist": "dist-demo",
     "status_file": "status-demo.json",
-    # Only these crystals (and the files that hold them) go in.
-    "crystals": ("cleaningRate", "autoClose", "glamour"),
-    "icons": ("dualcast", "triplecast"),  # extra icons its crystals use (Swiftcast's Dualcast)
+    # Only these shards (and the files that hold them) go in.
+    "shards": ("cleaningRate", "autoClose", "glamour"),
+    "icons": ("dualcast", "triplecast"),  # extra icons its shards use (Swiftcast's Dualcast)
     "files": ("00-core.js", "01b-login.js", "02-status.js", "05-settings.js", "10-cleaning-rate.js", "20-auto-close.js", "50-glamour.js"),
-    "description": "Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out and page theming for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.",
+    "description": "Shards (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out and page theming for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.",
 }
 CHANNEL = "public"  # set to "dev" / "demo" by --dev / --demo before building
 # Minifier, pinned so builds are repeatable; run through npx (no local node_modules).
@@ -147,12 +147,12 @@ def header(version: str) -> str:
 // ==/UserScript==
 """
     return f"""// ==UserScript==
-// @name         {DEV["name"] if dev else "Aethernet — crystals for NextGen Portal"}
+// @name         {DEV["name"] if dev else "Aethernet — shards for NextGen Portal"}
 // @namespace    {DEV["namespace"] if dev else "garrett.ubif"}
 // @version      {version}
 // @copyright    2026, Garrett Green. All rights reserved.
 // @license      Proprietary — no reproduction, redistribution, or derivative works without written permission.
-// @description  Crystals (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
+// @description  Shards (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*{chr(10) + "// @match        http://localhost:8790/*" if dev else ""}
 // @grant        GM_setValue
@@ -209,13 +209,13 @@ def load_notes(root: Path) -> list:
     # Newest first: [{version, date (UTC ISO, stamped at release), notes: [...],
     # credits?: [names whose suggestion shipped], thanks?: ["**Name** at Store, for …"] (both shown with a flair),
     # reports?: [{id, quote, credit, store}] (bug reports fixed in it; pulled from the Worker by pull_reports),
-    # updated?: [ids of existing crystals it changed → "Updated" sheen]}]
+    # updated?: [ids of existing shards it changed → "Updated" sheen]}]
     notes = json.loads((root / NOTES_FILE).read_text())
-    known = crystal_ids(root)
+    known = shard_ids(root)
     for n in notes:
         bad = [c for c in n.get("updated", []) if c not in known]
         if bad:
-            sys.exit(f"{NOTES_FILE}: {n['version']} lists unknown crystal ids in \"updated\": {bad}")
+            sys.exit(f"{NOTES_FILE}: {n['version']} lists unknown shard ids in \"updated\": {bad}")
     return notes
 
 
@@ -277,7 +277,7 @@ def action_icons(root: Path) -> str:
     icons = {
         f.stem: "data:image/jpeg;base64," + base64.b64encode(f.read_bytes()).decode()
         for f in sorted((root / "assets" / "icons").glob("*.jpg"))
-        if not demo or f.stem in DEMO["crystals"] or f.stem in DEMO.get("icons", ())
+        if not demo or f.stem in DEMO["shards"] or f.stem in DEMO.get("icons", ())
     }
     # FFXIV UI pieces (e.g. the hotbar macro gear), keyed "ui/<name>"
     for f in ([] if demo else sorted((root / "assets" / "ui").glob("*.png"))):
@@ -308,7 +308,7 @@ def build(root: Path, version: str = VERSION) -> Path:
         # Assize's rules engine (tracker-worker/src/assize-rules.js), shared with the tracker Worker and the admin site.
         "/*__ASSIZE_RULES__*/": tracker_module(root, "assize-rules.js"),
         "__ASSIZE_GRAPHS__": assize_graphs(root),
-        # FFXIV action icons, one per crystal (assets/icons/<crystalId>.jpg), plus
+        # FFXIV action icons, one per shard (assets/icons/<shardId>.jpg), plus
         # UI pieces (assets/ui/*.png), as data URIs
         "__ACTION_ICONS__": action_icons(root),
         "__PATCH_NOTES__": "[]" if demo else json.dumps(load_notes(root)),
@@ -317,7 +317,7 @@ def build(root: Path, version: str = VERSION) -> Path:
     parts = [head, "(function aethernet() {\n'use strict';\n"]
     # src/dev/*.js (dev tools) only go into dev builds; everything sorts by file name.
     files = list((root / "src").glob("*.js")) + (list((root / "src" / "dev").glob("*.js")) if dev else [])
-    if demo:  # only its crystals; no store check (01-access.js), so it boots straight away
+    if demo:  # only its shards; no store check (01-access.js), so it boots straight away
         files = [f for f in files if f.name in DEMO["files"]]
     # Core + the store-access gate load first; everything else sits in AE.boot,
     # which the gate calls only once the store is allowed (01-access.js).
@@ -396,8 +396,8 @@ def now_utc() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def crystal_ids(root: Path) -> set:
-    return {m for f in (root / "src").glob("*.js") for m in re.findall(r"AE\.crystal\(\{\s*id:\s*'(\w+)'", f.read_text())}
+def shard_ids(root: Path) -> set:
+    return {m for f in (root / "src").glob("*.js") for m in re.findall(r"AE\.shard\(\{\s*id:\s*'(\w+)'", f.read_text())}
 
 
 def load_status(root: Path) -> dict:
@@ -416,7 +416,7 @@ def publish_status(root: Path, status: dict) -> None:
         dev["incident"] = status.get("incident")
         dev["bulletins"] = status.get("bulletins")
         publish_dev_status(root, dev)
-    # Demo installs only hear about notices that concern their own crystals.
+    # Demo installs only hear about notices that concern their own shards.
     if DEMO["gist_id"]:
         demo = load_channel_status(root, DEMO["status_file"])
         inc = demo_incident(status.get("incident"))
@@ -428,11 +428,12 @@ def publish_status(root: Path, status: dict) -> None:
 def demo_incident(inc):
     if not inc:
         return None
-    ours = set(DEMO["crystals"])
-    touched = set(inc.get("crystals") or []) | set(inc.get("pause") or [])
+    ours = set(DEMO["shards"])
+    touched = set(inc.get("shards") or []) | set(inc.get("pause") or [])
     if not touched & ours:
         return None
-    return {**inc, "crystals": [c for c in inc.get("crystals") or [] if c in ours],
+    mine = [c for c in inc.get("shards") or [] if c in ours]
+    return {**inc, "shards": mine, "crystals": mine,  # "crystals": old clients (see mirror_legacy_shards)
             "pause": [c for c in inc.get("pause") or [] if c in ours]}
 
 
@@ -487,10 +488,17 @@ def bulletins_command(root: Path, args) -> None:
     publish_status(root, status)
 
 
+def mirror_legacy_shards(inc) -> None:
+    """Write the notice's shard list under both "shards" and the old "crystals" key (same list),
+    so installs from before the rename (which only read "crystals") still get badges and pauses."""
+    if inc:
+        inc["shards"] = inc["crystals"] = list(inc.get("shards") or inc.get("crystals") or [])
+
+
 def apply_notice_extras(inc: dict, args) -> None:
     """--mention / --chip (2.22.0+ installs). A chip shows only on installs older than
     --chip-below, which defaults to VERSION (the version being pushed): the fixed
-    version never shows it. Older installs ignore both (they only know crystals/tag)."""
+    version never shows it. Older installs ignore both (they only know shards/tag)."""
     if args.mention:
         inc["mentions"] = args.mention
     if args.chip:
@@ -501,10 +509,10 @@ def apply_notice_extras(inc: dict, args) -> None:
 def status_command(root: Path, args) -> None:
     status = load_status(root)
     inc = status.get("incident")
-    known = crystal_ids(root)
-    for cid in (args.crystal or []) + (args.pause or []) + (args.mention or []) + [c for c, _ in (args.chip or [])]:
+    known = shard_ids(root)
+    for cid in (args.shard or []) + (args.pause or []) + (args.mention or []) + [c for c, _ in (args.chip or [])]:
         if cid not in known:
-            sys.exit(f"Unknown crystal id {cid!r}. Known: {', '.join(sorted(known))}")
+            sys.exit(f"Unknown shard id {cid!r}. Known: {', '.join(sorted(known))}")
     if args.status_show:
         print(json.dumps(status, indent=2, ensure_ascii=False))
         return
@@ -516,7 +524,7 @@ def status_command(root: Path, args) -> None:
         t = now_utc()
         status["incident"] = {
             "id": t[:10] + "-" + slug, "severity": severity, "title": title,
-            "message": " ".join(rest), "crystals": args.crystal or [], "pause": args.pause or [],
+            "message": " ".join(rest), "shards": args.shard or [], "pause": args.pause or [],
             "fixedIn": None, "posted": t, "updated": t,
         }
         if args.tag:
@@ -526,7 +534,7 @@ def status_command(root: Path, args) -> None:
         if not inc:
             sys.exit("No notice is live to update.")
         inc["message"], inc["updated"] = args.status_update, now_utc()
-        if args.crystal: inc["crystals"] = args.crystal
+        if args.shard: inc["shards"] = args.shard
         if args.pause is not None: inc["pause"] = args.pause
         if args.tag: inc["tag"] = args.tag
         apply_notice_extras(inc, args)
@@ -536,6 +544,7 @@ def status_command(root: Path, args) -> None:
         inc["fixedIn"], inc["updated"] = args.status_fixed, now_utc()
     elif args.status_clear:
         status["incident"] = None
+    mirror_legacy_shards(status.get("incident"))
     publish_status(root, status)
 
 
@@ -606,7 +615,7 @@ def demo_release(root: Path) -> None:
         sys.exit(f"Refusing to publish: DEMO version {DEMO['version']} isn't higher than the published {m.group(1)}.")
     CHANNEL = "demo"
     out = build(root, DEMO["version"])
-    # Nothing that gives it away: the word "demo", or any left-out crystal / feature.
+    # Nothing that gives it away: the word "demo", or any left-out shard / feature.
     leaks = sorted(set(re.findall(r"(?i)\bdemo\b|patch notes|waymark|macrocosmos|esuna|recitation|bountiful|quick synthesis|lay of the land|"
                                   r"send feedback|workers\.dev|ae_usage", out.read_text())))
     if leaks:
@@ -634,8 +643,9 @@ if __name__ == "__main__":
     ap.add_argument("--status-fixed", metavar="VERSION")
     ap.add_argument("--status-clear", action="store_true")
     ap.add_argument("--status-show", action="store_true")
-    ap.add_argument("--crystal", action="append", metavar="ID", help="crystal the notice is about (repeatable)")
-    ap.add_argument("--pause", action="append", metavar="ID", help="crystal to pause everywhere (repeatable)")
+    ap.add_argument("--shard", "--crystal", action="append", dest="shard",  # --crystal: old spelling, still accepted
+                     metavar="ID", help="shard the notice is about (repeatable)")
+    ap.add_argument("--pause", action="append", metavar="ID", help="shard to pause everywhere (repeatable)")
     ap.add_argument("--pull-reports", metavar="VERSION", help="pull bug reports quoted as fixed in VERSION into patch-notes.json")
     ap.add_argument("--bulletins-show", action="store_true", help="print the live bulletin rules")
     ap.add_argument("--bulletins-reset", action="store_true", help="remove all bulletin rules (built-in ones stay)")
@@ -645,10 +655,10 @@ if __name__ == "__main__":
     ap.add_argument("--bulletin-selector", action="append", metavar="CSS", help="a CSS selector for a bulletin's box")
     ap.add_argument("--bulletin-unselector", action="append", metavar="CSS", help="remove a selector rule")
     ap.add_argument("--bulletin-closer", action="append", metavar="CSS", help="a close button to hide inside bulletins")
-    ap.add_argument("--mention", action="append", metavar="ID", help="crystal named in the notice: icon + link, no badge (2.22.0+)")
-    ap.add_argument("--chip", action="append", nargs=2, metavar=("ID", "TEXT"), help="badge on a crystal's Settings row, only on installs older than --chip-below (2.22.0+)")
+    ap.add_argument("--mention", action="append", metavar="ID", help="shard named in the notice: icon + link, no badge (2.22.0+)")
+    ap.add_argument("--chip", action="append", nargs=2, metavar=("ID", "TEXT"), help="badge on a shard's Settings row, only on installs older than --chip-below (2.22.0+)")
     ap.add_argument("--chip-below", metavar="VERSION", help="chips show on installs older than this (default: VERSION, the version being pushed)")
-    ap.add_argument("--tag", metavar="TEXT", help='badge text on the crystals\' Settings rows (default "Known issue")')
+    ap.add_argument("--tag", metavar="TEXT", help='badge text on the shards\' Settings rows (default "Known issue")')
     args = ap.parse_args()
     root = Path(__file__).resolve().parent
     if args.pull_reports:

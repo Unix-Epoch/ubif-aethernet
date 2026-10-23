@@ -1,6 +1,6 @@
 # Portal sandbox
 
-Portal's real web app running on **fake data**, for trying Aethernet's crystals
+Portal's real web app running on **fake data**, for trying Aethernet's shards
 (Swiftcast, Dualcast, Esuna, Divination, Recitation…) without touching a single
 real work order, arrival or customer.
 

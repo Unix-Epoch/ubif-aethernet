@@ -636,7 +636,7 @@ AE.waymark = (() => {
   return { reportEl, API, configured, call, load, RULES, ruleState, backfillPreview, tagsOf, autoOf, checkWo, customerTexted, dueMarks, today, OPEN_KEY, planScan, fmtDate, nickDate, parseNick, listSig, setTag, history, saveList, canEdit, scan, chip, autoChip, historyLine, dueState, when, fail, ensureCss, editor, summary, COLORS };
 })();
 
-AE.crystal({
+AE.shard({
   id: 'waymark',
   name: 'Waymark',
   sites: ['portal.ubreakifix.net'],

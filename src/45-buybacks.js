@@ -13,14 +13,14 @@
   ever spinning: per-row retry cap, stall detection with a bounded tab-bounce
   recovery, a click cap and a wall-clock cap. A Stop button halts it.
 
-  Crystallized Sep 26 2026 from the standalone "Select All - Buybacks" v1.1.1
+  Attuned Sep 26 2026 from the standalone "Select All - Buybacks" v1.1.1
   (Tampermonkey on Zen). Its buttons often didn't appear because its @match
   was only /boh/inventory/buyback-order/* — Tampermonkey injects on a real
   page load and Portal is a single-page app, so arriving from any other
   portal page meant the script never ran (removing + re-adding it forced a
-  reinject). As a crystal it runs portal-wide and gates on the path itself.
+  reinject). As a shard it runs portal-wide and gates on the path itself.
 */
-AE.crystal({
+AE.shard({
   id: 'buybacks',
   name: 'Bountiful Yield',
   sites: ['portal.ubreakifix.net'],

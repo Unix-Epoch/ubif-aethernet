@@ -95,7 +95,7 @@ AE.reassemble = (() => {
   return { DEFAULTS, DEVICES, REPAIRS, LEVELS, settings, quote, up99, canSeeProfit, typeOf };
 })();
 
-AE.crystal({
+AE.shard({
   id: 'reassemble',
   name: 'Reassemble',
   sites: ['portal.ubreakifix.net'],

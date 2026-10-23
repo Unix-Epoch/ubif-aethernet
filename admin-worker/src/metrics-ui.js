@@ -51,7 +51,7 @@ const CSS = `
 
 const TZ = 'America/New_York';
 const STORE_ORDER = [914, 326, 536, 1276]; // fixed color order (blue, orange, aqua, yellow); color follows the store everywhere
-const CRYSTALS = { cleaningRate: 'Divination', woCleanings: 'Esuna', textNotes: 'Recitation', autoClose: 'Swiftcast', checkinDrafts: 'Return', leadReplies: 'Provoke', galaxy: 'Macrocosmos', glamour: 'Glamour',
+const SHARDS = { cleaningRate: 'Divination', woCleanings: 'Esuna', textNotes: 'Recitation', autoClose: 'Swiftcast', checkinDrafts: 'Return', leadReplies: 'Provoke', galaxy: 'Macrocosmos', glamour: 'Glamour',
   buybacks: 'Bountiful Yield', countCheck: 'Lay of the Land', waymark: 'Waymark', fixes: "Master's Mend", timeSheet: 'Tactician', assize: 'Assize', decipher: 'Decipher', printLabels: 'Quick Synthesis', rowColors: 'Rainbow Drip', reassemble: 'Reassemble' };
 const PRESETS = [['today', 'Today'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['month', 'This month'], ['lastmonth', 'Last month'], ['year', 'Year to date']];
 
@@ -432,10 +432,10 @@ function drawAll() {
 
   // ---------------- Aethernet
   g = sec('Aethernet', 'Usage counters (Waymark database) and tracker health');
-  tile(g, 'Crystal uses', 'uses');
+  tile(g, 'Shard uses', 'uses');
   tile(g, 'Active people', 'active', { badge: '<span class="pill now">Latest day</span>' });
-  const crAll = sumMap(R.crystals, list), inUse = Object.keys(CRYSTALS).filter((k) => crAll[k] > 0).length;
-  panel(g, 's3 tile', 'Crystals in use', null, rlShort(), (b) => b.append(node(`<div><div class="big">${inUse}<small>of ${Object.keys(CRYSTALS).length}</small></div><div class="sub">crystals used at least once</div></div>`)));
+  const crAll = sumMap(R.crystals /* API field, legacy name kept */, list), inUse = Object.keys(SHARDS).filter((k) => crAll[k] > 0).length;
+  panel(g, 's3 tile', 'Shards in use', null, rlShort(), (b) => b.append(node(`<div><div class="big">${inUse}<small>of ${Object.keys(SHARDS).length}</small></div><div class="sub">shards used at least once</div></div>`)));
   const fr = list.map((st) => Object.assign({ store: st }, R.freshness[st] || { state: 'critical', ageMin: null, today: 0, open: 0 }));
   const newest = fr.reduce((m, f) => (f.ageMin != null && (m == null || f.ageMin < m) ? f.ageMin : m), null), worst = fr.filter((f) => f.state === 'critical' || f.state === 'warning').sort((a, b) => (b.ageMin || 1e9) - (a.ageMin || 1e9));
   panel(g, 's3 tile', 'Tracker freshness', null, '<span class="pill now">Now</span>', (b) => b.append(node(`<div><div class="big">${ago(newest)}<small>newest scan</small></div><div class="sub">${worst.length ? worst.slice(0, 2).map((f) => `<span class="stt">${ICON[f.state]}${f.store} ${STATE_LABEL[f.state].toLowerCase()} ${ago(f.ageMin)}</span>`).join(' ') : `<span class="stt">${ICON.good}All live</span>`}</div></div>`)));
@@ -443,8 +443,8 @@ function drawAll() {
   panel(g, 's6', 'Uses', splitTot('int', 'uses'), rlShort(), (b) => { if (uS.length > 1 || cmpColor) legend(b, uS, cmpColor); barChart(plotBox(b, 160), { x: xu, series: uS, fmt: 'int', stack: uS.length > 1, h: 160 }); }, tableOf(xu, uS, 'int'));
   const aS = seriesFor('active');
   panel(g, 's6', 'Active people', splitTot('int', 'active'), 'latest day', (b) => { if (aS.length > 1 || cmpColor) legend(b, aS.map((s) => ({ ...s, line: 1 })), cmpColor); lineChart(plotBox(b, 160), { x: xu, series: aS, fmt: 'int', h: 160, direct: true }); if (R.gran === 'week') b.append(node('<div class="note">Weekly points are the average people per day.</div>')); }, tableOf(xu, aS, 'int'));
-  const crEntries = Object.entries(crAll).filter(([k]) => CRYSTALS[k]).sort((a, b) => b[1] - a[1]), crRows = crEntries.slice(0, 8).map(([k, v]) => ({ label: CRYSTALS[k], value: v })).concat(crEntries.length > 8 ? [{ label: 'Other crystals', value: crEntries.slice(8).reduce((s, x) => s + x[1], 0) }] : []);
-  panel(g, 's6', 'Uses by crystal', null, rlShort(), (b) => hbar(b, { rows: crRows, fmt: 'int', color: scopeColor(), name: 'Uses' }), () => ({ cols: ['Crystal', 'Uses'], rows: crEntries.map(([k, v]) => [CRYSTALS[k], v]) }));
+  const crEntries = Object.entries(crAll).filter(([k]) => SHARDS[k]).sort((a, b) => b[1] - a[1]), crRows = crEntries.slice(0, 8).map(([k, v]) => ({ label: SHARDS[k], value: v })).concat(crEntries.length > 8 ? [{ label: 'Other shards', value: crEntries.slice(8).reduce((s, x) => s + x[1], 0) }] : []);
+  panel(g, 's6', 'Uses by shard', null, rlShort(), (b) => hbar(b, { rows: crRows, fmt: 'int', color: scopeColor(), name: 'Uses' }), () => ({ cols: ['Shard', 'Uses'], rows: crEntries.map(([k, v]) => [SHARDS[k], v]) }));
   panel(g, 's6', 'Tracker freshness by store', null, 'scans table', (b) => b.append(node(`<table><tr><th>Store</th><th>Last scan</th><th>Open WOs</th><th>Scans today</th><th>State</th></tr>${fr.map((f) => `<tr><td><b>${f.store}</b> <span class="soft">${esc(storeName(f.store))}</span></td><td>${f.ageMin == null ? 'never' : ago(f.ageMin) + ' ago'}</td><td>${FMT.int(f.open)}</td><td>${FMT.int(f.today)}</td><td><span class="stt" title="${esc(f.note || '')}">${ICON[f.state]}${STATE_LABEL[f.state]}</span></td></tr>`).join('')}</table>`)));
 }
 

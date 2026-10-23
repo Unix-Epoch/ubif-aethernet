@@ -139,7 +139,7 @@ AE.decipher = (() => {
   return { valid, junk, scannable, luhn, fmt, digitsOf, placeholder, norm, clean, lookup, record, appleInfo, isSamsung, storeGspn, needsSerial, warranty, searchModels, modelDetails, fromWo, learn, open: null };
 })();
 
-AE.crystal({
+AE.shard({
   id: 'decipher',
   name: 'Decipher',
   sites: ['portal.ubreakifix.net'],

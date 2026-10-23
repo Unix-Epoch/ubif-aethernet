@@ -4,15 +4,15 @@
   - "Send feedback" (avatar menu, Settings, Tampermonkey menu): a bug report
     or a suggestion, sent to the Aethernet API (same Worker as Waymark). Bug
     reports can include technical details: version, browser, the page's path,
-    which crystals are on, and the last few Aethernet errors. Never customer
+    which shards are on, and the last few Aethernet errors. Never customer
     details. Submit-and-done; suggestions that get built are credited in the
     patch notes.
   - Usage: AE.track() counts (core) are sent here every 5 minutes, named per
     person, per store, per feature, per day. Disclosed in Settings and About.
   - Admin (Garrett): an inbox of reports with his own status/notes, and
     usage by feature, person and store, with drill-down (filter by store,
-    person and crystal; a people × crystals table). No visible way in: ten quick clicks
-    on the crystal in the Settings header open it (asking for the key the
+    person and shard; a people × shards table). No visible way in: ten quick clicks
+    on the shard in the Settings header open it (asking for the key the
     first time). Reading needs the ADMIN_KEY secret, kept in this browser
     only; it never ships in the script, so other users can't read any of it
     even with the public app key.
@@ -162,6 +162,7 @@ AE.feedback = (() => {
   // ------------------------------------------------------------ Send feedback
   function diagnostics() {
     return {
+      // `crystals`: key kept, it's what saved bug reports store (legacy name for shards)
       crystals: Object.entries(AE.settings.crystals).filter(([, on]) => on).map(([id]) => id),
       errors: AE.recentErrors.slice(-5),
       pageErrors: AE.pageErrors.slice(-5), // Portal's own script errors
@@ -196,7 +197,7 @@ AE.feedback = (() => {
     const preview = () => JSON.stringify({ version: AE_VERSION, browser: browserName(), page: location.pathname, ...diag() }, null, 1);
     const pre = h('pre', null, preview());
     const detailsRow = h('div', null,
-      h('label', { class: 'chk' }, include, h('span', null, 'Include technical details (version, browser, this page\'s address, which crystals are on, recent Aethernet errors). No customer details.')),
+      h('label', { class: 'chk' }, include, h('span', null, 'Include technical details (version, browser, this page\'s address, which shards are on, recent Aethernet errors). No customer details.')),
       h('details', null, h('summary', null, 'What gets sent'), pre));
     const send = h('button', { type: 'button', class: 'sg-btn sg-lg sg-primary', onclick: async () => {
       const t = text.value.trim();
@@ -230,7 +231,7 @@ AE.feedback = (() => {
   }
 
   // ------------------------------------------------------------ Admin
-  const FEATURE_NAMES = () => Object.fromEntries(AE.crystals.map((c) => [c.id, c.name]));
+  const FEATURE_NAMES = () => Object.fromEntries(AE.shards.map((c) => [c.id, c.name]));
   const featureLabel = (f) => {
     const [id, act] = f.split(':');
     const base = { active: 'Used Aethernet', feedback: 'Feedback', settings: 'Settings' }[id] || FEATURE_NAMES()[id] || id;
@@ -524,17 +525,17 @@ AE.feedback = (() => {
     }
 
     /*
-      Usage, with drill-down: filter by store, person and crystal (menus at the
-      top, or click a store / person / crystal in any card; chips show what's
+      Usage, with drill-down: filter by store, person and shard (menus at the
+      top, or click a store / person / shard in any card; chips show what's
       filtered and clear it). Every card follows the filters. The rows are
       fetched once per date range (the Worker sends them raw: day, store,
       person, feature, count) and filtered here.
     */
-    let usage = null, uStore = '', uUser = '', uCrystal = '';
+    let usage = null, uStore = '', uUser = '', uShard = '';
     async function drawUsage() {
       if (!usage || usage.days !== days) usage = Object.assign(await call('GET', '/v1/admin/usage?days=' + days, null, key()), { days });
       const all = usage.rows;
-      const crystalOf = (r) => r.feature.split(':')[0];
+      const shardOf = (r) => r.feature.split(':')[0];
       const storeLabel = new Map(all.map((r) => [String(r.store), (r.store_name ? r.store_name + ' ' : '') + '#' + r.store]));
       const personLabel = new Map(all.map((r) => [String(r.user_id), r.user_name || 'User ' + r.user_id]));
       const personStore = new Map(all.map((r) => [String(r.user_id), storeLabel.get(String(r.store))]));
@@ -544,9 +545,9 @@ AE.feedback = (() => {
       const inScope = (r) => (!uStore || String(r.store) === uStore) && (!uUser || String(r.user_id) === uUser);
       const scoped = all.filter(inScope);
       const active = scoped.filter((r) => r.feature === 'active');
-      const rows = scoped.filter((r) => !r.feature.startsWith('active') && (!uCrystal || crystalOf(r) === uCrystal));
+      const rows = scoped.filter((r) => !r.feature.startsWith('active') && (!uShard || shardOf(r) === uShard));
       const sum = (arr, keyFn) => { const m = new Map(); for (const r of arr) { const k = String(keyFn(r)); m.set(k, (m.get(k) || 0) + r.count); } return [...m.entries()].sort((x, y) => y[1] - x[1]); };
-      const set = (what, v) => () => { if (what === 'store') { uStore = v; uUser = ''; } else if (what === 'user') uUser = v; else uCrystal = v; draw(); };
+      const set = (what, v) => () => { if (what === 'store') { uStore = v; uUser = ''; } else if (what === 'user') uUser = v; else uShard = v; draw(); };
 
       const bars = (entries, label, opts = {}) => {
         const max = Math.max(1, ...entries.map((e) => e[1]));
@@ -564,15 +565,15 @@ AE.feedback = (() => {
       const storeSel = select(uStore, (v) => set('store', v)(), 'All stores', [...storeLabel].sort((x, y) => x[1].localeCompare(y[1])));
       const userSel = select(uUser, (v) => set('user', v)(), 'Everyone', [...personLabel].filter(([id]) => !uStore || all.some((r) => String(r.user_id) === id && String(r.store) === uStore))
         .sort((x, y) => x[1].localeCompare(y[1])).map(([id, n]) => [id, uStore ? n : n + ' · ' + personStore.get(id)]));
-      const crystalIds = [...new Set(all.filter((r) => !r.feature.startsWith('active')).map(crystalOf))];
-      const crystalSel = select(uCrystal, (v) => set('crystal', v)(), 'All crystals', crystalIds.map((f) => [f, featureLabel(f)]).sort((x, y) => x[1].localeCompare(y[1])));
+      const shardIds = [...new Set(all.filter((r) => !r.feature.startsWith('active')).map(shardOf))];
+      const shardSel = select(uShard, (v) => set('shard', v)(), 'All shards', shardIds.map((f) => [f, featureLabel(f)]).sort((x, y) => x[1].localeCompare(y[1])));
       const chip = (label, clear) => h('button', { type: 'button', class: 'fchip', title: 'Clear', onclick: clear }, label, h('b', null, '×'));
-      const chips = [uStore && chip(storeLabel.get(uStore), set('store', '')), uUser && chip(personLabel.get(uUser), set('user', '')), uCrystal && chip(featureLabel(uCrystal), set('crystal', ''))].filter(Boolean);
+      const chips = [uStore && chip(storeLabel.get(uStore), set('store', '')), uUser && chip(personLabel.get(uUser), set('user', '')), uShard && chip(featureLabel(uShard), set('shard', ''))].filter(Boolean);
 
       const cardEl = (title, wide, ...kids) => h('div', { class: 'card' + (wide ? ' wide' : '') }, h('h3', null, title), ...kids);
       const empty = (x) => (x.length ? x : [h('div', { class: 'sub' }, 'No data for this filter.')]);
       const people = new Set(active.map((r) => String(r.user_id)));
-      const scope = [uUser ? personLabel.get(uUser) : uStore ? storeLabel.get(uStore) : 'Everyone', uCrystal ? featureLabel(uCrystal) : null].filter(Boolean).join(' · ');
+      const scope = [uUser ? personLabel.get(uUser) : uStore ? storeLabel.get(uStore) : 'Everyone', uShard ? featureLabel(uShard) : null].filter(Boolean).join(' · ');
 
       // Per day: uses (bar) for the current filter.
       const perDay = new Map(sum(rows, (r) => r.day));
@@ -581,29 +582,29 @@ AE.feedback = (() => {
       const chart = h('div', { class: 'days' }, ...dayKeys.map((k) => h('i', { title: new Date(k + 'T00:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) + ': ' + (perDay.get(k) || 0),
         style: 'height:' + Math.max(2, Math.round(((perDay.get(k) || 0) / topDay) * 100)) + '%' + (perDay.get(k) ? '' : ';opacity:.25') })));
 
-      // Who uses what: people × crystals (counts), for the current store/person filter.
+      // Who uses what: people × shards (counts), for the current store/person filter.
       const matrixRows = scoped.filter((r) => !r.feature.startsWith('active'));
-      const cols = sum(uCrystal ? matrixRows.filter((r) => crystalOf(r) === uCrystal) : matrixRows, crystalOf).map(([f]) => f);
-      const cell = new Map(); for (const r of matrixRows) { const k = r.user_id + '|' + crystalOf(r); cell.set(k, (cell.get(k) || 0) + r.count); }
-      const ppl = sum(uCrystal ? matrixRows.filter((r) => crystalOf(r) === uCrystal) : matrixRows, (r) => r.user_id).map(([id]) => id);
+      const cols = sum(uShard ? matrixRows.filter((r) => shardOf(r) === uShard) : matrixRows, shardOf).map(([f]) => f);
+      const cell = new Map(); for (const r of matrixRows) { const k = r.user_id + '|' + shardOf(r); cell.set(k, (cell.get(k) || 0) + r.count); }
+      const ppl = sum(uShard ? matrixRows.filter((r) => shardOf(r) === uShard) : matrixRows, (r) => r.user_id).map(([id]) => id);
       const matrix = cols.length ? h('div', { class: 'mx' }, h('table', null,
-        h('tr', null, h('th', null, 'Person'), ...cols.map((f) => h('th', { title: featureLabel(f) + ' — show only this', onclick: set('crystal', f), class: 'pick' }, h('span', { html: AE.actionIcon(f, 18) })))),
+        h('tr', null, h('th', null, 'Person'), ...cols.map((f) => h('th', { title: featureLabel(f) + ' — show only this', onclick: set('shard', f), class: 'pick' }, h('span', { html: AE.actionIcon(f, 18) })))),
         ...ppl.slice(0, 60).map((id) => h('tr', null,
           h('td', { class: 'pick', title: 'Show only this person', onclick: set('user', id) }, personLabel.get(id), h('span', { class: 'sub' }, uStore ? '' : ' · ' + personStore.get(id))),
           ...cols.map((f) => { const n = cell.get(id + '|' + f) || 0; return h('td', { class: 'num' + (n ? '' : ' zero') }, n || '·'); }))))) : null;
 
       body.replaceChildren(
-        h('div', { class: 'bar' }, daysSel, storeSel, userSel, crystalSel, ...chips),
+        h('div', { class: 'bar' }, daysSel, storeSel, userSel, shardSel, ...chips),
         h('div', { class: 'sub', style: 'margin:-4px 0 10px' }, scope + ': ' + people.size + (people.size === 1 ? ' person' : ' people') + ' active, ' +
-          rows.reduce((n, r) => n + r.count, 0) + ' uses since ' + usage.since + '. Click a store, person or crystal to drill in.'),
+          rows.reduce((n, r) => n + r.count, 0) + ' uses since ' + usage.since + '. Click a store, person or shard to drill in.'),
         h('div', { class: 'grid' },
           cardEl('Uses per day', true, chart),
-          uCrystal ? null : cardEl('By crystal', false, ...empty(bars(sum(rows, crystalOf), featureLabel, { pick: 'crystal', icon: true, limit: 20 }))),
-          cardEl(uCrystal ? featureLabel(uCrystal) + ': by action' : 'By action', false, ...empty(bars(sum(rows, (r) => r.feature), featureLabel, { limit: 20 }))),
+          uShard ? null : cardEl('By shard', false, ...empty(bars(sum(rows, shardOf), featureLabel, { pick: 'shard', icon: true, limit: 20 }))),
+          cardEl(uShard ? featureLabel(uShard) + ': by action' : 'By action', false, ...empty(bars(sum(rows, (r) => r.feature), featureLabel, { limit: 20 }))),
           uUser ? null : cardEl('By person', false, ...empty(bars(sum(rows, (r) => r.user_id), (k) => personLabel.get(k) + (uStore ? '' : ' · ' + personStore.get(k)), { pick: 'user', limit: 20 }))),
           uUser ? null : cardEl('Days active', false, ...empty(bars(sum(active, (r) => r.user_id), (k) => personLabel.get(k), { pick: 'user', limit: 20 })), h('div', { class: 'sub', style: 'margin-top:6px' }, 'Days each person had Portal open with ' + AE_NAME + '.')),
           uStore || uUser ? null : cardEl('By store', false, ...empty(bars(sum(rows, (r) => r.store), (k) => storeLabel.get(k), { pick: 'store' }))),
-          matrix ? cardEl('Who uses what', true, matrix, h('div', { class: 'sub', style: 'margin-top:6px' }, 'Uses per person and crystal. Click a name or an icon to drill in.')) : null));
+          matrix ? cardEl('Who uses what', true, matrix, h('div', { class: 'sub', style: 'margin-top:6px' }, 'Uses per person and shard. Click a name or an icon to drill in.')) : null));
     }
     draw();
   }

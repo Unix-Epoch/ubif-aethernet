@@ -1,5 +1,5 @@
 /*
-  Aethernet core — shared by every crystal (tool) in this bundle.
+  Aethernet core — shared by every shard (tool) in this bundle.
 
   - AE.settings: persisted in Tampermonkey storage (GM_*), so Portal and
     the Sprinklr form (a different site) see the same values.
@@ -8,16 +8,16 @@
   - Styling uses Portal's own design tokens (--aui-*), which switch with
     its light/dark theme; the fallbacks are the light-theme values, used on
     pages without the tokens (the Sprinklr form).
-  - AE.crystal(): each crystal (our name for a tool) registers here and runs
-    in its own try/catch, only if enabled in settings — one crystal breaking
-    can't take down the others. Adding a new one = "crystallizing" it.
+  - AE.shard(): each shard (our name for a tool) registers here and runs
+    in its own try/catch, only if enabled in settings — one shard breaking
+    can't take down the others. Adding a new one = "attuning" it.
 */
 
 const AE_NAME = 'Aethernet';
 const AE_VERSION = '__VERSION__';            // filled in by build.py
 const AE_DEV = __DEV__;                      // true only in the dev channel ("Aethernet (dev)")
 // AE_DEMO (used bare, never declared): build.py swaps it for true in the demo
-// channel's build (build.py --demo: only a few crystals, nothing else) and
+// channel's build (build.py --demo: only a few shards, nothing else) and
 // false everywhere else, so the other side's code is dropped by the minifier.
 const AE_BUILD_TIME = '__BUILD_TIME__';       // ISO time of the build
 const AE_BUILD_COMMIT = '__BUILD_COMMIT__';   // git commit it was built from ("-dirty" = uncommitted changes)
@@ -33,6 +33,7 @@ const AE_REFRESH_LABOR_DEFAULT = true;
 const AE = (() => {
   const SETTINGS_KEY = 'sg_settings';
   const DEFAULTS = {
+    // Stored key stays `crystals` (the old name for shards): renaming it would drop saved on/off switches.
     crystals: AE_DEMO ? { cleaningRate: true, autoClose: true, glamour: true }
       : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, checkinDrafts: true, leadReplies: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, timeSheet: true, reassemble: true, decipher: true, assize: true, fixes: true },
     // Swiftcast: offer Dualcast (all of a device's cleanings at once); refreshLabor: null = follow
@@ -71,6 +72,7 @@ const AE = (() => {
   };
   const stored = GM_getValue(SETTINGS_KEY, {});
   // Pre-2.4 installs saved the on/off switches as `tools`; carry them over.
+  // (`tools` -> `crystals` is the stored key, kept as-is after the shard rename.)
   if (stored.tools && !stored.crystals) { stored.crystals = stored.tools; delete stored.tools; }
   // 2.22.0: the screen protector is on for everyone, once, including anyone who switched it off while it was Experimental.
   if (!GM_getValue('ae_refresh_labor_on', false)) {
@@ -257,7 +259,7 @@ const AE = (() => {
     return result;
   }
 
-  // Refresh what's on screen without reloading, after a crystal changes
+  // Refresh what's on screen without reloading, after a shard changes
   // Portal data behind its back (a note, a nickname, a new WO).
   let refreshing = null;
   function refreshView(tags) {
@@ -332,9 +334,9 @@ const AE = (() => {
   .sg { font-family: Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--aui-on-surface, #1a1c1e); }
   /*
     Chips next to the customer name (WO heading) and in Work orders rows: one size, one font, one icon size, one gap.
-    #ae-wo-chips is the single flex row every crystal drops its chip into (AE.woChip); each chip carries its own
-    order (CSS), so they line up the same whichever crystal draws first: 10 Esuna, 20 Assize, 30 Waymark tags,
-    40 + Tag, 50 Auto-Waymark. Variants: .ae-chip (status pill: crystal icon + text, colors set by the crystal),
+    #ae-wo-chips is the single flex row every shard drops its chip into (AE.woChip); each chip carries its own
+    order (CSS), so they line up the same whichever shard draws first: 10 Esuna, 20 Assize, 30 Waymark tags,
+    40 + Tag, 50 Auto-Waymark. Variants: .ae-chip (status pill: shard icon + text, colors set by the shard),
     .sg-tag.ae-chip / .sg-auto.ae-chip (Waymark's own colors), .ghost (+ Tag), .round (icon only), .mini (list rows).
   */
   :root { --ae-chip-h:26px; --ae-chip-fs:13px; --ae-chip-icon:18px; --ae-chip-gap:8px; }
@@ -470,7 +472,7 @@ const AE = (() => {
   }
 
   // Minimal element builder: h('div', {class:'x', onclick}, child, 'text')
-  // Each crystal's FFXIV action icon, plus a few FFXIV UI pieces under "ui/<name>"
+  // Each shard's FFXIV action icon, plus a few FFXIV UI pieces under "ui/<name>"
   // (embedded by build.py from assets/icons/ and assets/ui/).
   const ACTION_ICONS = __ACTION_ICONS__;
   const actionIcon = (id, size = 24, extra = '') => ACTION_ICONS[id]
@@ -514,13 +516,13 @@ const AE = (() => {
 
   /*
     A progress panel (bottom-right card): spinner → ✓/✕/■, running clock,
-    ticked step list, a result message, and whatever action buttons the crystal
+    ticked step list, a result message, and whatever action buttons the shard
     sets. Used by auto-close and print-all-labels.
   */
   /*
-    Progress box for a crystal's run (Swiftcast, Dualcast, Quick Synthesis…),
+    Progress box for a shard's run (Swiftcast, Dualcast, Quick Synthesis…),
     styled after FFXIV casting:
-      - the crystal's action icon in the header, with a cooldown sweep: a grey
+      - the shard's action icon in the header, with a cooldown sweep: a grey
         infill that clears clockwise as each step completes (total known up
         front: opts.total, panel.plan(n), or panel.progress(done, total));
       - "–" collapses it into a floating spell icon with the same sweep; when the
@@ -680,7 +682,7 @@ const AE = (() => {
     background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
   .sg-confirm .sg-actions .sg-btn { flex:1; }
   `;
-  // icon: a crystal/spell id shown left of the title. cancelLabel: null = no Cancel button (a notice with just OK).
+  // icon: a shard/spell id shown left of the title. cancelLabel: null = no Cancel button (a notice with just OK).
   function confirmDialog({ title, message, warning, icon: iconId, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) {
     ensureCss();
     if (!document.getElementById('sg-confirm-css')) document.head.append(h('style', { id: 'sg-confirm-css' }, CONFIRM_CSS));
@@ -716,7 +718,7 @@ const AE = (() => {
     return el;
   }
 
-  // Crystals tell each other when a cleaning changes (e.g. auto-close finished)
+  // Shards tell each other when a cleaning changes (e.g. auto-close finished)
   // so the badge and WO pill refresh without waiting for their timers.
   // Events: cleaning-changed, text-sent { woId }, waymark-changed, wo-changed { woId, why } (Aethernet itself changed a work order's notes
   // or nickname: Assize re-reads it now, since Portal's updatedAt doesn't move for either).
@@ -873,7 +875,7 @@ const AE = (() => {
       const day = (pend[localDay()] = pend[localDay()] || {});
       day[feature] = (day[feature] || 0) + 1;
       GM_setValue(USAGE_KEY, pend);
-    } catch (_) { /* never let tracking break a crystal */ }
+    } catch (_) { /* never let tracking break a shard */ }
   }
   // Once a day per person (e.g. "used Aethernet today", "has a Glamour theme on").
   function trackDaily(feature) {
@@ -884,12 +886,12 @@ const AE = (() => {
     track(feature);
   }
 
-  // --------------------------------------------------- crystal registry
-  const crystals = [];
-  function crystal(def) { crystals.push(def); }
+  // --------------------------------------------------- shard registry
+  const shards = [];
+  function shard(def) { shards.push(def); }
   /*
     "A text went to a customer from this WO": event text-sent { woId } for
-    any crystal (Recitation logs it, Auto-Waymark follows up), so each works
+    any shard (Recitation logs it, Auto-Waymark follows up), so each works
     with the other switched off. Portal keeps its own fetch, so the send is
     seen in the browser's network log (POST …/messages/v1/send), not by
     wrapping fetch. Sends that failed (status 4xx/5xx, where the browser
@@ -914,7 +916,7 @@ const AE = (() => {
     // Which Aethernet builds are running on this page (the dev build warns if both are).
     const root = document.documentElement;
     root.dataset.aethernet = ((root.dataset.aethernet || '') + ' ' + (AE_DEV ? 'dev' : 'public')).trim();
-    for (const t of crystals) {
+    for (const t of shards) {
       if (!settings.crystals[t.id]) continue;
       if (t.sites && !t.sites.includes(AE_SANDBOX ? 'portal.ubreakifix.net' : location.hostname)) continue;
       // Paused remotely by an Aethernet notice (status.json); last-known copy.
@@ -1001,15 +1003,15 @@ const AE = (() => {
   }
 
   /*
-    Header icons. Every Aethernet item in Portal's top bar is one 34 px crystal icon with a small
-    count badge, registered here so the bar stays tidy as crystals are added:
+    Header icons. Every Aethernet item in Portal's top bar is one 34 px shard icon with a small
+    count badge, registered here so the bar stays tidy as shards are added:
 
       const wm = AE.headerIcon({ id: 'waymark', icon: 'waymark', label: '3 Auto-Waymarks due',
                                  badge: 3, count: 3, severity: 'amber', onClick: (e) => openBoard() });
       wm.update({ badge: 0, count: 0, severity: 'grey' });   // later; a no-op when nothing changed
 
       id        unique name; elId (optional) = the button's DOM id.
-      icon      a crystal's action icon id (AE.actionIcon); falls back to the Aethernet mark.
+      icon      a shard's action icon id (AE.actionIcon); falls back to the Aethernet mark.
       label     full text: the hover/focus pill, aria-label and the AeN menu row.
       detail    optional second line in the hover pill.
       badge     text on the corner badge ('' = none, e.g. 3 or '62%'); count = the actionable number
@@ -1258,7 +1260,7 @@ const AE = (() => {
     return woHead;
   }
 
-  // The one flex row beside the heading where every crystal's chip goes (see the chip notes in the CSS). Null off a WO page.
+  // The one flex row beside the heading where every shard's chip goes (see the chip notes in the CSS). Null off a WO page.
   function woHeadingRow(woId) {
     const heading = woHeading(woId), parent = heading && heading.parentElement;
     if (!parent) return null;
@@ -1343,14 +1345,14 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, woHeadingRow, woChip, textEl, findButton,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, woHeadingRow, woChip, textEl, findButton,
     api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, crystals, crystal, start, every,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every,
     api, unwrap, Stopped, portal, sameStore, assertSameStore, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
-    autoClose: null, // set by the auto-close crystal when it's enabled
+    autoClose: null, // set by the auto-close shard when it's enabled
     // Bug report links (06-feedback.js replaces these; without it, e.g. the demo build, just the words).
     bugLink: (label) => esc(label), bugLinkEl: (label) => h('span', null, label),
   };

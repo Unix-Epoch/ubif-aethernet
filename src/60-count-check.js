@@ -15,7 +15,7 @@
   everything, and a fully scanned one is missing nothing. (Checked against a
   full serial-by-serial comparison on UBF-013049: identical, 408 missing.)
 */
-AE.crystal({
+AE.shard({
   id: 'countCheck',
   name: 'Lay of the Land',
   sites: ['portal.ubreakifix.net'],

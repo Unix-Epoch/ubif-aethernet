@@ -15,7 +15,7 @@
   ours styling `tr.status-…`, or a row that already has a status- class we
   didn't put there.
 */
-AE.crystal({
+AE.shard({
   id: 'rowColors',
   name: 'Rainbow Drip',
   sites: ['portal.ubreakifix.net'],

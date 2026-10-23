@@ -437,7 +437,7 @@ const PAGE_DEFS = [
   ['sales', 'Sales', 'Daily sales and each day’s transactions', 'store'],
   ['metrics', 'Metrics', 'Charts for sales, operations, cleanings', 'store', true],
   ['data', 'Store data', 'Waymark tags, Auto-Waymarks, Divination links', 'store'],
-  ['usage', 'Usage', 'Who uses which crystal (filtered to their stores)', 'store'],
+  ['usage', 'Usage', 'Who uses which shard (filtered to their stores)', 'store'],
   ['reports', 'Reports', 'Bug reports and ideas; set status, quote in patch notes', 'wide'],
   ['auto', 'Auto-Waymark', 'Stage and push rules live for every store', 'wide'],
   ['stores', 'Stores', 'Give or remove a store’s Aethernet access', 'wide'],

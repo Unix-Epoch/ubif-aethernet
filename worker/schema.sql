@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS feedback (    -- bug reports and suggestions from the
   store INTEGER NOT NULL, store_name TEXT, user_id INTEGER, user_name TEXT,
   kind TEXT NOT NULL,                    -- 'bug' | 'idea'
   text TEXT NOT NULL,
-  version TEXT, page TEXT, browser TEXT, diag TEXT,  -- diag: JSON (enabled crystals, recent Aethernet errors)
+  version TEXT, page TEXT, browser TEXT, diag TEXT,  -- diag: JSON (enabled shards (JSON key still "crystals"), recent Aethernet errors)
   status TEXT NOT NULL DEFAULT 'new',    -- new | planned | fixed | wontfix (admin only)
   note TEXT,                             -- admin's own note
   fixed_in TEXT, quote TEXT, credit TEXT,  -- quoted as fixed in that version's patch notes (credit: e.g. "G.Green")

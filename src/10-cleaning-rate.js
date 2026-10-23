@@ -18,7 +18,7 @@
 
   Pending cleanings count too: a cleaning arrival created today that hasn't
   been checked in yet (still in Arrivals) shows as "pending" and counts. Its
-  ⚡ runs the cleaning auto-close (after a confirmation) when that crystal is on.
+  ⚡ runs the cleaning auto-close (after a confirmation) when that shard is on.
   See AE.data in core for how WOs and arrivals are fetched and matched.
 
   History (Reports page, /reporting/metrics): a "Cleaning rate history" card
@@ -30,7 +30,7 @@
   cached in this browser per store (ae_rate_history): a finished day doesn't
   change, so only missing days and the last two are ever reloaded.
 */
-AE.crystal({
+AE.shard({
   id: 'cleaningRate',
   name: 'Divination',
   sites: ['portal.ubreakifix.net'],

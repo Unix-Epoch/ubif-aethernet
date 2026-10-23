@@ -20,7 +20,7 @@
   clockTypeId (2 = break), timeIn, timeOut }; a punch still open counts up to now. Read only.
 */
 /*
-  Tactician's store-wide parts, outside the crystal so Settings can use them:
+  Tactician's store-wide parts, outside the shard so Settings can use them:
     · General manager(s) of this location: a store setting on the tracker (GET/PUT …/settings/gm), picked by
       anyone with Store time sheet access (Portal's own manager gate for that page). Portal's roles aren't used:
       Garrett, Oct 12, 2026: "Portal roles are often not set up properly". Store setup will set it too.
@@ -142,7 +142,7 @@ AE.tactician = (() => {
   return { ymd, monday, canManage, loadSettings, gmIds, saveGm, punches, people, gmEditor, summary, uploadDaily };
 })();
 
-AE.crystal({
+AE.shard({
   id: 'timeSheet',
   name: 'Tactician',
   sites: ['portal.ubreakifix.net'],

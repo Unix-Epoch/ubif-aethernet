@@ -23,7 +23,7 @@
   status, using Portal's own status → tag map. Afterwards the WO view is
   refreshed in place (AE.refreshView), so the note shows without a reload.
 */
-AE.crystal({
+AE.shard({
   id: 'textNotes',
   name: 'Recitation',
   sites: ['portal.ubreakifix.net'],

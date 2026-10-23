@@ -7,13 +7,13 @@
     No cleanings              an Asurion Mobility WO with none found
 
   Click it for the list. Available ones have a Create button (cleaning
-  auto-close, after a confirmation) when that crystal is on. Not shown on a
+  auto-close, after a confirmation) when that shard is on. Not shown on a
   cleaning WO itself, or on non-Asurion-Mobility WOs with no cleanings.
 
   Cleanings match this WO by device IMEI (customer ID only if there's no
   IMEI), created within 2 days of the WO. Read-only lookups.
 */
-AE.crystal({
+AE.shard({
   id: 'woCleanings',
   name: 'Esuna',
   sites: ['portal.ubreakifix.net'],

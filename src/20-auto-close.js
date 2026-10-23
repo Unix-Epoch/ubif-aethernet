@@ -32,7 +32,7 @@
   and PUT customer-devices (would blank the shared device's nickname and
   passcode on the parent WO). A Stop button halts before the next call.
 */
-AE.crystal({
+AE.shard({
   id: 'autoClose',
   name: 'Swiftcast',
   sites: ['portal.ubreakifix.net'],

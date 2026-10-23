@@ -73,7 +73,7 @@ AE.assizeRules = (() => {
   return makeRules({ RG, graphs: __ASSIZE_GRAPHS__ });
 })();
 
-AE.crystal({
+AE.shard({
   id: 'assize',
   name: 'Assize',
   sites: ['portal.ubreakifix.net'],

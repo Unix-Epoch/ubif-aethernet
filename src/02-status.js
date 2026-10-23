@@ -14,14 +14,14 @@
       },
       "incident": {                                          // set by build.py --status …
         "id", "severity": "info|warning|error", "title", "message",
-        "crystals": ["cleaningRate"],   // which crystals it's about (badges in Settings; a crystal's name in
+        "shards": ["cleaningRate"],   // (also written as "crystals", the pre-rename name old installs read) which shards it's about (badges in Settings; a shard's name in
                                         // the title becomes its icon + a link to its Settings)
-        "tag": "…",                     // (2.21.0) the badge's text on those crystals' rows (default "Known issue")
+        "tag": "…",                     // (2.21.0) the badge's text on those shards' rows (default "Known issue")
         "mentions": ["fixes"],          // (2.22.0+) named in the title (icon + link to Settings), no badge
         "chips": [{ "id": "fixes", "text": "Fix in a newer version", "below": "2.22.0" }],
-                                        // (2.22.0+) badges on crystals' Settings rows; `below`: only on
+                                        // (2.22.0+) badges on shards' Settings rows; `below`: only on
                                         // installs older than that version (the fixed one never shows it)
-        "pause": ["autoClose"],         // kill switch: these crystals stop acting
+        "pause": ["autoClose"],         // kill switch: these shards stop acting
         "fixedIn": "2.10.1",            // installs at/after this version stop showing it
         "posted", "updated"
       }
@@ -30,8 +30,8 @@
   - Checked on load and every 10 minutes; the last good copy is kept, so a
     GitHub outage never shows anything new (and never an error).
   - Everything in the file is untrusted data: plain text only (no HTML, no
-    links), length-capped, crystal ids validated. At worst a bad file shows a
-    message or pauses crystals; it can't run anything or turn anything on.
+    links), length-capped, shard ids validated. At worst a bad file shows a
+    message or pauses shards; it can't run anything or turn anything on.
   - `latest` drives the "update available" pill and Check for updates. An
     update is one click: the install link opens Tampermonkey's own Update page.
 */
@@ -67,7 +67,7 @@ AE.status = (() => {
         severity: SEVERITIES.includes(i.severity) ? i.severity : 'warning',
         title: text(i.title, 140),
         message: text(i.message, 700),
-        crystals: ids(i.crystals),
+        shards: ids(i.shards || i.crystals), // "crystals": the old name of this field; build.py still writes both
         pause: ids(i.pause),
         fixedIn: VER_RE.test(i.fixedIn || '') ? i.fixedIn : null,
         tag: text(i.tag, 40),
@@ -88,22 +88,22 @@ AE.status = (() => {
     return i && !(i.fixedIn && !newer(i.fixedIn, AE_VERSION)) ? i : null;
   };
   const paused = (id) => !!incident() && incident().pause.includes(id);
-  // The badge for a crystal's Settings row, if any: paused, a (version-gated) chip, or "Known issue" for a crystal it's about.
+  // The badge for a shard's Settings row, if any: paused, a (version-gated) chip, or "Known issue" for a shard it's about.
   function chipFor(id) {
     const inc = incident();
     if (!inc) return null;
     if (inc.pause.includes(id)) return { text: 'Paused', kind: 'paused', title: inc.title };
     const c = inc.chips.find((x) => x.id === id);
     if (c) return !c.below || newer(c.below, AE_VERSION) ? { text: c.text, kind: inc.severity, title: inc.title } : null;
-    if (inc.crystals.includes(id)) return { text: inc.tag || 'Known issue', kind: inc.severity, title: inc.title };
+    if (inc.shards.includes(id)) return { text: inc.tag || 'Known issue', kind: inc.severity, title: inc.title };
     return null;
   }
-  const crystalName = (id) => (AE.crystals.find((c) => c.id === id) || {}).name || id;
+  const shardName = (id) => (AE.shards.find((c) => c.id === id) || {}).name || id;
 
-  // For a crystal's action: true (and says why) when it's paused remotely.
+  // For a shard's action: true (and says why) when it's paused remotely.
   function blocked(id) {
     if (!paused(id)) return false;
-    AE.toast(crystalName(id) + ' is paused', incident().title + ' — the Aethernet team has paused it until it\'s fixed.', 'err', 9000);
+    AE.toast(shardName(id) + ' is paused', incident().title + ' — the Aethernet team has paused it until it\'s fixed.', 'err', 9000);
     return true;
   }
 
@@ -215,13 +215,13 @@ AE.status = (() => {
   // or a version-gated chip that applies here.)
   const needsNewer = (inc) => (inc.fixedIn && newer(inc.fixedIn, AE_VERSION)) || inc.chips.some((c) => c.below && newer(c.below, AE_VERSION));
 
-  // Notice text with each named crystal's name turned into its icon + a link to its Settings (built as
-  // elements: the notice text stays plain text). The title also gets the icons of crystals it doesn't name.
+  // Notice text with each named shard's name turned into its icon + a link to its Settings (built as
+  // elements: the notice text stays plain text). The title also gets the icons of shards it doesn't name.
   function linkNames(inc, text, lead) {
     let parts = [text];
     const icons = [];
-    for (const id of [...new Set([...inc.crystals, ...inc.mentions])]) {
-      const name = crystalName(id);
+    for (const id of [...new Set([...inc.shards, ...inc.mentions])]) {
+      const name = shardName(id);
       let hit = false;
       parts = parts.flatMap((p) => {
         if (typeof p !== 'string' || !name || !p.includes(name)) return [p];
@@ -230,7 +230,7 @@ AE.status = (() => {
         return [p.slice(0, i), h('a', { href: '#', class: 'crys', title: 'Open ' + name + ' in Settings', onclick: (e) => { e.preventDefault(); AE.openSettings(id); } },
           h('span', { html: AE.actionIcon(id, 18) }), name), p.slice(i + name.length)];
       });
-      if (lead && !hit && inc.crystals.includes(id)) icons.push(h('span', { title: name, html: AE.actionIcon(id, 18) }));
+      if (lead && !hit && inc.shards.includes(id)) icons.push(h('span', { title: name, html: AE.actionIcon(id, 18) }));
     }
     return [...icons, h('span', null, ...parts.filter((p) => p !== ''))];
   }
@@ -244,7 +244,7 @@ AE.status = (() => {
     if (el && el.dataset.key === key) return;
     el?.remove();
     ensureCss();
-    const pausedNames = inc.pause.map(crystalName);
+    const pausedNames = inc.pause.map(shardName);
     const upd = updateAvailable();
     el = h('div', { id: 'sg-status-banner', class: 'sg ' + inc.severity, role: inc.severity === 'error' ? 'alert' : 'status', 'data-key': key },
       h('span', { class: 'mark', title: AE_NAME, html: icon('aetheryte', 26) }),
@@ -257,7 +257,7 @@ AE.status = (() => {
           // The notice says a fix is in a newer version than this one: offer to get it.
           needsNewer(inc) ? (upd ? h('button', { type: 'button', class: 'sg-btn', onclick: () => startUpdate(upd) }, 'Update now')
             : AE_DEMO ? null : h('button', { type: 'button', class: 'sg-btn', onclick: () => checkNow() }, 'Check for updates')) : null,
-          inc.crystals.length || inc.mentions.length ? h('button', { type: 'button', class: 'sg-btn', onclick: () => AE.openSettings(inc.crystals[0] || inc.mentions[0]) }, 'Open in Settings') : null)),
+          inc.shards.length || inc.mentions.length ? h('button', { type: 'button', class: 'sg-btn', onclick: () => AE.openSettings(inc.shards[0] || inc.mentions[0]) }, 'Open in Settings') : null)),
       h('button', { type: 'button', class: 'sg-x', title: 'Dismiss (it comes back if the notice is updated)', onclick: () => { GM_setValue(DISMISS_KEY, key); el.remove(); } }, '✕'));
     document.body.appendChild(el);
     placeBanner();
@@ -286,7 +286,7 @@ AE.status = (() => {
   }
 
   if (AE_ON_PORTAL) {
-    // After every module has loaded (crystal names, Settings), paint the cached
+    // After every module has loaded (shard names, Settings), paint the cached
     // copy right away, then fetch a fresh one and keep polling.
     setTimeout(() => {
       render();

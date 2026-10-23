@@ -1,5 +1,5 @@
 /*
-  Work order tracker (collection). Not a crystal: it runs in the background for every
+  Work order tracker (collection). Not a shard: it runs in the background for every
   store with Aethernet access, once the tracker Worker is deployed (__TRACKER_API__).
 
   Every 10 minutes (one tab per browser; the Worker hands each WO to one browser at a time):

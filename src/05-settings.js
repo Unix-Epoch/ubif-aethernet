@@ -2,14 +2,14 @@
   Settings: a "Aethernet settings" item in Portal's avatar menu (cloned
   from Portal's own "View my account" item so it matches exactly), which
   opens a pop-out settings card. Also reachable from the Tampermonkey menu.
-  Crystal on/off changes need a reload, so Save reloads the page.
+  Shard on/off changes need a reload, so Save reloads the page.
 */
 (function settingsUi() {
   if (!AE_ON_PORTAL) return;
   const { h, esc, icon } = AE;
 
-  // Crystals are named after FFXIV actions; the description says what each does.
-  const CRYSTAL_INFO = [
+  // Shards are named after FFXIV actions; the description says what each does.
+  const SHARD_INFO = [
     ['cleaningRate', 'Divination', "Your store's live cleaning rate - shoot for 100% or more! Click the Cleanings icon at the top of any page."],
     // The demo build (AE_DEMO) ships only Divination, Swiftcast and Glamour; the
     // rest sit in AE_DEMO ? [] : […] so their text isn't in that file at all.
@@ -40,10 +40,10 @@
     ]),
   ];
 
-  // The Crystals list is grouped by what the crystals do. Order here is the order shown; a crystal
-  // missing from every group lands in the last one, so a new crystal is never lost. A group with no
-  // crystals in this build (demo, public) is not shown.
-  const CRYSTAL_GROUPS = [
+  // The Shards list is grouped by what the shards do. Order here is the order shown; a shard
+  // missing from every group lands in the last one, so a new shard is never lost. A group with no
+  // shards in this build (demo, public) is not shown.
+  const SHARD_GROUPS = [
     ['cleanings', 'Cleanings', ['cleaningRate', 'woCleanings', 'autoClose']],
     ['orders', 'Work orders & customers', ['waymark', 'assize', 'textNotes', 'leadReplies', 'rowColors', 'checkinDrafts']],
     ['devices', 'Devices & pricing', ['decipher', 'reassemble', 'galaxy']],
@@ -52,24 +52,24 @@
   ];
 
   /*
-    What's new. A crystal is "new" until Settings has been opened and closed
+    What's new. A shard is "new" until Settings has been opened and closed
     once with it listed; new ones get a yellow sheen. The first run of a build
     after an update shows an "Aethernet has updated!" pill (once) that opens
     Settings. A fresh install sees neither.
 
-    What's updated. A patch-notes entry can list the existing crystals it
+    What's updated. A patch-notes entry can list the existing shards it
     changed ("updated": [ids]); after an update those get an "Updated" tag and
     a purple sheen (New wins if both), until Settings is closed once.
     ae_updates_seen is the version whose updates were last seen; the first
     run that tracks it starts from the version you updated from.
   */
-  const SEEN_KEY = 'ae_seen_crystals', VERSION_KEY = 'ae_last_version';
-  const allIds = () => CRYSTAL_INFO.map(([id]) => id);
+  const SEEN_KEY = 'ae_seen_crystals' /* stored key, legacy name kept on purpose */, VERSION_KEY = 'ae_last_version';
+  const allIds = () => SHARD_INFO.map(([id]) => id);
   const existingInstall = () => ['sg_settings', 'ae_settings_sections', 'ae_text_notes_logged', 'gde_btn_pos']
     .some((k) => GM_getValue(k) !== undefined);
   const lastVersion = GM_getValue(VERSION_KEY);
   const updated = lastVersion ? lastVersion !== AE_VERSION : existingInstall();
-  // Before 2.7 nothing was tracked: count every crystal as already seen.
+  // Before 2.7 nothing was tracked: count every shard as already seen.
   if (GM_getValue(SEEN_KEY) === undefined) GM_setValue(SEEN_KEY, allIds());
   const isNew = (id) => !GM_getValue(SEEN_KEY, []).includes(id);
   const UPD_KEY = 'ae_updates_seen';
@@ -192,10 +192,10 @@
   .sg-sheet-foot { position:sticky; bottom:-24px; margin:auto -24px -24px; padding-top:16px; flex:none; padding:16px 24px; display:flex; gap:8px;
     background:var(--aui-surface, #fff); border-top:1px solid var(--aui-outline-soft, #eeedf1); }
   .sg-sheet-foot .sg-btn { flex:1; }
-  /* nested crystal settings */
-  .sg-crystal { border-top:1px solid var(--aui-outline-soft, #eeedf1); }
-  .sg-crystal:first-child { border-top:0; }
-  .sg-crystal > .sg-row { border-top:0; }
+  /* nested shard settings */
+  .sg-shard { border-top:1px solid var(--aui-outline-soft, #eeedf1); }
+  .sg-shard:first-child { border-top:0; }
+  .sg-shard > .sg-row { border-top:0; }
   .sg-opt-toggle { display:inline-flex; align-items:center; gap:4px; margin-top:4px; padding:2px 0; border:0; background:none; cursor:pointer;
     color:var(--aui-primary, #8223d2); font:400 12px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
   .sg-opt-toggle .chev { width:14px; height:14px; transition:transform .2s; }
@@ -206,7 +206,7 @@
   .sg-opts.closed { grid-template-rows:0fr; }
   .sg-opts > div { overflow:hidden; min-height:0; }
   .sg-opts > div > div { margin:0 0 12px 2px; padding:2px 0 2px 14px; border-left:2px solid var(--aui-primary-soft, #faecff); }
-  /* Crystals list: search + collapsible groups */
+  /* Shards list: search + collapsible groups */
   /* The search box stays at the top of the Settings sheet while the list scrolls under it (solid panel background,
      above the group headers). top:-24px cancels the sheet's top padding so nothing shows above it. The section's
      clipping box uses overflow:clip, which, unlike hidden, leaves the sheet as the scroller sticky follows. */
@@ -233,22 +233,22 @@
   .sg-grp-body > div { overflow:hidden; min-height:0; }
   .sg-grp.closed .sg-grp-body > div { visibility:hidden; transition:visibility 0s .2s; }
   .sg-cempty { padding:18px 0 10px; text-align:center; }
-  /* new crystals: a yellow sheen until Settings is closed once */
-  .sg-crystal.sg-new { position:relative; margin:0 -10px; padding:0 10px; border-radius:10px; border-top-color:transparent;
+  /* new shards: a yellow sheen until Settings is closed once */
+  .sg-shard.sg-new { position:relative; margin:0 -10px; padding:0 10px; border-radius:10px; border-top-color:transparent;
     background:linear-gradient(105deg, rgba(255,204,0,.14) 0%, rgba(255,204,0,.14) 38%, rgba(255,236,140,.55) 50%, rgba(255,204,0,.14) 62%, rgba(255,204,0,.14) 100%);
     background-size:250% 100%; box-shadow:inset 0 0 0 1px rgba(214,160,0,.55); animation:sg-sheen 2.6s ease-in-out infinite; }
-  .sg-crystal.sg-new + .sg-crystal { border-top-color:transparent; }
+  .sg-shard.sg-new + .sg-shard { border-top-color:transparent; }
   @keyframes sg-sheen { 0% { background-position:100% 0; } 60%,100% { background-position:0% 0; } }
   .sg-issue-tag { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:10000rem; vertical-align:2px; font-size:11px; font-weight:700;
     letter-spacing:.03em; text-transform:uppercase; background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
   .sg-issue-tag.paused, .sg-issue-tag.error { background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); }
   .sg-new-tag { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:10000rem; vertical-align:2px;
     background:#ffcc00; color:#3d2e00; font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
-  /* updated crystals: the same sheen in Aethernet purple, until Settings is closed once */
-  .sg-crystal.sg-upd { position:relative; margin:0 -10px; padding:0 10px; border-radius:10px; border-top-color:transparent;
+  /* updated shards: the same sheen in Aethernet purple, until Settings is closed once */
+  .sg-shard.sg-upd { position:relative; margin:0 -10px; padding:0 10px; border-radius:10px; border-top-color:transparent;
     background:linear-gradient(105deg, rgba(130,35,210,.08) 0%, rgba(130,35,210,.08) 38%, rgba(196,140,255,.38) 50%, rgba(130,35,210,.08) 62%, rgba(130,35,210,.08) 100%);
     background-size:250% 100%; box-shadow:inset 0 0 0 1px rgba(130,35,210,.45); animation:sg-sheen 2.6s ease-in-out infinite; }
-  .sg-crystal.sg-upd + .sg-crystal { border-top-color:transparent; }
+  .sg-shard.sg-upd + .sg-shard { border-top-color:transparent; }
   .sg-new-tag.upd { background:#8223d2; color:#fff; }
   .sg-exp-tag { display:inline-block; padding:1px 7px; border-radius:10000rem; font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
     background:repeating-linear-gradient(135deg, #fff0c0 0 6px, #ffe28a 6px 12px); color:#5a4300; border:1px solid #d6a000; }
@@ -274,7 +274,7 @@
     background-size:250% 100%; animation:sg-sheen 2.4s ease-in-out infinite, sg-save-pulse 1.6s ease-out infinite; }
   @keyframes sg-save-pulse { 0% { box-shadow:0 0 0 0 rgba(130,35,210,.5); } 100% { box-shadow:0 0 0 10px rgba(130,35,210,0); } }
   @keyframes sg-pill-in { from { opacity:0; transform:translate(-50%, 10px); } to { opacity:1; transform:translate(-50%, 0); } }
-  @media (prefers-reduced-motion: reduce) { .sg-crystal.sg-new, .sg-crystal.sg-upd, .sg-update-pill, .sg-btn.sg-pending { animation:none; } .sg-update-pill .x .ring { display:none; } }
+  @media (prefers-reduced-motion: reduce) { .sg-shard.sg-new, .sg-shard.sg-upd, .sg-update-pill, .sg-btn.sg-pending { animation:none; } .sg-update-pill .x .ring { display:none; } }
   `;
 
   // About — its own modal, above the settings panel.
@@ -307,7 +307,7 @@
         h('div', { class: 'sg-soft' }, 'v' + AE_VERSION)),
       h('h4', null, 'Authored by'),
       kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914']),
-      h('div', { class: 'fine' }, 'Crystal icons are FINAL FANTASY XIV action icons. © SQUARE ENIX.'),
+      h('div', { class: 'fine' }, 'Shard icons are FINAL FANTASY XIV action icons. © SQUARE ENIX.'),
       h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')))
     : h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
       h('div', { class: 'hero' },
@@ -318,8 +318,8 @@
       kv(['Version', 'v' + AE_VERSION], ['Built', builtText], ['Commit', h('code', null, AE_BUILD_COMMIT)]),
       h('h4', null, 'Authored by'),
       kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914']),
-      h('h4', null, 'Crystals'),
-      h('div', { class: 'chips' }, CRYSTAL_INFO.map(([id, name]) =>
+      h('h4', null, 'Shards'),
+      h('div', { class: 'chips' }, SHARD_INFO.map(([id, name]) =>
         h('span', { class: 'sg-chip' + (on[id] ? '' : ' chip-off'), title: on[id] ? 'On' : 'Off' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 16) }), name))),
       h('h4', null, 'Your setup'),
       kv(['Signed in', whoBox], ['Browser', browser], ['Script manager', manager]),
@@ -329,7 +329,7 @@
       h('div', { class: 'link-row' }, linkInput, copyBtn),
       h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Open the link with Tampermonkey installed to add ' + AE_NAME + '. Installs update themselves.'),
       h('div', { class: 'fine' }, 'A personal project. Not affiliated with or supported by Asurion or uBreakiFix.'),
-      h('div', { class: 'fine', style: 'margin-top:4px' }, 'Crystal icons are FINAL FANTASY XIV action icons. © SQUARE ENIX. Not affiliated with Square Enix.'),
+      h('div', { class: 'fine', style: 'margin-top:4px' }, 'Shard icons are FINAL FANTASY XIV action icons. © SQUARE ENIX. Not affiliated with Square Enix.'),
       h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-about', onclick: (e) => { if (e.target === scrim) close(); } }, card);
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
@@ -388,7 +388,7 @@
     document.body.appendChild(scrim);
   }
 
-  // open('galaxy') opens straight to that crystal, with its settings expanded.
+  // open('galaxy') opens straight to that shard, with its settings expanded.
   function open(focus) {
     if (typeof focus !== 'string') focus = null; // menu commands pass an event
     ensureModalCss();
@@ -433,7 +433,7 @@
     const galaxyAuto = { technicianName: '', email: '', location: '' };
     const galaxyInputs = {};
 
-    // Each crystal's own settings, shown nested under it.
+    // Each shard's own settings, shown nested under it.
     const OPTIONS = {
       glamour: [() => AE.glamour.summary(s.glamour), AE.glamour.editor(s, () => repaintSums())],
       autoClose: [() => (s.autoClose.dualcast !== false ? 'Dualcast/Triplecast on' : 'Dualcast/Triplecast off') + ((s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT) ? ' · screen protector on' : ''),
@@ -475,7 +475,7 @@
           input('Delay between labels (ms)', s.printLabels.delayMs, '900', (v) => { s.printLabels.delayMs = Math.max(200, Number(v) || 900); repaintSums(); }, 'number')],
       }),
     };
-    // A live Aethernet notice about this crystal (status.json): say so on its row.
+    // A live Aethernet notice about this shard (status.json): say so on its row.
     const issueTag = (id) => {
       const c = AE.status.chipFor(id);
       return c ? h('span', { class: 'sg-issue-tag ' + c.kind, title: c.title }, c.text) : null;
@@ -483,7 +483,7 @@
     const CHEV = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
     // A description's **…** parts are bold (the rest stays plain text).
     const boldParts = (t) => String(t).split(/\*\*(.+?)\*\*/).map((p, i) => (i % 2 ? h('b', { style: 'display:inline;font-size:inherit;line-height:inherit;color:inherit' }, p) : p)).filter((p) => p !== '');
-    const crystalRow = (id, name, desc) => {
+    const shardRow = (id, name, desc) => {
       const fresh = isNew(id), upd = !fresh && isUpdated(id);
       let optToggle = null, optBody = null;
       if (OPTIONS[id]) {
@@ -505,7 +505,7 @@
         sums.push(paintSum);
         paintSum();
       }
-      return h('div', { class: 'sg-crystal' + (fresh ? ' sg-new' : upd ? ' sg-upd' : ''), 'data-crystal': id },
+      return h('div', { class: 'sg-shard' + (fresh ? ' sg-new' : upd ? ' sg-upd' : ''), 'data-shard': id },
         h('div', { class: 'sg-row' },
           h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : upd ? h('span', { class: 'sg-new-tag upd' }, 'Updated') : null,
               issueTag(id)),
@@ -514,19 +514,19 @@
         optBody);
     };
 
-    // The Crystals list: a search box over collapsible groups. A group's open/closed is remembered
+    // The Shards list: a search box over collapsible groups. A group's open/closed is remembered
     // per browser with the sections ('grp_<id>'); the first Settings open after an update opens any
-    // group holding a New or Updated crystal, so the sheen is seen. Searching opens every group with
+    // group holding a New or Updated shard, so the sheen is seen. Searching opens every group with
     // a match without touching what's remembered.
-    function crystalList() {
-      const rows = new Map(CRYSTAL_INFO.map(([id, name, desc]) => [id, crystalRow(id, name, desc)]));
-      const listed = new Set(CRYSTAL_GROUPS.flatMap(([, , ids]) => ids));
-      const groups = CRYSTAL_GROUPS.map(([gid, gname, ids], i, all) => [gid, gname,
-        CRYSTAL_INFO.map(([id]) => id).filter((id) => ids.includes(id) || (i === all.length - 1 && !listed.has(id)))
+    function shardList() {
+      const rows = new Map(SHARD_INFO.map(([id, name, desc]) => [id, shardRow(id, name, desc)]));
+      const listed = new Set(SHARD_GROUPS.flatMap(([, , ids]) => ids));
+      const groups = SHARD_GROUPS.map(([gid, gname, ids], i, all) => [gid, gname,
+        SHARD_INFO.map(([id]) => id).filter((id) => ids.includes(id) || (i === all.length - 1 && !listed.has(id)))
           .sort((a, b) => (ids.indexOf(a) + 1 || 99) - (ids.indexOf(b) + 1 || 99))]).filter(([, , ids]) => ids.length);
       let query = '';
-      const search = h('input', { type: 'search', placeholder: 'Search crystals', autocomplete: 'off', spellcheck: 'false' });
-      const empty = h('div', { class: 'sg-cempty sg-soft', role: 'status', style: 'display:none' }, 'No crystals match');
+      const search = h('input', { type: 'search', placeholder: 'Search shards', autocomplete: 'off', spellcheck: 'false' });
+      const empty = h('div', { class: 'sg-cempty sg-soft', role: 'status', style: 'display:none' }, 'No shards match');
       const paints = [];
       const wraps = groups.map(([gid, gname, ids]) => {
         const key = 'grp_' + gid;
@@ -554,18 +554,18 @@
         sums.push(paint);
         return wrap;
       });
-      const info = new Map(CRYSTAL_INFO.map(([id, name, desc]) => [id, (name + ' ' + desc.replace(/\*\*/g, '')).toLowerCase()]));
+      const info = new Map(SHARD_INFO.map(([id, name, desc]) => [id, (name + ' ' + desc.replace(/\*\*/g, '')).toLowerCase()]));
       const matches = (id) => info.get(id).includes(query);
       const refresh = () => { query = search.value.trim().toLowerCase(); empty.style.display = paints.map((p) => p()).some(Boolean) ? 'none' : ''; };
       search.addEventListener('input', refresh);
       search.addEventListener('keydown', (e) => { if (e.key === 'Escape' && search.value) { e.stopPropagation(); search.value = ''; refresh(); } });
       refresh();
-      return h('div', { class: 'sg-clist' }, h('label', { class: 'sg-csearch' }, h('span', { class: 'lbl' }, 'Search crystals'), search), ...wraps, empty);
+      return h('div', { class: 'sg-clist' }, h('label', { class: 'sg-csearch' }, h('span', { class: 'lbl' }, 'Search shards'), search), ...wraps, empty);
     }
 
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
-        // Hidden way in: ten quick clicks on the crystal open the admin panel (key entry first time).
+        // Hidden way in: ten quick clicks on the shard open the admin panel (key entry first time).
         h('span', { style: 'color:var(--aui-primary,#8223d2);cursor:default;user-select:none', html: icon('aetheryte', 36), onclick: AE_DEMO ? null : (() => {
           let n = 0, last = 0;
           return () => { const t = Date.now(); n = t - last < 1500 ? n + 1 : 1; last = t; if (n >= 10) { n = 0; AE.feedback && AE.feedback.openAdmin(); } };
@@ -575,12 +575,12 @@
 
       section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
         who,
-        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your Portal login. Crystals use these automatically.'),
+        h('div', { class: 'sg-soft', style: 'margin-top:6px' }, 'Pulled from your Portal login. Shards use these automatically.'),
         AE_DEMO ? null : h('div', { class: 'sg-soft', style: 'margin-top:6px' }, AE_NAME + ' records which features you use (a count per feature per day, with your name and store) to decide what to improve. It never records customer details or what\'s on the page.')),
 
-      section('crystals', 'Crystals', true,
-        () => CRYSTAL_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + CRYSTAL_INFO.length + ' on',
-        crystalList()),
+      section('shards', 'Shards', true,
+        () => SHARD_INFO.filter(([id]) => s.crystals[id]).length + ' of ' + SHARD_INFO.length + ' on',
+        shardList()),
 
       h('div', { class: 'sg-foot-links' },
         AE_DEMO ? null : h('button', { type: 'button', class: 'sg-about-link', onclick: () => AE.feedback.openFeedback() }, 'Send feedback'),
@@ -593,7 +593,7 @@
         (saveBtn = h('button', { class: 'sg-btn sg-lg sg-primary', onclick: () => { AE.saveSettings(s); close(true); location.reload(); } }, 'Save & reload'))));
 
     const scrim = h('div', { class: 'sg sg-scrim', id: 'sg-settings', onclick: (e) => { if (e.target === scrim) close(); } }, sheet);
-    // Every way out ends the "new" sheen: the crystals have now been seen.
+    // Every way out ends the "new" sheen: the shards have now been seen.
     // Save & reload animates while the working copy differs from what's saved (checked after
     // anything in the sheet changes; editors that fill in defaults do so before the baseline).
     const baseline = JSON.stringify(s);
@@ -614,7 +614,7 @@
     document.body.appendChild(scrim);
     document.addEventListener('keydown', onKey);
     document.getElementById('sg-update-pill')?.remove();
-    if (focus) requestAnimationFrame(() => sheet.querySelector('[data-crystal="' + focus + '"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    if (focus) requestAnimationFrame(() => sheet.querySelector('[data-shard="' + focus + '"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
 
     AE.profile().then((p) => {
       const loc = p.storeId ? p.storeId + ' ' + p.storeName : '';
@@ -628,7 +628,7 @@
     }).catch((e) => { who.replaceChildren(h('dt', null, 'Error'), h('dd', null, esc(e.message))); });
   }
 
-  // The pop-over dialog styles (.sg-about-scrim, .sg-about…), for any crystal's dialog too (Reassemble).
+  // The pop-over dialog styles (.sg-about-scrim, .sg-about…), for any shard's dialog too (Reassemble).
   function ensureModalCss() {
     AE.ensureCss();
     if (!document.getElementById('sg-settings-css')) document.head.append(h('style', { id: 'sg-settings-css' }, MODAL_CSS));
@@ -664,7 +664,7 @@
       h('span', { html: '<svg class="ring" viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="11"/></svg>', style: 'display:contents' }));
     const pill = h('button', { type: 'button', class: 'sg sg-update-pill', id: 'sg-update-pill', title: "See what's new" },
       h('span', { html: icon('aetheryte', 20) }), AE_NAME + ' has updated!', h('span', { class: 'ver' }, 'v' + AE_VERSION), x);
-    // Settings opens underneath (that's where new crystals are marked), with the patch notes on top.
+    // Settings opens underneath (that's where new shards are marked), with the patch notes on top.
     pill.onclick = (e) => { pill.remove(); if (!x.contains(e.target)) { open(); openPatchNotes(fromVersion || AE_VERSION); } };
     // Gone by itself after 10 s, in step with the ring; hovering pauses both.
     let left = 10000, since = Date.now(), timer = setTimeout(() => pill.remove(), left);

@@ -51,8 +51,8 @@ async function api(method, path, body) {
   const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status); return j;
 }
 const COLORS = { purple: '#8223d2', blue: '#4a68f9', teal: '#1592a8', green: '#2f9e5b', lime: '#6f9a12', yellow: '#b38f00', orange: '#d9670f', red: '#d1344b', grey: '#5d5e61' };
-const CRYSTALS = { cleaningRate: 'Divination', woCleanings: 'Esuna', textNotes: 'Recitation', autoClose: 'Swiftcast', galaxy: 'Macrocosmos', buybacks: 'Bountiful Yield', printLabels: 'Quick Synthesis', glamour: 'Glamour', waymark: 'Waymark', countCheck: 'Lay of the Land', rowColors: 'Rainbow Drip', fixes: "Master's Mend", active: 'Used Aethernet', feedback: 'Feedback', settings: 'Settings' };
-const featureLabel = (f) => { const [id, act] = f.split(':'); return (CRYSTALS[id] || id) + (act ? ' · ' + act : ''); };
+const SHARDS = { cleaningRate: 'Divination', woCleanings: 'Esuna', textNotes: 'Recitation', autoClose: 'Swiftcast', galaxy: 'Macrocosmos', buybacks: 'Bountiful Yield', printLabels: 'Quick Synthesis', glamour: 'Glamour', waymark: 'Waymark', countCheck: 'Lay of the Land', rowColors: 'Rainbow Drip', fixes: "Master's Mend", active: 'Used Aethernet', feedback: 'Feedback', settings: 'Settings' };
+const featureLabel = (f) => { const [id, act] = f.split(':'); return (SHARDS[id] || id) + (act ? ' · ' + act : ''); };
 const fmt = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
 const fmtDay = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' });
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
@@ -122,41 +122,41 @@ async function drawReports(m) {
 }
 
 // ---------------------------------------------------------------- Usage (same drill-down as the in-Portal panel)
-let days = 30, usage = null, uStore = '', uUser = '', uCrystal = '';
+let days = 30, usage = null, uStore = '', uUser = '', uShard = '';
 async function drawUsage(m) {
   if (!usage || usage.days !== days) usage = Object.assign(await api('GET', '/usage?days=' + days), { days });
-  const all = usage.rows, crystalOf = (r) => r.feature.split(':')[0];
+  const all = usage.rows, shardOf = (r) => r.feature.split(':')[0];
   const storeLabel = new Map(all.map((r) => [String(r.store), (r.store_name ? r.store_name + ' ' : '') + '#' + r.store]));
   const personLabel = new Map(all.map((r) => [String(r.user_id), r.user_name || 'User ' + r.user_id]));
   const personStore = new Map(all.map((r) => [String(r.user_id), storeLabel.get(String(r.store))]));
   if (uStore && !storeLabel.has(uStore)) uStore = ''; if (uUser && !personLabel.has(uUser)) uUser = '';
   const scoped = all.filter((r) => (!uStore || String(r.store) === uStore) && (!uUser || String(r.user_id) === uUser));
-  const active = scoped.filter((r) => r.feature === 'active'), rows = scoped.filter((r) => !r.feature.startsWith('active') && (!uCrystal || crystalOf(r) === uCrystal));
+  const active = scoped.filter((r) => r.feature === 'active'), rows = scoped.filter((r) => !r.feature.startsWith('active') && (!uShard || shardOf(r) === uShard));
   const sum = (arr, f) => { const mm = new Map(); for (const r of arr) { const k = String(f(r)); mm.set(k, (mm.get(k) || 0) + r.count); } return [...mm.entries()].sort((a, b) => b[1] - a[1]); };
-  const set = (w, v) => () => { if (w === 'store') { uStore = v; uUser = ''; } else if (w === 'user') uUser = v; else uCrystal = v; draw(); };
+  const set = (w, v) => () => { if (w === 'store') { uStore = v; uUser = ''; } else if (w === 'user') uUser = v; else uShard = v; draw(); };
   const bars = (en, label, pick) => { const mx = Math.max(1, ...en.map((e) => e[1])); return en.slice(0, 20).map(([k, n]) => h('div', { class: 'row2' + (pick ? ' pick' : ''), onclick: pick ? set(pick, k) : null }, h('div', { class: 'nm' }, label(k)), h('div', { class: 'track' }, h('i', { style: 'width:' + Math.round(n / mx * 100) + '%' })), h('div', { class: 'soft' }, n))); };
   const select = (val, on, first, en) => h('select', { onchange: (e) => on(e.target.value) }, h('option', { value: '' }, first), en.map(([v, l]) => { const o = h('option', { value: v }, l); o.selected = v === val; return o; }));
-  const chips = [uStore && h('button', { class: 'chip', onclick: set('store', '') }, storeLabel.get(uStore), ' ×'), uUser && h('button', { class: 'chip', onclick: set('user', '') }, personLabel.get(uUser), ' ×'), uCrystal && h('button', { class: 'chip', onclick: set('crystal', '') }, featureLabel(uCrystal), ' ×')].filter(Boolean);
+  const chips = [uStore && h('button', { class: 'chip', onclick: set('store', '') }, storeLabel.get(uStore), ' ×'), uUser && h('button', { class: 'chip', onclick: set('user', '') }, personLabel.get(uUser), ' ×'), uShard && h('button', { class: 'chip', onclick: set('shard', '') }, featureLabel(uShard), ' ×')].filter(Boolean);
   const perDay = new Map(sum(rows, (r) => r.day)), dk = []; for (let d = new Date(usage.since + 'T00:00:00'); d <= new Date(); d.setDate(d.getDate() + 1)) dk.push(d.toISOString().slice(0, 10));
   const top = Math.max(1, ...dk.map((k) => perDay.get(k) || 0));
   const card = (t, ...k) => h('div', { class: 'card' }, h('h3', null, t), ...k);
-  const mx = scoped.filter((r) => !r.feature.startsWith('active')), cols = sum(uCrystal ? mx.filter((r) => crystalOf(r) === uCrystal) : mx, crystalOf).map(([f]) => f);
-  const cell = new Map(); for (const r of mx) { const k = r.user_id + '|' + crystalOf(r); cell.set(k, (cell.get(k) || 0) + r.count); }
-  const ppl = sum(uCrystal ? mx.filter((r) => crystalOf(r) === uCrystal) : mx, (r) => r.user_id).map(([id]) => id);
+  const mx = scoped.filter((r) => !r.feature.startsWith('active')), cols = sum(uShard ? mx.filter((r) => shardOf(r) === uShard) : mx, shardOf).map(([f]) => f);
+  const cell = new Map(); for (const r of mx) { const k = r.user_id + '|' + shardOf(r); cell.set(k, (cell.get(k) || 0) + r.count); }
+  const ppl = sum(uShard ? mx.filter((r) => shardOf(r) === uShard) : mx, (r) => r.user_id).map(([id]) => id);
   m.replaceChildren(
     h('div', { class: 'bar' }, select(String(days), (v) => { days = Number(v) || 30; draw(); }, 'Range', [7, 30, 90, 180, 365].map((d) => [String(d), 'Last ' + d + ' days'])),
       select(uStore, (v) => set('store', v)(), 'All stores', [...storeLabel]), select(uUser, (v) => set('user', v)(), 'Everyone', [...personLabel].filter(([id]) => !uStore || all.some((r) => String(r.user_id) === id && String(r.store) === uStore)).map(([id, n]) => [id, uStore ? n : n + ' · ' + personStore.get(id)])),
-      select(uCrystal, (v) => set('crystal', v)(), 'All crystals', [...new Set(all.filter((r) => !r.feature.startsWith('active')).map(crystalOf))].map((f) => [f, featureLabel(f)])), ...chips),
-    h('div', { class: 'soft', style: 'margin:-4px 0 12px' }, new Set(active.map((r) => r.user_id)).size + ' people active, ' + rows.reduce((n, r) => n + r.count, 0) + ' uses since ' + usage.since + '. Click a store, person or crystal to drill in.'),
+      select(uShard, (v) => set('shard', v)(), 'All shards', [...new Set(all.filter((r) => !r.feature.startsWith('active')).map(shardOf))].map((f) => [f, featureLabel(f)])), ...chips),
+    h('div', { class: 'soft', style: 'margin:-4px 0 12px' }, new Set(active.map((r) => r.user_id)).size + ' people active, ' + rows.reduce((n, r) => n + r.count, 0) + ' uses since ' + usage.since + '. Click a store, person or shard to drill in.'),
     card('Uses per day', h('div', { class: 'days' }, dk.map((k) => h('i', { title: k + ': ' + (perDay.get(k) || 0), style: 'height:' + Math.max(2, Math.round((perDay.get(k) || 0) / top * 100)) + '%' + (perDay.get(k) ? '' : ';opacity:.25') })))),
     h('div', { class: 'grid' },
-      uCrystal ? null : card('By crystal', ...bars(sum(rows, crystalOf), featureLabel, 'crystal')),
+      uShard ? null : card('By shard', ...bars(sum(rows, shardOf), featureLabel, 'shard')),
       card('By action', ...bars(sum(rows, (r) => r.feature), featureLabel)),
       uUser ? null : card('By person', ...bars(sum(rows, (r) => r.user_id), (k) => personLabel.get(k) + (uStore ? '' : ' · ' + personStore.get(k)), 'user')),
       uUser ? null : card('Days active', ...bars(sum(active, (r) => r.user_id), (k) => personLabel.get(k), 'user')),
       uStore || uUser ? null : card('By store', ...bars(sum(rows, (r) => r.store), (k) => storeLabel.get(k), 'store'))),
     cols.length ? h('div', { class: 'card', style: 'margin-top:14px;overflow:auto' }, h('h3', null, 'Who uses what'), h('table', null,
-      h('tr', null, h('th', null, 'Person'), cols.map((f) => h('th', { style: 'cursor:pointer', onclick: set('crystal', f) }, CRYSTALS[f] || f))),
+      h('tr', null, h('th', null, 'Person'), cols.map((f) => h('th', { style: 'cursor:pointer', onclick: set('shard', f) }, SHARDS[f] || f))),
       ppl.slice(0, 80).map((id) => h('tr', null, h('td', { style: 'cursor:pointer', onclick: set('user', id) }, personLabel.get(id), h('span', { class: 'soft' }, uStore ? '' : ' · ' + personStore.get(id))),
         cols.map((f) => { const n = cell.get(id + '|' + f) || 0; return h('td', { style: 'text-align:center' + (n ? '' : ';color:var(--line)') }, n || '·'); }))))) : null);
 }

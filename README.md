@@ -1,16 +1,16 @@
-# Aethernet — crystals for NextGen Portal
+# Aethernet — shards for NextGen Portal
 
 One Tampermonkey userscript, **`dist/aethernet.user.js`**, that bundles every
-portal crystal in this folder.
+portal shard in this folder.
 
-**Terminology:** each tool in Aethernet is a **crystal**, and adding a new one
-(or rolling an old standalone script in) is **crystallizing** it. Crystals are
+**Terminology:** each tool in Aethernet is a **shard**, and adding a new one
+(or rolling an old standalone script in) is **attuning** it. Shards are
 named after FFXIV actions, with what they do in brackets, and show that
-action's icon (`assets/icons/<crystalId>.jpg`, embedded by `build.py`; icons
+action's icon (`assets/icons/<shardId>.jpg`, embedded by `build.py`; icons
 © SQUARE ENIX, from XIVAPI). Quick Synthesis has no in-game icon, so it uses
 Rapid Synthesis's.
 
-| Crystal | Where it shows up |
+| Shard | Where it shows up |
 |---|---|
 | **Divination** (live cleaning rate) | Header badge left of "UBIF support" (just the % when the header is tight) |
 | **Swiftcast** (cleaning auto-close) | Round purple ⚡ in a cleaning arrival's "Customer arrival" drawer |
@@ -23,13 +23,13 @@ Rapid Synthesis's.
 | **Waymark** (work-order tags) | **+ Tag** after the customer's name on a WO; the Waymarks button in the header opens a board of open WOs grouped by tag; Settings → Waymark holds the store's tag list |
 
 **Settings:** avatar menu (top right) → **Aethernet settings**, or the
-Tampermonkey menu. Turn crystals on/off; a crystal's own settings (cleaning
+Tampermonkey menu. Turn shards on/off; a shard's own settings (cleaning
 target %, Galaxy form overrides, label delay) open from **Settings** under it.
 Saving reloads the page.
 
 **Updates:** the first page load after an update shows an **Aethernet has
 updated!** pill at the bottom of the screen, once; click it for the patch notes.
-Crystals added in an update carry a yellow sheen and a **New** tag until
+Shards added in an update carry a yellow sheen and a **New** tag until
 Settings has been closed once.
 
 **Patch notes:** Settings → **Patch notes** (bottom), or click the update pill.
@@ -60,15 +60,15 @@ downloads and runs code itself; updates always go through Tampermonkey.)
 **Notices:** a banner under Portal's header for a known issue, read live from
 `status.json` (no release needed; everyone sees it within ~15 minutes):
 
-    python3 build.py --status warning "Title" "Message" --crystal cleaningRate [--pause autoClose]
+    python3 build.py --status warning "Title" "Message" --shard cleaningRate [--pause autoClose]
     python3 build.py --status-update "New message"
     python3 build.py --status-fixed 2.11.1      # hidden for installs at/after 2.11.1
     python3 build.py --status-clear
 
-`--pause` is a kill switch: those crystals stop acting everywhere until the
+`--pause` is a kill switch: those shards stop acting everywhere until the
 notice is cleared (or the install reaches `fixedIn`). The file is treated as
 untrusted data: plain text only, capped, ids checked; it can show a message
-or pause crystals, never run code or turn anything on.
+or pause shards, never run code or turn anything on.
 
 **Nothing personal is hardcoded.** Name, email and store come from the
 logged-in user (`/api/auth/user`), so the same file works for anyone at any
@@ -112,10 +112,10 @@ each person's own portal login.
 
 ### Editing
 
-Crystals live in `src/`, one file each, loaded in filename order:
+Shards live in `src/`, one file each, loaded in filename order:
 `00-core.js` (settings storage, profile, API helper, shared styles and progress
-panel), `05-settings.js`, then the crystals. Each crystal registers with
-`AE.crystal({...})` and runs in its own try/catch, so one breaking can't take the
+panel), `05-settings.js`, then the shards. Each shard registers with
+`AE.shard({...})` and runs in its own try/catch, so one breaking can't take the
 others down. To ship a change: bump `VERSION` in `build.py`, then
 `python3 build.py --release`. It builds, refuses to publish unless `VERSION` is
 higher than the published one (read via the GitHub API, since the raw URL can
@@ -355,7 +355,7 @@ portal's own status → tag map. The Notes tab may need a refresh to show it.
 
 ## buybacks — bulk add on buyback orders (v2.5)
 
-Crystallized from the standalone **Select All - Buybacks** v1.1.1 (it lived only
+Attuned from the standalone **Select All - Buybacks** v1.1.1 (it lived only
 in Tampermonkey on Zen; source preserved in `legacy/select-all-buybacks.user.js`).
 On a buyback order's **Add Buyback parts** popout, Buybacks tab, adds **Add all
 Apple devices (TLC)** (destination "Asurion Reverse Logistics") and **Add all
@@ -364,10 +364,10 @@ It clicks each row's own add button by serial number, waits for the row to
 leave and the list to refill, and stops itself on stalls, a 500-click cap or 10
 minutes.
 
-**Fixed in the crystal:** the old script's buttons often didn't appear, because
+**Fixed in the shard:** the old script's buttons often didn't appear, because
 its `@match` was only `/boh/inventory/buyback-order/*` and Tampermonkey injects
 only on a real page load. Arriving from any other portal page meant it never
-ran, which is why removing and re-adding it "fixed" it. The crystal runs
+ran, which is why removing and re-adding it "fixed" it. The shard runs
 portal-wide and checks the path itself. Verified live: the toolbar appeared on
 two buyback orders in a row, reached by in-portal navigation.
 
@@ -404,14 +404,14 @@ the Cloudflare login used with `npx wrangler login`).
 - **Send feedback** (avatar menu → Send Aethernet feedback, Settings footer,
   Tampermonkey menu): a bug report or suggestion, stored by the Worker
   (`feedback` table) with name, store, version, browser and page path; bug
-  reports can add diagnostics (enabled crystals, last Aethernet errors).
+  reports can add diagnostics (enabled shards, last Aethernet errors).
   Submit-and-done. When a suggestion ships, credit the person in that
   release's `patch-notes.json` entry: `"credits": ["Name (Store)"]`.
-- **Usage**: `AE.track('crystal:action')` / `AE.trackDaily(...)` count per
+- **Usage**: `AE.track('shard:action')` / `AE.trackDaily(...)` count per
   person, store, feature and day (`usage` table, kept 180 days), uploaded
   every 5 minutes. Disclosed in Settings and About. No page contents or
   customer data.
-- **Admin** (inbox + usage charts): ten quick clicks on the crystal in the
+- **Admin** (inbox + usage charts): ten quick clicks on the shard in the
   Settings header. Needs the `ADMIN_KEY` Worker secret, kept in
   `worker/.admin-key` (git-ignored) and entered once per browser; it never
   ships in the script. Set/rotate: `cat worker/.admin-key | npx wrangler secret put ADMIN_KEY`.
@@ -424,7 +424,7 @@ Two channels, two installs:
 | | Public | Dev |
 |---|---|---|
 | Git branch | `main` | `dev` |
-| Tampermonkey script | Aethernet — crystals for NextGen Portal (`garrett.ubif`) | Aethernet (dev) (`garrett.ubif.dev`), own storage |
+| Tampermonkey script | Aethernet — shards for NextGen Portal (`garrett.ubif`) | Aethernet (dev) (`garrett.ubif.dev`), own storage |
 | Gist | `0cf4560c…` | `9ac1e1db…` (secret) |
 | Worker | aethernet-waymark | aethernet-waymark-dev (`wrangler deploy --env dev`), same D1 database, no cron |
 | Version | `VERSION` (2.15.0) | `DEV_BASE.N` (2.16.0.1, 2.16.0.2 …; `dev-build.txt`) |

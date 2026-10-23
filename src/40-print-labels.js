@@ -6,7 +6,7 @@
 
   If Portal renames its hooks, update SEL_MENU_BTN / SEL_PRINT_OPT.
 */
-AE.crystal({
+AE.shard({
   id: 'printLabels',
   name: 'Quick Synthesis',
   sites: ['portal.ubreakifix.net'],

@@ -26,7 +26,7 @@
   own quick replies; the one that fits the WO's status goes first (Ready for pickup ->
   PICK UP). A click only fills Portal's message box; Portal's Send sends it.
 */
-AE.crystal({
+AE.shard({
   id: 'leadReplies',
   name: 'Provoke',
   sites: ['portal.ubreakifix.net'],

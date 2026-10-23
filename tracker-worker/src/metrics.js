@@ -362,7 +362,7 @@ async function build(env, q) {
     if ((m === 'am' || m === 'cln') && periodOf(r.day) === 'cur') { const a = perDay[m][r.store] = perDay[m][r.store] || new Array(n).fill(null); const i = span(from, r.day) - 1; a[i] = (a[i] || 0) + r.value; }
   }
   const [use, act, actAll, marks, cfg] = ae.map ? ae.map((x) => x.results) : [];
-  const crystals = {};
+  const crystals = {}; // API field name (read by the admin site) keeps its legacy name; the admin UI shows "shards"
   for (const r of use || []) { add('uses', 'day', r.store, r.day, 0, r.n); if (periodOf(r.day) === 'cur') { const o = crystals[r.store] = crystals[r.store] || {}; o[r.c] = (o[r.c] || 0) + r.n; } }
   // Active people: a level per day (weeks average their days); "all" = distinct people across the selected stores
   const actLvl = (rows, key) => { for (const r of rows || []) { const p = periodOf(r.day); if (!p) continue; const i = G[p].dIdx(r.day), o = out[p].day.active = out[p].day.active || {}; const a = o[key(r)] = o[key(r)] || new Array(G[p].day.length).fill(0).map(() => []); a[i].push(r.n); } };

@@ -1,6 +1,6 @@
 /*
   Glamour (page theming) — recolours the whole portal by overriding its own
-  design tokens (--aui-*), so every portal screen and every crystal follows.
+  design tokens (--aui-*), so every portal screen and every shard follows.
 
   A theme is just three colours: background, text and accent. The rest of
   the palette (surfaces, outlines, soft text, the primary's soft/on shades)
@@ -10,7 +10,7 @@
 
   Presets are FFXIV-flavoured; users can also make their own. "Portal" means
   no override at all. The engine is set up at load (not in run()) so the
-  Settings editor can preview live even while the crystal is switched off.
+  Settings editor can preview live even while the shard is switched off.
 */
 AE.glamour = (() => {
   const { h } = AE;
@@ -187,7 +187,7 @@ AE.glamour = (() => {
     document.head.append(style); // (re)append so it stays after Portal's own sheets
   }
 
-  // The Settings editor (nested under the crystal). `s` is Settings' working copy.
+  // The Settings editor (nested under the shard). `s` is Settings' working copy.
   const EDITOR_CSS = `
   .sg-glam-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); gap:8px; margin:10px 0 6px; }
   .sg-glam-card { position:relative; display:flex; flex-direction:column; gap:6px; height:66px; padding:8px 9px; border-radius:10px; cursor:pointer; text-align:left;
@@ -359,7 +359,7 @@ AE.glamour = (() => {
   return { PRESETS, apply, editor, summary, tokens, contrast };
 })();
 
-AE.crystal({
+AE.shard({
   id: 'glamour',
   name: 'Glamour',
   sites: ['portal.ubreakifix.net'],

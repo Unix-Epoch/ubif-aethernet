@@ -32,7 +32,7 @@
     check-in (status 1), the saved copy is deleted. The Worker also deletes
     them 7 days after saving. They hold the customer's details and passcode.
 */
-AE.crystal({
+AE.shard({
   id: 'checkinDrafts',
   name: 'Return',
   sites: ['portal.ubreakifix.net'],
