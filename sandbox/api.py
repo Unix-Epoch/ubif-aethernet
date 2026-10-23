@@ -7,6 +7,7 @@ call Swiftcast/Dualcast, Esuna, Divination and Recitation make. Anything else
 answers 404 and is listed on /sandbox.
 """
 import copy, datetime, json, random, re, threading
+import retrace  # Retrace's inventory calls + the Worker stand-in (sandbox/retrace.py)
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -145,7 +146,15 @@ def dev_view(did):
 def cart_view(cart_id):
     c = load()['carts'].get(cart_id) or {'cartId': cart_id, 'items': []}
     total = round(sum(i['price'] for i in c['items']), 2)
-    return {'cartId': cart_id, 'cartItems': [dict(i) for i in c['items']], 'discountCodes': [], 'isCanceled': False,
+    # Part lines carry their inventory label like Portal's get-cart?includePartStatus=true (serial, serialStatus, partStatus)
+    items = []
+    for i in c['items']:
+        x = dict(i)
+        lab = retrace.part_label(i)
+        if lab:
+            x.update({'serial': lab, 'serialStatus': 'Reserved', 'partStatus': 'Reserved', 'warehouseId': str(STORE_ID), 'itemId': int(i['sku'])})
+        items.append(x)
+    return {'cartId': cart_id, 'cartItems': items, 'discountCodes': [], 'isCanceled': False,
             'payment': {'subtotal': total, 'netSubtotal': total, 'discount': 0, 'tax': 0, 'total': total, 'amountDue': total, 'amountPaid': 0}}
 
 
@@ -299,6 +308,11 @@ def route(method, path, body):
     p = u.path[len('/api/'):].strip('/')
     s = load()
     W = lambda wid: s['wos'].get(str(wid))
+
+    # ---- Retrace: Portal's inventory calls (item lookup, labels, serial history, POs, RMA, transfers) + the Worker stand-in
+    hit = retrace.route(method, p, q, body, s, STORE_ID, now)
+    if hit:
+        return hit
 
     # ---- who's signed in, store, config
     if p == 'auth/user' and s['settings'].get('signedOut'):  # test Portal's login page

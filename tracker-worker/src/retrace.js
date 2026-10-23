@@ -569,10 +569,12 @@ export function watchRule(method, url) {
   return null;
 }
 // Every label in a JSON value (depth ≤ 6), with the property it was under: [{ label, key }], each label once.
+// Document ids are skipped: Portal's cart ids (<store>-<13 digits>, e.g. 914-5631238484180) read like labels.
+const NOT_LABEL_KEYS = /^(cartId|csuCartId|salesId|salesOrderId|csuSalesOrderId|workorderId|workOrderId|woId|transferOrderId|purchId|countingJournalId|orderId|id|lineId|parentLineId)$/i;
 export function labelsIn(v) {
   const out = [], seen = new Set();
   const walk = (x, key, d) => {
-    if (d > 6 || x == null) return;
+    if (d > 6 || x == null || (key && NOT_LABEL_KEYS.test(key))) return;
     if (typeof x === 'string' || typeof x === 'number') { const p = parseLabel(x); if (p && !seen.has(p.label)) { seen.add(p.label); out.push({ label: p.label, key: key || '' }); } return; }
     if (Array.isArray(x)) { for (const y of x.slice(0, 500)) walk(y, key, d + 1); return; }
     if (typeof x === 'object') for (const [k, y] of Object.entries(x)) walk(y, k, d + 1);

@@ -303,6 +303,8 @@ def build(root: Path, version: str = VERSION) -> Path:
         # The tracker's encryption and shaping (tracker-worker/src/crypto.js, shape.js), as plain function bodies.
         "/*__TRACKER_CRYPTO__*/": tracker_module(root, "crypto.js"),
         "/*__TRACKER_SHAPE__*/": tracker_module(root, "shape.js"),
+        # Retrace's normalization and label parsing (tracker-worker/src/retrace.js), for the collector and the watcher (src/28-retrace-collect.js).
+        "/*__RETRACE__*/": tracker_module(root, "retrace.js"),
         # Assize's rule graphs: the interpreter (tracker-worker/src/rulegraph.js) and the built-in graphs (src/assize-graphs/*.json).
         "/*__RULEGRAPH__*/": tracker_module(root, "rulegraph.js"),
         # Assize's rules engine (tracker-worker/src/assize-rules.js), shared with the tracker Worker and the admin site.

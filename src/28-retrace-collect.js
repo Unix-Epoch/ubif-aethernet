@@ -1,0 +1,438 @@
+/*
+  Retrace collection (Oct 23, 2026): the browser side of Retrace, the inventory movement ledger (tracker Worker
+  routes /v1/:store/tracker/retrace/…, tracker-worker/src/retrace-api.js; what a movement is: retrace.js, inlined
+  below). Not a shard: it runs in the background wherever the tracker runs (AE.tracker.configured()), for this page's
+  store only, and stops when Retrace is paused by a notice (AE.status.paused('retrace')) or Portal's store changes.
+
+  A pass every 10 minutes (one tab per browser: its own GM soft lock, like the tracker's scan), Portal calls 300 ms apart:
+    1. GET …/retrace/cursor: where the last passes got to (any browser at the store).
+    2. Stock (every 30 minutes at most: each lookup call takes 10–14 s): Portal's item lookup sorted by available,
+       reserved and in-transit quantity, paged until that quantity reaches 0 (locationType is ignored by Portal, so
+       it can't be filtered to the store's stock). Rows → the sweep's items; the Worker answers which items changed.
+       Items that drop out of the lookup are sent once with zero quantities (this browser's list of what it sent),
+       so a sell-out reads as a change.
+    3. Labels of changed items (150 items a pass; the rest wait in this browser for the next pass):
+       store-products/{item}/inventory, paged → label snapshots.
+    4. Documents: outstanding RMA / buyback / salvage parts, RMA orders of the last 30 days (each new or changed
+       one read in full), store transfers both ways, vans, and purchase orders (draft and in transit in full; past
+       ones from the last 14 days, plus the whole past list a few pages a pass until it's all been seen).
+       TODO: completed counts and buyback orders. Portal answered 500 to their date-filtered lists (Oct 23) and
+       their date format is unknown. Their labels still reach the ledger through serial history (Count events)
+       and outstanding parts.
+    5. One sweep (split under the Worker's caps) with all of it; the Worker answers with the labels whose serial
+       history to read (60 a pass) and the POs to read in full (15 a pass: header with lines + receive details).
+    6. Serial history for those labels → POST …/retrace/history. A label whose history names a sales order this
+       browser hasn't linked yet also gets its label details read (15 a pass), sent as a snapshot, so the Worker
+       learns which WO the sales order belongs to.
+  Never throws: each step's failure is noted (AE.noteError) and the pass goes on; a signed-out session, a store
+  change or a pause stops it. The result is kept (AE.retrace.last()); AE.retrace.run() runs a pass now.
+
+  The watcher: Portal's own inventory writes (adjust in / out, defective, swaps, van and store transfers, count
+  scans, cart part adds / removes, RMA and buyback order calls; retrace.js WATCH_RULES), seen from inside the page
+  the moment Portal makes them. A small script in the page wraps fetch and XMLHttpRequest and reports each matching
+  call with Portal's answer; it never changes a request or a response (answers are read from a clone). A 2xx
+  becomes movements (retrace.js watchMovements, the signed-in tech as the user), queued in GM storage and sent to
+  POST …/retrace/watch a few seconds later and on every pass; a failed send stays queued.
+  Dev builds: "Retrace: record Portal calls" (dev tools) keeps the last 50 matching calls, with anything that
+  looks like customer data removed, so the real write shapes can be checked against the rules.
+
+  The sandbox (AE_SANDBOX) never calls the Worker: the same calls go to sandbox/api.py's stand-in (/api/sandbox-retrace).
+*/
+AE.retrace = (() => {
+  if (!AE_ON_PORTAL) return { run: async () => null, last: () => null, flush: async () => 0 };
+  const R = (() => { /*__RETRACE__*/ })();
+  const PASS_KEY = 'ae_retrace_pass_at', LAST_KEY = 'ae_retrace_last', QUEUE_KEY = 'ae_retrace_watch_q';
+  const STOCK_KEY = (s) => 'ae_retrace_stock_' + s, TODO_KEY = (s) => 'ae_retrace_todo_' + s, SO_KEY = (s) => 'ae_retrace_so_' + s;
+  const PASS_MS = 10 * 60 * 1000, LOOKUP_MS = 30 * 60 * 1000, GAP_MS = 300;
+  const NEED = 60, ITEM_BUDGET = 150, DETAIL_BUDGET = 15, PO_BUDGET = 15, RMA_BUDGET = 20;
+  const LOOKUP_PAGES = 30, LIST_PAGES = 10, PO_BACKFILL_PAGES = 2, PO_DAYS = 14, RMA_DAYS = 30;
+  const WATCH_BATCH = 50, QUEUE_MAX = 500, QUEUE_DAYS = 3;
+  // The Worker's per-request caps (retrace-api.js LIMIT): bigger lists go up in several sweeps.
+  const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, pos: 600 };
+  const enabled = () => AE_SANDBOX || AE.tracker.configured();
+  const stopped = () => !!AE.storeChanged() || AE.status.paused('retrace');
+  class Stop extends Error {}
+  const check = () => { if (stopped()) throw new Stop('stopped'); };
+  const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d; };
+
+  // ---------------------------------------------------------------- calls (counted for the pass's summary)
+  let counts = null;
+  async function portal(method, path, body) {
+    check();
+    if (counts) counts.portal++;
+    try { return await AE.api(method, path, body); } finally { await AE.sleep(GAP_MS); }
+  }
+  async function worker(store, method, path, body) {
+    if (counts) counts.worker++;
+    if (!AE_SANDBOX) return AE.tracker.call(method, '/v1/' + store + '/tracker/retrace' + path, body);
+    if (method !== 'GET') await AE.assertSameStore();
+    return AE.api(method, '/api/sandbox-retrace' + path, body);
+  }
+  /*
+    One sweep's rows, split into calls under the Worker's caps. need / poNeed / cursors go on the last call (the
+    others ask for nothing), so the history queue is claimed once. → { changedItems, need, more, added, written,
+    rejected, skipped, pos: { need, events, received, written } }
+  */
+  async function sweep(store, by, body) {
+    const n = Math.max(1, ...Object.keys(LIMIT).map((k) => Math.ceil(((body[k] || []).length) / LIMIT[k])));
+    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, pos: { need: [], events: 0, received: 0, written: 0 } };
+    for (let i = 0; i < n; i++) {
+      const last = i === n - 1, part = { by };
+      for (const k of Object.keys(LIMIT)) { const s = (body[k] || []).slice(i * LIMIT[k], (i + 1) * LIMIT[k]); if (s.length) part[k] = s; }
+      part.need = last && Number.isInteger(body.need) ? body.need : 0;
+      if (last && body.poNeed) part.poNeed = body.poNeed;
+      if (last && body.cursors) part.cursors = body.cursors;
+      const j = await worker(store, 'POST', '/sweep', part);
+      out.changedItems.push(...(j.changedItems || []));
+      for (const k of ['added', 'written', 'rejected', 'skipped']) out[k] += j[k] || 0;
+      if (j.pos) for (const k of ['events', 'received', 'written']) out.pos[k] += j.pos[k] || 0;
+      if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; }
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- 2. stock (item lookup)
+  const SORTS = [['availablequantity', 'AvailableQuantity'], ['reservedquantity', 'ReservedQuantity'], ['intransitquantity', 'InTransitQuantity']];
+  const QTY = ['AvailableQuantity', 'ReservedQuantity', 'InTransitQuantity', 'OnHandQuantity'];
+  async function stock(store) {
+    const rows = new Map(); // item|warehouse → row
+    for (const [field, qty] of SORTS) {
+      for (let page = 1; page <= LOOKUP_PAGES; page++) {
+        const list = R.rowsOf(await portal('GET', '/api/boh/inventory-lookup?pageSize=100&page=' + page + '&searchTerm=&locationType=0&categoryFilter=&sortField=' + field + '&sortOrder=desc'));
+        for (const r of list) {
+          if (!r || r.ItemNumber == null) continue;
+          if (r.SiteId != null && /^\d+$/.test(String(r.SiteId)) && Number(r.SiteId) !== Number(store)) continue; // another store's row (not seen; just in case)
+          if (QTY.some((k) => Number(r[k]) > 0)) rows.set(r.ItemNumber + '|' + r.WarehouseId, r);
+        }
+        const tail = list[list.length - 1];
+        if (list.length < 100 || !(tail && Number(tail[qty]) > 0)) break;
+      }
+    }
+    /*
+      The Worker keeps each item's quantities per warehouse as sent, whole. So an item is always sent with every
+      warehouse it was sent with before (0 where it's gone now), and an item gone from the lookup is sent once at 0
+      and then forgotten: its quantities read as changed and its labels get read.
+    */
+    const before = GM_getValue(STOCK_KEY(store), {}) || {}, now = {}, items = [];
+    for (const r of rows.values()) (now[r.ItemNumber] = now[r.ItemNumber] || new Set()).add(String(r.WarehouseId));
+    const zero = (item, wh) => ({ ItemNumber: item, WarehouseId: wh, OnHandQuantity: 0, AvailableQuantity: 0, ReservedQuantity: 0, InTransitQuantity: 0, SalesOnOrder: 0 });
+    for (const r of rows.values()) items.push(r);
+    for (const [item, whs] of Object.entries(now)) for (const wh of before[item] || []) if (!whs.has(wh)) { items.push(zero(item, wh)); whs.add(wh); }
+    for (const [item, whs] of Object.entries(before)) if (!now[item]) for (const wh of whs) items.push(zero(item, wh));
+    return { items, keep: Object.fromEntries(Object.entries(now).map(([k, v]) => [k, [...v]])) };
+  }
+
+  // ---------------------------------------------------------------- 3. labels of an item
+  async function labelsOf(store, item) {
+    const out = [];
+    for (let page = 1; page <= 20; page++) {
+      const j = await portal('GET', '/api/boh/store-products/' + encodeURIComponent(item) + '/inventory?pageSize=200&page=' + page + '&searchTerm=&warehouseType=All&warehouseId=' + store);
+      const list = R.rowsOf(j);
+      for (const r of list) { const s = R.labelSnapshot(r); if (s) out.push(s); }
+      const total = j && Number(j['@odata.count']);
+      if (list.length < 200 || (total && page * 200 >= total)) break;
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- 4. documents
+  async function pages(path, method, body, size) {
+    const all = [];
+    for (let page = 1; page <= LIST_PAGES; page++) {
+      const j = await portal(method, path.replace('{page}', page), body);
+      const list = R.rowsOf(j);
+      all.push(...list);
+      const total = j && Number(j['@odata.count']);
+      if (list.length < size || (total && page * size >= total)) break;
+    }
+    return all;
+  }
+  async function docs(store, cursors, acc, note) {
+    const at = new Date().toISOString();
+    const step = async (name, fn) => {
+      try { await fn(); } catch (e) {
+        if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e;
+        note(name, e);
+      }
+    };
+    await step('outstanding parts', async () => {
+      const snaps = R.normalize.outstanding(await portal('GET', '/api/boh/rma-buyback/outstanding-parts'));
+      acc.labels.push(...snaps.map(({ list, ...s }) => s));
+      acc.touched.push(...snaps.map((s) => s.label));
+    });
+    await step('rma orders', async () => {
+      const q = '?startDate=' + ymd(daysAgo(RMA_DAYS)).replace(/-/g, '') + '&endDate=' + ymd(new Date()).replace(/-/g, '') + '&searchTerm=&orderStatus=&pageSize=50&page={page}';
+      const rows = await pages('/api/boh/rma-buyback/rma-orders' + q, 'GET', undefined, 50);
+      const seen = (cursors.rma && cursors.rma.value && cursors.rma.value.seen) || {}, next = {};
+      let read = 0;
+      for (const r of rows) {
+        const d = R.normalize.doc('rma', r);
+        if (!d) continue;
+        acc.docs.push(Object.assign({ type: 'rma' }, d));
+        next[d.id] = d.status || '';
+        if (seen[d.id] === next[d.id] || read >= RMA_BUDGET) { if (seen[d.id] !== next[d.id]) delete next[d.id]; continue; } // over budget: next pass
+        read++;
+        const o = await portal('GET', '/api/boh/rma-order/' + encodeURIComponent(d.id));
+        const full = R.normalize.doc('rma', o);
+        if (full) acc.docs.push(Object.assign({ type: 'rma' }, full));
+        const moves = R.normalize.rma(o, { at });
+        acc.movements.push(...moves);
+        acc.touched.push(...moves.map((m) => m.label));
+      }
+      acc.cursors.rma = { seen: Object.fromEntries(Object.entries(next).slice(-150)) };
+    });
+    await step('store transfers', async () => {
+      for (const dir of ['receive', 'transfer']) {
+        for (const r of await pages('/api/boh/store-transfer-orders?page={page}&pageSize=50&direction=' + dir, 'GET', undefined, 50)) {
+          const d = R.normalize.doc('transfer', r);
+          if (d) acc.docs.push(Object.assign({ type: 'transfer' }, d));
+          const moves = R.normalize.transfer(r, { store, warehouses: [String(store), store + 'Q'] });
+          acc.movements.push(...moves);
+          for (const l of (r && Array.isArray(r.lines) ? r.lines : [])) { const x = R.cleanLabel(l && l.serialNumber); if (x) acc.touched.push(x); }
+        }
+      }
+    });
+    await step('vans', async () => {
+      for (const r of R.rowsOf(await portal('GET', '/api/boh/remote-tech/van-warehouses'))) { const d = R.normalize.doc('van', r); if (d) acc.docs.push(Object.assign({ type: 'van' }, d)); }
+    });
+    // POs: list rows go up as they are; the Worker keeps their status history and says which to read in full.
+    await step('purchase orders', async () => {
+      const list = (body) => pages('/api/boh/purchase-orders?pageSize=50&page={page}&searchTerm=', 'POST', body, 50);
+      acc.pos.push(...(await list({ orderType: 'draft' })), ...(await list({ orderType: 'in-transit' })),
+        ...(await list({ orderType: 'past', startDate: ymd(daysAgo(PO_DAYS)), endDate: ymd(new Date()) })));
+      // The whole past list (no dates: every past PO), a few pages a pass, once.
+      const bf = (cursors.po_backfill && cursors.po_backfill.value) || { page: 1, done: false };
+      if (!bf.done) {
+        let page = bf.page, done = false;
+        for (let i = 0; i < PO_BACKFILL_PAGES && !done; i++, page++) {
+          const j = await portal('POST', '/api/boh/purchase-orders?pageSize=50&page=' + page + '&searchTerm=', { orderType: 'past' });
+          const rows = R.rowsOf(j), total = j && Number(j['@odata.count']);
+          acc.pos.push(...rows);
+          done = rows.length < 50 || (total > 0 && page * 50 >= total);
+        }
+        acc.cursors.po_backfill = { page, done };
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- the pass
+  let running = false;
+  async function run(opts = {}) {
+    if (!enabled() || running || stopped()) return null;
+    if (!opts.force && Date.now() - GM_getValue(PASS_KEY, 0) < PASS_MS - 30000) return null;
+    running = true;
+    GM_setValue(PASS_KEY, Date.now());
+    const t0 = Date.now();
+    counts = { portal: 0, worker: 0 };
+    const result = { at: new Date().toISOString(), seconds: 0, calls: counts, watched: 0, lookup: null, items: 0, changedItems: 0, itemsRead: 0, itemsWaiting: 0, labels: 0, docs: 0,
+      movements: 0, pos: 0, poDetails: 0, histories: 0, historyRows: 0, details: 0, added: 0, backlogMore: false, errors: [] };
+    const note = (where, e) => {
+      if (result.errors.length < 8) result.errors.push(where + ': ' + ((e && e.message) || e));
+      AE.noteError('retrace ' + where, e);
+    };
+    try {
+      const p = await AE.profile();
+      if (!p || !p.storeId) throw new Error('No current store');
+      const store = p.storeId, by = p.name;
+      try { result.watched = await flush(store); } catch (e) { if (e.storeChanged) throw e; note('watch queue', e); }
+      const cursors = (await worker(store, 'GET', '/cursor')).cursors || {};
+      const acc = { items: [], labels: [], docs: [], movements: [], touched: [], pos: [], cursors: {} };
+
+      // 2. stock, at most every 30 minutes (any browser at the store: the cursor)
+      const lastLookup = cursors.lookup && cursors.lookup.value && Date.parse(cursors.lookup.value.at);
+      let todo = new Set(GM_getValue(TODO_KEY(store), []) || []);
+      if (opts.lookup || !lastLookup || Date.now() - lastLookup > LOOKUP_MS - 60000) {
+        try {
+          const lt = Date.now(), s = await stock(store);
+          const sw = await sweep(store, by, { items: s.items, cursors: { lookup: { at: new Date().toISOString(), rows: s.items.length } } });
+          GM_setValue(STOCK_KEY(store), s.keep);
+          result.lookup = { rows: s.items.length, seconds: Math.round((Date.now() - lt) / 1000) };
+          result.items = s.items.length; result.changedItems = sw.changedItems.length;
+          for (const c of sw.changedItems) todo.add(c.item);
+        } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('stock', e); }
+      }
+      // 3. labels of changed items, a budget a pass
+      for (const item of [...todo].slice(0, ITEM_BUDGET)) {
+        try { acc.labels.push(...(await labelsOf(store, item))); todo.delete(item); result.itemsRead++; }
+        catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('labels ' + item, e); todo.delete(item); }
+      }
+      GM_setValue(TODO_KEY(store), [...todo]);
+      result.itemsWaiting = todo.size;
+
+      // 4. documents, then 5. one sweep with everything
+      await docs(store, cursors, acc, note);
+      acc.touched = [...new Set(acc.touched.filter(Boolean))];
+      Object.assign(result, { labels: acc.labels.length, docs: acc.docs.length, movements: acc.movements.length, pos: acc.pos.length });
+      const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET }));
+      result.added += sw.added; result.backlogMore = sw.more;
+      if (sw.pos) result.poEvents = sw.pos.events;
+
+      // POs to read in full: header (lines) + receive details
+      const full = [];
+      for (const po of sw.pos.need.slice(0, PO_BUDGET)) {
+        try {
+          const header = await portal('GET', '/api/boh/purchase-orders/' + encodeURIComponent(po));
+          const receive = await portal('GET', '/api/boh/purchase-orders/' + encodeURIComponent(po) + '/receive-details').catch((e) => { if (/session expired/i.test(e.message || '')) throw e; note('po receive ' + po, e); return null; });
+          if (header) full.push({ header, receive });
+        } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('po ' + po, e); }
+      }
+      if (full.length) { const r = await sweep(store, by, { pos: full }); result.poDetails = full.length; result.added += r.added; result.poEvents = (result.poEvents || 0) + r.pos.events; }
+
+      // 6. serial history for the labels the Worker handed out; label details for unlinked sales orders
+      const sos = new Set(GM_getValue(SO_KEY(store), []) || []), snaps = [];
+      for (const label of sw.need) {
+        try {
+          const h = await portal('GET', '/api/boh/serial-history/' + encodeURIComponent(label));
+          const rows = R.rowsOf(h);
+          const j = await worker(store, 'POST', '/history', { label, rows, by });
+          result.histories++; result.historyRows += rows.length; result.added += j.added || 0;
+          const so = rows.map((r) => r && r.RefTable && /^sales orders?$/i.test(r.RefTable) && r.SourceKey).filter(Boolean).pop();
+          if (so && !sos.has(so) && result.details < DETAIL_BUDGET) {
+            const d = await portal('GET', '/api/boh/inventory/' + encodeURIComponent(label) + '?includeQuarantineInfo=true&includeSalvageInfo=true');
+            const s = R.labelSnapshot(d);
+            if (s) snaps.push(s);
+            sos.add(so); result.details++;
+          }
+        } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('history ' + label, e); }
+      }
+      if (snaps.length) { const r = await sweep(store, by, { labels: snaps }); result.added += r.added; }
+      GM_setValue(SO_KEY(store), [...sos].slice(-2000));
+      return result;
+    } catch (e) {
+      if (e instanceof Stop || e.storeChanged) { result.note = AE.storeChanged() ? "paused: Portal's store changed, reload the page" : 'paused by a notice'; return result; }
+      if (e.status === 403) { result.note = 'no access: ' + (e.message || e); return result; }
+      result.errors.push(e.message || String(e));
+      AE.noteError('retrace', e);
+      return result;
+    } finally {
+      result.seconds = Math.round((Date.now() - t0) / 1000);
+      counts = null;
+      running = false;
+      GM_setValue(LAST_KEY, result);
+    }
+  }
+
+  // ---------------------------------------------------------------- the watcher
+  const WATCH_EVT = 'aethernet:retrace-watch', REC_KEY = 'ae_dev_retrace_rec', REC_LOG = 'ae_dev_retrace_log', REC_MAX = 50;
+  function hook() {
+    if (document.getElementById('ae-retrace-hook')) return;
+    // A plain string: it runs in the page, outside Aethernet. Reads only: requests go out as Portal made them,
+    // and answers are read from a clone (fetch) or after they've arrived (XHR).
+    const code = [
+      '(function (evt, sources) {',
+      '  var res = sources.map(function (s) { return new RegExp(s, "i"); });',
+      '  var path = function (u) { return String(u || "").replace(/^https?:\\/\\/[^/]+/i, "").split(/[?#]/)[0].replace(/^\\/?api\\//i, "").replace(/^\\/+|\\/+$/g, ""); };',
+      '  var watched = function (m, u) { m = String(m || "GET").toUpperCase(); if (m === "GET" || m === "HEAD" || m === "OPTIONS") return false; var p = path(u); return res.some(function (re) { return re.test(p); }); };',
+      '  var send = function (m, u, body, status, text) {',
+      '    try { document.dispatchEvent(new CustomEvent(evt, { detail: JSON.stringify({ at: new Date().toISOString(), method: String(m).toUpperCase(), url: String(u), status: status,',
+      '      body: typeof body === "string" ? body.slice(0, 20000) : "", response: String(text || "").slice(0, 50000) }) })); } catch (_) {}',
+      '  };',
+      '  var of = window.fetch;',
+      '  if (of) window.fetch = function (input, init) {',
+      '    var p = of.apply(this, arguments);',
+      '    try {',
+      '      var u = typeof input === "string" ? input : (input && input.url) || String(input || "");',
+      '      var m = (init && init.method) || (input && input.method) || "GET";',
+      '      if (watched(m, u)) {',
+      '        var bodyP = init && typeof init.body === "string" ? Promise.resolve(init.body) : (input && input.clone ? input.clone().text().catch(function () { return ""; }) : Promise.resolve(""));',
+      '        p.then(function (r) { Promise.all([bodyP, r.clone().text().catch(function () { return ""; })]).then(function (v) { send(m, u, v[0], r.status, v[1]); }); }, function () {});',
+      '      }',
+      '    } catch (_) {}',
+      '    return p;',
+      '  };',
+      '  var X = window.XMLHttpRequest && window.XMLHttpRequest.prototype;',
+      '  if (X) {',
+      '    var open = X.open, xsend = X.send;',
+      '    X.open = function (m, u) { try { this.__aeW = watched(m, u) ? { m: m, u: u } : null; } catch (_) {} return open.apply(this, arguments); };',
+      '    X.send = function (body) {',
+      '      try {',
+      '        var w = this.__aeW, x = this;',
+      '        if (w) x.addEventListener("loadend", function () {',
+      '          var t = ""; try { t = x.responseType === "" || x.responseType === "text" ? x.responseText : x.responseType === "json" ? JSON.stringify(x.response) : ""; } catch (_) {}',
+      '          send(w.m, w.u, body, x.status, t);',
+      '        });',
+      '      } catch (_) {}',
+      '      return xsend.apply(this, arguments);',
+      '    };',
+      '  }',
+      '})(' + JSON.stringify(WATCH_EVT) + ', ' + JSON.stringify(R.WATCH_RULES.map(([re]) => re.source)) + ');',
+    ].join('\n');
+    const el = document.createElement('script');
+    el.id = 'ae-retrace-hook';
+    el.textContent = code;
+    (document.head || document.documentElement).append(el);
+  }
+
+  // The queue: { store, m, at } per movement, kept a few days, sent per store in batches.
+  const queue = () => (GM_getValue(QUEUE_KEY, []) || []).filter((x) => x && x.m && Date.now() - x.at < QUEUE_DAYS * 86400000);
+  let flushing = null, flushTimer = null;
+  function flush(store) {
+    if (flushing) return flushing;
+    flushing = (async () => {
+      let sent = 0;
+      for (;;) {
+        if (stopped()) break;
+        const batch = queue().filter((x) => Number(x.store) === Number(store)).slice(0, WATCH_BATCH);
+        if (!batch.length) break;
+        let drop = false;
+        try { await worker(store, 'POST', '/watch', { movements: batch.map((x) => x.m) }); sent += batch.length; drop = true; }
+        catch (e) { if (e.status === 400) drop = true; else throw e; } // 400: never valid, don't retry forever
+        if (drop) { const done = new Set(batch.map((x) => x.id)); GM_setValue(QUEUE_KEY, queue().filter((x) => !done.has(x.id))); }
+      }
+      return sent;
+    })().finally(() => { flushing = null; });
+    return flushing;
+  }
+
+  // Dev: what a Portal call looks like, with anything that could be a customer's removed.
+  const PERSONAL = /customer|phone|email|address|street|city|zip|postal|passcode|password|token|auth|cookie|givenName|familyName|fullName|firstName|lastName|imei|signature|card|dob|birth/i;
+  function scrubText(t) {
+    let v;
+    try { v = JSON.parse(t); } catch (_) { return String(t || '').replace(/[^\s@"]+@[^\s@"]+\.[a-z]{2,}/gi, '[email]').replace(/\+?\d[\d\s().-]{8,}\d/g, '[number]').slice(0, 8000); }
+    const walk = (x, d) => {
+      if (d > 8 || x == null) return x;
+      if (Array.isArray(x)) return x.slice(0, 50).map((y) => walk(y, d + 1));
+      if (typeof x === 'object') return Object.fromEntries(Object.entries(x).map(([k, y]) => [k, PERSONAL.test(k) ? '[removed]' : walk(y, d + 1)]));
+      if (typeof x === 'string') return x.replace(/[^\s@]+@[^\s@]+\.[a-z]{2,}/gi, '[email]').replace(/^\+?1?[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/, '[phone]').slice(0, 300);
+      return x;
+    };
+    return JSON.stringify(walk(v, 0)).slice(0, 8000);
+  }
+  const recording = () => AE_DEV && !!GM_getValue(REC_KEY, false);
+  function record(c) {
+    const rec = { at: c.at, method: c.method, url: String(c.url || '').replace(/^https?:\/\/[^/]+/, ''), status: c.status, body: scrubText(c.body), response: scrubText(c.response) };
+    GM_setValue(REC_LOG, [rec, ...(GM_getValue(REC_LOG, []) || [])].slice(0, REC_MAX));
+  }
+
+  let seq = 0;
+  async function onCall(c) {
+    if (recording()) record(c);
+    if (!enabled() || !(c.status >= 200 && c.status < 300) || stopped()) return;
+    const p = await AE.profile();
+    if (!p || !p.storeId) return;
+    const moves = R.watchMovements({ method: c.method, url: c.url, body: c.body, response: c.response, at: c.at }, { user: p.name || null, store: p.storeId }).filter((m) => R.normalize.watch(m));
+    if (!moves.length) return;
+    const now = Date.now();
+    GM_setValue(QUEUE_KEY, [...queue(), ...moves.map((m) => ({ id: now + '-' + (seq++) + '-' + Math.random().toString(36).slice(2, 6), store: p.storeId, at: now, m }))].slice(-QUEUE_MAX));
+    clearTimeout(flushTimer);
+    flushTimer = setTimeout(() => flush(p.storeId).catch((e) => { if (!e.storeChanged) console.warn('[Aethernet] Retrace: watched moves kept for the next pass', e); }), 3000);
+  }
+  document.addEventListener(WATCH_EVT, (e) => {
+    let c; try { c = JSON.parse(e.detail); } catch (_) { return; }
+    onCall(c).catch((err) => AE.noteError('retrace watch', err));
+  });
+  if (enabled() || recording()) hook();
+
+  return {
+    run: (opts = {}) => run(Object.assign({ force: true }, opts)), tick: () => run(), last: () => GM_getValue(LAST_KEY, null), flush: async () => { const p = await AE.profile(); return flush(p.storeId); },
+    queued: () => queue().length, enabled,
+    // dev tools: the Portal call recorder
+    recording, setRecording: (on) => { GM_setValue(REC_KEY, !!on); if (on) hook(); }, recorded: () => GM_getValue(REC_LOG, []) || [], clearRecorded: () => GM_deleteValue(REC_LOG),
+  };
+})();
+
+if (AE.retrace.enabled && AE.retrace.enabled()) {
+  setTimeout(() => AE.retrace.tick().catch(() => {}), 45000);
+  setInterval(() => AE.retrace.tick().catch(() => {}), 60 * 1000); // tick() waits out the 10 minutes
+}

@@ -179,9 +179,11 @@ const unclaim = () => T.prepare('UPDATE inv_labels SET claimed_until = NULL').ru
   assert.deepEqual([w[0].kind, w[0].ref_type, w[0].ref_id], ['count_found', 'count', 'UBF-100001']);
   // a cart add answers with the whole cart: labels only found there are keyed per cart, so the next add repeats nothing
   const cart = { cartItems: [{ lineId: 'L1', serial: '180001-0000600001' }, { lineId: 'L2', serial: '176255-0000514371' }] };
-  const a1 = W('POST', '/api/order/cart/item/add', { cartId: '914-1', cartLines: [{ ItemId: '180001' }] }, cart);
-  const a2 = R.watchMovements({ method: 'POST', url: '/api/order/cart/item/add', body: JSON.stringify({ cartId: '914-1' }), response: JSON.stringify(cart), at: '2026-10-23T13:00:00Z' }, {});
-  assert.deepEqual(kinds(a1), ['reserved', 'reserved']); assert.equal(a1[0].ref_type, 'cart'); assert.equal(a1[0].ref_id, '914-1');
+  const a1 = W('POST', '/api/order/cart/item/add', { cartId: '914-5631238484180', cartLines: [{ ItemId: '180001' }] }, cart);
+  const a2 = R.watchMovements({ method: 'POST', url: '/api/order/cart/item/add', body: JSON.stringify({ cartId: '914-5631238484180' }), response: JSON.stringify(cart), at: '2026-10-23T13:00:00Z' }, {});
+  assert.deepEqual(R.labelsIn({ cartId: '914-5631238484180', lineId: '1234-56789' }), [], 'cart / line ids are not labels');
+  assert.deepEqual(a1.map((m) => m.label), ['180001-0000600001', '176255-0000514371'], 'the answer\'s labels, not the cart id');
+  assert.deepEqual(kinds(a1), ['reserved', 'reserved']); assert.equal(a1[0].ref_type, 'cart'); assert.equal(a1[0].ref_id, '914-5631238484180');
   assert.deepEqual(a1.map((m) => m.key), a2.map((m) => m.key), 'same cart, same labels: same keys');
   assert.equal(W('POST', '/api/order/cart/item/add', { workorderId: 500400001, cartId: '914-1' }, cart)[0].ref_type, 'wo', 'a WO named in the body wins');
   assert.deepEqual(W('POST', '/api/order/cart/item/remove', { cartId: '914-1', cartLines: ['L1'] }, cart), [], 'no label, no item: nothing (the recorder still keeps it)');

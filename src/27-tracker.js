@@ -6,7 +6,8 @@
     1. Portal's open-WO list → POST /scan with plain fields only (WO, status, program,
        device model, dates). The Worker answers which WOs to fetch in full.
     2. For each: the same detail the Mac tracker kept (workorder, status audit trail,
-       customer data, every note, cart). Device passcodes are removed first.
+       customer data, every note, cart), plus its event list (parts added / removed /
+       swapped, for Retrace). Device passcodes are removed first.
     3. Split it: a plain part (status, program, dates, bin, status history, cart lines and
        totals: no customer details) and the whole detail sealed with the store's public
        key, plus a sealed search card (name, phones, emails, IMEI/serial, claim number).
@@ -56,7 +57,7 @@ AE.tracker = (() => {
     per store in GM storage (every tab shares it), 2 hours at most. Customer data is never kept here: the tracker
     fetches it on its own. The calls for one order run together (the cart waits only for the work order, which
     names it); note pages after the first stay 300 ms apart. A fetch with a failed part isn't kept.
-      get(store, wo, { force, maxAge, updatedAt }) → { workorder, audit_trail, notes: { notes, total, latestManualNote } | null, cart, at }
+      get(store, wo, { force, maxAge, updatedAt }) → { workorder, audit_trail, notes: { notes, total, latestManualNote } | null, cart, events: { events } | null, at }
         force      always ask Portal (Refresh, just after a text or note, the tracker's missing-order check)
         maxAge     how old a kept copy may be (ms, default 10 minutes)
         updatedAt  Portal's list row updatedAt: a kept copy from before it is not used
@@ -77,13 +78,30 @@ AE.tracker = (() => {
     }
     return { notes: all, total, latestManualNote: latest };
   }
+  // The WO's event list (parts added / removed / swapped, status updates…), 50 a page following lastKey, 5 pages at
+  // most, for Retrace (shape.js partEvents keeps the parts events). Each event's metadata (staff IP addresses,
+  // session ids) is dropped here, so it's never kept or sealed.
+  const EVENT_PAGES = 5;
+  async function eventsOf(wo) {
+    const all = [];
+    let key = null;
+    for (let i = 0; i < EVENT_PAGES; i++) {
+      const p = await AE.api('GET', '/api/workorder/' + wo + '/events?pageSize=50' + (key ? '&lastKey=' + encodeURIComponent(typeof key === 'string' ? key : JSON.stringify(key)) : ''));
+      const rows = (p && Array.isArray(p.events) ? p.events : Array.isArray(p) ? p : []);
+      all.push(...rows.map(({ metadata, ...e }) => e));
+      key = p && p.lastKey;
+      if (!key || !rows.length) break;
+      await AE.sleep(GAP_MS);
+    }
+    return { events: all };
+  }
   async function fetchDetail(wo) {
     let failed = false;
     const soft = (pr) => pr.catch(() => { failed = true; return null; });
     const coreP = AE.api('GET', '/api/workorder/' + wo).catch((e) => { if (/HTTP 404/.test(e.message || '')) e.gone = true; throw e; });
     const cartP = coreP.then((core) => { const id = core && core.workorder && core.workorder.csuCartId; return id ? soft(AE.api('GET', '/api/get-cart/' + id + '?includePartStatus=true')) : null; }, () => null);
-    const [core, audit, notes, cart] = await Promise.all([coreP, soft(AE.api('GET', '/api/workorder-audit-trail/' + wo)), soft(notesOf(wo)), cartP]);
-    return { d: scrub({ workorder: core, audit_trail: audit, notes, cart }), failed };
+    const [core, audit, notes, cart, events] = await Promise.all([coreP, soft(AE.api('GET', '/api/workorder-audit-trail/' + wo)), soft(notesOf(wo)), cartP, soft(eventsOf(wo))]);
+    return { d: scrub({ workorder: core, audit_trail: audit, notes, cart, events }), failed };
   }
   function wodGet(store, wo, opts = {}) {
     const id = String(wo), k = wodKey(store);
@@ -108,7 +126,7 @@ AE.tracker = (() => {
   // The tracker's copy: the shared detail plus the customer record (fetched alongside, never kept).
   async function detailOf(store, wo, opts) {
     const [x, customer] = await Promise.all([wodGet(store, wo, opts), AE.api('GET', '/api/v1/workorder/' + wo + '/demographic/customer-data').catch(() => null)]);
-    return scrub({ workorder: x.workorder, audit_trail: x.audit_trail, customer_data: customer, notes: x.notes, cart: x.cart });
+    return scrub({ workorder: x.workorder, audit_trail: x.audit_trail, customer_data: customer, notes: x.notes, cart: x.cart, events: x.events });
   }
 
   // One WO, ready to send (or to look at, for the dev tools' dry run).

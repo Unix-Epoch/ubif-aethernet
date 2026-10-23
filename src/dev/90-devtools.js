@@ -320,6 +320,33 @@
       note('The dry run reads the WO from Portal exactly as a scan would, then shows what would be sent, without sending anything.'),
       trOut);
 
+    // Retrace: the last collector pass, a pass now, and the Portal call recorder (real write shapes for the watcher).
+    const rtOut = h('div', { class: 'out' });
+    const rtLast = AE.retrace.last();
+    const drawRtRec = () => {
+      const log = AE.retrace.recorded();
+      rtOut.replaceChildren(...(log.length ? [row(btn('Copy all ' + log.length, async () => { await navigator.clipboard.writeText(JSON.stringify(log, null, 1)); AE.toast('Copied', log.length + ' recorded Portal call(s) are on the clipboard.', 'ok'); }),
+        btn('Clear', () => { AE.retrace.clearRecorded(); drawRtRec(); }))].concat(log.slice(0, 10).map((r) => h('div', { class: 'note' }, r.method + ' ' + r.url + ' → ' + r.status + ' · ' + new Date(r.at).toLocaleTimeString())))
+        : [note('No Portal calls recorded yet.')]));
+    };
+    drawRtRec();
+    const retrace = section('Retrace',
+      note((AE.retrace.enabled() ? 'On' + (AE_SANDBOX ? ' (sandbox stand-in, not the Worker)' : '') : 'Off: no tracker Worker in this build') + '. Last pass: ' + (rtLast ? new Date(rtLast.at).toLocaleString() + ' · ' + rtLast.seconds + ' s · Portal ' + rtLast.calls.portal + ' / Worker ' + rtLast.calls.worker + ' calls · '
+        + rtLast.labels + ' labels · ' + rtLast.docs + ' docs · ' + rtLast.pos + ' POs · ' + rtLast.histories + ' histories · ' + rtLast.added + ' added' + (rtLast.note ? ' · ' + rtLast.note : '') + (rtLast.errors.length ? ' · ' + rtLast.errors.join('; ') : '') : 'none yet')
+        + ' · watched moves queued: ' + AE.retrace.queued()),
+      row(btn('Run a pass now', async () => {
+        if (!AE.retrace.enabled()) throw new Error('No tracker Worker in this build.');
+        rtOut.replaceChildren(note('Running a pass (the stock lookup takes a few minutes when it\'s due)…'));
+        const r = await AE.retrace.run();
+        rtOut.replaceChildren(h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(r, null, 1)));
+      }), btn(AE.retrace.recording() ? 'Retrace: stop recording Portal calls' : 'Retrace: record Portal calls', () => {
+        const on = !AE.retrace.recording();
+        AE.retrace.setRecording(on);
+        AE.toast('Retrace recorder ' + (on ? 'on' : 'off'), on ? 'Portal\'s inventory writes (adjust, swap, transfer, count scans, cart parts, RMA / buyback) are saved here, customer details removed.' : 'Stopped.', 'ok', 6000);
+        open();
+      }, { title: 'Keeps the last 50 Portal inventory write calls (request + answer, scrubbed) so the watcher can be checked against real shapes. Records only.' })),
+      rtOut);
+
     // Assize's rule graphs, shadow mode: how many run, and where they disagree with the code rules.
     const ag = AE.hooks.assizeGraphs ? AE.hooks.assizeGraphs() : null;
     const agLast = ag && ag.log[0];
@@ -362,7 +389,7 @@
     const card = h('div', { class: 'sg sg-card sg-dev', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' dev tools' },
       h('div', { class: 'head' }, h('span', { style: 'color:#e0761a;line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Dev tools'), h('span', { class: 'tag' }, 'DEV v' + AE_VERSION),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
-      h('div', { class: 'scroll' }, updates, tracker, assizeGraphs, sharepoint, notices, access, settings, macro, waymark, rows, scans, recorder, perf, general));
+      h('div', { class: 'scroll' }, updates, tracker, retrace, assizeGraphs, sharepoint, notices, access, settings, macro, waymark, rows, scans, recorder, perf, general));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-dev', onclick: (e) => { if (e.target === scrim) close(); } }, card);
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
