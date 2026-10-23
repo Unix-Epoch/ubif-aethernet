@@ -86,7 +86,8 @@ AE.loginPage = (() => {
     if (!c.mark) { mark?.remove(); return; }
     if (mark) return;
     document.body.append(AE.h('div', { id: 'ae-login-mark', title: AE_NAME },
-      AE.h('span', { style: 'line-height:0', html: AE.wordmark(22) })));
+      AE.h('span', { style: 'line-height:0', html: AE.icon('aetheryte', 28) }),
+      AE.h('span', { style: 'line-height:0', html: AE.wordmark(20) })));
   }
 
   // Portal is a single-page app: /login comes and goes without a page load. The page watcher

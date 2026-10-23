@@ -125,11 +125,6 @@ DEV_GRANTS = """
 // @connect      ubreakifix-my.sharepoint.com"""
 
 
-# Tampermonkey's icon: the Aethernet mark (Garrett's Æ, chosen Oct 22, 2026) in purple on a square canvas.
-ICON = "data:image/svg+xml;base64," + base64.b64encode(
-    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-20 -250 1171 1171"><path fill="#5b34c9" d="M821 134H464L542 268H898L975 402H619L697 536H1053L1130 670H391L269 556H573L388 235L137 670H0L387 0H743L821 134Z"/></svg>').decode()
-
-
 def header(version: str) -> str:
     dev = CHANNEL == "dev"
     raw = channel_raw()
@@ -141,7 +136,6 @@ def header(version: str) -> str:
 // @copyright    2026, Garrett Green. All rights reserved.
 // @license      Proprietary — no reproduction, redistribution, or derivative works without written permission.
 // @description  {DEMO["description"]}
-// @icon         {ICON}
 // @match        https://portal.ubreakifix.net/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -159,7 +153,6 @@ def header(version: str) -> str:
 // @copyright    2026, Garrett Green. All rights reserved.
 // @license      Proprietary — no reproduction, redistribution, or derivative works without written permission.
 // @description  Shards (add-on tools) for NextGen Portal: live cleaning rate, one-click cleaning close-out, Galaxy Diagnostics exception filing, print-all-labels and buyback add-all for portal.ubreakifix.net. Settings: avatar menu → Aethernet settings.
-// @icon         {ICON}
 // @match        https://portal.ubreakifix.net/*
 // @match        https://forms-prod.sprinklr.com/guided-workflows/6544db26d4b8393a0b65ebb7*{chr(10) + "// @match        http://localhost:8790/*" if dev else ""}
 // @grant        GM_setValue

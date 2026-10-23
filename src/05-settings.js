@@ -89,8 +89,8 @@
   .sg-sheet { display:flex; flex-direction:column; width:min(440px, 100vw); height:100%; overflow:auto; border-radius:16px 0 0 16px; border-right:0; padding:24px; animation: sg-slide .22s ease-out; }
   .sg-sheet > * { flex-shrink:0; }
   /* "Aethernet" titles use AE.wordmark() — Runic MT outlines, no font file shipped */
-  .sg-wordmark { margin:0 0 4px; color:var(--aui-on-surface, #1a1c1e); --ae-mark:var(--aui-primary, #8223d2); line-height:0; }
-  .sg-about .hero h2.sg-wordmark { margin-top:6px; }
+  .sg-wordmark { margin:0 0 4px; color:var(--aui-on-surface, #1a1c1e); line-height:0; }
+  .sg-about .hero h2.sg-wordmark { margin-top:8px; }
   .sg-about-link { display:block; margin:20px auto 4px; padding:6px 10px; border:0; background:none; cursor:pointer;
     color:var(--aui-on-surface-soft, #5d5e61); font:400 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-decoration:underline; }
   .sg-about-link:hover { color:var(--aui-primary, #8223d2); }
@@ -302,8 +302,8 @@
     // The demo build's About is the bare minimum: name, version, author, icon credit.
     const card = AE_DEMO ? h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
       h('div', { class: 'hero' },
-        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 92) }),
-        h('h2', { class: 'sg-wordmark', html: AE.wordmark(36) }),
+        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
+        h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
         h('div', { class: 'sg-soft' }, 'v' + AE_VERSION)),
       h('h4', null, 'Authored by'),
       kv(['Author', 'Garrett Green'], ['Store', 'uBreakiFix Newport News #914']),
@@ -311,8 +311,8 @@
       h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')))
     : h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
       h('div', { class: 'hero' },
-        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 92) }),
-        h('h2', { class: 'sg-wordmark', html: AE.wordmark(36) }),
+        h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
+        h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
         h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen' })),
       h('h4', null, 'This build'),
       kv(['Version', 'v' + AE_VERSION], ['Built', builtText], ['Commit', h('code', null, AE_BUILD_COMMIT)]),
@@ -565,11 +565,12 @@
 
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
       h('div', { style: 'display:flex;align-items:center;gap:12px' },
-        // Hidden way in: ten quick clicks on the wordmark open the admin panel (key entry first time).
-        h('div', { style: 'flex:1' }, h('h2', { class: 'sg-wordmark', style: 'cursor:default;user-select:none;display:inline-block', html: AE.wordmark(30), onclick: AE_DEMO ? null : (() => {
+        // Hidden way in: ten quick clicks on the shard open the admin panel (key entry first time).
+        h('span', { style: 'color:var(--aui-primary,#8223d2);cursor:default;user-select:none', html: icon('aetheryte', 36), onclick: AE_DEMO ? null : (() => {
           let n = 0, last = 0;
           return () => { const t = Date.now(); n = t - last < 1500 ? n + 1 : 1; last = t; if (n >= 10) { n = 0; AE.feedback && AE.feedback.openAdmin(); } };
-        })() }), h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen · v' + AE_VERSION })),
+        })() }),
+        h('div', { style: 'flex:1' }, h('h2', { class: 'sg-wordmark', html: AE.wordmark(26) }), h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen · v' + AE_VERSION })),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
 
       section('who', 'Signed in as', true, () => who.querySelector('dd') ? who.querySelector('dd').textContent : '',
