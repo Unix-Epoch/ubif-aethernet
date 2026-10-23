@@ -36,7 +36,7 @@
 
   Admin side: retraceAdmin() below, mounted by trackerRoutes at /api/tracker/retrace/… (page 'retrace'; route list there).
 */
-import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements } from './retrace.js';
+import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem } from './retrace.js';
 
 export const NEED_MAX = 60;
 const NEED_CAP = 200, CLAIM_MIN = 10, WATCH_MAX = 50;
@@ -52,19 +52,21 @@ const NEED = { backfill: 1, touched: 2, changed: 3 };
 
 const later = (min) => new Date(Date.now() + min * 60000).toISOString();
 const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
-const chunks = async (T, stmts) => { const out = []; for (let i = 0; i < stmts.length; i += 100) out.push(...(await T.batch(stmts.slice(i, i + 100)))); return out; };
+// Statements left out (an ignored item's insert / touch is null) are dropped here.
+const chunks = async (T, list) => { const out = [], stmts = list.filter(Boolean); for (let i = 0; i < stmts.length; i += 100) out.push(...(await T.batch(stmts.slice(i, i + 100)))); return out; };
 const lc = (v) => (v == null ? null : String(v).toLowerCase());
 // Leading store number in Portal's Store text ("914", "914 - Newport News"); null when it has none.
 const storeNo = (v) => { const m = /^\s*(\d{1,6})\b/.exec(v == null ? '' : String(v)); return m ? Number(m[1]) : null; };
 
 // ------------------------------------------------------------------ shared writes
-const insertMv = (T, store, m, at) => T.prepare(`INSERT OR IGNORE INTO inv_movements (store, label, item, at, kind, raw_status, raw_event, ref_type, ref_id, ref_line, from_wh, to_wh, user_name, source, detail, key, recorded_at)
+// Both give null for an ignored item (retrace.js IGNORED_ITEMS: BB0001, buyback devices), which chunks() drops.
+const insertMv = (T, store, m, at) => ignoredItem(m.item) ? null : T.prepare(`INSERT OR IGNORE INTO inv_movements (store, label, item, at, kind, raw_status, raw_event, ref_type, ref_id, ref_line, from_wh, to_wh, user_name, source, detail, key, recorded_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   .bind(store, m.label, m.item, m.at, m.kind, m.raw_status, m.raw_event, m.ref_type, m.ref_id, m.ref_line, m.from_wh, m.to_wh, m.user, m.source, m.detail, m.key, at);
 const soWo = (T, store, so, wo, source, at) => T.prepare(`INSERT INTO inv_so_wo (store, sales_order, wo, source, updated_at) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT (store, sales_order) DO UPDATE SET wo = excluded.wo, source = excluded.source, updated_at = excluded.updated_at WHERE wo IS NOT excluded.wo`).bind(store, so, String(wo), source, at);
 // A label a movement names: known from now on, and queued for a history read at `need` (never lowered here).
-const touchLabel = (T, store, label, item, need, at, wo = null) => T.prepare(`INSERT INTO inv_labels (store, label, item, wo, first_seen, last_seen, need_history) VALUES (?, ?, ?, ?, ?, ?, ?)
+const touchLabel = (T, store, label, item, need, at, wo = null) => ignoredItem(item) ? null : T.prepare(`INSERT INTO inv_labels (store, label, item, wo, first_seen, last_seen, need_history) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (store, label) DO UPDATE SET item = COALESCE(item, excluded.item), wo = COALESCE(excluded.wo, wo), need_history = MAX(need_history, excluded.need_history)`)
   .bind(store, label, item, wo, at, at, need);
 
@@ -74,7 +76,7 @@ const touchLabel = (T, store, label, item, need, at, wo = null) => T.prepare(`IN
   batch go too. INSERT OR IGNORE stays the guard against two browsers racing.
 */
 async function newOnly(T, store, moves) {
-  const seen = new Set(), list = moves.filter((m) => m && !seen.has(m.key) && seen.add(m.key));
+  const seen = new Set(), list = moves.filter((m) => m && !ignoredItem(m.item) && !seen.has(m.key) && seen.add(m.key));
   if (!list.length) return [];
   const have = new Set();
   for (let i = 0; i < list.length; i += 500) {
@@ -88,7 +90,7 @@ async function movementStmts(T, store, moves, at, need, wo = null) {
   const fresh = await newOnly(T, store, moves), stmts = [], labels = new Map();
   for (const m of fresh) { stmts.push(insertMv(T, store, m, at)); if (m.label && !labels.has(m.label)) labels.set(m.label, m.item); }
   for (const [label, item] of labels) stmts.push(touchLabel(T, store, label, item, need, at, wo));
-  return { stmts, added: fresh.length };
+  return { stmts: stmts.filter(Boolean), added: fresh.length };
 }
 
 // ------------------------------------------------------------------ WO hook
@@ -139,7 +141,12 @@ export async function retraceStore(req, env, url, store, path, H) {
     // Each row names its store and label (Store "914", InventSerialId): another store's or label's rows are never written here.
     const rows = all.filter((r) => r && typeof r === 'object' && (storeNo(r.Store) == null || storeNo(r.Store) === store) && (r.InventSerialId == null || cleanLabel(r.InventSerialId) === label));
     const skipped = all.length - rows.length;
-    const at = H.now(), hash = hash53(JSON.stringify(rows.map(({ ['@odata.etag']: _e, ...r }) => r)));
+    // A label whose history names an ignored item (Portal's ItemId BB0001: a buyback device) isn't stock: dropped.
+    if (rows.some((r) => ignoredItem(r.ItemId))) {
+      await T.prepare('DELETE FROM inv_labels WHERE store = ? AND label = ?').bind(store, label).run();
+      return H.json({ ok: true, added: 0, ignored: true, skipped });
+    }
+    const at = H.now(), hash =hash53(JSON.stringify(rows.map(({ ['@odata.etag']: _e, ...r }) => r)));
     const row = await T.prepare('SELECT history_hash FROM inv_labels WHERE store = ? AND label = ?').bind(store, label).first();
     const done = (latest) => T.prepare(`INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen, last_history_at, history_hash, need_history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
         ON CONFLICT (store, label) DO UPDATE SET last_history_at = excluded.last_history_at, history_hash = excluded.history_hash, need_history = 0, claimed_until = NULL,
@@ -168,7 +175,7 @@ export async function retraceStore(req, env, url, store, path, H) {
     const items = new Map();
     for (const r of b.items || []) {
       const item = H.clean(r && (r.ItemNumber ?? r.itemNumber ?? r.item) != null ? String(r.ItemNumber ?? r.itemNumber ?? r.item) : '', 40);
-      if (!item) continue;
+      if (!item || ignoredItem(item)) continue;
       const x = items.get(item) || { name: null, category: null, qty: {} };
       x.name = x.name || H.clean(r.ProductName ?? r.name, 120) || null;
       x.category = x.category || H.clean(r.RetailCategory ?? r.category, 60) || null;
@@ -203,7 +210,7 @@ export async function retraceStore(req, env, url, store, path, H) {
     const snaps = new Map();
     for (const r of b.labels || []) {
       const s = labelSnapshot(r);
-      if (!s) continue;
+      if (!s || ignoredItem(s.item)) continue;
       const own = storeNo(s.store);
       if (own != null && own !== store) { skipped++; continue; } // another store's label: never written here
       snaps.set(s.label, Object.assign(snaps.get(s.label) || {}, s));
@@ -293,7 +300,7 @@ export async function retraceStore(req, env, url, store, path, H) {
         const old = new Map(((prev && prev.labels) || []).map((l) => [l.label, l]));
         for (const l of next.labels && st.labels ? next.labels : []) {
           const o = old.get(l.label);
-          if (o && o.status === l.status) continue;
+          if ((o && o.status === l.status) || ignoredItem(l.item)) continue;
           stmts.push(T.prepare(`INSERT INTO inv_labels (store, label, item, po, oem_serial, imei, first_seen, last_seen, need_history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT (store, label) DO UPDATE SET item = COALESCE(item, excluded.item), po = COALESCE(po, excluded.po), oem_serial = COALESCE(oem_serial, excluded.oem_serial),
                 imei = COALESCE(imei, excluded.imei), need_history = MAX(need_history, excluded.need_history)`)

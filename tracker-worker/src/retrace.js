@@ -143,6 +143,13 @@ export function cleanLabel(v) {
   return s && /^[A-Za-z0-9][A-Za-z0-9._\-/]{2,39}$/.test(s) ? s : null;
 }
 export const itemOfLabel = (label) => { const p = parseLabel(label); return p ? p.item : null; };
+/*
+  Items Retrace leaves out entirely (case-insensitive): BB0001 is Portal's generic SKU for buyback devices, so its
+  labels (B-<item>-<digits>) aren't stock and would swamp the item lists. Nothing for them is stored; a label whose
+  history turns out to be one of these is dropped.
+*/
+export const IGNORED_ITEMS = ['bb0001'];
+export const ignoredItem = (item) => item != null && IGNORED_ITEMS.includes(String(item).trim().toLowerCase());
 export const refTypeOf = (refTable) => {
   const s = str(refTable, 40);
   if (!s) return null;

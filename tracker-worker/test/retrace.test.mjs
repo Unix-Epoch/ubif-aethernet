@@ -454,6 +454,24 @@ const { presetOf } = await import('../src/access.js');
 assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data', 'retrace'] }), 'manager');
 assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data'] }), 'manager', 'a manager from before Retrace is still a manager');
 
+// ------------------------------------------------------------------ ignored items (BB0001: buyback devices)
+{
+  const { ignoredItem } = await import('../src/retrace.js');
+  assert.ok(ignoredItem('BB0001') && ignoredItem('bb0001') && ignoredItem(' BB0001 ') && !ignoredItem('180001') && !ignoredItem(null));
+  const bb = 'B-286093-0000137332', bbRow = (ev, t) => ({ InventSerialId: bb, ItemId: 'BB0001', Store: '914', DateTime: t, SerialEventType: ev, SerialStatus: 'Received', RefTable: 'Sales orders', SourceKey: 'FSO000321533', SourceKeyLineNum: 1, User: 'RetailServiceAccount' });
+  await call('POST', '/v1/914/tracker/retrace/sweep', { touched: [bb], need: 0 }); // queued by its label alone (item 286093)
+  assert.ok(await T.prepare('SELECT 1 FROM inv_labels WHERE store = 914 AND label = ?').bind(bb).first(), 'touched label queued');
+  const h = await call('POST', '/v1/914/tracker/retrace/history', { label: bb, rows: [bbRow('SerialReserved', '2026-10-23T12:00:00Z')] });
+  assert.equal(h.j.ignored, true);
+  assert.equal(await T.prepare('SELECT 1 FROM inv_labels WHERE store = 914 AND label = ?').bind(bb).first(), null, 'its history says BB0001: label dropped');
+  assert.equal((await T.prepare("SELECT COUNT(*) AS n FROM inv_movements WHERE lower(item) = 'bb0001'").first()).n, 0, 'no BB0001 movements from history');
+  const w = await call('POST', '/v1/914/tracker/retrace/watch', { movements: [{ label: bb, item: 'BB0001', kind: 'reserved', source: 'watch', at: '2026-10-23T12:05:00Z', ref_type: 'wo', ref_id: '500000001' }] });
+  assert.equal(w.status, 200); assert.equal(w.j.added, 0, 'watcher: BB0001 not stored');
+  await call('POST', '/v1/914/tracker/retrace/sweep', { labels: [{ SerialNumber: 'B-616883-0000103989', ItemNumber: 'BB0001', SerialStatus: 'Reserved', Store: '914' }], items: [{ ItemNumber: 'BB0001', ProductName: 'Buyback device', WarehouseId: '914', OnHandQuantity: 3 }], need: 0 });
+  assert.equal((await T.prepare("SELECT COUNT(*) AS n FROM inv_labels WHERE lower(item) = 'bb0001'").first()).n, 0, 'sweep: BB0001 label snapshots skipped');
+  assert.equal((await T.prepare("SELECT COUNT(*) AS n FROM inv_items WHERE lower(item) = 'bb0001'").first()).n, 0, 'sweep: BB0001 item rows skipped');
+}
+
 await dispose();
 rmSync('.wrangler-test-retrace', { recursive: true, force: true });
 console.log('retrace: all passed');
