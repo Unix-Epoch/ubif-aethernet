@@ -1,6 +1,7 @@
 // The admin app: one page, no build step. Talks only to /api/… on this site (behind Cloudflare Access).
 export const PAGE = String.raw`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Aethernet admin</title>
+<link rel="icon" href="data:image/svg+xml,<svg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='-20%20-250%201171%201171'><path%20fill='%235b34c9'%20d='M821%20134H464L542%20268H898L975%20402H619L697%20536H1053L1130%20670H391L269%20556H573L388%20235L137%20670H0L387%200H743L821%20134Z'/></svg>">
 <style>
 @font-face{font-family:Apercu;src:url(https://assets.asurion-ui.my.asurion53.com/fonts/Apercu-Regular-Pro.woff2) format('woff2');font-weight:400}
 @font-face{font-family:Apercu;src:url(https://assets.asurion-ui.my.asurion53.com/fonts/Apercu-Bold-Pro.woff2) format('woff2');font-weight:700}
@@ -8,7 +9,7 @@ export const PAGE = String.raw`<!doctype html><html lang="en"><head><meta charse
 @media (prefers-color-scheme:dark){:root{--bg:#131216;--card:#1d1c21;--fg:#ececf0;--soft:#a8a7ad;--line:#2e2d33;--ps:#2c1f3d;--pt:#c39af5;--ok:#163d1c;--okf:#c5ffc8;--warn:#3d3410;--warnf:#fff0c0;--hd:#211f26}}
 *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 Apercu,"Helvetica Neue",Helvetica,Arial,sans-serif}
 .top{position:sticky;top:0;z-index:5;min-height:60px;background:var(--card);border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:8px 24px}
-.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px} .logo svg{color:var(--p)}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px} .logo .lsub{font-weight:400;color:var(--soft);font-size:17px;padding-top:4px}
 .tabs{display:flex;gap:4px;flex-wrap:wrap} .tabs button{border:0;background:none;padding:8px 14px;border-radius:999px;color:var(--soft);font:inherit;cursor:pointer} .tabs button.on{background:var(--ps);color:var(--p);font-weight:700}
 .me{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--soft)} .lock{padding:3px 10px;border-radius:999px;background:var(--ok);color:var(--okf);font-weight:700;font-size:12px}
 main{padding:20px 24px 60px;max-width:1400px}
@@ -39,7 +40,7 @@ a{color:var(--p);font-weight:700;text-decoration:none} .soft{color:var(--soft);f
 @media (max-width:900px){.top{position:relative}}
 @media (max-width:640px){.top,main{padding-left:16px;padding-right:16px} .me{margin-left:0} .grid{grid-template-columns:1fr}}
 </style></head><body>
-<div class="top"><span class="logo"><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="11" rx="10.5" ry="3.2" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".55"/><path fill="currentColor" d="M12 1.5 6 10l6 12.5L18 10z"/></svg>Aethernet admin</span>
+<div class="top"><span class="logo"><svg height="24" width="145" viewBox="364 -20 4270 705" role="img" aria-label="Aethernet"><path fill="var(--pt)" d="M384 665L768 0L1140 0L1188 84L816 84L1103 581L1475 581L1524 665L777 665L701 594L1001 594L768 191L494 665ZM936 291L1308 291L1356 375L984 375ZM767 190L877 190L1111 595L1001 595Z"/><path fill="currentColor" d="M1387 125L1491 125L1803 665L1699 665ZM1376 245L1696 245L1743 325L1423 325ZM1653 585L1893 585L1939 665L1699 665ZM1771 245L2097 245L2198 309L2404 665L2300 665L2109 334L2095 325L1922 325L2118 665L2014 665L1771 245ZM1630 0L1734 0L2118 665L2014 665ZM2266 245L2587 245L2688 309L2793 491L2512 491L2567 585L2848 585L2894 665L2509 665ZM2466 411L2643 411L2599 334L2585 325L2417 325ZM2746 245L2978 245L3039 283L3063 325L2897 325L3093 665L2989 665ZM3091 245L3417 245L3518 309L3724 665L3620 665L3429 334L3415 325L3242 325L3438 665L3334 665L3091 245ZM3586 245L3907 245L4008 309L4113 491L3832 491L3887 585L4168 585L4214 665L3829 665ZM3786 411L3963 411L3919 334L3905 325L3737 325ZM4062 125L4166 125L4478 665L4374 665ZM4051 245L4371 245L4418 325L4098 325ZM4328 585L4568 585L4614 665L4374 665Z"/></svg><span class="lsub">admin</span></span>
 <nav class="tabs" id="tabs"></nav><span class="me"><span class="ownr" id="ownr" style="display:none">Developer</span><span class="lock">Cloudflare Access</span><span>__EMAIL__</span></span></div>
 <main id="main"><div class="soft">Loading…</div></main>
 <script>
