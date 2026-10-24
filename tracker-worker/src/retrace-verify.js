@@ -2,6 +2,8 @@
   Retrace's coverage check (Oct 24, 2026): "has Retrace seen everything at this store?", for the admin Retrace page's
   Verify coverage panel. Five checks against the store's frozen baseline (inv_baseline / inv_item_counts), read only
   except for the stored result and the spot check's ticks:
+    (Quantity-only items, a counted label total of 0 (stock without individual labels, e.g. 900348), are skipped by checks 1 and 2 and
+     reported as "N quantity-only items skipped"; they are never in "missed" (they are baseline items) and add nothing to the label totals.)
     1 counts   per baseline item, Portal's label count (sold included; inv_item_counts) against the labels Retrace stored (inv_labels).
                Fewer is a miss; more is labels newer than the baseline (never a failure, counted aside).
     2 qty      per baseline item, Portal's available + reserved quantity from the stock lookup (inv_items.qty, non-quarantine
@@ -38,8 +40,13 @@ async function perItem(T, store) {
       WHERE c.store = ?1 ORDER BY c.item`).bind(store).all()).results;
 }
 
-function countsCheck(rows) {
-  const short = [];
+// Quantity-only items: stock with no individual labels (Portal's generic SKUs, e.g. 900348 "Generic - Liquid Glass (Individual)", there so staff can check the
+// product out). Recognised by the counted label total (store-products/{item}/inventory @odata.count, or its 404) being 0: nothing to find, nothing to compare.
+const qtyOnly = (r) => r.portal === 0;
+const qoNote = (n) => n ? ' · ' + plural(n, 'quantity-only item') + ' skipped (no labels to check)' : '';
+
+function countsCheck(all) {
+  const short = [], rows = all.filter((r) => !qtyOnly(r)), qo = all.length - rows.length;
   let extra = 0;
   for (const r of rows) {
     if (r.n < r.portal) {
@@ -49,8 +56,8 @@ function countsCheck(rows) {
   }
   short.sort((a, b) => (b.portal - b.have) - (a.portal - a.have) || (a.item < b.item ? -1 : 1));
   const ok = rows.length - short.length;
-  return { status: !rows.length ? 'todo' : short.length ? 'fail' : 'pass', total: rows.length, ok, n: short.length, extra, rows: short.slice(0, ROWS),
-    result: !rows.length ? 'no baseline items' : ok + ' of ' + rows.length + ' items match' + (!short.length && extra ? ' · ' + plural(extra, 'label') + ' newer than the baseline' : '') };
+  return { status: !rows.length ? 'todo' : short.length ? 'fail' : 'pass', total: rows.length, ok, n: short.length, extra, quantity_only: qo, rows: short.slice(0, ROWS),
+    result: (!rows.length ? (qo ? 'no items with labels' : 'no baseline items') : ok + ' of ' + rows.length + ' items match' + (!short.length && extra ? ' · ' + plural(extra, 'label') + ' newer than the baseline' : '')) + qoNote(qo) };
 }
 
 // Portal's quantities by warehouse (inv_items.qty): available and reserved, quarantine warehouses (914Q) left out. null = no quantity yet.
@@ -63,8 +70,8 @@ function portalQty(qtyText) {
   return { available: sum('available'), reserved: sum('reserved') };
 }
 
-function qtyCheck(rows) {
-  const bad = [];
+function qtyCheck(all) {
+  const bad = [], rows = all.filter((r) => !qtyOnly(r)), qo = all.length - rows.length;
   let ok = 0, unchecked = 0;
   for (const r of rows) {
     const p = portalQty(r.qty);
@@ -77,8 +84,8 @@ function qtyCheck(rows) {
   }
   bad.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || (a.item < b.item ? -1 : 1));
   const checked = ok + bad.length;
-  return { status: !checked ? 'todo' : bad.length ? 'fail' : 'pass', total: rows.length, ok, unchecked, n: bad.length, rows: bad.slice(0, ROWS),
-    result: !checked ? 'no quantities from the stock lookup yet' : ok + ' of ' + checked + ' items match' + (unchecked ? ' · ' + unchecked + ' unchecked (no quantity yet)' : '') };
+  return { status: !checked ? 'todo' : bad.length ? 'fail' : 'pass', total: rows.length, ok, unchecked, n: bad.length, quantity_only: qo, rows: bad.slice(0, ROWS),
+    result: (!checked ? (qo && !unchecked ? 'only quantity-only items: no labels to check' : 'no quantities from the stock lookup yet') : ok + ' of ' + checked + ' items match' + (unchecked ? ' · ' + unchecked + ' unchecked (no quantity yet)' : '')) + qoNote(qo) };
 }
 
 // ------------------------------------------------------------------ check 3: stale histories

@@ -710,11 +710,11 @@ export function watchMovements(call, ctx) {
   return found.map((f) => one(f.label, rule.kind, { detail: rule.kind === 'status_changed' ? what : null }));
 }
 
-// A list from any of Portal's envelopes: [rows], { value }, { data }, { results }, { items }, { rows } (else []).
+// A list from any of Portal's envelopes: [rows], { value }, { data }, { results }, { items }, { rows }, { OnHandItemDetails } (inventory-lookup, captured live Oct 24 2026) (else []).
 export function rowsOf(j) {
   if (Array.isArray(j)) return j;
   if (!j || typeof j !== 'object') return [];
-  for (const k of ['value', 'data', 'results', 'items', 'rows', 'orders', 'transferOrders']) if (Array.isArray(j[k])) return j[k];
+  for (const k of ['value', 'data', 'results', 'items', 'rows', 'orders', 'transferOrders', 'OnHandItemDetails']) if (Array.isArray(j[k])) return j[k];
   return [];
 }
 

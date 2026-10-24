@@ -56,6 +56,8 @@ AE.retrace = (() => {
   const STOCK_KEY = (s) => 'ae_retrace_stock_' + s, TODO_KEY = (s) => 'ae_retrace_todo_' + s, SO_KEY = (s) => 'ae_retrace_so_' + s, NAMED_KEY = (s) => 'ae_retrace_named_' + s;
   const PASS_MS = 10 * 60 * 1000, LOOKUP_MS = 30 * 60 * 1000, GAP_MS = 300;
   const COUNT_KEY = (s) => 'ae_retrace_count_' + s, COUNT_BUDGET = 200;
+  // Quantity-only items (stock, no labels: counted total 0, e.g. the generic SKU 900348): remembered so their quantity changes don't queue a label read that would find nothing.
+  const QO_KEY = (s) => 'ae_retrace_qtyonly_' + s;
   const NEED = 60, ITEM_BUDGET = 150, DETAIL_BUDGET = 15, PO_BUDGET = 15, RMA_BUDGET = 20, NAME_ASK = 20, NAME_BUDGET = 10, NAME_RETRY_MS = 86400000;
   const LOOKUP_PAGES = 30, LIST_PAGES = 10, PO_BACKFILL_PAGES = 2, PO_DAYS = 14, RMA_DAYS = 30;
   const WATCH_BATCH = 50, QUEUE_MAX = 500, QUEUE_DAYS = 3;
@@ -305,6 +307,7 @@ AE.retrace = (() => {
       // 2. stock, at most every 30 minutes (any browser at the store: the cursor)
       const lastLookup = cursors.lookup && cursors.lookup.value && Date.parse(cursors.lookup.value.at);
       let todo = new Set(GM_getValue(TODO_KEY(store), []) || []);
+      const qtyOnly = new Set(GM_getValue(QO_KEY(store), []) || []);
       if (opts.lookup || !lastLookup || Date.now() - lastLookup > LOOKUP_MS - 60000) {
         try {
           const lt = Date.now(), s = await stock(store);
@@ -313,14 +316,17 @@ AE.retrace = (() => {
           GM_setValue(STOCK_KEY(store), s.keep);
           result.lookup = { rows: s.items.length, seconds: Math.round((Date.now() - lt) / 1000) };
           result.items = s.items.length; result.changedItems = sw.changedItems.length;
-          for (const c of sw.changedItems) todo.add(c.item);
+          for (const c of sw.changedItems) if (!qtyOnly.has(String(c.item))) todo.add(c.item);
         } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('stock', e); }
       }
       // 2b. label totals for the baseline: asked of the Worker when this pass didn't just do the lookup, then one tiny call per item
       if (!baseline.frozen) {
         if (!countNeed.length) { try { countNeed = (await sweep(store, by, { countNeed: COUNT_BUDGET, need: 0 })).countNeed; } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('count list', e); } }
         for (const item of countNeed.slice(0, COUNT_BUDGET)) {
-          try { const t = await labelTotal(store, item); acc.labelTotals.push({ item: t.item, total: t.total }); if (t.snaps) acc.labels.push(...t.snaps); result.counted++; }
+          try {
+            const t = await labelTotal(store, item); acc.labelTotals.push({ item: t.item, total: t.total }); if (t.snaps) acc.labels.push(...t.snaps); result.counted++;
+            if (t.total === 0) { qtyOnly.add(t.item); todo.delete(t.item); GM_setValue(QO_KEY(store), [...qtyOnly]); result.quantityOnly = (result.quantityOnly || 0) + 1; } // 404 or 0: quantity-only
+          }
           catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('count ' + item, e); }
         }
         if (!baseline.posKnown) {
@@ -342,7 +348,7 @@ AE.retrace = (() => {
       const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK, countNeed: baseline.frozen ? 0 : COUNT_BUDGET }));
       if (!baseline.frozen) GM_setValue(COUNT_KEY(store), sw.countNeed);
       // Items the Worker's coverage check found referenced but never read: their label lists, next (a budget a pass, like a changed item's)
-      for (const i of sw.missedItems) todo.add(i);
+      for (const i of sw.missedItems) if (!qtyOnly.has(String(i))) todo.add(i);
       GM_setValue(TODO_KEY(store), [...todo]);
       result.itemsWaiting = todo.size;
       result.added += sw.added; result.backlogMore = sw.more; result.named += sw.named; result.unnamed = sw.unnamed.length;

@@ -198,6 +198,7 @@ const unclaim = () => T.prepare('UPDATE inv_labels SET claimed_until = NULL').ru
   assert.equal(W('POST', '/api/boh/rma-buyback/buyback-order/ship', { lines: [{ SerialNumber: 'B-210004-0000000044' }] })[0].kind, 'buyback');
   assert.deepEqual(W('GET', '/api/boh/inventory/176255-0000514371/adjust-in', {}), []);
   assert.deepEqual(R.rowsOf({ value: [1] }), [1]); assert.deepEqual(R.rowsOf([2]), [2]); assert.deepEqual(R.rowsOf({ x: 1 }), []);
+  assert.deepEqual(R.rowsOf(fx('inventory-lookup')).map((r) => r.ItemNumber), ['180001', '180001', '176255'], "inventory-lookup's rows are under OnHandItemDetails");
 }
 
 // ------------------------------------------------------------------ purchase orders (status over time)
@@ -266,7 +267,7 @@ ok(await sendWo(700003, 10, [wl(1, '180001-0000600002')], [{ eventType: 'PARTS_U
 
 // ------------------------------------------------------------------ store isolation
 assert.equal((await call('POST', '/v1/999/tracker/retrace/watch', { movements: [{ label: '180001-0000600001', at: AT, kind: 'lost' }] })).status, 403, 'store without access');
-const lookup = fx('inventory-lookup').value, products = fx('store-products').value;
+const lookup = fx('inventory-lookup').OnHandItemDetails, products = fx('store-products').value;
 let sw = await call('POST', '/v1/326/tracker/retrace/sweep', { labels: products });
 ok(sw, 'sweep 326'); assert.equal(sw.j.skipped, 3, '914 labels sent to 326: skipped');
 assert.equal(await count('SELECT COUNT(*) AS n FROM inv_labels WHERE store = 326'), 0, 'store 326 got nothing');
@@ -1039,6 +1040,33 @@ assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 
   // a store with nothing queued
   await T.prepare('UPDATE inv_labels SET need_history = 0, claimed_until = NULL WHERE store = 539').run();
   const e = (await admin('owner@x.com', Q(539))).j; assert.deepEqual([e.total, e.waiting, e.being_read, e.eta_min, e.rows], [0, 0, 0, 0, []]);
+}
+
+// ------------------------------------------------------------------ quantity-only items (Oct 24, 2026): stock with no labels, e.g. 900348 with 9,995 in stock
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (546, 'Quantity only')").run();
+  const st = 546, sw = (body) => call('POST', '/v1/546/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+  const full = async () => (await admin('owner@x.com', '/retrace/coverage')).j.stores.find((x) => x.store === st).progress;
+  const vr = async () => (await adminPost('owner@x.com', '/retrace/verify/546/run')).j;
+  const kind = (k) => (j) => j.checks.find((c) => c.key === k);
+  const lk = (item, qty, name) => ({ ItemNumber: item, ProductName: name, SiteId: '546', WarehouseId: '546', OnHandQuantity: qty, AvailableQuantity: qty, ReservedQuantity: 0, InTransitQuantity: 0, RetailCategory: 'Accessories' });
+  const lab = (n) => ({ SerialNumber: '546001-' + String(n).padStart(10, '0'), ItemNumber: '546001', SerialStatus: 'Available', Store: '546' });
+  const s1 = await sw({ items: [lk('546001', 2, 'Real part'), lk('900348', 9995, 'Generic - Liquid Glass (Individual)')], cursors: { lookup: { at: AT, rows: 2 } }, labels: [lab(1), lab(2)], countNeed: 10 });
+  assert.deepEqual(s1.j.countNeed.sort(), ['546001', '900348'], 'the quantity-only item is counted like any other');
+  // its count: a 0 (as a 404 or a 0 count gives); the baseline freezes without waiting on it
+  await sw({ labelTotals: [{ item: '546001', total: 2 }, { item: '900348', total: 0 }], poTotal: 0, countNeed: 10 });
+  let f = await full(); assert.notEqual(f.state, 'counting', 'frozen: the quantity-only item does not hold it back');
+  assert.deepEqual([f.steps.stock, f.steps.labels, f.steps.histories], [{ x: 2, y: 2 }, { x: 2, y: 2 }, { x: 0, y: 2 }], 'labels and histories denominators: real labels only');
+  // checks 1 and 2: pass, the quantity-only item skipped and counted aside
+  let v = await vr(); const c1 = kind('counts')(v), c2 = kind('qty')(v);
+  assert.deepEqual([c1.status, c1.quantity_only, c1.total, c1.ok], ['pass', 1, 1, 1], JSON.stringify(c1)); assert.match(c1.result, /1 quantity-only item skipped/);
+  assert.equal(c2.status, 'pass', JSON.stringify(c2)); assert.equal(c2.quantity_only, 1); assert.match(c2.result, /1 quantity-only item skipped/);
+  assert.equal(kind('missed')(v).n, 0, 'never in Items missed'); assert.ok(!JSON.stringify(kind('missed')(v).rows).includes('900348'));
+  // a real item that is short still fails both checks (qty 2 in the lookup, one label stored)
+  await T.prepare("DELETE FROM inv_labels WHERE store = 546 AND label = '546001-0000000002'").run();
+  v = await vr();
+  assert.equal(kind('counts')(v).status, 'fail'); assert.equal(kind('counts')(v).rows[0].item, '546001');
+  assert.equal(kind('qty')(v).status, 'fail'); assert.deepEqual(kind('qty')(v).rows.map((r) => r.item), ['546001']);
 }
 
 await dispose();

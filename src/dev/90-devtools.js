@@ -347,7 +347,7 @@
         for (const [name, q] of tries) {
           try {
             const j = await AE.api('GET', '/api/boh/inventory-lookup?pageSize=3&page=1&searchTerm=&categoryFilter=&' + q);
-            const rows = Array.isArray(j) ? j : j && typeof j === 'object' ? (['value', 'data', 'results', 'items', 'rows'].map((k) => j[k]).find(Array.isArray) || []) : [];
+            const rows = Array.isArray(j) ? j : j && typeof j === 'object' ? (['value', 'data', 'results', 'items', 'rows', 'OnHandItemDetails'].map((k) => j[k]).find(Array.isArray) || []) : [];
             out.push({ name, query: q, topLevel: Array.isArray(j) ? 'array' : j && typeof j === 'object' ? Object.keys(j) : typeof j, rows: rows.length, first: rows[0] || null, raw: rows.length ? undefined : JSON.stringify(j).slice(0, 400) });
           } catch (e) { out.push({ name, query: q, error: e.message || String(e) }); }
           rtOut.replaceChildren(h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(out, null, 1)));

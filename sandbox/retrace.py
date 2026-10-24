@@ -49,11 +49,12 @@ def route(method, p, q, body, s, store, now):
     """→ (status, json) or None when the path isn't Retrace's."""
     # ---- Portal: item lookup (sorted by the quantity asked for, paged)
     if p == 'boh/inventory-lookup' and method == 'GET':
-        rows = fx('inventory-lookup', store)['value']
+        rows = fx('inventory-lookup', store)['OnHandItemDetails']
         field = {'availablequantity': 'AvailableQuantity', 'reservedquantity': 'ReservedQuantity', 'intransitquantity': 'InTransitQuantity'}.get((q.get('sortField') or '').lower())
         if field:
             rows = sorted(rows, key=lambda r: -(r.get(field) or 0))
-        return 200, page(rows, q)
+        size, n = int(q.get('pageSize') or 100), int(q.get('page') or 1)  # Portal's envelope (captured live at 914, Oct 24 2026)
+        return 200, {'$id': '1', 'OnHandItemDetails': rows[(n - 1) * size: n * size], 'TotalRecords': len(rows), 'ErrorMessage': None, 'Success': True, 'DebugMessage': None}
     m = re.fullmatch(r'boh/store-products/([^/]+)/inventory', p)
     if m and method == 'GET':
         item = m.group(1)
@@ -69,7 +70,7 @@ def route(method, p, q, body, s, store, now):
         # the item page's header call: shape not captured beyond ProductName and the quantities (made up from the lookup row,
         # else a sandbox cart line's name, else a made-up name; 404 for a non-numeric item, as for one Portal doesn't know)
         item = m.group(1)
-        row = next((r for r in fx('inventory-lookup', store)['value'] if r['ItemNumber'] == item), None)
+        row = next((r for r in fx('inventory-lookup', store)['OnHandItemDetails'] if r['ItemNumber'] == item), None)
         name = row['ProductName'] if row else next((line.get('name') for _, sku, line, _w in cart_labels(s) if sku == item and line.get('name')), None)
         if not name and not re.fullmatch(r'\d{4,8}', item):
             return 404, {'message': 'Product not found'}

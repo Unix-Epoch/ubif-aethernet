@@ -8,7 +8,7 @@
   Everything is written under the store in the URL and nothing else: a label snapshot naming another store is skipped.
     POST /retrace/sweep { items, labels, docs, movements, touched, cursors, need, names, nameNeed, labelTotals, countNeed, poTotal, by }   one collector pass →
          { need: [label], more, changedItems: [{ item, why: new|changed }], added, rejected, skipped, written, named, unnamed, countNeed: [item], missedItems: [item] }
-           items      inventory-lookup rows ({ ItemNumber, ProductName, RetailCategory, WarehouseId, OnHandQuantity,
+           items      inventory-lookup rows (Portal's envelope is { OnHandItemDetails: [rows], TotalRecords, … }; the collector sends the rows: { ItemNumber, ProductName, RetailCategory, WarehouseId, OnHandQuantity,
                       AvailableQuantity, ReservedQuantity, InTransitQuantity, SalesOnOrder, VanNickName }): per item and
                       warehouse; quantities differing from the stored ones (or a new item) come back in changedItems so
                       the browser reads that item's labels. Which items to look up is the collector's call (the lookup
