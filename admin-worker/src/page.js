@@ -36,6 +36,13 @@ a{color:var(--p);font-weight:700;text-decoration:none} .soft{color:var(--soft);f
 .rule{display:flex;gap:10px;justify-content:space-between;align-items:flex-start}
 .ownr{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--p);color:#fff}
 .deny{max-width:520px;margin:60px auto;text-align:center} .deny .ic{width:56px;height:56px;border-radius:50%;background:var(--ps);color:var(--p);display:inline-flex;align-items:center;justify-content:center;margin-bottom:12px} .deny h2{margin:0 0 6px;font-size:20px} .deny p{color:var(--soft);margin:0 0 16px}
+.ld{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:16px} .ld h3{margin:0;font-size:16px;text-transform:none;letter-spacing:0;color:var(--fg)} .ld h4{margin:0 0 6px;font-size:14px} .ld .sub{color:var(--soft);font-size:12.5px}
+.ld-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px} .ld-tile{border:1px solid var(--line);border-radius:10px;padding:12px;display:grid;gap:6px;align-content:start}
+.ld-tile .lk{font-size:12px;color:var(--soft)} .ld-tile b{font-size:22px;font-variant-numeric:tabular-nums} .ld-tile .of{font-size:12px;color:var(--soft)}
+.ld-meter{height:6px;border-radius:3px;background:var(--line);overflow:hidden} .ld-meter i{display:block;height:100%;background:#1baf7a} .ld-meter i.mid{background:#d9a400} .ld-meter i.hi{background:var(--err)}
+.ld-spark{height:34px;display:flex;align-items:flex-end;gap:2px} .ld-spark i{flex:1;background:var(--pt);opacity:.65;border-radius:1px 1px 0 0;min-height:2px} .ld-spark i.none{opacity:.15}
+.ld-proj{background:var(--ps);color:var(--fg);border-radius:10px;padding:10px 14px;font-size:13px} .ld-empty{border:1px dashed var(--line);border-radius:10px;padding:10px 14px;font-size:13px;color:var(--soft)}
+.ld td.n,.ld th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap} .ld .tw{overflow-x:auto}
 @media (max-width:900px){.top{position:relative}}
 @media (max-width:640px){.top,main{padding-left:16px;padding-right:16px} .me{margin-left:0} .grid{grid-template-columns:1fr}}
 </style></head><body>
@@ -123,8 +130,68 @@ async function drawReports(m) {
 
 // ---------------------------------------------------------------- Usage (same drill-down as the in-Portal panel)
 let days = 30, usage = null, uStore = '', uUser = '', uShard = '';
+// Cloudflare and Portal load (top of Usage): what Aethernet's Workers use of the Workers Paid allowances, counted by the Workers themselves
+// (tracker-worker/src/usage.js; data from GET /api/tracker/usage-load). Honest empty states: nothing is shown that wasn't counted.
+const LIMITS = { requests: 10e6, read: 25e9, written: 50e6, bytes: 10e9 };
+const nf = (x) => Math.round(x).toLocaleString();
+const reqText = (x) => (x >= 1e5 ? (x / 1e6).toFixed(2) + ' M' : nf(x));
+const bigNum = (x) => (x >= 1e5 ? (x / 1e6).toFixed(x >= 1e7 ? 1 : 2) + ' M' : nf(x));
+const sizeText = (b) => (b >= 1e9 ? (b / 1e9).toFixed(2) + ' GB' : Math.round(b / 1e6) + ' MB');
+const pctText = (p) => (p < 0.1 ? '<0.1%' : (p < 10 ? p.toFixed(1) : String(Math.round(p))) + '%');
+const lenText = (sec) => (sec == null ? '—' : sec < 90 ? sec + ' s' : (sec / 60).toFixed(1) + ' min');
+function loadSection(j) {
+  const card = (...k) => h('div', { class: 'card ld' }, ...k), head = h('div', null, h('h3', null, 'Cloudflare and Portal load'),
+    h('div', { class: 'sub' }, "Counted by Aethernet's own Workers over the last 30 days. Cloudflare's dashboard stays the billing source; this is for spotting growth early. Allowances are Workers Paid."));
+  if (j.error) return card(head, h('div', { class: 'ld-empty' }, "Couldn't load the load numbers: " + j.error));
+  const g = j.global, counted = g ? g.days.filter((d) => d.requests != null).length : 0, none = !j.firstDay;
+  const note = h('div', { class: 'soft' }, "Counted by Aethernet's tracker and admin Workers; days are UTC, like Cloudflare's. Not counted: the Waymark Worker (tags, sheets and the usage calls stores make), so Cloudflare's own totals run a little higher. Database size is the tracker database; Waymark's has its own 10 GB. The counter's own few writes aren't included.");
+  const bits = [head];
+  if (g) {
+    if (none) bits.push(h('div', { class: 'ld-empty' }, 'Counting starts when this is deployed; nothing counted yet. The numbers below fill in as requests come in.'));
+    else if (counted < 30) bits.push(h('div', { class: 'ld-empty' }, 'Counting started ' + fmtDay(j.firstDay) + ': ' + counted + (counted === 1 ? ' day' : ' days') + ' of data so far, so the 30-day figures are partial.'));
+    const series = (f) => g.days.map((d) => d[f]), tile = (label, val, f, limit, ofText, show) => {
+      const sp = series(f), top = Math.max(1, ...sp.map((x) => x || 0)), pct = val == null ? 0 : val / limit * 100;
+      return h('div', { class: 'ld-tile' }, h('span', { class: 'lk' }, label), h('b', null, val == null ? '—' : show(val)),
+        h('span', { class: 'of' }, val == null ? ofText + ' · not counted yet' : ofText + ' · ' + pctText(pct)),
+        h('div', { class: 'ld-meter' }, h('i', { class: pct >= 80 ? 'hi' : pct >= 50 ? 'mid' : '', style: 'width:' + (val ? Math.min(100, Math.max(pct, 1.5)) : 0) + '%' })),
+        h('div', { class: 'ld-spark', 'aria-hidden': 'true' }, sp.map((x, i) => h('i', { class: x == null ? 'none' : null, title: fmtDay(g.days[i].day) + ': ' + (x == null ? 'not counted' : f === 'bytes' ? sizeText(x) : nf(x)), style: 'height:' + (x == null ? 2 : Math.max(2, Math.round(x / top * 100))) + '%' }))));
+    };
+    const m = g.month, c = (x) => (none ? null : x);
+    bits.push(h('div', { class: 'ld-tiles' },
+      tile('Worker requests, this month', c(m.requests), 'requests', LIMITS.requests, 'of 10,000,000 included', nf),
+      tile('D1 rows read, this month', c(m.rows_read), 'rows_read', LIMITS.read, 'of 25,000 M included', bigNum),
+      tile('D1 rows written, this month', c(m.rows_written), 'rows_written', LIMITS.written, 'of 50 M included', bigNum),
+      tile('Database size', g.bytes, 'bytes', LIMITS.bytes, 'of 10 GB per database', sizeText)));
+    // The projection line: only what the numbers support.
+    const p = g.projection, tiles = [['Worker requests', m.requests / LIMITS.requests], ['D1 rows read', m.rows_read / LIMITS.read], ['D1 rows written', m.rows_written / LIMITS.written], ['Database size', g.bytes == null ? 0 : g.bytes / LIMITS.bytes]];
+    const worst = tiles.sort((a, b) => b[1] - a[1])[0], near = worst[1] >= 0.5 ? worst[0] + ' is at ' + pctText(worst[1] * 100) + ' of its allowance.' : 'Nothing is near a limit.';
+    let line = null;
+    if (none) line = null;
+    else if (p.status === 'early') line = [h('b', null, 'Too early for a projection: '), (p.days || 0) + ' complete ' + ((p.days || 0) === 1 ? 'day' : 'days') + ' counted so far, a week is needed. ' + near];
+    else if (p.status === 'nostores') line = [h('b', null, 'No store has reported a Retrace pass in the last week, '), 'so there is no per-store projection yet. At the current pace: about ' + reqText(p.month_requests) + ' requests a month (' + pctText(p.month_requests / LIMITS.requests * 100) + ' of the allowance). ' + near];
+    else line = [h('b', null, 'At ' + p.stores + (p.stores === 1 ? ' store: ' : ' stores: ')), 'about ' + reqText(p.month_requests) + ' requests a month (' + pctText(p.month_requests / LIMITS.requests * 100) + ' of the allowance), growing roughly ' + reqText(p.per_store) + ' per extra store. '
+      + (p.db_growth_per_store_month ? 'Database growth is about ' + sizeText(p.db_growth_per_store_month) + ' a month per store. ' : '') + near + ' (From ' + p.days + ' complete days.)'];
+    if (line) bits.push(h('div', { class: 'ld-proj' }, line));
+    bits.push(h('div', null, h('h4', null, 'By area, last 30 days'), h('div', { class: 'tw' }, h('table', null,
+      h('thead', null, h('tr', null, h('th', null, 'Area'), h('th', { class: 'n' }, 'Requests today'), h('th', { class: 'n' }, 'Requests, 30 days'), h('th', { class: 'n' }, 'Rows read'), h('th', { class: 'n' }, 'Rows written'))),
+      h('tbody', null, g.areas.map((a) => h('tr', null, h('td', null, a.name), h('td', { class: 'n' }, none ? '—' : nf(a.today)), h('td', { class: 'n' }, none ? '—' : nf(a.requests)), h('td', { class: 'n' }, none ? '—' : bigNum(a.rows_read)), h('td', { class: 'n' }, none ? '—' : bigNum(a.rows_written)))))))));
+  } else bits.push(h('div', { class: 'ld-empty' }, 'Totals for all of the Workers are shown to people with access to every store. Below: the stores you can see.'));
+  const sp = j.stores.filter((s) => s.passes > 0), ps = sp.reduce((n, s) => n + s.passes, 0), lk = sp.reduce((n, s) => n + s.lookupPasses, 0), ls = sp.filter((s) => s.lookupSeconds != null);
+  bits.push(h('div', null, h('h4', null, 'By store, Retrace and Portal load'),
+    j.stores.length ? h('div', { class: 'tw' }, h('table', null,
+      h('thead', null, h('tr', null, h('th', null, 'Store'), h('th', { class: 'n' }, 'Labels'), h('th', { class: 'n' }, 'Portal calls per pass'), h('th', { class: 'n' }, 'Worker calls per pass'), h('th', { class: 'n' }, 'Pass length'), h('th', { class: 'n' }, 'Browsers collecting'))),
+      h('tbody', null, j.stores.map((s) => h('tr', null, h('td', null, s.store + (s.name ? ' ' + s.name : '')), h('td', { class: 'n' }, nf(s.labels)), h('td', { class: 'n' }, s.passes ? nf(s.portalPerPass) : '—'), h('td', { class: 'n' }, s.passes ? nf(s.workerPerPass) : '—'),
+        h('td', { class: 'n' }, lenText(s.avgSeconds)), h('td', { class: 'n' }, s.browsers || '—')))))) : h('div', { class: 'ld-empty' }, 'No store to show yet.'),
+    h('div', { class: 'sub', style: 'margin-top:6px' }, sp.length
+      ? 'Averages over the last 7 days. Portal calls per pass is the load Retrace puts on Portal from each store’s browser.' + (lk && ls.length ? ' The stock lookup runs in ' + lk + ' of ' + ps + ' passes and takes about ' + lenText(Math.round(ls.reduce((n, s) => n + s.lookupSeconds, 0) / ls.length)) + ' when it does.' : '')
+      : 'No Retrace pass has been reported yet: each browser reports its pass counts when its pass ends, once it has the build with this section. Labels are what Retrace knows now.')));
+  bits.push(note);
+  return card(...bits);
+}
 async function drawUsage(m) {
+  const loadP = api('GET', '/tracker/usage-load').catch((e) => ({ error: e.message }));
   if (!usage || usage.days !== days) usage = Object.assign(await api('GET', '/usage?days=' + days), { days });
+  const loadJ = await loadP;
   const all = usage.rows, shardOf = (r) => r.feature.split(':')[0];
   const storeLabel = new Map(all.map((r) => [String(r.store), (r.store_name ? r.store_name + ' ' : '') + '#' + r.store]));
   const personLabel = new Map(all.map((r) => [String(r.user_id), r.user_name || 'User ' + r.user_id]));
@@ -144,6 +211,7 @@ async function drawUsage(m) {
   const cell = new Map(); for (const r of mx) { const k = r.user_id + '|' + shardOf(r); cell.set(k, (cell.get(k) || 0) + r.count); }
   const ppl = sum(uShard ? mx.filter((r) => shardOf(r) === uShard) : mx, (r) => r.user_id).map(([id]) => id);
   m.replaceChildren(
+    loadSection(loadJ),
     h('div', { class: 'bar' }, select(String(days), (v) => { days = Number(v) || 30; draw(); }, 'Range', [7, 30, 90, 180, 365].map((d) => [String(d), 'Last ' + d + ' days'])),
       select(uStore, (v) => set('store', v)(), 'All stores', [...storeLabel]), select(uUser, (v) => set('user', v)(), 'Everyone', [...personLabel].filter(([id]) => !uStore || all.some((r) => String(r.user_id) === id && String(r.store) === uStore)).map(([id, n]) => [id, uStore ? n : n + ' · ' + personStore.get(id)])),
       select(uShard, (v) => set('shard', v)(), 'All shards', [...new Set(all.filter((r) => !r.feature.startsWith('active')).map(shardOf))].map((f) => [f, featureLabel(f)])), ...chips),

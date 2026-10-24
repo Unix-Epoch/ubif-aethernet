@@ -26,8 +26,9 @@
     GET  /v1/:store/tracker/rfp/days?from&to     the RFP total at the end of each day (Tactician)
     GET  /v1/:store/tracker/settings             store settings (general managers, …); PUT …/settings/gm
     GET  /v1/:store/assize/rules?v=              the Assize rule graphs published for the store (src/assize.js)
-    POST /v1/:store/tracker/retrace/sweep|history|watch, GET …/retrace/cursor   Retrace, the inventory movement
-                                                 ledger (src/retrace-api.js; WO cart and parts movements come from POST /wo/:wo)
+    POST /v1/:store/tracker/retrace/sweep|history|watch|pass, GET …/retrace/cursor   Retrace, the inventory movement
+                                                 ledger (src/retrace-api.js; WO cart and parts movements come from POST /wo/:wo;
+                                                 pass = the collector's summary of a finished pass, for the load section of the Usage page)
 
   Agents (programs with their own key, e.g. the Mac's work order audit; x-aethernet-key too):
     POST /v1/agents/register { id, name, publicJwk, token }   → { id, fingerprint, status } (waits for approval)
@@ -56,6 +57,7 @@ import { PAGES, WIDE_PAGES, owners, cleanPages, presetOf, accessOf, check, strip
 import { metricsApi, statusPeriodStmts, closeStatusPeriod } from './metrics.js';
 import { assizeStore, assizeAdmin } from './assize.js';
 import { retraceStore, retraceAdmin, woRetraceStmts } from './retrace-api.js';
+import { meter, usageLoad, pruneUsage } from './usage.js';
 
 const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
@@ -627,6 +629,8 @@ function accessDiff(before, after) {
   GET  /wo/:store/:wo            one WO: row, snapshots (plain + sealed), changes
   …    /assize/…                 Assize rules: list, drafts, publish, history, per-store overrides, test orders
                                  (page 'rules'; src/assize.js has the routes)
+  GET  /usage-load               Cloudflare and Portal load: requests / D1 rows by area and day, Retrace passes per store (src/usage.js; page 'usage';
+                                 totals for all-stores access only, store rows limited to their stores; not counted itself)
   GET  /retrace/…                Retrace: item movements, label timeline, POs (page and list), search, coverage; the collection queue
                                  (GET /retrace/queue/:store); the coverage check
                                  (GET /retrace/verify/:store, POST …/run and …/tick: its only writes) (page 'retrace';
@@ -784,6 +788,8 @@ async function trackerRoutes(req, env, url, path, email, who) {
   if (path.startsWith('/assize/')) return assizeAdmin(req, env, url, path, me, email, { json, fail, readJson, clean, int, now, log });
   // Retrace (src/retrace-api.js): the gate above already required page 'retrace' and the store in the path / ?store=.
   if (path.startsWith('/retrace/')) return retraceAdmin(req, env, url, path, me, email, { json, fail, clean, int, log, readJson });
+  // Cloudflare and Portal load (src/usage.js): the gate above already required page 'usage'; usageLoad limits stores and totals to what `me` may see.
+  if (req.method === 'GET' && path === '/usage-load') return json(await usageLoad(env, me), 200, false);
 
   if (!me.owner) return fail(403, 'developers only', false);
   if (req.method === 'GET' && path === '/people') {
@@ -955,30 +961,37 @@ async function sandboxGuard(req, url) {
 
 // ------------------------------------------------------------------ entry
 export default {
-  async fetch(req, env) {
-    const url = new URL(req.url);
-    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
-    if (env.LIMITER) { const { success } = await env.LIMITER.limit({ key: req.headers.get('cf-connecting-ip') || 'x' }); if (!success) return fail(429, 'slow down'); }
-    if (!env.APP_KEY || req.headers.get('x-aethernet-key') !== env.APP_KEY) return fail(403, 'app key required');
-    try {
-      const sg = await sandboxGuard(req, url);
-      if (sg) return sg;
-      if (url.pathname === '/v1/tracker/master' && req.method === 'GET') {
-        const r = await env.TR.prepare('SELECT public_jwk FROM master_key WHERE id = 1').first();
-        return r ? json({ publicJwk: JSON.parse(r.public_jwk) }) : fail(404, 'tracker not set up');
-      }
-      if (url.pathname.startsWith('/v1/agents/')) return await agentApi(req, env, url);
-      const m = url.pathname.match(/^\/v1\/(\d{1,6})\/(tracker|assize)\//);
-      if (!m) return fail(404, 'not found');
-      const store = Number(m[1]);
-      if (!(await allowed(env, store))) return fail(403, 'store has no Aethernet access');
-      if (m[2] === 'assize') return await assizeStore(req, env, url, store, { json, fail });
-      return await storeApi(req, env, url, store);
-    } catch (e) {
-      return fail(e.status || 500, e.status ? e.message : 'server error: ' + (e.message || e));
-    }
+  // Counted by area with its D1 rows (src/usage.js); a counter problem never reaches the request.
+  async fetch(req, env, ctx) {
+    const m = meter(env, req);
+    try { return await handle(req, m.env); } finally { await m.done(ctx); }
   },
   async scheduled(_ev, env, ctx) {
     ctx.waitUntil(trim(env));
+    ctx.waitUntil(pruneUsage(env).catch(() => {}));
   },
 };
+
+async function handle(req, env) {
+  const url = new URL(req.url);
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  if (env.LIMITER) { const { success } = await env.LIMITER.limit({ key: req.headers.get('cf-connecting-ip') || 'x' }); if (!success) return fail(429, 'slow down'); }
+  if (!env.APP_KEY || req.headers.get('x-aethernet-key') !== env.APP_KEY) return fail(403, 'app key required');
+  try {
+    const sg = await sandboxGuard(req, url);
+    if (sg) return sg;
+    if (url.pathname === '/v1/tracker/master' && req.method === 'GET') {
+      const r = await env.TR.prepare('SELECT public_jwk FROM master_key WHERE id = 1').first();
+      return r ? json({ publicJwk: JSON.parse(r.public_jwk) }) : fail(404, 'tracker not set up');
+    }
+    if (url.pathname.startsWith('/v1/agents/')) return await agentApi(req, env, url);
+    const m = url.pathname.match(/^\/v1\/(\d{1,6})\/(tracker|assize)\//);
+    if (!m) return fail(404, 'not found');
+    const store = Number(m[1]);
+    if (!(await allowed(env, store))) return fail(403, 'store has no Aethernet access');
+    if (m[2] === 'assize') return await assizeStore(req, env, url, store, { json, fail });
+    return await storeApi(req, env, url, store);
+  } catch (e) {
+    return fail(e.status || 500, e.status ? e.message : 'server error: ' + (e.message || e));
+  }
+}

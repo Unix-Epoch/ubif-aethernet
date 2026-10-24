@@ -329,3 +329,30 @@ CREATE TABLE IF NOT EXISTS inv_verify_ticks (
   matches INTEGER NOT NULL,
   PRIMARY KEY (store, label)
 );
+-- Oct 24, 2026: Cloudflare and Portal load (migrations/2026-10-24-usage-load.sql): daily counters for the admin Usage page (src/usage.js).
+CREATE TABLE IF NOT EXISTS usage_load (
+  day TEXT NOT NULL,                   -- UTC day (Cloudflare's)
+  area TEXT NOT NULL,                  -- collector | retrace_admin | tracker | other (src/usage.js areaOf)
+  requests INTEGER NOT NULL DEFAULT 0,
+  rows_read INTEGER NOT NULL DEFAULT 0,      -- D1 rows read / written by those requests (meta.rows_read / rows_written of each result)
+  rows_written INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, area)
+);
+CREATE TABLE IF NOT EXISTS usage_size (
+  day TEXT PRIMARY KEY,
+  bytes INTEGER NOT NULL               -- the tracker database's size, the newest meta.size_after seen that day
+);
+-- Retrace passes, per store and day: what the collector reports when a pass ends (POST /v1/:store/tracker/retrace/pass).
+CREATE TABLE IF NOT EXISTS usage_pass (
+  day TEXT NOT NULL, store INTEGER NOT NULL,
+  passes INTEGER NOT NULL DEFAULT 0,
+  portal_calls INTEGER NOT NULL DEFAULT 0, worker_calls INTEGER NOT NULL DEFAULT 0,
+  seconds INTEGER NOT NULL DEFAULT 0,
+  lookup_passes INTEGER NOT NULL DEFAULT 0, lookup_seconds INTEGER NOT NULL DEFAULT 0,   -- passes that ran the stock lookup, and its seconds
+  PRIMARY KEY (day, store)
+);
+CREATE TABLE IF NOT EXISTS usage_browsers (
+  day TEXT NOT NULL, store INTEGER NOT NULL,
+  browser TEXT NOT NULL,               -- a random id each browser makes for itself (no name)
+  PRIMARY KEY (day, store, browser)
+);

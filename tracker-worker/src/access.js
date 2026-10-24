@@ -41,6 +41,7 @@ export const ROUTES = [
   ['POST', /^\/api\/stores(\/\d{1,6}\/remove)?$/, 'stores'],
   ['*', /^\/api\/config$/, 'stores'],
   ['GET', /^\/api\/usage$/, 'usage'],                         // rows filtered to their stores
+  ['GET', /^\/api\/tracker\/usage-load$/, 'usage'],            // Cloudflare and Portal load: totals for all-stores access, store rows limited to their stores (src/usage.js)
   ['*', /^\/api\/feedback(\/\d+)?$/, 'reports'],
   ['GET', /^\/api\/next-version$/, 'reports'],
   ['*', /^\/api\/auto-rules$/, 'auto'],

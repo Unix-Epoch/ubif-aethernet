@@ -35,6 +35,8 @@
     6. Serial history for those labels → POST …/retrace/history. A label whose history names a sales order this
        browser hasn't linked yet also gets its label details read (15 a pass), sent as a snapshot, so the Worker
        learns which WO the sales order belongs to.
+  When a pass ends it posts its own counts (Portal calls, Worker calls, seconds, the lookup's seconds, a random id for this
+  browser) to POST …/retrace/pass: the admin Usage page's Retrace and Portal load. Optional on the Worker's side.
   Never throws: each step's failure is noted (AE.noteError) and the pass goes on; a signed-out session, a store
   change or a pause stops it. The result is kept (AE.retrace.last()); AE.retrace.run() runs a pass now.
 
@@ -52,6 +54,7 @@
 AE.retrace = (() => {
   if (!AE_ON_PORTAL) return { run: async () => null, last: () => null, state: () => null, flush: async () => 0 };
   const R = (() => { /*__RETRACE__*/ })();
+  const BROWSER_KEY = 'ae_retrace_browser';
   const PASS_KEY = 'ae_retrace_pass_at', LAST_KEY = 'ae_retrace_last', QUEUE_KEY = 'ae_retrace_watch_q';
   const STOCK_KEY = (s) => 'ae_retrace_stock_' + s, TODO_KEY = (s) => 'ae_retrace_todo_' + s, SO_KEY = (s) => 'ae_retrace_so_' + s, NAMED_KEY = (s) => 'ae_retrace_named_' + s;
   const PASS_MS = 10 * 60 * 1000, LOOKUP_MS = 30 * 60 * 1000, GAP_MS = 300;
@@ -69,6 +72,9 @@ AE.retrace = (() => {
   const check = () => { if (stopped()) throw new Stop('stopped'); };
   const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d; };
+
+  // A random id this browser makes for itself (no name in it): how many browsers collect for a store, on the admin Usage page.
+  const browserId = () => { let id = GM_getValue(BROWSER_KEY, ''); if (!id) { id = crypto.randomUUID().slice(0, 12); GM_setValue(BROWSER_KEY, id); } return id; };
 
   // ---------------------------------------------------------------- calls (counted for the pass's summary)
   let counts = null;
@@ -288,6 +294,7 @@ AE.retrace = (() => {
     GM_setValue(PASS_KEY, Date.now());
     const t0 = Date.now();
     counts = { portal: 0, worker: 0 };
+    let passStore = null; // set once the store is known: the pass's own counts go to the Worker when it ends
     const result = { at: new Date().toISOString(), seconds: 0, calls: counts, watched: 0, lookup: null, items: 0, changedItems: 0, itemsRead: 0, itemsWaiting: 0, labels: 0, docs: 0,
       movements: 0, counted: 0, pos: 0, poDetails: 0, histories: 0, historyRows: 0, details: 0, added: 0, names: 0, named: 0, unnamed: 0, namesRead: 0, backlogMore: false, errors: [] };
     const note = (where, e) => {
@@ -298,6 +305,7 @@ AE.retrace = (() => {
       const p = await AE.profile();
       if (!p || !p.storeId) throw new Error('No current store');
       const store = p.storeId, by = p.name;
+      passStore = store;
       try { result.watched = await flush(store); } catch (e) { if (e.storeChanged) throw e; note('watch queue', e); }
       const cur = await worker(store, 'GET', '/cursor'), cursors = cur.cursors || {}, baseline = cur.baseline || {};
       const acc = { items: [], labels: [], docs: [], movements: [], touched: [], pos: [], names: [], cursors: {}, labelTotals: [] };
@@ -403,6 +411,10 @@ AE.retrace = (() => {
       return result;
     } finally {
       result.seconds = Math.round((Date.now() - t0) / 1000);
+      // The pass's counts, for the Usage page (not itself one of the counted calls; the Worker's route is optional, an old Worker answers 404).
+      if (passStore && !AE_SANDBOX && counts && counts.portal + counts.worker > 0) {
+        try { await AE.tracker.call('POST', '/v1/' + passStore + '/tracker/retrace/pass', { portalCalls: counts.portal, workerCalls: counts.worker, seconds: result.seconds, lookupSeconds: result.lookup ? result.lookup.seconds : undefined, browser: browserId() }); } catch (_) {}
+      }
       counts = null;
       running = false;
       GM_setValue(LAST_KEY, result);

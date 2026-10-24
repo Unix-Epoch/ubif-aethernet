@@ -259,6 +259,34 @@ assert.equal((await call('mgr@x.com', 'POST', '/api/tracker/retrace/coverage')).
   await T.prepare("UPDATE people SET pages = ? WHERE email = 'rep@x.com'").bind(JSON.stringify(['reports', 'usage'])).run();
 }
 
+// --- Cloudflare and Portal load (src/usage.js): page 'usage'; all-stores access gets the totals, others only their stores' rows; its own reads aren't counted
+{
+  const U = '/api/tracker/usage-load';
+  assert.equal((await call('viewer@x.com', 'GET', U)).status, 403, 'no usage page');
+  assert.equal((await call('mgr@x.com', 'GET', U)).status, 403, 'Manager role has no usage page');
+  assert.equal((await call('nobody@x.com', 'GET', U)).status, 403, 'not on the list');
+  assert.equal((await call('ol@x.com', 'POST', U)).status, 403, 'read only');
+  const own = await call('owner@x.com', 'GET', U);
+  assert.equal(own.status, 200); assert.equal(own.j.scope, 'all'); assert.ok(own.j.global && own.j.global.days.length === 30);
+  assert.ok((await call('ol@x.com', 'GET', U)).j.global, 'Owner role with usage: totals');
+  const rep = await call('rep@x.com', 'GET', U);                   // stores [326], pages reports + usage
+  assert.equal(rep.status, 200); assert.equal(rep.j.global, null, 'store-limited: no worker-wide totals'); assert.equal(rep.j.scope, 'stores');
+  assert.ok(!/"requests"|rows_read|bytes/.test(rep.text), 'no totals anywhere in a store-limited answer');
+  assert.ok(rep.j.stores.every((x) => x.store === 326), 'only their stores');
+  assert.equal((await call('rep@x.com', 'GET', U + '?store=914')).status, 403, 'a store they cannot see');
+  // The admin site's own requests were counted by area (tracker D1 rows included); the usage-load reads were not
+  await call('owner@x.com', 'GET', '/api/tracker/retrace/coverage');
+  const area = async () => Object.fromEntries((await T.prepare('SELECT area, requests, rows_read FROM usage_load').all()).results.map((r) => [r.area, r]));
+  const a1 = await area();
+  assert.ok(a1.retrace_admin && a1.retrace_admin.requests >= 1, 'Retrace admin page counted'); assert.ok(a1.tracker.requests >= 1 && a1.other.requests >= 1);
+  assert.ok(a1.tracker.rows_read > 0, 'tracker routes read D1 rows');
+  await call('owner@x.com', 'GET', U); await call('ol@x.com', 'GET', U);
+  const a2 = await area();
+  assert.deepEqual(Object.fromEntries(Object.entries(a2).map(([k, v]) => [k, v.requests])), Object.fromEntries(Object.entries(a1).map(([k, v]) => [k, v.requests])), 'reading the usage numbers does not count');
+  await call('viewer@x.com', 'GET', '/api/tracker/sales/days');    // a refused request is still a request to the Worker
+  assert.equal((await area()).tracker.requests, a1.tracker.requests + 1);
+}
+
 // --- trackerAdmin gates on its own too (called directly, without the site's gate)
 const direct = async (email, path) => (await trackerAdmin(new Request('https://a.test/api/tracker' + path), E, new URL('https://a.test/api/tracker' + path), path.split('?')[0], email)).status;
 assert.equal(await direct('viewer@x.com', '/sales/days?from=2026-10-16&to=2026-10-16'), 403);

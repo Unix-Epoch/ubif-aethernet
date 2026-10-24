@@ -23,11 +23,14 @@
                       (page 'rules'; the same files the tracker Worker imports and build.py inlines into Aethernet)
     GET  /rules-ui.js    the Assize rules editor (page 'rules'; loaded by page.js on first use)
     GET  /retrace-ui.js  the Retrace page (page 'retrace'; loaded by page.js on first use; data from /api/tracker/retrace/…)
+  Every request here is counted by area with its D1 rows (tracker-worker/src/usage.js; the top of the Usage page); the counter's reads
+  (GET /api/tracker/usage-load) aren't.
   Local testing only: `wrangler dev --var LOCAL_TEST:1` lets requests to localhost in.
 */
 import { adminApi } from '../../worker/src/index.js';
 import { trackerAdmin } from '../../tracker-worker/src/index.js';
 import { accessOf, check } from '../../tracker-worker/src/access.js';
+import { meter } from '../../tracker-worker/src/usage.js';
 import { PAGE } from './page.js';
 import CRYPTO_SRC from '../../tracker-worker/src/crypto.js';
 import WORDS from './words.txt';
@@ -70,52 +73,58 @@ async function verify(req, env) {
 const deny = (why) => new Response(why, { status: 403, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
 
 export default {
-  async fetch(req, env) {
-    let who;
-    try { who = await verify(req, env); } catch (e) { return deny(e.message); }
-    const url = new URL(req.url);
-    if (url.pathname === '/' || url.pathname === '/index.html') {
-      return new Response(PAGE.replace('__EMAIL__', String(who.email || '').replace(/[<>&"]/g, '')), {
-        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY',
-          'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://assets.asurion-ui.my.asurion53.com; img-src 'self' data:; connect-src 'self'" } });
-    }
-    // The tracker's encryption, as a module for the page (unlocking happens in the browser).
-    if (url.pathname === '/crypto.js') return new Response(CRYPTO_SRC, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
-    if (url.pathname === '/tracker-ui.js') return new Response(TRACKER_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
-    if (url.pathname === '/words.txt') return new Response(WORDS, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'max-age=86400' } });
-    if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/metrics') && !SHARED[url.pathname]) return new Response('Not found', { status: 404 });
-    // The access gate: nothing below runs for a route, page or store this person wasn't given.
-    if (!env.TR) return new Response(JSON.stringify({ error: 'tracker database not bound' }), { status: 503, headers: { 'content-type': 'application/json' } });
-    const me = await accessOf(env, who.email);
-    const denied = await check(env, me, who.email, req.method, url.pathname, url.search);
-    if (denied) return new Response(JSON.stringify(denied), { status: 403, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
-    // The Metrics page's own script: after the gate, so only people with page 'metrics' get it.
-    if (url.pathname === '/metrics-ui.js') return new Response(METRICS_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
-    // The Assize rules editor and its engine (page 'rules'): import * as RG from '/rulegraph.js'; import { makeRules } from '/assize-rules.js'.
-    // The Retrace page (page 'retrace'), the same way.
-    if (SHARED[url.pathname]) return new Response(SHARED[url.pathname], { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
-    if (!url.pathname.startsWith('/api/')) return new Response('Not found', { status: 404 });
-    // The next public version (status.json's latest, minor + 1): the default "fixed in" for quoting a report.
-    if (url.pathname === '/api/next-version') {
-      try {
-        const st = await (await fetch('https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/status.json?t=' + Date.now())).json();
-        const [x, y] = String(st.latest.version).split('.').map(Number);
-        return new Response(JSON.stringify({ latest: st.latest.version, next: x + '.' + (y + 1) + '.0' }), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
-      } catch (e) { return new Response(JSON.stringify({ next: '' }), { headers: { 'content-type': 'application/json' } }); }
-    }
-    if (url.pathname.startsWith('/api/tracker/')) {
-      try { return await trackerAdmin(req, env, url, url.pathname.replace(/^\/api\/tracker/, ''), who.email, me); }
-      catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: e.status || 500, headers: { 'content-type': 'application/json' } }); }
-    }
-    if (url.pathname.startsWith('/api/')) {
-      try {
-        const res = await adminApi(req, env, url, url.pathname.replace(/^\/api/, ''), me);
-        const h = new Headers(res.headers); h.set('cache-control', 'no-store'); h.delete('access-control-allow-origin');
-        return new Response(res.body, { status: res.status, headers: h });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'content-type': 'application/json' } });
-      }
-    }
-    return new Response('Not found', { status: 404 });
+  // Counted by area with its D1 rows, into the tracker's usage tables (tracker-worker/src/usage.js); a counter problem never reaches the request.
+  async fetch(req, env, ctx) {
+    const m = meter(env, req);
+    try { return await handle(req, m.env); } finally { await m.done(ctx); }
   },
 };
+
+async function handle(req, env) {
+  let who;
+  try { who = await verify(req, env); } catch (e) { return deny(e.message); }
+  const url = new URL(req.url);
+  if (url.pathname === '/' || url.pathname === '/index.html') {
+    return new Response(PAGE.replace('__EMAIL__', String(who.email || '').replace(/[<>&"]/g, '')), {
+      headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY',
+        'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://assets.asurion-ui.my.asurion53.com; img-src 'self' data:; connect-src 'self'" } });
+  }
+  // The tracker's encryption, as a module for the page (unlocking happens in the browser).
+  if (url.pathname === '/crypto.js') return new Response(CRYPTO_SRC, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
+  if (url.pathname === '/tracker-ui.js') return new Response(TRACKER_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
+  if (url.pathname === '/words.txt') return new Response(WORDS, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'max-age=86400' } });
+  if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/metrics') && !SHARED[url.pathname]) return new Response('Not found', { status: 404 });
+  // The access gate: nothing below runs for a route, page or store this person wasn't given.
+  if (!env.TR) return new Response(JSON.stringify({ error: 'tracker database not bound' }), { status: 503, headers: { 'content-type': 'application/json' } });
+  const me = await accessOf(env, who.email);
+  const denied = await check(env, me, who.email, req.method, url.pathname, url.search);
+  if (denied) return new Response(JSON.stringify(denied), { status: 403, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+  // The Metrics page's own script: after the gate, so only people with page 'metrics' get it.
+  if (url.pathname === '/metrics-ui.js') return new Response(METRICS_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
+  // The Assize rules editor and its engine (page 'rules'): import * as RG from '/rulegraph.js'; import { makeRules } from '/assize-rules.js'.
+  // The Retrace page (page 'retrace'), the same way.
+  if (SHARED[url.pathname]) return new Response(SHARED[url.pathname], { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
+  if (!url.pathname.startsWith('/api/')) return new Response('Not found', { status: 404 });
+  // The next public version (status.json's latest, minor + 1): the default "fixed in" for quoting a report.
+  if (url.pathname === '/api/next-version') {
+    try {
+      const st = await (await fetch('https://gist.githubusercontent.com/Unix-Epoch/0cf4560c4f26d8ff9091a10068fd3464/raw/status.json?t=' + Date.now())).json();
+      const [x, y] = String(st.latest.version).split('.').map(Number);
+      return new Response(JSON.stringify({ latest: st.latest.version, next: x + '.' + (y + 1) + '.0' }), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+    } catch (e) { return new Response(JSON.stringify({ next: '' }), { headers: { 'content-type': 'application/json' } }); }
+  }
+  if (url.pathname.startsWith('/api/tracker/')) {
+    try { return await trackerAdmin(req, env, url, url.pathname.replace(/^\/api\/tracker/, ''), who.email, me); }
+    catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: e.status || 500, headers: { 'content-type': 'application/json' } }); }
+  }
+  if (url.pathname.startsWith('/api/')) {
+    try {
+      const res = await adminApi(req, env, url, url.pathname.replace(/^\/api/, ''), me);
+      const h = new Headers(res.headers); h.set('cache-control', 'no-store'); h.delete('access-control-allow-origin');
+      return new Response(res.body, { status: res.status, headers: h });
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'content-type': 'application/json' } });
+    }
+  }
+  return new Response('Not found', { status: 404 });
+}

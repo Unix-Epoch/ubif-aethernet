@@ -6,6 +6,7 @@
 
   Store side (x-aethernet-key + the store's Aethernet access, same as /scan; mounted by storeApi at /v1/:store/tracker/retrace/…).
   Everything is written under the store in the URL and nothing else: a label snapshot naming another store is skipped.
+    POST /retrace/pass { portalCalls, workerCalls, seconds, lookupSeconds?, browser?, by? }   a finished pass's own counts (optional; src/usage.js) → { ok }
     POST /retrace/sweep { items, labels, docs, movements, touched, cursors, need, names, nameNeed, labelTotals, countNeed, poTotal, by }   one collector pass →
          { need: [label], more, changedItems: [{ item, why: new|changed }], added, rejected, skipped, written, named, unnamed, countNeed: [item], missedItems: [item] }
            items      inventory-lookup rows (Portal's envelope is { OnHandItemDetails: [rows], TotalRecords, … }; the collector sends the rows: { ItemNumber, ProductName, RetailCategory, WarehouseId, OnHandQuantity,
@@ -81,6 +82,7 @@
 
   Admin side: retraceAdmin() below, mounted by trackerRoutes at /api/tracker/retrace/… (page 'retrace'; route list there).
 */
+import { passStmts } from './usage.js';
 import { verifyRun, verifyAsk, verifyView, verifyTick, QUEUE_REASON, QUEUE_SINCE } from './retrace-verify.js';
 import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS, serialNow } from './retrace.js';
 
@@ -331,6 +333,14 @@ export async function retraceStore(req, env, url, store, path, H) {
   if (path === '/retrace/progress' && req.method === 'GET') {
     const p = (await progress(T, store)).out, seen = H.clean(url.searchParams.get('seen'), 40);
     return H.json({ store, state: p.state, pct: p.pct, done_at: p.done_at, announce: !!p.done_at && p.done_at !== seen }, 200);
+  }
+
+  // The collector's summary of a finished pass (src/usage.js passStmts): the Usage page's Retrace and Portal load. Optional: older collectors never send it.
+  if (path === '/retrace/pass' && req.method === 'POST') {
+    const stmts = passStmts(T, store, await H.readJson(req, 2000));
+    if (!stmts) return H.fail(400, 'portalCalls, workerCalls and seconds (whole numbers) required');
+    await T.batch(stmts);
+    return H.json({ ok: true });
   }
 
   if (path === '/retrace/watch' && req.method === 'POST') {
