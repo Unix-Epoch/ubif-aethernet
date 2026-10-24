@@ -98,6 +98,30 @@ export const REF_TYPES = [
 ];
 // WarehouseLocationType (label details: Main seen; Quarantine | Lost | Van by name) → what moving there means (GUESSES).
 export const LOCATION_KINDS = { quarantine: 'quarantined', lost: 'lost', van: 'van_out' };
+
+// Where a serial stands now, for the admin Retrace page's serial list: [text, group]. Groups: in (in stock), wo (reserved),
+// out (used, sold, moved), q (defective, returns), bad (lost, missing); null = none of them (only under All).
+// Portal's own status on the label wins (snapshots keep it current), but a label read as Sold, or with no status, takes
+// what its last movement says (used on a repair, transferred out, to a van …), a movement newer than the label's last
+// snapshot (newer = true) wins, and Quarantine is defective whatever else.
+const NOW_STATUS = {
+  available: ['Available', 'in'], received: ['Available', 'in'], none: ['Available', 'in'], intransit: ['In transit', 'in'],
+  reserved: ['Reserved', 'wo'], sold: ['Sold', 'out'], 'adjusted(deleted)': ['Adjusted out', 'out'],
+  defective: ['Defective', 'q'], damaged: ['Defective', 'q'], broken: ['Defective', 'q'], nondefectiverma: ['RMA', 'q'], lost: ['Lost', 'bad'],
+};
+const NOW_KIND = {
+  shipped_to_store: ['In transit', 'in'], received: ['Available', 'in'], unreserved: ['Available', 'in'], swapped_out: ['Available', 'in'], count_found: ['Available', 'in'],
+  adjusted_in: ['Available', 'in'], returned: ['Available', 'in'], transfer_in: ['Available', 'in'], van_in: ['Available', 'in'],
+  reserved: ['Reserved', 'wo'], swapped_in: ['Reserved', 'wo'], used: ['Used on repair', 'out'], sold: ['Sold', 'out'], transfer_out: ['Transferred out', 'out'],
+  van_out: ['On a van', 'out'], adjusted_out: ['Adjusted out', 'out'], defective: ['Defective', 'q'], quarantined: ['Quarantined', 'q'], salvage: ['Salvage', 'q'],
+  rma: ['RMA', 'q'], buyback: ['Buyback', 'q'], lost: ['Lost', 'bad'], count_missing: ['Missing', 'bad'],
+};
+export function serialNow(status, whType, lastKind, newer = false) {
+  const s = String(status || '').toLowerCase().replace(/\s+/g, ''), kind = NOW_KIND[lastKind] || null;
+  if (String(whType || '').toLowerCase() === 'quarantine' && s !== 'sold' && s !== 'lost') return ['Quarantined', 'q'];
+  if (kind && (newer || (kind[1] === 'out' && (!s || s === 'sold')))) return kind;
+  return NOW_STATUS[s] || kind || [status ? String(status) : 'Unknown', null];
+}
 // Count line results. GUESSES: Portal's count line shapes not captured yet.
 export const COUNT_FOUND = /^(found|counted|scanned|matched|ok|present|true)$/i;
 export const COUNT_MISSING = /^(missing|not ?found|lost|unscanned|absent|false)$/i;

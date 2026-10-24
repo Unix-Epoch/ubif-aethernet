@@ -47,7 +47,7 @@ export const ROUTES = [
   ['GET', /^\/api\/tracker\/assize\/(orders|stores)$/, 'rules'],   // ?store= checked here (query)
   ['*', /^\/api\/tracker\/assize\/rules(\/|$)/, 'rules'],         // scope of each edit checked in src/assize.js
   ['GET', /^\/(rulegraph|assize-rules|rules-ui)\.js$/, 'rules'],     // the editor and its engine, served to the page
-  ['GET', /^\/api\/tracker\/retrace\/(item|label)\/(\d{1,6})\/[^/]{1,80}$/, 'retrace', 2],
+  ['GET', /^\/api\/tracker\/retrace\/(item|label|serials)\/(\d{1,6})\/[^/]{1,80}$/, 'retrace', 2],
   ['GET', /^\/api\/tracker\/retrace\/po\/(\d{1,6})\/[^/]{1,80}$/, 'retrace', 1],
   ['GET', /^\/api\/tracker\/retrace\/(search|coverage|pos|items)$/, 'retrace'],   // ?store= checked here (query); without it, their stores (src/retrace-api.js; items needs it)
   ['GET', /^\/retrace-ui\.js$/, 'retrace'],                         // the Retrace page, served to the page

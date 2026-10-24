@@ -44,7 +44,7 @@
 
   Admin side: retraceAdmin() below, mounted by trackerRoutes at /api/tracker/retrace/… (page 'retrace'; route list there).
 */
-import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS } from './retrace.js';
+import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS, serialNow } from './retrace.js';
 
 export const NEED_MAX = 60;
 const NEED_CAP = 200, CLAIM_MIN = 10, WATCH_MAX = 50;
@@ -440,6 +440,13 @@ export async function retraceStore(req, env, url, store, path, H) {
         limit ≤ 1000 (200). by_kind: the date range and user without the kinds filter (the page's filter chips); users:
         the date range and kinds without the user filter (its person picker); first_at / all_total: every movement of the
         item, no filter; sold90: 'sold' movements in the last 90 days.
+  GET /retrace/serials/:store/:item?group&days&limit&offset   → { store, item, serials: [{ label, now, group, serial_status, wh_type, wo, po,
+        moves, last: { at, kind, user, source, ref_type, ref_id, wo, from_wh, to_wh, detail } }], total, groups: { all, in, wo, out, q, bad },
+        loose: [movements with no label], loose_total }
+        the item list's one row per serial (the page's item view): last = the newest movement, moves = all of the label's movements,
+        now / group = where it stands (retrace.js serialNow: Portal's status on the label, else the last movement, which wins when newer than the label's last snapshot). groups: how many
+        serials are in each group (days applied, group not); group: in|wo|out|q|bad; days: only serials whose last movement is that
+        recent (1-3650); newest last movement first; limit ≤ 500 (200). loose: the item's movements with no label (days applied), 50 newest.
   GET /retrace/items?store=&limit=&offset=   → { items: [{ item, name, category, qty, on_hand, moves, last_at }], total }
         items with movements at the store, most recent movement first; name from inv_items, else a label's product;
         on_hand: inv_items qty summed over the store's warehouses (null when the item lookup hasn't seen it); limit ≤ 500 (100).
@@ -508,6 +515,37 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     await H.log(env, email, 'retrace:item', store, null, item);
     return H.json({ store, item, info: i && Object.assign(i, { qty: parse(i.qty) }), counts: counts.results, labels: labels.results, movements: moves.results, total: total.results[0].n,
       by_kind: byKind.results, users: users.results, first_at: a.first_at || null, all_total: a.n || 0, sold90: a.sold90 || 0 }, 200, false);
+  }
+
+  const sm = path.match(/^\/retrace\/serials\/(\d{1,6})\/([^/]{1,80})$/);
+  if (sm) {
+    const store = Number(sm[1]), item = H.clean(decodeURIComponent(sm[2]), 40);
+    if (!canSee(store)) return H.fail(403, 'not your store', false);
+    if (!item) return H.fail(400, 'item required', false);
+    const group = q.get('group') || 'all';
+    if (!['all', 'in', 'wo', 'out', 'q', 'bad'].includes(group)) return H.fail(400, 'group: all, in, wo, out, q, bad', false);
+    const days = q.get('days') ? H.int(q.get('days')) : null;
+    if (q.get('days') && (days == null || days < 1 || days > 3650)) return H.fail(400, 'days: 1 to 3650', false);
+    const since = days ? new Date(Date.now() - days * 86400000).toISOString() : null;
+    const limit = Math.min(H.int(q.get('limit')) || 200, 500), offset = H.int(q.get('offset')) || 0;
+    const [last, loose, looseN] = await T.batch([
+      T.prepare(`SELECT r.*, l.serial_status, l.wh_type, l.wo AS label_wo, l.po AS label_po, l.last_seen AS label_seen FROM (
+          SELECT ${MV_COLS}, ROW_NUMBER() OVER (PARTITION BY m.label ORDER BY m.at DESC, m.id DESC) AS rn, COUNT(*) OVER (PARTITION BY m.label) AS moves
+          FROM ${MV_FROM} WHERE m.store = ? AND m.item = ? AND m.label IS NOT NULL) r
+        LEFT JOIN inv_labels l ON l.store = r.store AND l.label = r.label WHERE r.rn = 1 ${since ? 'AND r.at >= ?' : ''} ORDER BY r.at DESC, r.id DESC LIMIT 5000`).bind(...[store, item, since].filter((v) => v != null)),
+      T.prepare(`SELECT ${MV_COLS} FROM ${MV_FROM} WHERE m.store = ? AND m.item = ? AND m.label IS NULL ${since ? 'AND m.at >= ?' : ''} ORDER BY m.at DESC, m.id DESC LIMIT 50`).bind(...[store, item, since].filter((v) => v != null)),
+      T.prepare(`SELECT COUNT(*) AS n FROM inv_movements m WHERE m.store = ? AND m.item = ? AND m.label IS NULL ${since ? 'AND m.at >= ?' : ''}`).bind(...[store, item, since].filter((v) => v != null)),
+    ]);
+    const groups = { all: 0, in: 0, wo: 0, out: 0, q: 0, bad: 0 };
+    const rows = last.results.map((r) => {
+      const [now, g] = serialNow(r.serial_status, r.wh_type, r.kind, !!r.label_seen && r.at > r.label_seen);
+      groups.all++; if (g) groups[g]++;
+      return { label: r.label, now, group: g, serial_status: r.serial_status || null, wh_type: r.wh_type || null, wo: r.label_wo || null, po: r.label_po || null, moves: r.moves,
+        last: { at: r.at, kind: r.kind, user: r.user, source: r.source, ref_type: r.ref_type, ref_id: r.ref_id, wo: r.wo, from_wh: r.from_wh, to_wh: r.to_wh, detail: r.detail } };
+    });
+    const shown = group === 'all' ? rows : rows.filter((r) => r.group === group);
+    await H.log(env, email, 'retrace:serials', store, null, item);
+    return H.json({ store, item, serials: shown.slice(offset, offset + limit), total: shown.length, groups, loose: loose.results, loose_total: looseN.results[0].n }, 200, false);
   }
 
   const lm = path.match(/^\/retrace\/label\/(\d{1,6})\/([^/]{1,80})$/);

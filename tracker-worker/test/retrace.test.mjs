@@ -408,6 +408,54 @@ assert.ok(c914.labels >= 5 && c914.histories === 3 &&  c914.backlog > 0 && c914.
   assert.equal((await admin('owner@x.com', '/retrace/items?store=914&limit=1')).j.items.length, 1);
   assert.equal((await admin('owner@x.com', '/retrace/items')).status, 400, 'store required');
   assert.deepEqual((await admin('owner@x.com', '/retrace/items?store=555')).j.items, [], 'a store with nothing yet');
+  // one row per serial: newest movement, move count, where it stands, group chips, range, paging, item-level movements
+  const sr = await admin('owner@x.com', '/retrace/serials/914/180001');
+  ok(sr, 'serials');
+  const labelsOf = new Set((await T.prepare("SELECT DISTINCT label FROM inv_movements WHERE store = 914 AND item = '180001' AND label IS NOT NULL").all()).results.map((r) => r.label));
+  assert.equal(sr.j.total, labelsOf.size, 'one row per label'); assert.equal(new Set(sr.j.serials.map((x) => x.label)).size, sr.j.serials.length);
+  assert.equal(sr.j.groups.all, sr.j.total);
+  assert.ok(sr.j.serials.every((x, k, a2) => k === 0 || a2[k - 1].last.at >= x.last.at), 'newest last movement first');
+  const s1m = sr.j.serials.find((x) => x.label === '180001-0000600001');
+  const mv1 = (await admin('owner@x.com', '/retrace/label/914/180001-0000600001')).j.movements;
+  assert.equal(s1m.moves, mv1.length, 'moves = every movement of the label');
+  assert.equal(s1m.last.at, mv1[mv1.length - 1].at); assert.equal(s1m.last.kind, mv1[mv1.length - 1].kind, 'last = the newest movement');
+  assert.equal(s1m.last.kind, 'sold', 'the sold movement added above is the newest');
+  assert.deepEqual([s1m.now, s1m.group], ['Sold', 'out']);
+  assert.equal(sr.j.groups.in + sr.j.groups.wo + sr.j.groups.out + sr.j.groups.q + sr.j.groups.bad <= sr.j.groups.all, true);
+  for (const g of ['in', 'wo', 'out', 'q', 'bad']) {
+    const f = (await admin('owner@x.com', '/retrace/serials/914/180001?group=' + g)).j;
+    assert.equal(f.total, sr.j.groups[g], 'group ' + g); assert.ok(f.serials.every((x) => x.group === g));
+    assert.deepEqual(f.groups, sr.j.groups, 'group counts ignore the group filter');
+  }
+  assert.ok((await admin('owner@x.com', '/retrace/serials/914/180001?group=out')).j.serials.some((x) => x.label === '180001-0000600001'));
+  assert.equal((await admin('owner@x.com', '/retrace/serials/914/180001?group=nope')).status, 400);
+  assert.equal((await admin('owner@x.com', '/retrace/serials/914/180001?days=0')).status, 400);
+  const pg1 = (await admin('owner@x.com', '/retrace/serials/914/180001?limit=1')).j, pg2 = (await admin('owner@x.com', '/retrace/serials/914/180001?limit=1&offset=1')).j;
+  assert.equal(pg1.serials.length, 1); assert.equal(pg1.total, sr.j.total); assert.equal(pg2.serials[0].label, sr.j.serials[1].label, 'paging');
+  // days: by the serial's last movement (a label last moved long ago drops out, the sold one stays)
+  await T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, source, key, recorded_at) VALUES (914, '180001-0000600099', '180001', '2025-01-01T00:00:00.000Z', 'received', 'watch', 'test-old-serial', ?), (914, NULL, '180001', ?, 'adjusted_in', 'watch', 'test-loose', ?)").bind(AT, new Date().toISOString(), AT).run();
+  const wide = (await admin('owner@x.com', '/retrace/serials/914/180001')).j, recent = (await admin('owner@x.com', '/retrace/serials/914/180001?days=30')).j;
+  assert.ok(wide.serials.some((x) => x.label === '180001-0000600099') && !recent.serials.some((x) => x.label === '180001-0000600099'), 'days filters on the last movement');
+  assert.ok(recent.serials.some((x) => x.label === '180001-0000600001'));
+  assert.equal(recent.total, recent.groups.all); assert.equal(recent.groups.all, wide.groups.all - 1);
+  assert.ok(wide.loose.some((m) => m.kind === 'adjusted_in' && m.label === null), 'item-level movements apart'); assert.equal(wide.loose_total, wide.loose.length);
+  assert.ok(wide.serials.every((x) => x.label), 'no label-less rows among the serials');
+  assert.ok(recent.loose.some((m) => m.kind === 'adjusted_in') && recent.loose.every((m) => m.label === null), 'loose follows days');
+  assert.deepEqual((await admin('owner@x.com', '/retrace/serials/555/180001')).j.serials, [], 'a store with nothing yet');
+  // serialNow: Portal's status on the label, else the last movement
+  const { serialNow } = await import('../src/retrace.js');
+  assert.deepEqual(serialNow('Available', 'Main', 'received'), ['Available', 'in']);
+  assert.deepEqual(serialNow('Reserved', null, 'reserved'), ['Reserved', 'wo']);
+  assert.deepEqual(serialNow('Sold', null, 'used'), ['Used on repair', 'out'], 'sold + last used: the repair');
+  assert.deepEqual(serialNow('Sold', null, 'sold'), ['Sold', 'out']);
+  assert.deepEqual(serialNow(null, null, 'transfer_out'), ['Transferred out', 'out'], 'no status: the last movement');
+  assert.deepEqual(serialNow('Defective', null, 'defective'), ['Defective', 'q']);
+  assert.deepEqual(serialNow('In Transit', null, 'shipped_to_store'), ['In transit', 'in']);
+  assert.deepEqual(serialNow('Available', 'Quarantine', 'quarantined'), ['Quarantined', 'q'], 'quarantine is defective');
+  assert.deepEqual(serialNow('Lost', 'Quarantine', 'lost'), ['Lost', 'bad']);
+  assert.deepEqual(serialNow('Reserved', null, 'sold', true), ['Sold', 'out'], 'a newer movement beats the label\'s snapshot');
+  assert.deepEqual(serialNow('Reserved', null, 'sold', false), ['Reserved', 'wo']);
+  assert.deepEqual(serialNow('Weird', null, 'status_changed'), ['Weird', null], 'unknown: only under All');
 }
 // PO page and list
 {
@@ -449,6 +497,9 @@ assert.equal((await admin('mgr@x.com', '/retrace/items?store=914')).status, 200)
 assert.equal((await admin('mgr@x.com', '/retrace/items?store=326')).status, 403, 'items: other store');
 assert.equal((await admin('mgr@x.com', '/retrace/items')).status, 400);
 assert.equal((await admin('viewer@x.com', '/retrace/items?store=914')).status, 403, 'no Retrace page');
+assert.equal((await admin('mgr@x.com', '/retrace/serials/914/180001')).status, 200);
+assert.equal((await admin('mgr@x.com', '/retrace/serials/326/180001')).status, 403, 'serials: other store');
+assert.equal((await admin('viewer@x.com', '/retrace/serials/914/180001')).status, 403, 'no Retrace page');
 assert.ok((await T.prepare("SELECT COUNT(*) AS n FROM access_log WHERE action = 'retrace:item' AND email = 'mgr@x.com'").first()).n >= 1, 'views logged');
 const { presetOf } = await import('../src/access.js');
 assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data', 'retrace'] }), 'manager');

@@ -208,6 +208,9 @@ assert.ok((await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.l
 await T.prepare("UPDATE people SET pages = ? WHERE email = 'mgr@x.com'").bind(JSON.stringify(['wos', 'sales', 'metrics', 'data', 'retrace'])).run();
 assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/item/914/180001')).status, 200, 'manager: their store');
 assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 403, 'manager: another store');
+assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/serials/914/180001')).status, 200, 'manager: serials, their store');
+assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/serials/326/180001')).status, 403, 'manager: serials, another store');
+assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/retrace/serials/914/180001')).status, 403, 'no Retrace page: serials');
 assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/label/326/180001-0000600001')).status, 403);
 assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/search?store=326&q=180001')).status, 403);
 assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/coverage')).status, 200);

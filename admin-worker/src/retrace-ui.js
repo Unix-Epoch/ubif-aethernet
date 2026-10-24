@@ -1,8 +1,10 @@
 // Admin site: the Retrace page (page 'retrace'). Served at /retrace-ui.js and loaded by page.js when the tab opens.
 // Retrace is the inventory movement ledger (tracker-worker/src/retrace.js, retrace-api.js): every label's moves at a
 // store, collected by Aethernet in store browsers. This page reads it: a coverage strip, search, the store's items
-// (most recent movement first) or its purchase orders, the selected item's counts and movements with filters, a
-// label's whole timeline in a drawer, and a PO's own page. Read only; the server checks page and store on every call.
+// (most recent movement first) or its purchase orders, the selected item's counts and its serials (one row per label:
+// status now, where it is, last movement, move count; filtered by status now and by when it last moved; movements with
+// no label below), a label's whole timeline in a drawer, and a PO's own page. Read only; the server checks page and store
+// on every call.
 // Store, item and PO live in the URL hash (#retrace?store=914&item=721276, &po=UBFPO…) so links can be shared.
 
 const CSS = `
@@ -102,22 +104,21 @@ const KIND = {
   status_changed: ['Status changed', 'other'],
 };
 const kindOf = (k) => KIND[k] || [String(k || 'Unknown').replace(/_/g, ' '), 'other'];
-const GROUPS = [['all', 'All'], ['in', 'Into stock'], ['wo', 'Work orders'], ['out', 'Out of stock'], ['q', 'Quarantine & returns'], ['c', 'Consignment'], ['bad', 'Lost & missing']];
-const kindsIn = (g) => Object.keys(KIND).filter((k) => KIND[k][1] === g);
+// The filter chips: a serial's status now (retrace-api.js serialNow groups), not the kind of a movement.
+const GROUPS = [['all', 'All'], ['in', 'In stock'], ['wo', 'Reserved'], ['out', 'Used, sold, moved'], ['q', 'Defective & returns'], ['bad', 'Lost & missing']];
 // retrace.js SOURCES → the four names the page shows.
 const SRC = (s) => (s === 'history' ? 'History' : s === 'wo' || s === 'wo_event' ? 'WO' : s === 'watch' ? 'Live' : 'Sweep');
-const RANGES = [['30', 'Last 30 days'], ['90', 'Last 90 days'], ['all', 'Since tracking began']];
+const RANGES = [['30', 'Moved in the last 30 days'], ['90', 'Moved in the last 90 days'], ['all', 'Any time']];
 const PAGE = 200;
 // The collector reads 60 serial histories a pass, a pass every 10 minutes (src/28-retrace-collect.js).
 const HISTORIES_PER_MIN = 6;
 const EMPTY_SVG = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg>';
 
 let ui = null, S = null, el = {};
-const fresh = () => ({ store: null, view: 'items', item: null, po: null, group: 'all', range: '30', user: '', q: '', stores: [], coverage: [], items: null, itemsTotal: 0, pos: null, posTotal: 0, data: null, moves: [], label: null, results: null });
+const fresh = () => ({ store: null, view: 'items', item: null, po: null, group: 'all', range: '30', q: '', stores: [], coverage: [], items: null, itemsTotal: 0, pos: null, posTotal: 0, data: null, sr: null, serials: [], label: null, results: null });
 
 // ------------------------------------------------------------------ formatting
 const pad = (n) => String(n).padStart(2, '0');
-const ymdUTC = (d) => d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
 const when = (iso) => (iso ? ui.fmt(iso) : '—');
 const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 function shortWhen(iso) {
@@ -379,29 +380,32 @@ function drawResults() {
 }
 
 // ------------------------------------------------------------------ item view
-function itemQuery(offset) {
+// One row per serial: its status now, where it is, its last movement and how many it has had (/retrace/serials).
+// S.data is the item's own numbers (/retrace/item, no movements asked for), S.sr the serial list.
+function serialsQuery(offset) {
   const p = new URLSearchParams({ limit: String(PAGE), offset: String(offset || 0) });
-  if (S.range !== 'all') { const d = new Date(Date.now() - Number(S.range) * 86400000); p.set('from', ymdUTC(d)); }
-  if (S.group !== 'all') p.set('kinds', kindsIn(S.group).join(','));
-  if (S.user) p.set('user', S.user);
-  return '/tracker/retrace/item/' + S.store + '/' + encodeURIComponent(S.item) + '?' + p.toString();
+  if (S.range !== 'all') p.set('days', S.range);
+  if (S.group !== 'all') p.set('group', S.group);
+  return '/tracker/retrace/serials/' + S.store + '/' + encodeURIComponent(S.item) + '?' + p.toString();
 }
 async function openItem(item) {
   const h = ui.h;
   if (el.po) el.po.hidden = true;
   el.item.hidden = false;
   if (!item) { el.item.replaceChildren(h('div', { class: 'rnote' }, 'No item movements at this store yet.')); saveHash(); return; }
-  if (item !== S.item) { S.group = 'all'; S.user = ''; }
+  if (item !== S.item) S.group = 'all';
   S.item = item; S.view = S.results ? S.view : 'items';
   if (!S.results) drawList(); else el.list.querySelectorAll('.it[data-id]').forEach((b) => b.classList.toggle('on', b.dataset.id === item));
   el.item.replaceChildren(h('div', { class: 'loading' }, 'Loading…'));
-  try { S.data = await ui.api('GET', itemQuery(0)); } catch (e) { el.item.replaceChildren(h('div', { class: 'rnote' }, "Couldn't load this item: " + e.message)); return; }
-  S.moves = S.data.movements;
+  try {
+    [S.data, S.sr] = await Promise.all([ui.api('GET', '/tracker/retrace/item/' + S.store + '/' + encodeURIComponent(item) + '?limit=1'), ui.api('GET', serialsQuery(0))]);
+  } catch (e) { el.item.replaceChildren(h('div', { class: 'rnote' }, "Couldn't load this item: " + e.message)); return; }
+  S.serials = S.sr.serials;
   drawItem(); saveHash();
 }
 async function refilter() {
-  try { S.data = await ui.api('GET', itemQuery(0)); } catch (e) { return ui.toast("Couldn't load: " + e.message); }
-  S.moves = S.data.movements; drawItem(); saveHash();
+  try { S.sr = await ui.api('GET', serialsQuery(0)); } catch (e) { return ui.toast("Couldn't load: " + e.message); }
+  S.serials = S.sr.serials; drawItem(); saveHash();
 }
 
 // Counts: Portal's quantities from the stock lookup when Retrace has them (store warehouses, not quarantine),
@@ -422,11 +426,7 @@ function itemCounts(d) {
 function drawItem() {
   const h = ui.h, d = S.data, x = S.items.find((i) => i.item === d.item) || {};
   const name = (d.info && d.info.name) || x.name || 'Item ' + d.item;
-  const byGroup = { all: 0 };
-  for (const k of d.by_kind || []) { const g = kindOf(k.kind)[1]; byGroup[g] = (byGroup[g] || 0) + k.n; byGroup.all += k.n; }
   const sel = (opts, val, on, label) => h('select', { 'aria-label': label, onchange: (e) => on(e.target.value) }, opts.map(([v, l]) => { const o = h('option', { value: v }, l); o.selected = v === val; return o; }));
-  const users = [['', 'Anyone'], ...(d.users || []).map((u) => [u.user, u.user])];
-  if (S.user && !users.some(([v]) => v === S.user)) users.push([S.user, S.user]);
   el.rows = h('tbody');
   el.item.replaceChildren(
     h('div', { class: 'ihd' },
@@ -435,30 +435,50 @@ function drawItem() {
           h('span', null, num(d.all_total) + (d.all_total === 1 ? ' movement' : ' movements') + ' recorded' + (d.first_at ? ' since ' + dayOnly(d.first_at) : '')), h('span', null, 'Store ' + S.store))),
       h('div', { class: 'counts' }, itemCounts(d).map(([k, v]) => h('div', { class: 'cnt' }, h('b', null, num(v)), h('span', null, k))))),
     h('div', { class: 'filters' },
-      GROUPS.map(([g, label]) => h('button', { type: 'button', class: 'fchip' + (g === S.group ? ' on' : ''), onclick: () => { S.group = g; refilter(); } }, label, ' ', h('small', null, num(byGroup[g] || 0)))),
-      h('span', { class: 'r' }, sel(RANGES, S.range, (v) => { S.range = v; refilter(); }, 'Date range'), sel(users, S.user, (v) => { S.user = v; refilter(); }, 'Person'))),
+      GROUPS.map(([g, label]) => h('button', { type: 'button', class: 'fchip' + (g === S.group ? ' on' : ''), onclick: () => { S.group = g; refilter(); } }, label, ' ', h('small', null, num(S.sr.groups[g] || 0)))),
+      h('span', { class: 'r' }, sel(RANGES, S.range, (v) => { S.range = v; refilter(); }, 'Moved in'))),
     h('div', { class: 'tw' }, h('table', null,
-      h('thead', null, h('tr', null, ['When', 'Label', 'Movement', 'Reference', 'From → to', 'By', 'Source'].map((t) => h('th', null, t)))), el.rows)),
+      h('thead', null, h('tr', null, ['Label', 'Status now', 'Where it is', 'Last movement', 'When', 'Moves'].map((t, k) => h('th', { class: k === 5 ? 'num' : null }, t)))), el.rows)),
     el.more = h('div'),
+    el.loose = h('div', { class: 'sec', hidden: true }),
     h('div', { class: 'legend' },
       [['in', 'Into stock'], ['wo', 'On a work order'], ['out', 'Out of stock'], ['q', 'Quarantine, RMA, buyback'], ['c', 'Consignment'], ['bad', 'Lost, missing']].map(([c, t]) => h('span', null, h('span', { class: 'kd ' + c }, t))),
-      h('span', { style: 'margin-left:auto' }, "Source: History = Portal's serial history · WO = work order tracker · Live = seen as it happened · Sweep = Retrace's own checks")));
-  drawRows();
+      h('span', { style: 'margin-left:auto' }, 'Status now: Portal’s status on the label, else its last movement')));
+  drawRows(); drawLoose();
 }
-function moveRow(m) {
+// Where the serial is: its last movement's reference, else the work order / PO the label carries.
+function whereEl(r) {
+  const l = r.last;
+  if (l.ref_id || l.wo) return refEl(l);
+  return r.wo ? woRef(r.wo) : r.po ? poRef(r.po) : ui.h('span', { class: 'rsoft' }, '—');
+}
+function serialRow(r) {
   const h = ui.h;
-  return h('tr', { 'data-l': m.label || null, class: m.label && m.label === S.label ? 'on' : null, onclick: (e) => { if (m.label && !e.target.closest('a')) openLabel(m.label); } },
-    h('td', { class: 'num' }, when(m.at)), h('td', { class: 'mono' }, m.label || h('span', { class: 'rsoft' }, 'item only')), h('td', null, kindChip(m.kind)),
-    h('td', null, refEl(m)), h('td', null, fromTo(m)), h('td', null, m.user || ''), h('td', { class: 'src', title: m.source }, SRC(m.source)));
+  return h('tr', { 'data-l': r.label, class: r.label === S.label ? 'on' : null, onclick: (e) => { if (!e.target.closest('a')) openLabel(r.label); } },
+    h('td', { class: 'mono' }, r.label), h('td', null, h('span', { class: 'kd ' + (r.group || 'other') }, r.now)), h('td', null, whereEl(r)),
+    h('td', null, kindChip(r.last.kind), r.last.user ? h('span', { class: 'rsoft rsm', style: 'margin-left:6px' }, r.last.user) : null), h('td', { class: 'num' }, when(r.last.at)), h('td', { class: 'num' }, num(r.moves)));
 }
 function drawRows() {
-  const h = ui.h, d = S.data;
-  el.rows.replaceChildren(...(S.moves.length ? S.moves.map(moveRow) : [h('tr', null, h('td', { colspan: 7, class: 'rsoft', style: 'padding:18px 10px' },
-    d.all_total ? 'No movements match these filters.' : 'No movements recorded for this item yet.'))]));
-  el.more.replaceChildren(S.moves.length < d.total ? h('div', { class: 'rnote' }, h('button', { class: 'rbtn', type: 'button', onclick: async (e) => {
+  const h = ui.h, sr = S.sr;
+  el.rows.replaceChildren(...(S.serials.length ? S.serials.map(serialRow) : [h('tr', null, h('td', { colspan: 6, class: 'rsoft', style: 'padding:18px 10px' },
+    S.data.all_total ? 'No serials match these filters.' : 'No movements recorded for this item yet.'))]));
+  el.more.replaceChildren(S.serials.length < sr.total ? h('div', { class: 'rnote' }, h('button', { class: 'rbtn', type: 'button', onclick: async (e) => {
     e.target.disabled = true;
-    const j = await ui.api('GET', itemQuery(S.moves.length)); S.moves.push(...j.movements); drawRows();
-  } }, 'Show ' + Math.min(PAGE, d.total - S.moves.length) + ' more'), ' ', h('span', { class: 'rsm' }, 'Showing ' + num(S.moves.length) + ' of ' + num(d.total))) : '');
+    try { const j = await ui.api('GET', serialsQuery(S.serials.length)); S.serials.push(...j.serials); } catch (err) { e.target.disabled = false; return ui.toast("Couldn't load: " + err.message); }
+    drawRows();
+  } }, 'Show ' + Math.min(PAGE, sr.total - S.serials.length) + ' more'), ' ', h('span', { class: 'rsm' }, 'Showing ' + num(S.serials.length) + ' of ' + num(sr.total)))
+    : S.serials.length ? h('div', { class: 'rnote' }, num(sr.total) + (sr.total === 1 ? ' serial' : ' serials') + ' · click one for its full history') : '');
+}
+// Movements with no label (a count of the item, an adjustment): below the serials, not clickable.
+function drawLoose() {
+  const h = ui.h, sr = S.sr;
+  el.loose.hidden = !sr.loose.length;
+  if (!sr.loose.length) return;
+  el.loose.replaceChildren(h('h4', null, 'Item-level movements'),
+    h('div', { class: 'rsoft rsm', style: 'margin:-4px 0 8px' }, 'No label on these' + (sr.loose_total > sr.loose.length ? ' · newest ' + sr.loose.length + ' of ' + num(sr.loose_total) : '')),
+    h('div', { class: 'tw' }, h('table', null,
+      h('thead', null, h('tr', null, ['When', 'Movement', 'Reference', 'From → to', 'By', 'Source'].map((t) => h('th', null, t)))),
+      h('tbody', null, sr.loose.map((m) => h('tr', null, h('td', { class: 'num' }, when(m.at)), h('td', null, kindChip(m.kind)), h('td', null, refEl(m)), h('td', null, fromTo(m)), h('td', null, m.user || ''), h('td', { class: 'src', title: m.source }, SRC(m.source))))))));
 }
 
 // ------------------------------------------------------------------ label drawer
