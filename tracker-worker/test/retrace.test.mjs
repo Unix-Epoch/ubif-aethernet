@@ -531,8 +531,12 @@ assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 
   // woNames: cart lines (item as cartDiff works it out) and parts events' items
   const wn = R.woNames({ cart: { items: [{ name: 'Screen A', sku: '300001', serial: '300001-0000000001' }, { name: 'Labor', sku: 'LABOR9' }, { sku: '300011', serial: '300011-0000000001' },
     { name: 'From label', serial: '300012-0000000001' }] }, partEvents: [{ eventData: { type: 'add', items: [{ itemId: 1, item: { name: 'Event Part', itemNumber: '300013' } }] } }] });
-  assert.deepEqual(wn, [{ item: '300001', name: 'Screen A', label: '300001-0000000001', event: false }, { item: 'LABOR9', name: 'Labor', label: null, event: false },
-    { item: '300012', name: 'From label', label: '300012-0000000001', event: false }, { item: '300013', name: 'Event Part', label: null, event: true }]);
+  assert.deepEqual(wn, [{ item: '300001', name: 'Screen A', label: '300001-0000000001', event: false, category: null }, { item: 'LABOR9', name: 'Labor', label: null, event: false, category: null },
+    { item: '300012', name: 'From label', label: '300012-0000000001', event: false, category: null }, { item: '300013', name: 'Event Part', label: null, event: true, category: null }]);
+  // labor / service lines (itemTypeId 5) carry the marker, and a parts event for the same item number takes it from the cart line
+  const wl = R.woNames({ cart: { items: [{ name: 'Diagnostic', sku: '12016', itemTypeId: 5 }, { name: 'Screen', sku: '721276', itemTypeId: 1 }, { name: 'Parts Deposit Offset', sku: 'SRV0006' }, { name: 'Rework', sku: '542119', itemTypeId: 7 }] },
+    partEvents: [{ eventData: { type: 'add', items: [{ itemId: '12016', item: { name: 'Diagnostic', itemNumber: '12016' } }, { itemId: '721276', item: { name: 'Screen', itemNumber: '721276' } }] } }] });
+  assert.deepEqual(wl.map((x) => [x.item, x.event, x.category]), [['12016', false, R.NON_STOCK], ['721276', false, null], ['SRV0006', false, R.NON_STOCK], ['542119', false, null], ['12016', true, R.NON_STOCK], ['721276', true, null]]);
   const nameOf = async (item, store = 914) => { const r = await T.prepare('SELECT name, category, qty, qty_hash FROM inv_items WHERE store = ? AND item = ?').bind(store, item).first(); return r ? r.name : undefined; };
   const sweepN = (body, store = 914) => call('POST', '/v1/' + store + '/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
 
@@ -873,6 +877,102 @@ assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 
   assert.deepEqual([by(a3, 'counts').status, by(a3, 'qty').status], ['pass', 'pass']);
   const at1 = a3.checked_at; await s3({ need: 0 });
   assert.equal((await admin('owner@x.com', V(703))).j.checked_at, at1, 'once: later sweeps leave it alone');
+}
+
+// ------------------------------------------------------------------ the empty baseline (store 914, Oct 24, 2026): a lookup of 0 rows froze it and fired "done"
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (537, 'Empty baseline')").run();
+  const st = 537, ago = (m) => new Date(Date.now() - m * 60000).toISOString();
+  const sw = (body) => call('POST', '/v1/537/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+  const pr = async () => (await call('GET', '/v1/537/tracker/retrace/progress')).j;
+  const full = async () => (await admin('owner@x.com', '/retrace/coverage')).j.stores.find((x) => x.store === st).progress;
+  const labs = [];
+  for (let n = 1; n <= 12; n++) labs.push(T.prepare(`INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen, need_history) VALUES (?, ?, '537001', 'Available', ?, ?, ?)`)
+    .bind(st, '537001-' + String(n).padStart(10, '0'), ago(900), ago(5), n <= 4 ? 0 : 1));
+  // the live state: labels stored (some read, most queued), a baseline frozen with nothing in it and "done" at the same instant, a lookup cursor with 0 rows
+  await T.batch([...labs, T.prepare("UPDATE inv_labels SET last_history_at = ? WHERE store = ? AND need_history = 0").bind(ago(60), st),
+    T.prepare('INSERT INTO inv_baseline (store, expected_items, expected_labels, expected_pos, pos_counted_at, counted_at, backfill_done_at, created_at) VALUES (?, 0, 0, 5, ?, ?, ?, ?)').bind(st, ago(30), ago(30), ago(30), ago(30)),
+    T.prepare("INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, 'lookup', '{\"at\":\"x\",\"rows\":0}', ?)").bind(st, ago(30)),
+    T.prepare("INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, 'po_backfill', '{\"done\":true}', ?)").bind(st, ago(30))]);
+  // read only, before any sweep: not a baseline, not done, nothing to announce, the collector is told to count
+  let p = await pr();
+  assert.deepEqual([p.state, p.pct, p.done_at, p.announce], ['counting', null, null, false], JSON.stringify(p));
+  let f = await full(); assert.deepEqual([f.state, f.done_at, f.counted_at, f.steps], ['counting', null, null, null]);
+  assert.equal((await call('GET', '/v1/537/tracker/retrace/cursor')).j.baseline.frozen, false);
+  assert.equal((await admin('owner@x.com', '/retrace/verify/537')).j.checked_at, null);
+  assert.equal((await adminPost('owner@x.com', '/retrace/verify/537/run')).status, 409, 'the verify run waits for a real baseline');
+  // an empty lookup (rows 0) is not recorded, so it never counts as "a lookup ran"
+  await sw({ items: [], cursors: { lookup: { at: AT, rows: 0 } }, countNeed: 10 });
+  assert.equal(JSON.parse((await T.prepare("SELECT value FROM inv_cursors WHERE store = 537 AND sweep = 'lookup'").first()).value).at, 'x', 'the stored cursor is still the old one');
+  // the next sweep clears the bogus row: counted_at, expected_*, and the bogus done time; the PO count stays
+  await sw({ countNeed: 10 });
+  const b = await T.prepare('SELECT * FROM inv_baseline WHERE store = 537').first();
+  assert.deepEqual([b.counted_at, b.expected_items, b.expected_labels, b.backfill_done_at, b.expected_pos], [null, null, null, null, 5]);
+  assert.equal((await pr()).state, 'counting');
+  // a lookup that answers but counted nothing yet: still counting, and the Worker asks for the count
+  let s1 = await sw({ items: [{ ItemNumber: '537001', ProductName: 'Part', WarehouseId: '537', OnHandQuantity: 12, AvailableQuantity: 12 }], cursors: { lookup: { at: AT, rows: 1 } }, countNeed: 10 });
+  assert.deepEqual(s1.j.countNeed, ['537001']); assert.equal((await pr()).state, 'counting');
+  // a count of 0 while 12 labels are stored is a failed count: no freeze
+  await sw({ labelTotals: [{ item: '537001', total: 0 }], countNeed: 10 });
+  f = await full(); assert.equal(f.state, 'counting'); assert.equal(await count('SELECT COUNT(*) AS n FROM inv_baseline WHERE store = 537 AND counted_at IS NOT NULL'), 0);
+  // a real count freezes it for real, and done does not fire: 8 histories are still queued against a baseline of 12
+  await sw({ labelTotals: [{ item: '537001', total: 12 }], countNeed: 10 });
+  f = await full(); assert.equal(f.state, 'gathering'); assert.deepEqual([f.steps.stock, f.steps.labels], [{ x: 1, y: 1 }, { x: 12, y: 12 }]);
+  assert.equal((await adminPost('owner@x.com', '/retrace/verify/537/run')).status, 200, 'now it can check');
+  await T.prepare("UPDATE inv_labels SET last_history_at = ?, need_history = 0 WHERE store = 537 AND need_history = 0").bind(ago(1)).run();
+  // everything at its total except histories (8 not read): not complete
+  await sw({}); assert.equal((await pr()).done_at, null);
+  // all read: done, once
+  await T.prepare("UPDATE inv_labels SET last_history_at = ?, need_history = 0 WHERE store = 537").bind(ago(1)).run();
+  await T.prepare("UPDATE inv_item_counts SET labels = 12 WHERE store = 537").run();
+  await T.prepare("INSERT INTO inv_docs (store, type, id, status, at, data, first_seen, updated_at) SELECT 537, 'po', 'P' || value, 'Received', ?, '{\"detailAt\":\"x\"}', ?, ? FROM json_each('[1,2,3,4,5]')").bind(ago(100), ago(100), ago(100)).run();
+  await T.prepare("UPDATE inv_items SET name = 'Part' WHERE store = 537").run();
+  await sw({});
+  p = await pr(); assert.deepEqual([p.state, p.pct], ['done', 100]); assert.ok(p.done_at);
+  // a healthy baseline is never touched by the heal
+  const d0 = p.done_at; await sw({}); assert.equal((await pr()).done_at, d0);
+  // the queued-histories guard: done is not recorded while far more histories are queued than the baseline's new labels explain
+  await T.prepare("UPDATE inv_baseline SET backfill_done_at = NULL WHERE store = 537").run();
+  const many = []; for (let n = 100; n < 400; n++) many.push(T.prepare("INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen, need_history) VALUES (537, ?, '537002', 'Available', ?, ?, 1)").bind('537002-' + String(n).padStart(10, '0'), ago(9), ago(9)));
+  await T.batch(many); await sw({});
+  assert.equal((await pr()).done_at, null, '300 histories queued: not done'); assert.equal((await full()).state, 'gathering');
+  await T.prepare("UPDATE inv_labels SET need_history = 0 WHERE store = 537").run(); await sw({});
+  assert.ok((await pr()).done_at, 'done once the queue is down');
+}
+
+// ------------------------------------------------------------------ labor and service items stay out of "items missed"
+{
+  const st = 538, ago = (m) => new Date(Date.now() - m * 60000).toISOString();
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (538, 'Labor check')").run();
+  await T.prepare("INSERT OR IGNORE INTO store_keys (store, public_jwk, wrapped_private, created_at) VALUES (538, '{}', 'x', 'now')").run();
+  const sw = (body) => call('POST', '/v1/538/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+  const wo = (n, items, events) => sendWo(n, 10, items, events, 538);
+  const ev = (id, num, name) => ({ eventId: id, timestamp: ago(20), eventType: 'PARTS_UPDATED', eventData: { type: 'add', items: [{ itemId: num, quantity: 1, item: { name, itemNumber: num } }] }, userId: 1, user: 'Tech' });
+  // one baseline item; a WO adds a labor line, a diagnostic and a real part (no label: it was never counted), each with a parts event
+  await T.batch([T.prepare('INSERT INTO inv_baseline (store, expected_items, expected_labels, expected_pos, counted_at, created_at) VALUES (538, 1, 1, 0, ?, ?)').bind(ago(500), ago(500)),
+    T.prepare('INSERT INTO inv_items (store, item, name, qty, qty_hash, first_seen, last_seen) VALUES (538, ?, ?, ?, ?, ?, ?)').bind('538001', 'Base', '{"538":{"onHand":1,"available":1,"reserved":0}}', 'h', ago(900), ago(5)),
+    T.prepare('INSERT INTO inv_item_counts (store, item, labels, counted_at) VALUES (538, ?, 1, ?)').bind('538001', ago(500)),
+    T.prepare("INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen, last_history_at) VALUES (538, '538001-0000000001', '538001', 'Available', ?, ?, ?)").bind(ago(900), ago(5), ago(60))]);
+  const send = await wo(538100, [{ lineId: 1, name: 'Asurion Mobility Labor, Single Peril, Tier 1', sku: '900003', itemTypeId: 5, serial: '' }, { lineId: 2, name: 'Diagnostic', sku: '12016', itemTypeId: 5 },
+    { lineId: 3, name: 'Real Part', sku: '538777', itemTypeId: 1 }, { lineId: 4, name: 'Parts Deposit Offset', sku: 'SRV0006' }],
+    [ev('e1', '900003', 'Asurion Mobility Labor, Single Peril, Tier 1'), ev('e2', '12016', 'Diagnostic'), ev('e3', '538777', 'Real Part'), ev('e4', 'SRV0006', 'Parts Deposit Offset')]);
+  assert.ok(send.status < 300, 'wo upload ' + send.status + JSON.stringify(send.j));
+  const cat = async (i) => (await T.prepare('SELECT category FROM inv_items WHERE store = 538 AND item = ?').bind(i).first() || {}).category;
+  assert.deepEqual([await cat('900003'), await cat('12016'), await cat('SRV0006'), await cat('538777')], [R.NON_STOCK, R.NON_STOCK, R.NON_STOCK, null], 'marked from the cart line types');
+  const r = await adminPost('owner@x.com', '/retrace/verify/538/run'); ok(r, 'run');
+  const m = r.j.checks.find((c) => c.key === 'missed');
+  assert.deepEqual(m.rows.map((x) => x.item), ['538777'], 'only the real part is missed: ' + JSON.stringify(m.rows.map((x) => x.item)));
+  assert.equal(m.n, 1);
+  // a labor item only a PO line mentions is still a real miss (no type known: it could be a part); once marked it leaves the list
+  await T.prepare("INSERT INTO inv_docs (store, type, id, status, at, data, first_seen, updated_at) VALUES (538, 'po', 'UBFPO000538001', 'Received', ?, ?, ?, ?)")
+    .bind(ago(50), JSON.stringify({ id: 'UBFPO000538001', lines: [{ line: 1, item: '900004' }, { line: 2, item: '538999' }] }), ago(50), ago(50)).run();
+  let m2 = (await adminPost('owner@x.com', '/retrace/verify/538/run')).j.checks.find((c) => c.key === 'missed');
+  assert.deepEqual(m2.rows.map((x) => x.item).sort(), ['538777', '538999', '900004']);
+  await T.prepare("INSERT INTO inv_items (store, item, name, category, first_seen, last_seen) VALUES (538, '900004', 'Labor T2', ?, ?, ?)").bind(R.NON_STOCK, ago(1), ago(1)).run();
+  m2 = (await adminPost('owner@x.com', '/retrace/verify/538/run')).j.checks.find((c) => c.key === 'missed');
+  assert.deepEqual(m2.rows.map((x) => x.item).sort(), ['538777', '538999']);
+  // and the collector is only asked for the real ones
+  assert.deepEqual((await sw({})).j.missedItems.sort(), ['538777', '538999'], 'missedItems carries no labor item');
 }
 
 await dispose();

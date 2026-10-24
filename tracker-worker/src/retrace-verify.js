@@ -8,7 +8,8 @@
                warehouses: a second source Retrace didn't write) against the labels in those statuses. No quantity yet = unchecked.
     3 stale    labels never read, or changed (or marked modified by Portal) after their history was last read, or queued again.
     4 missed   items the store's POs, movements (WO, transfer, RMA, buyback, count) and names refer to that aren't in the baseline
-               and have no labels stored. Each is handed to the collector once (the sweep's missedItems) to read its labels; one
+               and have no labels stored. Labor and service items (inv_items.category 'Labor / service', from the WO's cart line
+               types: retrace.js NON_STOCK) are never expected to have labels and stay out. Each is handed to the collector once (the sweep's missedItems) to read its labels; one
                asked for 30 minutes ago and still without labels is "empty" (Portal has none to read): listed, not a failure.
     5 spot     10 labels sampled at random (sold, quarantined, old ones included), kept until the next run; a person opens each
                in Portal and ticks "Matches" (inv_verify_ticks: who and when).
@@ -17,7 +18,7 @@
   (retrace-api.js settle). Routes: retraceAdmin in retrace-api.js. migrations/2026-10-24-retrace-verify.sql has the tables.
   Passing all five is strong evidence, not proof: Portal stays the only source of truth.
 */
-import { IGNORED_ITEMS, serialNow } from './retrace.js';
+import { IGNORED_ITEMS, NON_STOCK, serialNow } from './retrace.js';
 
 export const SPOT = 10;
 const ROWS = 50, STALE_SHOW = 5, ASK_MAX = 20, EMPTY_AFTER_MS = 30 * 60000, RESULT_MAX = 60000, SEEN_MAX = 3;
@@ -98,16 +99,17 @@ async function staleCheck(T, store) {
 // Items the store's records refer to, not in the baseline, with no labels stored. The last run's `asked` (item → when it was
 // handed to the collector) carries over for the ones still missing.
 async function missedCheck(T, store, prev, at) {
-  const w = (col) => `${col} NOT IN (SELECT item FROM inv_item_counts WHERE store = ?1) AND NOT EXISTS (SELECT 1 FROM inv_labels l WHERE l.store = ?1 AND l.item = ${col}) AND lower(${col}) NOT IN (SELECT value FROM json_each(?2))`;
+  const w = (col) => `${col} NOT IN (SELECT item FROM inv_item_counts WHERE store = ?1) AND NOT EXISTS (SELECT 1 FROM inv_labels l WHERE l.store = ?1 AND l.item = ${col}) AND lower(${col}) NOT IN (SELECT value FROM json_each(?2))
+    AND NOT EXISTS (SELECT 1 FROM inv_items s WHERE s.store = ?1 AND s.item = ${col} AND s.category = ?3)`;
   const ign = JSON.stringify(IGNORED_ITEMS);
   const [mv, po, named] = await T.batch([
     T.prepare(`SELECT m.item, m.ref_type, m.ref_id, MAX(m.at) AS at FROM inv_movements m WHERE m.store = ?1 AND m.item IS NOT NULL AND m.ref_id IS NOT NULL AND ${w('m.item')}
-        GROUP BY m.item, m.ref_type, m.ref_id ORDER BY at DESC LIMIT 800`).bind(store, ign),
+        GROUP BY m.item, m.ref_type, m.ref_id ORDER BY at DESC LIMIT 800`).bind(store, ign, NON_STOCK),
     // PO lines (inv_docs data.lines[].item)
     T.prepare(`SELECT json_extract(je.value, '$.item') AS item, d.id AS ref_id, d.at AS at FROM inv_docs d, json_each(d.data, '$.lines') je
-        WHERE d.store = ?1 AND d.type = 'po' AND json_extract(je.value, '$.item') IS NOT NULL AND ${w("json_extract(je.value, '$.item')")} ORDER BY d.at DESC LIMIT 800`).bind(store, ign),
+        WHERE d.store = ?1 AND d.type = 'po' AND json_extract(je.value, '$.item') IS NOT NULL AND ${w("json_extract(je.value, '$.item')")} ORDER BY d.at DESC LIMIT 800`).bind(store, ign, NON_STOCK),
     // items only a name has reached (an order line, an event): no quantities, no labels
-    T.prepare(`SELECT i.item FROM inv_items i WHERE i.store = ?1 AND i.qty_hash IS NULL AND ${w('i.item')} LIMIT 400`).bind(store, ign),
+    T.prepare(`SELECT i.item FROM inv_items i WHERE i.store = ?1 AND i.qty_hash IS NULL AND ${w('i.item')} LIMIT 400`).bind(store, ign, NON_STOCK),
   ]);
   const by = new Map();
   const see = (item, t, id, when) => {
@@ -156,8 +158,8 @@ async function sample(T, store) {
 // ------------------------------------------------------------------ run and store
 // → the stored result, or null when the store's baseline isn't frozen (nothing to check against).
 export async function verifyRun(T, store, at, by) {
-  const b = await T.prepare('SELECT counted_at FROM inv_baseline WHERE store = ?').bind(store).first();
-  if (!b || !b.counted_at) return null;
+  const b = await T.prepare('SELECT counted_at, expected_items FROM inv_baseline WHERE store = ?').bind(store).first();
+  if (!b || !b.counted_at || !b.expected_items) return null; // an empty baseline is none (retrace-api.js healBaseline)
   const prevRow = await T.prepare('SELECT result FROM inv_verify WHERE store = ?').bind(store).first(), prev = prevRow ? parse(prevRow.result) : null;
   const rows = await perItem(T, store), missed = await missedCheck(T, store, prev, at);
   const result = { v: 1, by: by || null, counts: countsCheck(rows), qty: qtyCheck(rows), stale: await staleCheck(T, store), missed: missed.check, spot: await sample(T, store), ask: missed.ask, asked: missed.asked };

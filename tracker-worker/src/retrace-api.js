@@ -41,7 +41,8 @@
          is how many lookup items still without a count to hand out (default 0, at most COUNT_CAP; none once frozen);
          missedItems: items the coverage check (src/retrace-verify.js) found referenced at the store with no labels stored, up to 20 a
          sweep, each handed out once: the browser reads their label lists like a changed item's.
-         poTotal is the number of purchase orders (in transit + past) Portal lists, taken once.
+         poTotal is the number of purchase orders (in transit + past) Portal lists, taken once. A lookup cursor with rows 0 is not
+         recorded (an empty lookup is a failed one, not "every item counted").
     POST /retrace/history { label, rows, by }   the label's serial-history rows (boh/serial-history/{label}: the rows,
          or Portal's { value: [rows] } as is) → { ok, added, same, skipped } · rows normalized here (normalize.historyRows),
          duplicates ignored, rows naming another store or label skipped, the label leaves the queue.
@@ -59,12 +60,17 @@
     counting    the browser asks Portal each lookup item's label count (one call per item, pageSize=1, location All = sold included)
                 and the PO list counts; nothing is shown as a percentage yet.
     gathering   all items counted (and PO count known): expected_labels = the sum of the counts, expected_items = items counted,
-                expected_pos = in-transit + past POs. Frozen then (counted_at). Steps, each X of Y against that baseline:
+                expected_pos = in-transit + past POs. Frozen then (counted_at), and never empty: at least one lookup item counted, and
+                labels counted when labels are already known (a lookup that came back with no rows, or counts of 0 for every item,
+                keeps it counting). A frozen row with expected_items = 0 is not a baseline (the Oct 24 store 914 bug: a lookup of 0 rows
+                counted as "every item counted"): the next sweep clears it (counts, counted_at, expected_*, and its backfill_done_at,
+                which can't be true) and counts again. Steps, each X of Y against that baseline:
                   stock lookup  items counted of expected_items · labels found  labels stored for the baseline's items (per item at most its count)
                   histories read  of those labels, serial history read · purchase orders  read in full (not drafts) of expected_pos
                   item names  baseline items with a name of expected_items
                 Labels that show up later (new POs, new items) are "new since": they never change the baseline.
-    done        every step at 100% and the PO list read through: backfill_done_at is set once and never cleared or moved. Ordinary
+    done        every step at 100%, the PO list read through and no more histories queued than a few new labels explain (QUEUE_SLACK):
+                backfill_done_at is set once and never cleared or moved (but for the empty baseline above). Ordinary
                 later changes (new labels, a PO to read) don't un-done it. There is no re-count route. By hand: deleting a store's
                 inv_item_counts rows and clearing counted_at / expected_* in its inv_baseline row makes it count again and freeze a
                 new baseline; backfill_done_at stays, so the signal doesn't fire a second time (state stays 'done', pct follows the
@@ -117,13 +123,18 @@ const touchLabel = (T, store, label, item, need, at, wo = null) => ignoredItem(i
 export const PROGRESS_WEIGHT = { labels: 0.05, histories: 1, pos: 2, names: 1 };
 export const PER_PASS = { histories: 60, pos: 15, names: 10 };
 const PASS_MIN = 10;
+// Histories still queued when everything else is at its total: a few are new labels (POs, items since the baseline); more than this
+// share of the baseline (or this many, whichever is larger) means the gathering isn't finished, whatever the steps say.
+const QUEUE_SLACK = 50, QUEUE_SHARE = 0.1;
 const nInt = (v) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 1e7 ? v : null);
 
 /*
   One store's progress, read only. → { out, b, ready, complete }
+    bogus     a frozen row with expected_items = 0: not a baseline, treated as not frozen (state 'counting', no done_at); settle() clears it
     out       what the routes hand out: { store, state, pct, done_at, counted_at, eta_min, steps: { stock, labels, histories, pos, names }
               each { x, y } (frozen only), counting: { items_done, items_total, pos_known }, new_labels, last_sweep_at }
-    ready     counting is finished (a lookup has run, every lookup item has a count, the PO total is known): settle() freezes
+    ready     counting is finished (a lookup has run and gave items, every lookup item has a count, at least one label counted when
+              labels are known, the PO total is known): settle() freezes
     complete  frozen and every step has reached its total and the PO list has been read through: settle() records done
 */
 export async function progress(T, store) {
@@ -133,7 +144,7 @@ export async function progress(T, store) {
         FROM inv_items i LEFT JOIN inv_item_counts c ON c.store = i.store AND c.item = i.item WHERE i.store = ? AND i.qty_hash IS NOT NULL`).bind(store),
     // Per baseline item, at most its count: a label stored for an item beyond what Portal said it has is "new since", not found.
     T.prepare(`SELECT COALESCE(SUM(MIN(c.labels, COALESCE(l.n, 0))), 0) AS found, COALESCE(SUM(MIN(c.labels, COALESCE(l.h, 0))), 0) AS read,
-          (SELECT COUNT(*) FROM inv_labels WHERE store = ?1) AS every
+          (SELECT COUNT(*) FROM inv_labels WHERE store = ?1) AS every, (SELECT COUNT(*) FROM inv_labels WHERE store = ?1 AND need_history > 0) AS queued
         FROM inv_item_counts c LEFT JOIN (SELECT item, COUNT(*) AS n, SUM(last_history_at IS NOT NULL) AS h FROM inv_labels WHERE store = ?1 GROUP BY item) l ON l.item = c.item
         WHERE c.store = ?1`).bind(store),
     T.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(json_extract(data, '$.detailAt') IS NOT NULL), 0) AS read FROM inv_docs WHERE store = ? AND type = 'po' AND lower(COALESCE(status, '')) <> 'draft'`).bind(store),
@@ -142,10 +153,11 @@ export async function progress(T, store) {
   const b = bq.results[0] || null, it = itq.results[0], lb = lbq.results[0], po = poq.results[0];
   const cur = Object.fromEntries(curq.results.map((r) => [r.sweep, r]));
   const listed = !!(cur.po_backfill && (parse(cur.po_backfill.value) || {}).done === true);
-  const frozen = !!(b && b.counted_at);
+  const bogus = !!(b && b.counted_at && !b.expected_items), frozen = !!(b && b.counted_at) && !bogus;
   const posKnown = !!(b && b.expected_pos != null) || listed;
-  const ready = !frozen && !!cur.lookup && it.lookup === it.counted && posKnown;
-  const out = { store, state: b && b.backfill_done_at ? 'done' : frozen ? 'gathering' : 'counting', pct: null, done_at: (b && b.backfill_done_at) || null, counted_at: (b && b.counted_at) || null,
+  // a lookup with no items (it.lookup 0) or no counted items is not "every item counted"; labels known but none counted is a failed count
+  const ready = !frozen && !!cur.lookup && it.lookup > 0 && it.counted === it.lookup && posKnown && !(it.labels === 0 && lb.every > 0);
+  const out = { store, state: frozen && b.backfill_done_at ? 'done' : frozen ? 'gathering' : 'counting', pct: null, done_at: (frozen && b.backfill_done_at) || null, counted_at: (frozen && b.counted_at) || null,
     eta_min: null, steps: null, counting: { items_done: it.counted, items_total: it.lookup, pos_known: posKnown }, new_labels: null, last_sweep_at: (cur[LAST_SWEEP] && cur[LAST_SWEEP].updated_at) || null };
   let complete = false;
   if (frozen) {
@@ -154,18 +166,29 @@ export async function progress(T, store) {
       pos: { x: Math.min(po.read, eP), y: eP }, names: { x: Math.min(it.named, eI), y: eI } };
     const w = (k) => PROGRESS_WEIGHT[k], done = Object.values(steps).every((v) => v.x >= v.y);
     const den = Object.keys(PROGRESS_WEIGHT).reduce((n, k) => n + w(k) * steps[k].y, 0), num = Object.keys(PROGRESS_WEIGHT).reduce((n, k) => n + w(k) * steps[k].x, 0);
-    complete = done && listed;
+    complete = done && listed && eI > 0 && lb.queued <= Math.max(QUEUE_SLACK, Math.ceil(eL * QUEUE_SHARE));
     out.steps = steps;
     out.pct = complete || (done && !den) ? 100 : Math.min(99, Math.floor(den ? (num / den) * 100 : 100));
     out.eta_min = complete ? 0 : Math.max(1, ...Object.keys(PER_PASS).map((k) => Math.ceil((steps[k].y - steps[k].x) / PER_PASS[k])), steps.labels.x < steps.labels.y ? 1 : 0) * PASS_MIN;
     out.new_labels = Math.max(0, lb.every - steps.labels.x);
   }
-  return { out, b, ready, complete, items: it, pos: po };
+  return { out, b, ready, complete, bogus, items: it, pos: po };
+}
+
+// A frozen baseline with no items is no baseline (see "Progress"): cleared so the store counts again from scratch, with the done time
+// it set (which can't be true). expected_pos and its date stay (the PO count doesn't depend on the lookup). → whether it cleared one.
+async function healBaseline(T, store) {
+  const r = await T.prepare(`UPDATE inv_baseline SET counted_at = NULL, expected_items = NULL, expected_labels = NULL, backfill_done_at = NULL
+      WHERE store = ? AND counted_at IS NOT NULL AND COALESCE(expected_items, 0) = 0`).bind(store).run();
+  if (!(r.meta && r.meta.changes)) return false;
+  await T.prepare('DELETE FROM inv_item_counts WHERE store = ?').bind(store).run();
+  return true;
 }
 
 // Freezes the baseline once counting is finished, records the done time once; → the store's progress after that.
 // Called by the sweep and the history read, i.e. whenever something that moves a step has been written.
 async function settle(T, store, at) {
+  await healBaseline(T, store);
   let p = await progress(T, store);
   if (p.ready) {
     await T.batch([
@@ -187,10 +210,10 @@ async function settle(T, store, at) {
   return p.out;
 }
 
-// A history read can be the last thing a store's gathering was waiting for. Settled only while the store has a baseline that isn't done yet.
+// A history read can be the last thing a store's gathering was waiting for. Settled only while the store has a baseline that isn't done yet (or an empty one to clear).
 async function settleAfterHistory(T, store, at) {
-  const b = await T.prepare('SELECT backfill_done_at FROM inv_baseline WHERE store = ?').bind(store).first();
-  if (b && !b.backfill_done_at) await settle(T, store, at);
+  const b = await T.prepare('SELECT backfill_done_at, counted_at, expected_items FROM inv_baseline WHERE store = ?').bind(store).first();
+  if (b && (!b.backfill_done_at || (b.counted_at && !b.expected_items))) await settle(T, store, at);
 }
 
 // ------------------------------------------------------------------ item names
@@ -199,7 +222,7 @@ async function settleAfterHistory(T, store, at) {
   details' ProductName, Portal's item record read for the unnamed list) may change a stored name, so a rename in Portal
   shows up; descriptive ones (cart line text, PO line descriptions, receive details' ItemName, RMA lines' item_name,
   outstanding parts' PartName, transfer lines) only fill a missing one. Category: filled when missing, never changed
-  here (the item lookup's RetailCategory keeps that). A row made here has no quantities (qty / qty_hash NULL), which
+  here (the item lookup's RetailCategory keeps that; the WO hook's 'Labor / service' marks non-stock items). A row made here has no quantities (qty / qty_hash NULL), which
   the item lookup's diff reads as a new item, never a change. Ignored items get no row.
 */
 // index.js clean(): the WO hook has no H. Numbers (an item id sent as one) read as their text.
@@ -267,7 +290,9 @@ async function movementStmts(T, store, moves, at, need, wo = null) {
   reserved / unreserved / used, swapped_out + swapped_in), as statements for the WO upload's own batch. The labels
   get the WO linked and a history read queued. Items named on the WO (retrace.js woNames: cart line text, parts events'
   item names) get inv_items.name when they have none: a line with a label, an event's item, or a line whose item
-  Retrace already knows (a label or a movement at the store); service and labor lines stay out. Never fails the
+  Retrace already knows (a label or a movement at the store); service and labor lines stay out unless a parts event names
+  them (it's a movement already), and then they are marked category 'Labor / service' (cart line itemTypeId 5, retrace.js
+  NON_STOCK) so the coverage check doesn't expect labels for them. Never fails the
   upload: any error here gives no statements.
 */
 export async function woRetraceStmts(T, store, wo, prevPlain, plain, at) {
@@ -283,7 +308,7 @@ export async function woRetraceStmts(T, store, wo, prevPlain, plain, at) {
     const known = new Set(ask.length ? (await T.prepare(`SELECT item FROM inv_labels WHERE store = ?1 AND item IN (SELECT value FROM json_each(?2))
         UNION SELECT item FROM inv_movements WHERE store = ?1 AND item IN (SELECT value FROM json_each(?2))`)
       .bind(store, JSON.stringify(ask)).all()).results.map((r) => r.item) : []);
-    for (const x of named) if (x.label || x.event || known.has(x.item)) book.add(x.item, x.name, false);
+    for (const x of named) if (x.label || x.event || known.has(x.item)) book.add(x.item, x.name, false, x.category);
     if (book.map.size) stmts.push(...(await nameStmts(T, store, book, at)));
     return stmts;
   } catch (_) { return []; }
@@ -297,8 +322,8 @@ export async function retraceStore(req, env, url, store, path, H) {
     const r = await T.prepare('SELECT sweep, value, updated_at FROM inv_cursors WHERE store = ?').bind(store).all();
     const cursors = {};
     for (const x of r.results) cursors[x.sweep] = { value: parse(x.value), at: x.updated_at };
-    const b = await T.prepare('SELECT counted_at, expected_pos FROM inv_baseline WHERE store = ?').bind(store).first();
-    return H.json({ cursors, baseline: { frozen: !!(b && b.counted_at), posKnown: !!(b && b.expected_pos != null) } });
+    const b = await T.prepare('SELECT counted_at, expected_items, expected_pos FROM inv_baseline WHERE store = ?').bind(store).first();
+    return H.json({ cursors, baseline: { frozen: !!(b && b.counted_at && b.expected_items > 0), posKnown: !!(b && b.expected_pos != null) } });
   }
 
   if (path === '/retrace/progress' && req.method === 'GET') {
@@ -519,6 +544,7 @@ export async function retraceStore(req, env, url, store, path, H) {
       The baseline's inputs: label counts per item (only while counting: a frozen baseline never changes) and the PO total
       (taken once, before the freeze). settle() below decides when counting is finished.
     */
+    await healBaseline(T, store);
     const base = await T.prepare('SELECT counted_at, expected_pos FROM inv_baseline WHERE store = ?').bind(store).first(), frozen = !!(base && base.counted_at);
     if (!frozen) {
       for (const x of b.labelTotals || []) {
@@ -536,6 +562,7 @@ export async function retraceStore(req, env, url, store, path, H) {
     for (const [name, value] of Object.entries(b.cursors || {})) {
       const v = JSON.stringify(value === undefined ? null : value);
       if (!CURSOR_RE.test(name) || name === LAST_SWEEP || v.length > 4000) return H.fail(400, 'bad cursor ' + String(name).slice(0, 40));
+      if (name === 'lookup' && value && value.rows === 0) continue; // an empty lookup is a failed one: not recorded
       stmts.push(T.prepare('INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, sweep) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at').bind(store, name, v, at));
     }
     // An item the lookup named in this sweep keeps the lookup's name (written with its quantities above).

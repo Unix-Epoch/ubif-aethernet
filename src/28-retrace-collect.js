@@ -10,7 +10,7 @@
        reserved and in-transit quantity, paged until that quantity reaches 0 (locationType is ignored by Portal, so
        it can't be filtered to the store's stock). Rows → the sweep's items; the Worker answers which items changed.
        Items that drop out of the lookup are sent once with zero quantities (this browser's list of what it sent),
-       so a sell-out reads as a change.
+       so a sell-out reads as a change. A lookup with no row at all is a failure (noted, nothing sent, retried next pass).
     2b. Label totals, so the progress bar's denominators are set early instead of growing as labels are found: each lookup
        item the Worker hasn't a count for (it says which, up to 200 a pass) gets one call, store-products/{item}/inventory
        with pageSize=1 and location All (sold included), and Portal's @odata.count is its label count. If Portal sent no
@@ -113,18 +113,23 @@ AE.retrace = (() => {
   const QTY = ['AvailableQuantity', 'ReservedQuantity', 'InTransitQuantity', 'OnHandQuantity'];
   async function stock(store) {
     const rows = new Map(); // item|warehouse → row
+    let read = 0, other = 0;
     for (const [field, qty] of SORTS) {
       for (let page = 1; page <= LOOKUP_PAGES; page++) {
         const list = R.rowsOf(await portal('GET', '/api/boh/inventory-lookup?pageSize=100&page=' + page + '&searchTerm=&locationType=0&categoryFilter=&sortField=' + field + '&sortOrder=desc'));
         for (const r of list) {
           if (!r || r.ItemNumber == null) continue;
-          if (r.SiteId != null && /^\d+$/.test(String(r.SiteId)) && Number(r.SiteId) !== Number(store)) continue; // another store's row (not seen; just in case)
+          read++;
+          if (r.SiteId != null && /^\d+$/.test(String(r.SiteId)) && Number(r.SiteId) !== Number(store)) { other++; continue; } // another store's row (not seen; just in case)
           if (QTY.some((k) => Number(r[k]) > 0)) rows.set(r.ItemNumber + '|' + r.WarehouseId, r);
         }
         const tail = list[list.length - 1];
         if (list.length < 100 || !(tail && Number(tail[qty]) > 0)) break;
       }
     }
+    // No row with stock at all is a failed lookup, not an empty store: nothing is sent (it would zero every item and, the first time, count
+    // as "every item counted"). The note says what came back, to tell Portal's answer shape from the store filter.
+    if (!rows.size) throw new Error('the item lookup gave no rows with stock (' + read + ' item rows read, ' + other + ' of another store)');
     /*
       The Worker keeps each item's quantities per warehouse as sent, whole. So an item is always sent with every
       warehouse it was sent with before (0 where it's gone now), and an item gone from the lookup is sent once at 0

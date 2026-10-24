@@ -174,6 +174,17 @@ export const itemOfLabel = (label) => { const p = parseLabel(label); return p ? 
 */
 export const IGNORED_ITEMS = ['bb0001'];
 export const ignoredItem = (item) => item != null && IGNORED_ITEMS.includes(String(item).trim().toLowerCase());
+/*
+  Items that are never stock (labor, services): a cart line's itemTypeId 5 (live cart lines at 914: 28 SKUs, no line with a label;
+  1 = part, 7 = rework kit, 3 / 8 mixed, so only 5 counts) or an SRV… service SKU with no type (deposits). inv_items.category = this
+  marker (set from the WO hook, woNames) takes them out of the coverage check's "items missed": they never have labels.
+*/
+export const NON_STOCK = 'Labor / service';
+export const cartCategory = (line) => {
+  if (!line || typeof line !== 'object') return null;
+  const t = Number(line.itemTypeId), sku = line.sku == null ? '' : String(line.sku).trim();
+  return t === 5 || ((line.itemTypeId == null || line.itemTypeId === '') && /^SRV/i.test(sku)) ? NON_STOCK : null;
+};
 export const refTypeOf = (refTable) => {
   const s = str(refTable, 40);
   if (!s) return null;
@@ -560,21 +571,23 @@ export function woMovements(prevPlain, plain, ctx) {
 
 /*
   Item names a WO's plain part carries (inv_items.name, descriptive: Portal's cart text), for the WO hook:
-  [{ item, name, label, event }]. Cart lines: the item worked out as cartDiff does (itemNumber / sku, else the label's),
+  [{ item, name, label, event, category }]. Cart lines: the item worked out as cartDiff does (itemNumber / sku, else the label's),
   label = the line's (null when it has none). Parts events' items (item.itemNumber + item.name): event = true, since
-  each one is a movement already (normalize.partsEvent).
+  each one is a movement already (normalize.partsEvent). category: NON_STOCK for labor / service lines (cartCategory); a parts
+  event carries none itself, so it takes the one of the cart line with the same item number (else null).
 */
 export function woNames(plain) {
-  const out = [];
+  const out = [], cats = new Map();
   for (const i of (plain && plain.cart && Array.isArray(plain.cart.items) ? plain.cart.items : [])) {
-    const label = cleanLabel(i && i.serial), item = (i && str(first(i, ['itemNumber', 'sku']), 40)) || itemOfLabel(label), name = i && str(i.name, 120);
-    if (item && name) out.push({ item, name, label: label || null, event: false });
+    const label = cleanLabel(i && i.serial), item = (i && str(first(i, ['itemNumber', 'sku']), 40)) || itemOfLabel(label), name = i && str(i.name, 120), category = cartCategory(i);
+    if (item && category) cats.set(item, category);
+    if (item && name) out.push({ item, name, label: label || null, event: false, category });
   }
   for (const e of (plain && Array.isArray(plain.partEvents) ? plain.partEvents : [])) {
     const d = (e && e.eventData) || {};
     for (const it of [d.item ? { item: d.item } : null, ...(Array.isArray(d.items) ? d.items : [])]) {
       const item = str(it && it.item && it.item.itemNumber, 40), name = str(it && it.item && it.item.name, 120);
-      if (item && name) out.push({ item, name, label: null, event: true });
+      if (item && name) out.push({ item, name, label: null, event: true, category: cats.get(item) || null });
     }
   }
   return out;
