@@ -627,7 +627,8 @@ function accessDiff(before, after) {
   GET  /wo/:store/:wo            one WO: row, snapshots (plain + sealed), changes
   …    /assize/…                 Assize rules: list, drafts, publish, history, per-store overrides, test orders
                                  (page 'rules'; src/assize.js has the routes)
-  GET  /retrace/…                Retrace: item movements, label timeline, POs (page and list), search, coverage (page 'retrace';
+  GET  /retrace/…                Retrace: item movements, label timeline, POs (page and list), search, coverage; the coverage check
+                                 (GET /retrace/verify/:store, POST …/run and …/tick: its only writes) (page 'retrace';
                                  src/retrace-api.js has the routes)
   Developers only (People; TRACKER_OWNERS, `owner` in the API):
   GET  /people                   everyone + their key copies' kinds, pages, details, review; owners: the developers
@@ -781,7 +782,7 @@ async function trackerRoutes(req, env, url, path, email, who) {
   // Assize rules (src/assize.js): the gate above already required page 'rules'; edits check the scope there.
   if (path.startsWith('/assize/')) return assizeAdmin(req, env, url, path, me, email, { json, fail, readJson, clean, int, now, log });
   // Retrace (src/retrace-api.js): the gate above already required page 'retrace' and the store in the path / ?store=.
-  if (path.startsWith('/retrace/')) return retraceAdmin(req, env, url, path, me, email, { json, fail, clean, int, log });
+  if (path.startsWith('/retrace/')) return retraceAdmin(req, env, url, path, me, email, { json, fail, clean, int, log, readJson });
 
   if (!me.owner) return fail(403, 'developers only', false);
   if (req.method === 'GET' && path === '/people') {

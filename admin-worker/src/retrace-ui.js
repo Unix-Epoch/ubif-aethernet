@@ -4,8 +4,9 @@
 // baseline: counting labels, gathering, paused, up to date), search, the store's items
 // (most recent movement first) or its purchase orders, the selected item's counts and its serials (one row per label:
 // status now, where it is, last movement, move count; filtered by status now and by when it last moved; movements with
-// no label below), a label's whole timeline in a drawer, and a PO's own page. Read only; the server checks page and store
-// on every call.
+// no label below), a label's whole timeline in a drawer, and a PO's own page. Read only apart from the coverage check
+// (Verify coverage on the strip: five checks that Retrace has seen everything at the store, a spot check of 10 labels the
+// person ticks; its result and ticks are the only things saved); the server checks page and store on every call.
 // Store, item and PO live in the URL hash (#retrace?store=914&item=721276, &po=UBFPO…) so links can be shared.
 
 const CSS = `
@@ -83,6 +84,19 @@ const CSS = `
 .rt .tl,.rt-drawer .tl{list-style:none;margin:0;padding:0;position:relative} .rt .tl::before,.rt-drawer .tl::before{content:"";position:absolute;left:5px;top:6px;bottom:6px;width:2px;background:var(--line)}
 .rt .tl li,.rt-drawer .tl li{position:relative;padding:0 0 14px 22px} .rt .tl li::before,.rt-drawer .tl li::before{content:"";position:absolute;left:0;top:5px;width:12px;height:12px;border-radius:50%;background:var(--card);border:2px solid var(--p)}
 .rt .tl li .w,.rt-drawer .tl li .w{font-size:11.5px;color:var(--soft);font-variant-numeric:tabular-nums} .rt .tl li .t,.rt-drawer .tl li .t{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:2px} .rt .tl li p,.rt-drawer .tl li p{margin:3px 0 0;font-size:12.5px;color:var(--soft)}
+.rt .vbtn{height:30px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);font-size:12.5px;cursor:pointer;color:var(--fg);white-space:nowrap}
+.rt .vbtn.p{background:var(--p);color:#fff;border-color:transparent;font-weight:700} .rt .vbtn:disabled{opacity:.6;cursor:default}
+.rt .pg .top .r{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.rt .vp{overflow:hidden}
+.rt .vh{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:14px 16px;border-bottom:1px solid var(--line)} .rt .vh h3{margin:0;font-size:16px} .rt .vh .r{margin-left:auto;display:flex;gap:8px;align-items:center}
+.rt .sum{font-weight:700;padding:3px 10px;border-radius:999px;font-size:12.5px} .rt .sum.ok{background:var(--ok);color:var(--okf)} .rt .sum.bad{background:var(--warn);color:var(--warnf)}
+.rt .ck{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:2px 12px;padding:12px 16px;border-bottom:1px solid var(--line);align-items:start}
+.rt .ck .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700;margin-top:1px} .rt .ic.ok{background:var(--ok);color:var(--okf)} .rt .ic.bad{background:var(--warn);color:var(--warnf)} .rt .ic.todo{background:var(--line);color:var(--soft)}
+.rt .ck b{font-size:14px} .rt .ck .why{grid-column:2;color:var(--soft);font-size:12.5px} .rt .ck .res{font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
+.rt .ck .det{grid-column:2/4;margin-top:6px;min-width:0}
+.rt .spot{padding:6px 0;display:grid;gap:4px} .rt .spot .row{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:13px;padding:6px 0;border-top:1px solid var(--line)} .rt .spot .row label{display:flex;gap:6px;align-items:center;margin-left:auto;font-size:12.5px;color:var(--soft);cursor:pointer}
+.rt .vfoot{padding:10px 16px;font-size:12px;color:var(--soft);background:var(--hd)}
+@media (max-width:640px){.rt .ck{grid-template-columns:28px minmax(0,1fr)} .rt .ck .res{grid-column:2;text-align:left} .rt .ck .det{grid-column:1/-1} .rt .vh .r{margin-left:0}}
 .rt .rnote{font-size:12.5px;color:var(--soft);padding:10px 14px}
 .rt .legend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--soft);padding:8px 14px 12px}
 .rt .seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:2px;gap:2px}
@@ -126,7 +140,7 @@ const PAUSED_MS = 25 * 60000;
 const EMPTY_SVG = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg>';
 
 let ui = null, S = null, el = {};
-const fresh = () => ({ store: null, view: 'items', item: null, po: null, group: 'all', range: '30', q: '', stores: [], coverage: [], items: null, itemsTotal: 0, pos: null, posTotal: 0, data: null, sr: null, serials: [], label: null, results: null });
+const fresh = () => ({ store: null, view: 'items', item: null, po: null, group: 'all', range: 'all', q: '', stores: [], coverage: [], items: null, itemsTotal: 0, pos: null, posTotal: 0, data: null, sr: null, serials: [], label: null, results: null, vopen: false, verify: null, vbusy: false });
 
 // ------------------------------------------------------------------ formatting
 const pad = (n) => String(n).padStart(2, '0');
@@ -212,7 +226,7 @@ export async function draw(m, helpers) {
   el = {};
   el.drawer = drawerEl();
   el.root = h('div', { class: 'rt' },
-    el.health = h('div'),
+    el.health = h('div'), el.verify = h('div', { hidden: true }),
     h('div', { class: 'rcard search' },
       el.q = h('input', { type: 'search', placeholder: 'Search an item, label, PO, work order, sales order or transfer', 'aria-label': 'Search Retrace', value: S.q,
         onkeydown: (e) => { if (e.key === 'Enter') search(el.q.value.trim()); }, onsearch: (e) => { if (!e.target.value) search(''); } }),
@@ -226,7 +240,8 @@ export async function draw(m, helpers) {
     // Leaving the tab: the drawer is on <body>, so close it.
     addEventListener('hashchange', () => { if (!location.hash.startsWith('#retrace')) { const d = document.querySelector('.rt-drawer'); if (d) d.hidden = true; } });
   }
-  drawHealth();
+  drawHealth(); drawVerify();
+  if (S.vopen) loadVerify(false);
   await loadStore({ item: params.get('item'), po: params.get('po'), label: params.get('label') });
 }
 
@@ -251,7 +266,8 @@ function drawHealth() {
   const h = ui.h, c = S.coverage.find((x) => x.store === S.store) || {}, p = c.progress || { state: 'counting', counting: { items_done: 0, items_total: 0 }, steps: null };
   const age = c.last_sweep_at ? Date.now() - new Date(c.last_sweep_at).getTime() : null;
   const stale = age == null || age > PAUSED_MS, counting = p.state === 'counting', done = p.state === 'done', paused = !done && stale;
-  const where = h('span', { class: 'r rsoft rsm' }, storeName(S.store) + ' · ' + (c.last_sweep_at ? 'last pass ' + ago(c.last_sweep_at) : 'no pass yet'));
+  const where = h('span', { class: 'r' }, h('span', { class: 'rsoft rsm' }, storeName(S.store) + ' · ' + (c.last_sweep_at ? 'last pass ' + ago(c.last_sweep_at) : 'no pass yet')),
+    counting ? null : h('button', { class: 'vbtn p', type: 'button', 'aria-expanded': String(S.vopen), onclick: toggleVerify }, S.vopen ? 'Hide coverage check' : 'Verify coverage'));
   const stp = p.steps || {}, tabLeft = p.eta_min != null ? span(p.eta_min) + ' of an open tab' : '';
   let title, big, sub, note;
   if (counting) {
@@ -276,9 +292,114 @@ function drawHealth() {
     bar, h('div', { class: 'steps' }, steps), ...(note ? [h('div', { class: 'note' + (paused ? ' warn' : '') }, note)] : []));
 }
 
+// ------------------------------------------------------------------ coverage check
+// Five checks that Retrace has seen everything at the store (tracker-worker/src/retrace-verify.js); the last result opens instantly.
+const CHECK = {
+  counts: ['Label counts per item', 'For each item, Portal’s label count (sold included) against the labels Retrace stored.'],
+  qty: ['Stock quantities', 'Portal’s available and reserved quantity per item against Retrace’s labels in those statuses. A second source Retrace didn’t write.'],
+  stale: ['Stale histories', 'Labels never read, or whose status changed after their history was last read. They are read again on the next pass.'],
+  missed: ['Items missed', 'Items seen on POs, work orders, transfers or returns at this store that aren’t in the baseline and have no labels.'],
+  spot: ['Spot check by hand', 'Compare a few timelines to Portal’s own serial history.'],
+};
+// Portal's item page (its label popup has no address of its own): search the label in the list there.
+const portalItemUrl = (item) => 'https://portal.ubreakifix.net/boh/inventory/store-products/' + encodeURIComponent(item) + '?location=All&warehouseId=' + S.store;
+const SEEN = { po: 'PO ', wo: 'WO ', transfer: 'Transfer ', rma: 'RMA ', buyback: 'Buyback ', journal: 'Count ', count: 'Count ', sales_order: 'Order ' };
+function itemLink(item, name) {
+  return ui.h('span', null, ui.h('a', { class: 'ref', href: '#', onclick: (e) => { e.preventDefault(); openItem(item); } }, item), name ? ' · ' + name : '');
+}
+function seenEl(r) {
+  const h = ui.h;
+  if (!r.seen.length) return h('span', { class: 'rsoft' }, 'an order or work order line');
+  const parts = r.seen.map((x) => (x.t === 'po' ? poRef(x.id) : x.t === 'wo' ? woRef(x.id) : plain((SEEN[x.t] || '') + x.id)));
+  return h('span', null, parts.flatMap((p, i) => (i ? [', ', p] : [p])), r.seen_n > r.seen.length ? ' +' + (r.seen_n - r.seen.length) : '');
+}
+const qtyText = (q) => num(q.available + q.reserved) + ' (' + num(q.available) + ' + ' + num(q.reserved) + ')';
+function table(head, rows) {
+  const h = ui.h;
+  return h('div', { class: 'tw' }, h('table', null, h('thead', null, h('tr', null, head.map(([t, c]) => h('th', { class: c }, t)))), h('tbody', null, rows)));
+}
+function spotRows(c) {
+  const h = ui.h;
+  return h('div', { class: 'spot' },
+    h('div', { class: 'rsoft rsm' }, c.total + ' labels picked at random (sold, quarantined and old ones included). Open each in Portal and tick it when its timeline matches.'),
+    c.rows.map((r) => h('div', { class: 'row' }, h('span', { class: 'mono' }, r.label), h('span', { class: 'rsoft' }, r.now + ' · ' + num(r.moves) + (r.moves === 1 ? ' movement' : ' movements')),
+      h('a', { class: 'ref', href: '#', onclick: (e) => { e.preventDefault(); openLabel(r.label); } }, 'Retrace timeline'),
+      r.item ? h('a', { class: 'ref', href: portalItemUrl(r.item), target: '_blank', rel: 'noopener', title: 'Opens the item in Portal; search the label in its list' }, 'Open in Portal ↗') : null,
+      h('label', { title: r.checked ? 'Ticked by ' + r.checked.by + ', ' + when(r.checked.at) : null },
+        h('input', { type: 'checkbox', checked: !!r.checked, 'aria-label': 'Matches Portal: ' + r.label, onchange: (e) => tickSpot(r.label, e.target) }), ' Matches'))),
+    h('div', { class: 'rsoft rsm' }, c.checked + ' of ' + c.total + ' checked by hand'));
+}
+function checkDetail(c) {
+  const h = ui.h, td = (v, cls) => h('td', { class: cls }, v);
+  if (c.key === 'counts' && c.rows.length) return table([['Item'], ['Portal says', 'num'], ['Retrace has', 'num'], ['Likely cause']],
+    c.rows.map((r) => h('tr', null, td(itemLink(r.item, r.name)), td(num(r.portal), 'num'), td(num(r.have), 'num'), td(r.cause, 'rsoft'))));
+  if (c.key === 'qty' && c.rows.length) return table([['Item'], ['Portal says', 'num'], ['Retrace has', 'num'], ['Likely cause']],
+    c.rows.map((r) => h('tr', null, td(itemLink(r.item, r.name)), td(qtyText(r.portal), 'num'), td(qtyText(r.have), 'num'), td(r.cause, 'rsoft'))));
+  if (c.key === 'stale' && c.rows.length) return table([['Label'], ['Status now'], ['Last status change'], ['History last read']],
+    [...c.rows.map((r) => h('tr', { 'data-l': r.label, onclick: () => openLabel(r.label) }, td(r.label, 'mono'), td(r.now || '—'), td(when(r.changed_at)), td(r.read_at ? when(r.read_at) : 'never'))),
+      c.n > c.rows.length ? h('tr', null, h('td', { class: 'rsoft', colspan: 4 }, '+ ' + num(c.n - c.rows.length) + ' more, read again on the next pass')) : null]);
+  if (c.key === 'missed' && c.rows.length) return table([['Item'], ['Seen on'], ['What happens']],
+    c.rows.map((r) => h('tr', null, td(itemLink(r.item, r.name)), td(seenEl(r)),
+      td(r.state === 'empty' ? 'Asked Portal for its labels: it has none at this store.' : 'Retrace reads its labels on the next pass.', 'rsoft'))));
+  if (c.key === 'spot') return c.rows.length ? spotRows(c) : null;
+  return null;
+}
+function drawVerify() {
+  const h = ui.h, v = S.verify;
+  el.verify.hidden = !S.vopen;
+  if (!S.vopen) return;
+  const head = (extra) => h('div', { class: 'vh' }, h('h3', null, 'Coverage check · ' + storeName(S.store)), ...extra);
+  const run = h('button', { class: 'vbtn', type: 'button', disabled: S.vbusy, onclick: runVerify }, S.vbusy ? 'Checking…' : 'Run again');
+  if (!v || !v.checks) {
+    el.verify.replaceChildren(h('div', { class: 'rcard vp' }, head([h('span', { class: 'r' }, S.vbusy ? h('span', { class: 'rsoft rsm' }, 'Checking…') : h('button', { class: 'vbtn', type: 'button', onclick: runVerify }, 'Run the check'))]),
+      h('div', { class: 'rnote' }, v && v.error ? v.error : S.vbusy ? 'Reading the store’s records…' : 'Not checked yet.')));
+    return;
+  }
+  const all = v.pass === v.total;
+  el.verify.replaceChildren(h('div', { class: 'rcard vp' },
+    head([h('span', { class: 'sum ' + (all ? 'ok' : 'bad') }, v.pass + ' of ' + v.total + ' pass'), h('span', { class: 'r' }, h('span', { class: 'rsoft rsm' }, 'checked ' + (ago(v.checked_at) || '—') + (v.by && v.by !== 'auto' ? ' by ' + v.by : v.by === 'auto' ? ' automatically' : '')), run)]),
+    v.checks.map((c) => {
+      const [title, why] = CHECK[c.key], icon = c.status === 'pass' ? ['ok', '✓'] : c.status === 'fail' ? ['bad', '!'] : ['todo', '·'];
+      const det = c.status === 'pass' && c.key !== 'spot' ? null : checkDetail(c);
+      return h('div', { class: 'ck', 'data-check': c.key }, h('span', { class: 'ic ' + icon[0], 'aria-label': c.status }, icon[1]), h('b', null, c.no + ' · ' + title), h('span', { class: 'res' }, c.result), h('span', { class: 'why' },
+        c.key === 'spot' && c.status === 'pass' ? c.total + ' of ' + c.total + ' timelines matched Portal. Last checked ' + when(c.last_checked_at) + '.' : why), det ? h('div', { class: 'det' }, det) : null);
+    }),
+    h('div', { class: 'vfoot' }, 'Passing all five is strong evidence but not proof, because Portal remains the only source of truth.')));
+}
+async function loadVerify(auto) {
+  const st = S.store;
+  try {
+    const v = await ui.api('GET', '/tracker/retrace/verify/' + st);
+    if (st !== S.store) return;
+    S.verify = v;
+  } catch (e) { if (st === S.store) S.verify = { error: "Couldn't load the check: " + e.message }; }
+  drawVerify();
+  if (auto && S.verify && !S.verify.error && !S.verify.checked_at) await runVerify();
+}
+async function runVerify() {
+  if (S.vbusy) return;
+  const st = S.store;
+  S.vbusy = true; drawVerify();
+  try { const v = await ui.api('POST', '/tracker/retrace/verify/' + st + '/run', {}); if (st === S.store) S.verify = v; }
+  catch (e) { if (st === S.store) { ui.toast("Couldn't run the check: " + e.message); if (!S.verify || !S.verify.checks) S.verify = { error: e.message }; } }
+  S.vbusy = false;
+  if (st === S.store) drawVerify();
+}
+async function toggleVerify() {
+  S.vopen = !S.vopen; drawHealth(); drawVerify();
+  if (S.vopen && !(S.verify && S.verify.checked_at)) await loadVerify(true);
+  else if (S.vopen) loadVerify(false);
+}
+async function tickSpot(label, box) {
+  const st = S.store, want = box.checked;
+  try { const v = await ui.api('POST', '/tracker/retrace/verify/' + st + '/tick', { label, matches: want }); if (st === S.store) { S.verify = v; drawVerify(); } }
+  catch (e) { box.checked = !want; ui.toast("Couldn't save the tick: " + e.message); }
+}
+
 // ------------------------------------------------------------------ store: list + right side
 async function switchStore(st) {
   S.store = st; S.item = null; S.po = null; S.data = null; S.label = null; S.results = null; S.q = ''; el.q.value = '';
+  S.vopen = false; S.verify = null; el.verify.hidden = true;
   closeDrawer(); drawHealth();
   await loadStore({});
 }
@@ -327,7 +448,7 @@ function itemRow(x) {
   const h = ui.h;
   return h('button', { class: 'it' + (x.item === S.item && el.po.hidden ? ' on' : ''), type: 'button', 'data-id': x.item, onclick: () => { el.po.hidden = true; el.item.hidden = false; openItem(x.item); } },
     h('b', null, x.name || 'Item ' + x.item), h('span', { class: 'n' }, x.on_hand != null ? num(x.on_hand) + ' on hand' : ''),
-    h('span', { class: 's mono' }, x.item), h('span', { class: 's' }, num(x.moves) + (x.moves === 1 ? ' movement' : ' movements') + ' · last ' + shortWhen(x.last_at)));
+    h('span', { class: 's mono' }, x.item), x.available != null ? h('span', { class: 's' }, num(x.available) + ' available') : null);
 }
 function drawItemList() {
   const h = ui.h;

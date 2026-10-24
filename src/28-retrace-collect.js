@@ -84,11 +84,11 @@ AE.retrace = (() => {
   /*
     One sweep's rows, split into calls under the Worker's caps. need / poNeed / nameNeed / cursors go on the last call
     (the others ask for nothing), so the history queue is claimed once. → { changedItems, need, more, added, written,
-    rejected, skipped, named, unnamed, countNeed, pos: { need, events, received, written } }
+    rejected, skipped, named, unnamed, countNeed, missedItems, pos: { need, events, received, written } }
   */
   async function sweep(store, by, body) {
     const n = Math.max(1, ...Object.keys(LIMIT).map((k) => Math.ceil(((body[k] || []).length) / LIMIT[k])));
-    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, named: 0, unnamed: [], countNeed: [], pos: { need: [], events: 0, received: 0, written: 0 } };
+    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, named: 0, unnamed: [], countNeed: [], missedItems: [], pos: { need: [], events: 0, received: 0, written: 0 } };
     for (let i = 0; i < n; i++) {
       const last = i === n - 1, part = { by };
       for (const k of Object.keys(LIMIT)) { const s = (body[k] || []).slice(i * LIMIT[k], (i + 1) * LIMIT[k]); if (s.length) part[k] = s; }
@@ -100,6 +100,7 @@ AE.retrace = (() => {
       if (last && body.poTotal != null) part.poTotal = body.poTotal;
       const j = await worker(store, 'POST', '/sweep', part);
       out.changedItems.push(...(j.changedItems || []));
+      out.missedItems.push(...(j.missedItems || [])); // handed out once, on whichever call
       for (const k of ['added', 'written', 'rejected', 'skipped', 'named']) out[k] += j[k] || 0;
       if (j.pos) for (const k of ['events', 'received', 'written']) out.pos[k] += j.pos[k] || 0;
       if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; out.unnamed = j.unnamed || []; out.countNeed = j.countNeed || []; }
@@ -331,6 +332,10 @@ AE.retrace = (() => {
       Object.assign(result, { labels: acc.labels.length, docs: acc.docs.length, movements: acc.movements.length, pos: acc.pos.length, names: acc.names.length });
       const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK, countNeed: baseline.frozen ? 0 : COUNT_BUDGET }));
       if (!baseline.frozen) GM_setValue(COUNT_KEY(store), sw.countNeed);
+      // Items the Worker's coverage check found referenced but never read: their label lists, next (a budget a pass, like a changed item's)
+      for (const i of sw.missedItems) todo.add(i);
+      GM_setValue(TODO_KEY(store), [...todo]);
+      result.itemsWaiting = todo.size;
       result.added += sw.added; result.backlogMore = sw.more; result.named += sw.named; result.unnamed = sw.unnamed.length;
       if (sw.pos) result.poEvents = sw.pos.events;
 

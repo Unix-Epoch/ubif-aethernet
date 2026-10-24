@@ -218,10 +218,29 @@ assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/retrace/coverage')
 assert.equal((await call('ol@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 403, 'an Owner from before Retrace needs the page added');
 assert.equal((await call('owner@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 200, 'developers: everything');
 assert.equal((await call('mgr@x.com', 'POST', '/api/tracker/retrace/coverage')).status, 403, 'read only: unknown route');
+// Coverage check (Verify coverage): page 'retrace', the store in the path; run and tick are the only POSTs
+{
+  const v = '/api/tracker/retrace/verify/';
+  assert.equal((await call('mgr@x.com', 'GET', v + '914')).status, 200, 'manager: their store');
+  assert.equal((await call('mgr@x.com', 'GET', v + '326')).status, 403, 'manager: another store');
+  assert.equal((await call('mgr@x.com', 'POST', v + '914/run', {})).status, 409, 'manager: run on their store passes the gate (no frozen baseline here)');
+  assert.equal((await call('mgr@x.com', 'POST', v + '326/run', {})).status, 403, 'manager: run on another store');
+  assert.equal((await call('mgr@x.com', 'POST', v + '326/tick', { label: '1-1', matches: true })).status, 403, 'manager: tick on another store');
+  assert.equal((await call('mgr@x.com', 'POST', v + '914/tick', { label: '180001-0000600001', matches: true })).status, 400, 'manager: tick on their store (not in a sample)');
+  for (const [m, p] of [['GET', '914'], ['POST', '914/run'], ['POST', '914/tick']]) assert.equal((await call('viewer@x.com', m, v + p, m === 'POST' ? {} : undefined)).status, 403, 'no Retrace page: ' + m + ' ' + p);
+  assert.equal((await call('ol@x.com', 'POST', v + '914/run', {})).status, 403, 'an Owner from before Retrace needs the page added');
+  assert.equal((await call('owner@x.com', 'GET', v + '326')).status, 200, 'developers: everything');
+  assert.equal((await call('mgr@x.com', 'GET', v + '914/run')).status, 403, 'run is POST only'); assert.equal((await call('mgr@x.com', 'POST', v + '914', {})).status, 403, 'the result is GET only');
+  assert.equal((await call('mgr@x.com', 'DELETE', v + '914')).status, 403, 'no other methods');
+  assert.ok((await T.prepare("SELECT COUNT(*) AS n FROM access_log WHERE action = 'denied' AND detail LIKE '%retrace/verify%'").first()).n >= 1, 'refusals logged');
+}
 // The Retrace page's script (page 'retrace'), its item list and its store picker
 {
   const r = await call('mgr@x.com', 'GET', '/retrace-ui.js');
   assert.equal(r.status, 200); assert.match(r.text, /export async function draw\(/);
+  assert.match(r.text, /group: 'all', range: 'all',/, 'the item page\'s "Moved in" range starts at Any time');
+  assert.match(r.text, /if \(S\.range !== 'all'\) p\.set\('days'/, 'the default stays out of the serials query');
+  assert.doesNotMatch(r.text, /range: '30'/); assert.match(r.text, /Verify coverage/); assert.match(r.text, /num\(x\.available\) \+ ' available'/, 'the item list shows what is available');
   assert.equal((await call('viewer@x.com', 'GET', '/retrace-ui.js')).status, 403, 'no Retrace page: /retrace-ui.js');
   assert.match((await call('owner@x.com', 'GET', '/')).text, /import\('\/retrace-ui\.js'\)/, 'page.js loads the Retrace page');
   assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/items?store=914')).status, 200);

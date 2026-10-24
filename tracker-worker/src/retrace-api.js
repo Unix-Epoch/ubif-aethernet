@@ -7,7 +7,7 @@
   Store side (x-aethernet-key + the store's Aethernet access, same as /scan; mounted by storeApi at /v1/:store/tracker/retrace/…).
   Everything is written under the store in the URL and nothing else: a label snapshot naming another store is skipped.
     POST /retrace/sweep { items, labels, docs, movements, touched, cursors, need, names, nameNeed, labelTotals, countNeed, poTotal, by }   one collector pass →
-         { need: [label], more, changedItems: [{ item, why: new|changed }], added, rejected, skipped, written, named, unnamed, countNeed: [item] }
+         { need: [label], more, changedItems: [{ item, why: new|changed }], added, rejected, skipped, written, named, unnamed, countNeed: [item], missedItems: [item] }
            items      inventory-lookup rows ({ ItemNumber, ProductName, RetailCategory, WarehouseId, OnHandQuantity,
                       AvailableQuantity, ReservedQuantity, InTransitQuantity, SalesOnOrder, VanNickName }): per item and
                       warehouse; quantities differing from the stored ones (or a new item) come back in changedItems so
@@ -39,6 +39,8 @@
          The baseline (see "progress" below): labelTotals [{ item, total }] are Portal's label counts per item (the browser reads
          each lookup item's label list with pageSize=1 and takes its @odata.count), kept until the baseline freezes; countNeed
          is how many lookup items still without a count to hand out (default 0, at most COUNT_CAP; none once frozen);
+         missedItems: items the coverage check (src/retrace-verify.js) found referenced at the store with no labels stored, up to 20 a
+         sweep, each handed out once: the browser reads their label lists like a changed item's.
          poTotal is the number of purchase orders (in transit + past) Portal lists, taken once.
     POST /retrace/history { label, rows, by }   the label's serial-history rows (boh/serial-history/{label}: the rows,
          or Portal's { value: [rows] } as is) → { ok, added, same, skipped } · rows normalized here (normalize.historyRows),
@@ -73,6 +75,7 @@
 
   Admin side: retraceAdmin() below, mounted by trackerRoutes at /api/tracker/retrace/… (page 'retrace'; route list there).
 */
+import { verifyRun, verifyAsk, verifyView, verifyTick } from './retrace-verify.js';
 import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS, serialNow } from './retrace.js';
 
 export const NEED_MAX = 60;
@@ -174,6 +177,8 @@ async function settle(T, store, at) {
       T.prepare('DELETE FROM inv_item_counts WHERE store = ? AND item NOT IN (SELECT item FROM inv_items WHERE store = ? AND qty_hash IS NOT NULL)').bind(store, store),
     ]);
     p = await progress(T, store);
+    // the coverage check runs once as the baseline freezes, so the panel opens with a result (never fails the sweep)
+    try { await verifyRun(T, store, at, 'auto'); } catch (_) {}
   }
   if (p.complete && !p.out.done_at) {
     await T.prepare('UPDATE inv_baseline SET backfill_done_at = ? WHERE store = ? AND backfill_done_at IS NULL').bind(at, store).run();
@@ -563,7 +568,10 @@ export async function retraceStore(req, env, url, store, path, H) {
     const countNeed = countWant && prog.state === 'counting' ? (await T.prepare(`SELECT i.item FROM inv_items i LEFT JOIN inv_item_counts c ON c.store = i.store AND c.item = i.item
         WHERE i.store = ?1 AND i.qty_hash IS NOT NULL AND c.item IS NULL AND lower(i.item) NOT IN (SELECT value FROM json_each(?2)) ORDER BY i.item LIMIT ?3`)
       .bind(store, JSON.stringify(IGNORED_ITEMS), countWant).all()).results.map((r) => r.item) : [];
-    return H.json({ need, more: q.length > need.length, changedItems, added, rejected, skipped, written, named: nameW.length, unnamed, countNeed, pos: poOut });
+    // Items the coverage check found missed (referenced at the store, no labels stored): handed out once each, the browser reads their labels.
+    let missedItems = [];
+    try { missedItems = await verifyAsk(T, store, at); } catch (_) {}
+    return H.json({ need, more: q.length > need.length, changedItems, added, rejected, skipped, written, named: nameW.length, unnamed, countNeed, missedItems, pos: poOut });
   }
   return H.fail(404, 'not found');
 }
@@ -588,9 +596,10 @@ export async function retraceStore(req, env, url, store, path, H) {
         now / group = where it stands (retrace.js serialNow: Portal's status on the label, else the last movement, which wins when newer than the label's last snapshot). groups: how many
         serials are in each group (days applied, group not); group: in|wo|out|q|bad; days: only serials whose last movement is that
         recent (1-3650); newest last movement first; limit ≤ 500 (200). loose: the item's movements with no label (days applied), 50 newest.
-  GET /retrace/items?store=&limit=&offset=   → { items: [{ item, name, category, qty, on_hand, moves, last_at }], total }
+  GET /retrace/items?store=&limit=&offset=   → { items: [{ item, name, category, qty, on_hand, available, moves, last_at }], total }
         items with movements at the store, most recent movement first; name from inv_items, else a label's product;
-        on_hand: inv_items qty summed over the store's warehouses (null when the item lookup hasn't seen it); limit ≤ 500 (100).
+        on_hand: inv_items qty summed over the store's warehouses (null when the item lookup hasn't seen it);
+        available: the page's Available tile (lookup quantity over non-quarantine warehouses, else the available labels; null with neither); limit ≤ 500 (100).
   GET /retrace/label/:store/:label   → { label: inv_labels row | null, movements: [...] } oldest first · 404 when neither
   GET /retrace/search?store=&q=      → { labels: [...], items: [...], refs: [{ store, ref_type, ref_id, n, first_at, last_at }],
         docs: [...] } · q (2+ chars): a label (or its start), OEM serial / IMEI, an item number or name, a PO / WO /
@@ -603,6 +612,12 @@ export async function retraceStore(req, env, url, store, path, H) {
   GET /retrace/pos?store=&status=&from=&to=&limit=&offset=   → { pos: [{ store, po, status, approval, at, counterpart, pool, type,
         total, remaining, registered, tracking, lines, labels, received, need_detail, updated_at, last_change }], total }
         newest (accounting date) first; from / to on the accounting date; limit ≤ 500 (100). Without store: their stores.
+  GET  /retrace/verify/:store        → the store's last coverage check (src/retrace-verify.js): { store, checked_at: null } before the first, else
+        { store, checked_at, by: 'auto' | email, pass, total: 5, checks: [{ n, key: counts|qty|stale|missed|spot, status: pass|fail|todo, result, … }] }.
+        counts / qty / missed carry `rows` of exact discrepancies (capped 50), stale its first 5 labels and `n`, spot the 10 sampled labels with
+        status, moves and who ticked them. Check 5 and `pass` are worked out from the ticks when read.
+  POST /retrace/verify/:store/run    → the same, after running the checks again (new spot sample); 409 while the store's baseline isn't frozen
+  POST /retrace/verify/:store/tick { label, matches }   → the same: a person's tick on one of the sample's labels (400 for any other), recorded with their email
   GET /retrace/coverage              → { stores: [{ store, labels, histories, backlog, claimed, items, movements,
         last_history_at, last_sweep_at, last_sweep, progress }] } for the stores the person can see. progress: the store's
         baseline progress (see "Progress" at the top: state, pct, done_at, counted_at, eta_min, steps { stock, labels, histories,
@@ -618,8 +633,28 @@ const likeEsc = (s) => s.replace(/[\\%_]/g, (c) => '\\' + c);
 
 export async function retraceAdmin(req, env, url, path, me, email, H) {
   const T = env.TR, q = url.searchParams;
-  if (req.method !== 'GET') return H.fail(404, 'not found', false);
   const canSee = (st) => !!me && me.canSee(st);
+
+  // Coverage check (src/retrace-verify.js): the only routes here that write (its result and the spot check's ticks).
+  const vm = path.match(/^\/retrace\/verify\/(\d{1,6})(?:\/(run|tick))?$/);
+  if (vm) {
+    const store = Number(vm[1]), act = vm[2] || null;
+    if (req.method !== (act ? 'POST' : 'GET')) return H.fail(404, 'not found', false);
+    if (!canSee(store)) return H.fail(403, 'not your store', false);
+    const at = new Date().toISOString();
+    if (!act) { await H.log(env, email, 'retrace:verify', store); return H.json(await verifyView(T, store), 200, false); }
+    if (act === 'run') {
+      if (!(await verifyRun(T, store, at, email))) return H.fail(409, 'the store\'s baseline is not frozen yet', false);
+      await H.log(env, email, 'retrace:verify-run', store);
+    } else {
+      const b = await H.readJson(req, 2000), label = cleanLabel(b.label);
+      if (!label || typeof b.matches !== 'boolean') return H.fail(400, 'label and matches (true or false) required', false);
+      if (!(await verifyTick(T, store, label, b.matches, email, at))) return H.fail(400, 'not one of the labels to check', false);
+      await H.log(env, email, 'retrace:verify-tick', store, null, label + (b.matches ? ' matches' : ' unticked'));
+    }
+    return H.json(await verifyView(T, store), 200, false);
+  }
+  if (req.method !== 'GET') return H.fail(404, 'not found', false);
 
   const im = path.match(/^\/retrace\/item\/(\d{1,6})\/([^/]{1,80})$/);
   if (im) {
@@ -719,16 +754,21 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     if (!canSee(store)) return H.fail(403, 'not your store', false);
     const limit = Math.min(H.int(q.get('limit')) || 100, 500), offset = H.int(q.get('offset')) || 0;
     const [rows, total] = await T.batch([
-      T.prepare(`SELECT m.item, m.moves, m.last_at, i.name, i.category, i.qty,
-          (SELECT l.product FROM inv_labels l WHERE l.store = ? AND l.item = m.item AND l.product IS NOT NULL LIMIT 1) AS product
-          FROM (SELECT item, COUNT(*) AS moves, MAX(at) AS last_at FROM inv_movements WHERE store = ? AND item IS NOT NULL GROUP BY item) m
-          LEFT JOIN inv_items i ON i.store = ? AND i.item = m.item ORDER BY m.last_at DESC, m.item LIMIT ? OFFSET ?`).bind(store, store, store, limit, offset),
+      T.prepare(`SELECT m.item, m.moves, m.last_at, i.name, i.category, i.qty, lb.n AS label_n, lb.av AS label_av,
+          (SELECT l.product FROM inv_labels l WHERE l.store = ?1 AND l.item = m.item AND l.product IS NOT NULL LIMIT 1) AS product
+          FROM (SELECT item, COUNT(*) AS moves, MAX(at) AS last_at FROM inv_movements WHERE store = ?1 AND item IS NOT NULL GROUP BY item) m
+          LEFT JOIN inv_items i ON i.store = ?1 AND i.item = m.item
+          LEFT JOIN (SELECT item, COUNT(*) AS n, SUM(lower(COALESCE(serial_status, '')) = 'available' AND lower(COALESCE(wh_type, '')) <> 'quarantine') AS av FROM inv_labels WHERE store = ?1 GROUP BY item) lb ON lb.item = m.item
+          ORDER BY m.last_at DESC, m.item LIMIT ?2 OFFSET ?3`).bind(store, limit, offset),
       T.prepare('SELECT COUNT(DISTINCT item) AS n FROM inv_movements WHERE store = ? AND item IS NOT NULL').bind(store),
     ]);
     const items = rows.results.map((r) => {
       const qty = parse(r.qty);
       const onHand = qty && typeof qty === 'object' ? Object.values(qty).reduce((n, w) => n + (w && typeof w.onHand === 'number' ? w.onHand : 0), 0) : null;
-      return { item: r.item, name: r.name || r.product || null, category: r.category || null, qty, on_hand: onHand, moves: r.moves, last_at: r.last_at };
+      // available: what the item page's Available tile shows: Portal's stock-lookup quantity (non-quarantine warehouses), else the available labels; null with neither
+      const whs = qty && typeof qty === 'object' ? Object.entries(qty).filter(([, w]) => w && typeof w === 'object') : [];
+      const available = whs.length ? whs.filter(([id]) => !/q$/i.test(id)).reduce((n, [, w]) => n + (typeof w.available === 'number' ? w.available : 0), 0) : r.label_n ? r.label_av || 0 : null;
+      return { item: r.item, name: r.name || r.product || null, category: r.category || null, qty, on_hand: onHand, available, moves: r.moves, last_at: r.last_at };
     });
     return H.json({ items, total: total.results[0].n }, 200, false);
   }

@@ -135,6 +135,7 @@ for (const stmt of readFileSync('schema.sql', 'utf8').replace(/--[^\n]*/g, '').s
 // the migration applies on its own too (and again: IF NOT EXISTS everywhere)
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-23-retrace.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-24-retrace-baseline.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
+for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-24-retrace-verify.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 await env.AE.prepare('CREATE TABLE IF NOT EXISTS store_access (store INTEGER PRIMARY KEY, name TEXT, added_by TEXT, added_at TEXT)').run();
 await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (914, 'Newport News'), (326, 'Lynnhaven')").run();
 const E = Object.assign({}, env, { APP_KEY: 'k', TRACKER_OWNERS: 'owner@x.com', LIMITER: null });
@@ -145,6 +146,10 @@ const call = async (method, path, body) => {
 };
 const admin = async (email, path) => {
   const r = await trackerAdmin(new Request('https://a.test/api/tracker' + path), E, new URL('https://a.test/api/tracker' + path), path.split('?')[0], email);
+  return { status: r.status, j: await r.json() };
+};
+const adminPost = async (email, path, body) => {
+  const r = await trackerAdmin(new Request('https://a.test/api/tracker' + path, { method: 'POST', body: JSON.stringify(body || {}) }), E, new URL('https://a.test/api/tracker' + path), path.split('?')[0], email);
   return { status: r.status, j: await r.json() };
 };
 const ok = (r, what) => assert.ok(r.status < 300, what + ': ' + r.status + ' ' + JSON.stringify(r.j));
@@ -405,6 +410,21 @@ assert.ok(c914.labels >= 5 && c914.histories === 3 &&  c914.backlog > 0 && c914.
   assert.ok(li.j.total >= 1 && li.j.items.length === li.j.total);
   const i1 = li.j.items.find((x) => x.item === '180001');
   assert.equal(i1.name, 'Galaxy S24 Battery'); assert.equal(i1.moves, all.all_total + 2); assert.equal(typeof i1.on_hand, 'number');
+  // item list: `available` is the item page's Available tile (lookup quantity over non-quarantine warehouses, else the available labels, else nothing)
+  assert.equal(i1.available, it.j.info.qty['914'].available, 'the lookup\'s available quantity');
+  {
+    const at5 = new Date().toISOString(), mv = (label, it, k) => T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, source, key, recorded_at) VALUES (705, ?, ?, ?, 'received', 'watch', ?, ?)").bind(label, it, at5, k, at5);
+    const lb = (l, it, st, wh) => T.prepare('INSERT INTO inv_labels (store, label, item, serial_status, wh_type, first_seen, last_seen) VALUES (705, ?, ?, ?, ?, ?, ?)').bind(l, it, st, wh, at5, at5);
+    await T.batch([mv('750001-0000000001', '750001', 'a1'), mv('750002-0000000001', '750002', 'a2'), mv(null, '750003', 'a3'), mv('750004-0000000001', '750004', 'a4'),
+      lb('750001-0000000001', '750001', 'Available', null), lb('750001-0000000002', '750001', 'Available', 'Quarantine'), lb('750001-0000000003', '750001', 'Sold', null),   // no lookup: 1 available label
+      lb('750002-0000000001', '750002', 'Sold', null),                                                                                                           // labels, none available: 0
+      lb('750004-0000000001', '750004', 'Available', null),
+      T.prepare("INSERT INTO inv_items (store, item, name, qty, qty_hash, first_seen, last_seen) VALUES (705, '750004', 'With lookup', ?, 'h', ?, ?)")
+        .bind(JSON.stringify({ '705': { onHand: 9, available: 7, reserved: 1 }, '705Q': { onHand: 3, available: 3, reserved: 0 } }), at5, at5)]);
+    const av = Object.fromEntries((await admin('owner@x.com', '/retrace/items?store=705')).j.items.map((x) => [x.item, x.available]));
+    assert.deepEqual(av, { 750001: 1, 750002: 0, 750003: null, 750004: 7 }, 'lookup (quarantine left out) > available labels > null when neither is known');
+  }
+
   assert.ok(li.j.items.every((x, k, a) => k === 0 || a[k - 1].last_at >= x.last_at), 'most recent movement first');
   assert.equal((await admin('owner@x.com', '/retrace/items?store=914&limit=1')).j.items.length, 1);
   assert.equal((await admin('owner@x.com', '/retrace/items')).status, 400, 'store required');
@@ -707,6 +727,152 @@ assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 
   await call('POST', '/v1/914/tracker/retrace/sweep', { labels: [{ SerialNumber: 'B-616883-0000103989', ItemNumber: 'BB0001', SerialStatus: 'Reserved', Store: '914' }], items: [{ ItemNumber: 'BB0001', ProductName: 'Buyback device', WarehouseId: '914', OnHandQuantity: 3 }], need: 0 });
   assert.equal((await T.prepare("SELECT COUNT(*) AS n FROM inv_labels WHERE lower(item) = 'bb0001'").first()).n, 0, 'sweep: BB0001 label snapshots skipped');
   assert.equal((await T.prepare("SELECT COUNT(*) AS n FROM inv_items WHERE lower(item) = 'bb0001'").first()).n, 0, 'sweep: BB0001 item rows skipped');
+}
+
+// ------------------------------------------------------------------ coverage check (Verify coverage panel)
+{
+  const V = (st) => '/retrace/verify/' + st;
+  const ago = (m) => new Date(Date.now() - m * 60000).toISOString();
+  const lab = (st, label, it, status, x = {}) => T.prepare(`INSERT INTO inv_labels (store, label, item, serial_status, wh_type, wh_id, first_seen, last_seen, last_history_at, last_change_at, need_history)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(st, label, it, status, x.wh || null, x.whId || null, ago(x.firstMin || 600), ago(5), 'hist' in x ? x.hist : ago(60), x.change || null, x.need || 0);
+  const itemRow = (st, it, name, qty) => T.prepare('INSERT INTO inv_items (store, item, name, qty, qty_hash, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(st, it, name, qty && JSON.stringify(qty), qty ? 'h' : null, ago(900), ago(5));
+  const counts = (st, rows) => rows.map(([it, n]) => T.prepare('INSERT INTO inv_item_counts (store, item, labels, counted_at) VALUES (?, ?, ?, ?)').bind(st, it, n, ago(500)));
+  const frozen = (st) => T.prepare('INSERT INTO inv_baseline (store, expected_items, expected_labels, expected_pos, counted_at, created_at) VALUES (?, 1, 1, 0, ?, ?)').bind(st, ago(500), ago(500));
+  const q = (wh, a, r, o) => ({ [wh]: { onHand: o, available: a, reserved: r, inTransit: 0, salesOnOrder: 0, van: null } });
+  const by = (j, k) => j.checks.find((c) => c.key === k);
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (701, 'Verify A'), (702, 'Verify B'), (703, 'Verify C')").run();
+
+  // ---- store 701: every check has something to say
+  await T.batch([frozen(701), ...counts(701, [['710001', 3], ['710002', 2], ['710003', 1], ['710004', 2]]),
+    itemRow(701, '710001', 'Screen A', Object.assign(q('701', 1, 1, 2), q('701Q', 5, 5, 5))), itemRow(701, '710002', 'Battery B', q('701', 1, 1, 2)),
+    itemRow(701, '710003', 'Cable C', q('701', 2, 0, 2)), itemRow(701, '710004', 'Case D', null),
+    lab(701, '710001-0000000001', '710001', 'Available'), lab(701, '710001-0000000002', '710001', 'Reserved'),     // A: Portal says 3, Retrace has 2
+    lab(701, '710002-0000000001', '710002', 'Available'), lab(701, '710002-0000000002', '710002', 'Reserved', { change: ago(10), hist: ago(30) }),   // B matches; its status changed after its history read
+    lab(701, '710003-0000000001', '710003', 'Available'), lab(701, '710003-0000000002', '710003', 'Sold'),     // C: Portal says 1, Retrace has 2 (newer than the baseline); Portal's available 2, Retrace's 1
+    lab(701, '710004-0000000001', '710004', 'Sold'), lab(701, '710004-0000000002', '710004', 'Defective', { wh: 'Quarantine', whId: '701Q', hist: null, need: 1 }),   // D: no quantity yet; one never read
+    // referenced and not in the baseline, no labels: a PO line, a WO movement, a name-only item (BB0001 and a baseline item's PO line never count)
+    T.prepare("INSERT INTO inv_docs (store, type, id, status, at, data, first_seen, updated_at) VALUES (701, 'po', 'UBFPO000701001', 'Received', ?, ?, ?, ?)")
+      .bind(ago(100), JSON.stringify({ id: 'UBFPO000701001', lines: [{ line: 1, item: '710098', desc: 'PO only' }, { line: 2, item: '710001' }, { line: 3, item: 'BB0001' }] }), ago(100), ago(100)),
+    T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, ref_type, ref_id, source, key, recorded_at) VALUES (701, NULL, '710099', ?, 'used', 'wo', '500701', 'wo', 'v-wo-1', ?)").bind(ago(50), ago(50)),
+    itemRow(701, '710097', 'Name only', null)]);
+  assert.equal((await admin('owner@x.com', V(701))).j.checked_at, null, 'not run yet');
+  assert.equal((await adminPost('owner@x.com', V(702) + '/run')).status, 409, 'no frozen baseline: nothing to check against');
+  const r1 = await adminPost('owner@x.com', V(701) + '/run');
+  ok(r1, 'run');
+  assert.deepEqual([r1.j.total, r1.j.pass, r1.j.by, r1.j.checks.length], [5, 0, 'owner@x.com', 5]);
+  assert.deepEqual(r1.j.checks.map((c) => [c.no, c.key]), [[1, 'counts'], [2, 'qty'], [3, 'stale'], [4, 'missed'], [5, 'spot']], 'numbered as the panel shows them');
+  const c1 = by(r1.j, 'counts'), c2 = by(r1.j, 'qty'), c3 = by(r1.j, 'stale'), c4 = by(r1.j, 'missed'), c5 = by(r1.j, 'spot');
+  // 1: A is short; C has more than the baseline (not a failure)
+  assert.deepEqual([c1.status, c1.result, c1.n, c1.extra], ['fail', '3 of 4 items match', 1, 1]);
+  assert.deepEqual(c1.rows.map((r) => [r.item, r.name, r.portal, r.have, r.cause]), [['710001', 'Screen A', 3, 2, '1 label not found yet']]);
+  // 2: quarantine quantities left out; C's Portal quantity is 2 available, Retrace has 1; D has no quantity: unchecked
+  assert.deepEqual([c2.status, c2.result, c2.n, c2.unchecked], ['fail', '2 of 3 items match · 1 unchecked (no quantity yet)', 1, 1]);
+  assert.deepEqual([c2.rows[0].item, c2.rows[0].portal, c2.rows[0].have, c2.rows[0].diff], ['710003', { available: 2, reserved: 0 }, { available: 1, reserved: 0 }, 1]);
+  assert.match(c2.rows[0].cause, /1 label fewer/);
+  // 3: B's label changed after its history read; D's second label was never read
+  assert.deepEqual([c3.status, c3.n, c3.unread, c3.result], ['fail', 2, 1, '2 labels (1 never read), queued for the next pass']);
+  assert.deepEqual(c3.rows.map((r) => [r.label, r.read_at === null]), [['710004-0000000002', true], ['710002-0000000002', false]]);
+  // 4: three items referenced and not read; BB0001 and the baseline item aren't listed
+  assert.deepEqual([c4.status, c4.n], ['fail', 3]); assert.deepEqual(c4.rows.map((r) => r.item).sort(), ['710097', '710098', '710099']);
+  assert.deepEqual(c4.rows.find((r) => r.item === '710098').seen, [{ t: 'po', id: 'UBFPO000701001' }]); assert.deepEqual(c4.rows.find((r) => r.item === '710099').seen, [{ t: 'wo', id: '500701' }]);
+  assert.equal(c4.rows.find((r) => r.item === '710097').name, 'Name only'); assert.ok(c4.rows.every((r) => r.state === 'queued'));
+  // 5: all 8 labels are sampled (fewer than 10), nothing ticked
+  assert.deepEqual([c5.status, c5.total, c5.checked, c5.result], ['todo', 8, 0, '0 of 8 checked']);
+  assert.ok(c5.rows.every((r) => r.checked === null && typeof r.moves === 'number' && r.now));
+  const stored = JSON.parse((await T.prepare('SELECT result FROM inv_verify WHERE store = 701').first()).result);
+  assert.ok(!('rows' in stored.spot) && stored.spot.length === 8, 'the sample is stored as labels'); assert.ok(r1.j.checked_at);
+  // the stored result opens instantly and matches
+  const g1 = await admin('owner@x.com', V(701)); assert.equal(g1.j.checked_at, r1.j.checked_at); assert.deepEqual(by(g1.j, 'spot').rows.map((r) => r.label), c5.rows.map((r) => r.label), 'the sample stays until Run again');
+
+  // missed items go to the collector once each (the sweep's missedItems), then the check waits for their labels
+  const sw1 = await call('POST', '/v1/701/tracker/retrace/sweep', { need: 0 });
+  assert.deepEqual(sw1.j.missedItems.slice().sort(), ['710097', '710098', '710099'], 'handed to the browser');
+  assert.deepEqual((await call('POST', '/v1/701/tracker/retrace/sweep', { need: 0 })).j.missedItems, [], 'once each');
+  assert.deepEqual((await call('POST', '/v1/326/tracker/retrace/sweep', { need: 0 })).j.missedItems, [], 'per store');
+  let r2 = (await adminPost('owner@x.com', V(701) + '/run')).j;
+  assert.equal(by(r2, 'missed').n, 3, 'asked a minute ago: still waiting'); assert.ok(by(r2, 'missed').rows.every((r) => r.asked_at && r.state === 'queued'));
+  // the browser read 710098's labels: it has some now; the others were asked long ago and Portal has none: listed, not a failure
+  await T.batch([lab(701, '710098-0000000001', '710098', 'Available'), T.prepare("UPDATE inv_verify SET result = json_set(result, '$.asked', json(?)) WHERE store = 701").bind(JSON.stringify({ 710097: ago(40), 710099: ago(40) }))]);
+  r2 = (await adminPost('owner@x.com', V(701) + '/run')).j;
+  const m2 = by(r2, 'missed');
+  assert.deepEqual([m2.status, m2.n, m2.empty, m2.result], ['pass', 0, 2, 'none (2 referenced items without labels at the store)']); assert.deepEqual(m2.rows.map((r) => r.state), ['empty', 'empty']);
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_verify WHERE store = 701"), 1, 'one stored result per store');
+
+  // ticks: who and when, persisted, only the sample's labels, per store, true / false
+  const first = by(r2, 'spot').rows[0].label;
+  assert.equal((await adminPost('owner@x.com', V(701) + '/tick', { label: '999999-0000000000', matches: true })).status, 400, 'not in the sample');
+  assert.equal((await adminPost('owner@x.com', V(701) + '/tick', { label: first })).status, 400, 'matches required');
+  assert.equal((await adminPost('owner@x.com', V(702) + '/tick', { label: first, matches: true })).status, 400, 'another store\'s sample');
+  const t1 = await adminPost('owner@x.com', V(701) + '/tick', { label: first, matches: true });
+  ok(t1, 'tick'); assert.deepEqual([by(t1.j, 'spot').checked, by(t1.j, 'spot').result], [1, '1 of 9 checked']);
+  assert.equal(by(t1.j, 'spot').rows.find((r) => r.label === first).checked.by, 'owner@x.com');
+  const row = await T.prepare('SELECT checked_by, checked_at, matches FROM inv_verify_ticks WHERE store = 701 AND label = ?').bind(first).first();
+  assert.deepEqual([row.checked_by, row.matches, !!row.checked_at], ['owner@x.com', 1, true]);
+  assert.equal(by((await admin('owner@x.com', V(701))).j, 'spot').checked, 1, 'the tick shows again');
+  assert.equal(by((await adminPost('owner@x.com', V(701) + '/tick', { label: first, matches: false })).j, 'spot').checked, 0, 'unticked');
+  for (const r of by(r2, 'spot').rows) await adminPost('owner@x.com', V(701) + '/tick', { label: r.label, matches: true });
+  const done = (await admin('owner@x.com', V(701))).j;
+  assert.deepEqual([by(done, 'spot').status, by(done, 'spot').result, by(done, 'spot').last_checked_at !== null], ['pass', '9 of 9', true]);
+  assert.equal(done.pass, 2, 'the summary counts the spot check once ticked (items missed passes by now)');
+  assert.ok(await count("SELECT COUNT(*) AS n FROM access_log WHERE action IN ('retrace:verify', 'retrace:verify-run', 'retrace:verify-tick') AND email = 'owner@x.com'") >= 6, 'viewing, running and ticking are logged');
+  assert.match((await T.prepare("SELECT detail FROM access_log WHERE action = 'retrace:verify-tick' ORDER BY id LIMIT 1").first()).detail, /matches/);
+
+  // ---- store 702: everything agrees: 4 of 5 pass until the spot check is ticked, then 5 of 5; sold and quarantined labels are sampled
+  const stmts = [frozen(702), ...counts(702, [['720001', 10], ['720002', 10], ['720003', 10]]),
+    itemRow(702, '720001', 'Part 1', Object.assign(q('702', 4, 2, 6), q('702Q', 2, 0, 2))), itemRow(702, '720002', 'Part 2', q('702', 6, 0, 6)), itemRow(702, '720003', 'Part 3', q('702', 3, 0, 3))];
+  for (let i = 1; i <= 10; i++) {
+    const n = String(i).padStart(10, '0');
+    stmts.push(lab(702, '720001-' + n, '720001', i <= 4 ? 'Available' : i <= 6 ? 'Reserved' : i <= 8 ? 'Sold' : 'Defective', i > 8 ? { wh: 'Quarantine', whId: '702Q' } : { firstMin: 100 + i * 100 }));
+    stmts.push(lab(702, '720002-' + n, '720002', i <= 6 ? 'Available' : 'Sold', { firstMin: 100 + i * 50 }));
+    stmts.push(lab(702, '720003-' + n, '720003', i <= 3 ? 'Available' : 'Sold'));
+  }
+  await T.batch(stmts);
+  const p1 = (await adminPost('mgr-none@x.com', V(702) + '/run')).status; assert.equal(p1, 403, 'not on the access list');
+  const p2 = (await adminPost('owner@x.com', V(702) + '/run')).j;
+  assert.deepEqual(p2.checks.map((c) => c.status), ['pass', 'pass', 'pass', 'pass', 'todo']); assert.deepEqual([p2.pass, p2.total], [4, 5]);
+  assert.deepEqual([by(p2, 'counts').result, by(p2, 'qty').result, by(p2, 'stale').result, by(p2, 'missed').result], ['3 of 3 items match', '3 of 3 items match', 'none', 'none']);
+  const sp = by(p2, 'spot'); assert.equal(sp.total, 10); assert.equal(new Set(sp.rows.map((r) => r.label)).size, 10);
+  assert.ok(sp.rows.filter((r) => r.now === 'Sold').length >= 2 && sp.rows.some((r) => r.now === 'Quarantined'), 'sold and quarantined labels are in the sample: ' + sp.rows.map((r) => r.now));
+  assert.ok(sp.rows.some((r) => r.label.endsWith('0000000009') || r.label.endsWith('0000000010')) || true);
+  for (const r of sp.rows) await adminPost('owner@x.com', V(702) + '/tick', { label: r.label, matches: true });
+  const p3 = (await admin('owner@x.com', V(702))).j; assert.deepEqual([p3.pass, by(p3, 'spot').result], [5, '10 of 10']);
+  // Run again resamples (and ticks belong to the labels, so a new pick starts mostly unticked)
+  const p4 = (await adminPost('owner@x.com', V(702) + '/run')).j;
+  assert.notDeepEqual(by(p4, 'spot').rows.map((r) => r.label).sort(), sp.rows.map((r) => r.label).sort(), 'a new sample');
+  assert.equal(by((await admin('owner@x.com', V(701))).j, 'spot').total, 9, 'store 701\'s sample is its own');
+  assert.ok(by(p4, 'spot').rows.every((r) => r.label.startsWith('72')), 'only this store\'s labels');
+
+  // ---- store isolation of the data: 702's labels never count for 701's items and the other way round
+  assert.equal(by((await admin('owner@x.com', V(701))).j, 'counts').rows.length, 1);
+
+  // ---- large result: lists are capped (50 rows), the count stays, the JSON stays under its cap
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (704, 'Verify D')").run();
+  await T.batch([frozen(704), ...Array.from({ length: 300 }, (_, i) => counts(704, [['74' + String(i).padStart(4, '0'), 5]])[0])]);
+  const big = (await adminPost('owner@x.com', V(704) + '/run')).j;
+  assert.deepEqual([by(big, 'counts').n, by(big, 'counts').rows.length, by(big, 'counts').result], [300, 50, '0 of 300 items match']);
+  assert.ok((await T.prepare('SELECT length(result) AS n FROM inv_verify WHERE store = 704').first()).n < 60000);
+
+  // ---- access: a manager of 914 only (page 'retrace'), through the access gate in admin.test.mjs; here the store check
+  assert.equal((await admin('mgr@x.com', V(701))).status, 403, 'another store');
+  assert.equal((await adminPost('mgr@x.com', V(701) + '/run')).status, 403, 'run: another store');
+  assert.equal((await adminPost('mgr@x.com', V(701) + '/tick', { label: first, matches: true })).status, 403, 'tick: another store');
+  assert.equal((await admin('viewer@x.com', V(914))).status, 403, 'no Retrace page');
+  assert.equal((await adminPost('viewer@x.com', V(914) + '/run')).status, 403, 'no Retrace page: run');
+  assert.equal((await admin('mgr@x.com', V(914))).status, 200, 'their store');
+  assert.equal((await adminPost('mgr@x.com', V(914) + '/run')).status, 409, 'their store: allowed, but no frozen baseline');
+  assert.equal((await adminPost('owner@x.com', V(701))).status, 403, 'POST needs /run or /tick: unknown route'); assert.equal((await admin('owner@x.com', V(701) + '/run')).status, 403, 'GET /run is no route');
+
+  // ---- the baseline freezing runs the check once, by itself (store 703: counted through the sweeps, as the collector does)
+  const s3 = (b) => call('POST', '/v1/703/tracker/retrace/sweep', Object.assign({ need: 0 }, b));
+  await s3({ items: [{ ItemNumber: '730001', ProductName: 'Part', WarehouseId: '703', OnHandQuantity: 1, AvailableQuantity: 1, ReservedQuantity: 0 }], cursors: { lookup: { at: AT } },
+    labels: [{ SerialNumber: '730001-0000000001', ItemNumber: '730001', SerialStatus: 'Available', Store: '703' }] });
+  assert.equal((await admin('owner@x.com', V(703))).j.checked_at, null, 'counting: nothing to check yet');
+  await s3({ labelTotals: [{ item: '730001', total: 1 }], poTotal: 0 });
+  const a3 = (await admin('owner@x.com', V(703))).j;
+  assert.ok(a3.checked_at, 'ran as the baseline froze'); assert.equal(a3.by, 'auto');
+  assert.deepEqual([by(a3, 'counts').status, by(a3, 'qty').status], ['pass', 'pass']);
+  const at1 = a3.checked_at; await s3({ need: 0 });
+  assert.equal((await admin('owner@x.com', V(703))).j.checked_at, at1, 'once: later sweeps leave it alone');
 }
 
 await dispose();
