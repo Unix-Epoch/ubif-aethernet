@@ -50,7 +50,7 @@
   The sandbox (AE_SANDBOX) never calls the Worker: the same calls go to sandbox/api.py's stand-in (/api/sandbox-retrace).
 */
 AE.retrace = (() => {
-  if (!AE_ON_PORTAL) return { run: async () => null, last: () => null, flush: async () => 0 };
+  if (!AE_ON_PORTAL) return { run: async () => null, last: () => null, state: () => null, flush: async () => 0 };
   const R = (() => { /*__RETRACE__*/ })();
   const PASS_KEY = 'ae_retrace_pass_at', LAST_KEY = 'ae_retrace_last', QUEUE_KEY = 'ae_retrace_watch_q';
   const STOCK_KEY = (s) => 'ae_retrace_stock_' + s, TODO_KEY = (s) => 'ae_retrace_todo_' + s, SO_KEY = (s) => 'ae_retrace_so_' + s, NAMED_KEY = (s) => 'ae_retrace_named_' + s;
