@@ -26,10 +26,7 @@ AE.tracker = (() => {
 
   async function call(method, path, body) {
     if (method !== 'GET') await AE.assertSameStore(); // never upload under this page's store once Portal has switched
-    const res = await fetch(API + path, { method, credentials: 'omit', headers: { 'content-type': 'application/json', 'x-aethernet-key': KEY }, body: body ? JSON.stringify(body) : undefined });
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(j.error || 'HTTP ' + res.status), { status: res.status });
-    return j;
+    return AE.workerCall(method, API + path, { credentials: 'omit', headers: { 'content-type': 'application/json', 'x-aethernet-key': KEY }, body: body ? JSON.stringify(body) : undefined });
   }
 
   // The store's public key: from the Worker, or made here (needs the master public key).

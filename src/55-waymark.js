@@ -77,14 +77,11 @@ AE.waymark = (() => {
     if (!configured()) throw new Error("Waymark isn't set up yet");
     const p = await me();
     if (method !== 'GET') await AE.assertSameStore(); // never write under this page's store once Portal has switched
-    const res = await fetch(API + '/v1/' + p.storeId + path, {
-      method, credentials: 'omit',
+    return AE.workerCall(method, API + '/v1/' + p.storeId + path, {
+      credentials: 'omit',
       headers: { 'content-type': 'application/json', 'x-aethernet-key': KEY },
       body: body ? JSON.stringify(Object.assign({ by: p.name, byId: p.userId }, body)) : undefined,
     });
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
-    return j;
   }
 
   // { list: [{name, color}], tags: { [woId]: [{tag, by, at}] } }, cached for a minute.

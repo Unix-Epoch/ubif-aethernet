@@ -91,18 +91,189 @@ const AE = (() => {
 
   // ---------------------------------------------------------------- API
   class Stopped extends Error {}
+  /*
+    Every failed call to Portal or to an Aethernet Worker throws an ApiError (the message text is what the shards'
+    checks match: "→ HTTP 504", "session expired", "returned the app page", "timed out"):
+      status          the HTTP status, 0 when no answer came (timeout, network)
+      path / method   what was asked
+      body            the first 200 characters of the answer
+      sessionExpired  true only for a 401 (Portal's login ended); a 403 keeps the same message but is a permission error
+      notJson         a 2xx answer that wasn't JSON (a proxy's page, an error text)
+      timedOut        no answer within API_TIMEOUT_MS
+  */
+  class ApiError extends Error {
+    constructor(message, fields) {
+      super(message);
+      this.name = 'ApiError';
+      Object.assign(this, { status: 0, path: '', method: '', body: '', sessionExpired: false, notJson: false, timedOut: false }, fields);
+    }
+  }
+  // A response that is not the shape the caller needs: what it was asked, what was missing.
+  class BadShape extends Error {
+    constructor(label, missing, got) {
+      super((label || 'Portal') + ' answered in an unexpected shape' + (missing ? ' (' + missing + ')' : ''));
+      this.name = 'BadShape';
+      this.label = label || ''; this.missing = missing || ''; this.got = got || '';
+    }
+  }
+  const API_TIMEOUT_MS = 30000;
+  // A fetch that gives up after `ms` (an AbortController): { res, text }; throws ApiError(status 0) on a timeout or a network failure.
+  async function timedFetch(method, url, init, ms = API_TIMEOUT_MS) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), ms);
+    try {
+      const res = await fetch(url, Object.assign({}, init, { method, signal: ctl.signal }));
+      return { res, text: await res.text() };
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      if (ctl.signal.aborted) throw new ApiError(method + ' ' + url + ' timed out after ' + Math.round(ms / 1000) + ' s', { status: 0, path: url, method, timedOut: true });
+      throw new ApiError((e && e.message) || 'network error', { status: 0, path: url, method, network: true });
+    } finally { clearTimeout(timer); }
+  }
+  /*
+    Calls to Aethernet's own Workers (Waymark, tracker, feedback, access check): the same fetch with a timeout, the
+    JSON answer, and the same ApiError on a bad status (message = the Worker's own `error` text, else "HTTP n").
+    Not counted in AE.health (that is Portal's).
+  */
+  async function workerCall(method, url, init, ms) {
+    const { res, text } = await timedFetch(method, url, init, ms);
+    let j; try { j = text ? JSON.parse(text) : {}; } catch (_) { j = {}; }
+    if (!res.ok) throw new ApiError((j && j.error) || 'HTTP ' + res.status, { status: res.status, path: url, method, body: text.slice(0, 200), sessionExpired: false });
+    return j;
+  }
+  /*
+    Portal. A GET whose 2xx answer isn't JSON is an error (notJson). A write's isn't: the write has happened, and Portal's
+    answers to writes aren't known to always be JSON, so its text comes back as it always did. { raw: true } = the caller wants the text.
+  */
   async function api(method, path, body, opts = {}) {
     if (opts.shouldStop && opts.shouldStop()) throw new Stopped();
-    const init = { method, credentials: 'include', headers: { accept: 'application/json' } };
+    const init = { credentials: 'include', headers: { accept: 'application/json' } };
     if (body !== undefined) { init.headers['content-type'] = 'application/json'; init.body = JSON.stringify(body); }
-    const res = await fetch(path, init);
-    const text = await res.text();
-    if (res.status === 401 || res.status === 403) throw new Error('Your Portal session expired. Log in again.');
-    if (!res.ok) throw new Error(method + ' ' + path + ' → HTTP ' + res.status + ': ' + text.slice(0, 200));
-    if (/^\s*<!doctype html/i.test(text)) throw new Error(method + ' ' + path + ' returned the app page, not data (wrong route?)');
-    try { return text ? JSON.parse(text) : null; } catch (_) { return text; }
+    let res, text;
+    try { ({ res, text } = await timedFetch(method, path, init, opts.timeoutMs)); }
+    catch (e) { if (e instanceof ApiError) health.fail('network', e); throw e; }
+    const base = { status: res.status, path, method, body: text.slice(0, 200) };
+    if (res.status === 401 || res.status === 403) throw new ApiError('Your Portal session expired. Log in again.', Object.assign(base, { sessionExpired: res.status === 401 }));
+    if (!res.ok) {
+      const e = new ApiError(method + ' ' + path + ' → HTTP ' + res.status + ': ' + text.slice(0, 200), base);
+      if (res.status >= 500 || res.status === 429) health.fail('http', e);
+      throw e;
+    }
+    if (/^\s*<!doctype html/i.test(text)) {
+      const e = new ApiError(method + ' ' + path + ' returned the app page, not data (wrong route?)', Object.assign(base, { notJson: true }));
+      health.fail('notjson', e);
+      throw e;
+    }
+    let j;
+    try { j = text ? JSON.parse(text) : null; }
+    catch (_) {
+      if (opts.raw || method !== 'GET') { health.ok(); return text; }
+      const e = new ApiError(method + ' ' + path + ' answered with text, not JSON: ' + text.slice(0, 200), Object.assign(base, { notJson: true }));
+      health.fail('notjson', e);
+      throw e;
+    }
+    health.ok();
+    return j;
   }
   const unwrap = (j) => (j && j.data && !Array.isArray(j.data) ? j.data : j);
+
+  /*
+    Shape guards, only where the shape is proven (a captured answer, or code that reads it successfully). A response that
+    isn't what was asked for throws a BadShape (it counts as a failure for AE.health), instead of reading as "empty".
+      AE.shape.obj(j, ['key', …], label)   an object (not an array) holding those keys; returns j
+      AE.shape.list(j, 'key' | ['k1','k2'], label)   the array at the first of those keys; j itself when it is an array
+      { lenient: true } (third/last argument, or { label, lenient }) → [] / the object as-is instead of throwing, for callers that want "empty if absent"
+      AE.shape.workorder(j)   GET /api/workorder/{id}: { workorder: { workorderStatusId: number, … } } (the work order, unwrapped)
+  */
+  const shape = (() => {
+    const opt = (x) => (x && typeof x === 'object' ? x : { label: x });
+    const bad = (label, missing, j) => {
+      const e = new BadShape(label, missing, Array.isArray(j) ? 'array' : j === null ? 'null' : typeof j === 'object' ? 'object with ' + Object.keys(j).slice(0, 8).join(', ') : typeof j);
+      health.fail('shape', e);
+      return e;
+    };
+    const isObj = (j) => !!j && typeof j === 'object' && !Array.isArray(j);
+    function obj(j, keys, o) {
+      o = opt(o);
+      const missing = isObj(j) ? (keys || []).filter((k) => !(k in j)) : ['an object'];
+      if (!missing.length) return j;
+      if (o.lenient) return isObj(j) ? j : {};
+      throw bad(o.label, 'missing ' + missing.join(', '), j);
+    }
+    function list(j, keys, o) {
+      o = opt(o);
+      if (Array.isArray(j)) return j;
+      for (const k of [].concat(keys || [])) if (isObj(j) && Array.isArray(j[k])) return j[k];
+      if (o.lenient) return [];
+      throw bad(o.label, 'no list at ' + [].concat(keys || []).join(' / '), j);
+    }
+    // The work order of GET /api/workorder/{id}. `j.workorder` is what the tracker, Assize and every shard read; the older fallback
+    // (a { data } wrapper, AE.unwrap) is kept. Valid = an object whose workorderStatusId is a number (Decipher's fromWo checks the device fields the same way).
+    function workorder(j, label) {
+      const w = isObj(j) && isObj(j.workorder) ? j.workorder : unwrap(j);
+      if (isObj(w) && w.workorderStatusId != null && w.workorderStatusId !== '' && Number.isFinite(Number(w.workorderStatusId))) return w;
+      throw bad(label || 'work order', 'no work order with a numeric workorderStatusId', j);
+    }
+    return { obj, list, workorder, isObj };
+  })();
+
+  /*
+    Portal's health: a circuit breaker fed by AE.api. A 5xx, 429, timeout, network failure, non-JSON answer or BadShape is a
+    failure; a valid answer is a success; other 4xx count for nothing. After 3 failures in a row Portal is "down" for a
+    backoff (1, 2, 5, 10 min, then 10) and then ONE probe is let through: success clears it, failure waits the next step.
+      AE.health.down()     for the top of a background loop (scan, tick, refresh): true = skip quietly. Once the backoff is over the first
+                           caller gets false (it is the probe: it must call Portal), the rest keep getting true until that call has answered.
+      AE.health.tripped()  inside such a loop: true when Portal is down and no probe is out, so a long loop stops piling on.
+      AE.health.state()    a snapshot for the dev tools
+      AE.on('portal-health', ({ down }) => …)   fires when an outage begins and when it ends
+      AE.health.hook.outageStart(info)   called once as an outage begins ({ at, failures, kind, message, status, path }): the place to
+                           hang automatic reporting later (nothing is sent today); assign a function to it.
+    Interactive actions (a click that calls Portal) never ask: they are not blocked, and their answers feed the count.
+  */
+  const health = (() => {
+    const STEPS = [60000, 120000, 300000, 600000], FAILS = 3, PROBE_MAX_MS = 60000;
+    const s = { fails: 0, prev: 0, last: 'ok', downSince: 0, level: 0, nextProbe: 0, probing: false, probeAt: 0, outages: 0, lastError: null };
+    const isDown = () => s.downSince > 0;
+    const set = (down, info) => {
+      if (down) {
+        s.downSince = Date.now(); s.outages++;
+        try { hook.outageStart(Object.assign({ at: new Date(s.downSince).toISOString(), failures: s.fails }, info)); } catch (_) {}
+        if (AE_ON_PORTAL) { try { toast('Portal is slow or down', 'Aethernet is pausing its background checks and will retry on its own.', 'err', 10000); } catch (_) {} }
+      } else {
+        s.downSince = 0; s.level = 0; s.nextProbe = 0; s.probing = false;
+        if (AE_ON_PORTAL) { try { toast('Portal is back', 'Aethernet is resuming its background checks.', 'ok', 6000); } catch (_) {} }
+      }
+      try { emit('portal-health', { down }); } catch (_) {}
+    };
+    const hook = { outageStart: () => {} };
+    function ok() {
+      s.prev = s.fails; s.fails = 0; s.last = 'ok';
+      if (isDown()) set(false);
+    }
+    function fail(kind, e) {
+      // A BadShape follows the api call that returned the answer, which counted as a success: take that success back.
+      s.fails = (kind === 'shape' && s.last === 'ok' ? s.prev : s.fails) + 1; s.last = 'fail';
+      s.lastError = { at: new Date().toISOString(), kind, status: (e && e.status) || 0, path: (e && e.path) || (e && e.label) || '', message: String((e && e.message) || e).slice(0, 200) };
+      if (isDown()) { // a failed probe: wait the next step
+        if (s.probing) { s.probing = false; s.level = Math.min(s.level + 1, STEPS.length - 1); s.nextProbe = Date.now() + STEPS[s.level]; }
+      } else if (s.fails >= FAILS) {
+        s.level = 0; s.nextProbe = Date.now() + STEPS[0]; s.probing = false;
+        set(true, { kind, status: s.lastError.status, path: s.lastError.path, message: s.lastError.message });
+      }
+    }
+    function down() {
+      if (!isDown()) return false;
+      const t = Date.now();
+      if (s.probing && t - s.probeAt > PROBE_MAX_MS) s.probing = false; // the probe never called Portal: let another through
+      if (s.probing || t < s.nextProbe) return true;
+      s.probing = true; s.probeAt = t;
+      return false;
+    }
+    const tripped = () => isDown() && !s.probing;
+    const state = () => ({ down: isDown(), failures: s.fails, level: s.level, since: s.downSince || null, nextProbe: isDown() ? s.nextProbe : null, probing: s.probing, outages: s.outages, last: s.lastError });
+    const reset = () => { s.fails = 0; s.prev = 0; s.last = 'ok'; s.downSince = 0; s.level = 0; s.nextProbe = 0; s.probing = false; s.outages = 0; s.lastError = null; };
+    return { ok, fail, down, tripped, state, reset, hook, STEPS };
+  })();
 
   /*
     Portal's state, from inside the page. Portal is several React apps
@@ -1346,7 +1517,7 @@ const AE = (() => {
 
   return {
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, woHeadingRow, woChip, textEl, findButton,
-    api, unwrap, Stopped, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, ApiError, BadShape, shape, health, workerCall, timedFetch, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every,
     api, unwrap, Stopped, portal, sameStore, assertSameStore, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,

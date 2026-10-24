@@ -32,10 +32,7 @@ AE.feedback = (() => {
     if (!configured()) throw new Error('The Aethernet service isn\'t set up');
     const headers = { 'content-type': 'application/json', 'x-aethernet-key': KEY };
     if (adminKey) headers['x-aethernet-admin'] = adminKey;
-    const res = await fetch(API + path, { method, headers, credentials: 'omit', keepalive: !!body && JSON.stringify(body).length < 60000, body: body ? JSON.stringify(body) : undefined });
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
-    return j;
+    return AE.workerCall(method, API + path, { headers, credentials: 'omit', keepalive: !!body && JSON.stringify(body).length < 60000, body: body ? JSON.stringify(body) : undefined });
   }
   const me = async () => { const p = await AE.profile(); if (!p.storeId) throw new Error('No current store'); return p; };
   const browserName = () => { const ua = navigator.userAgent; return /Zen\//.test(ua) ? 'Zen' : /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : 'Other'; };
