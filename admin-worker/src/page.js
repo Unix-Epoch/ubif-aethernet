@@ -129,7 +129,7 @@ async function drawReports(m) {
 }
 
 // ---------------------------------------------------------------- Usage (same drill-down as the in-Portal panel)
-let days = 30, usage = null, uStore = '', uUser = '', uShard = '';
+let days = 30, usage = null, usageLoadCache = null, uStore = '', uUser = '', uShard = '';
 // Cloudflare and Portal load (top of Usage): what Aethernet's Workers use of the Workers Paid allowances, counted by the Workers themselves
 // (tracker-worker/src/usage.js; data from GET /api/tracker/usage-load). Honest empty states: nothing is shown that wasn't counted.
 const LIMITS = { requests: 10e6, read: 25e9, written: 50e6, bytes: 10e9 };
@@ -188,8 +188,17 @@ function loadSection(j) {
   bits.push(note);
   return card(...bits);
 }
+// The Cloudflare and Portal load section reads the whole usage tables, so a filter click (draw() again) reuses it: it reloads when the range
+// changes or after a minute (leaving the tab and coming back later). A failed read isn't kept.
+async function loadUsageLoad() {
+  const c = usageLoadCache;
+  if (c && c.days === days && Date.now() - c.at < 60000) return c.data;
+  const data = await api('GET', '/tracker/usage-load').catch((e) => ({ error: e.message }));
+  if (!data.error) usageLoadCache = { days, at: Date.now(), data };
+  return data;
+}
 async function drawUsage(m) {
-  const loadP = api('GET', '/tracker/usage-load').catch((e) => ({ error: e.message }));
+  const loadP = loadUsageLoad();
   if (!usage || usage.days !== days) usage = Object.assign(await api('GET', '/usage?days=' + days), { days });
   const loadJ = await loadP;
   const all = usage.rows, shardOf = (r) => r.feature.split(':')[0];

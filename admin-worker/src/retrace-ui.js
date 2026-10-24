@@ -249,16 +249,29 @@ export async function draw(m, helpers) {
     addEventListener('keydown', (e) => { if (e.key === 'Escape' && live()) closeDrawer(); });
     // Leaving the tab: the drawer is on <body>, so close it.
     addEventListener('hashchange', () => { if (!location.hash.startsWith('#retrace')) { const d = document.querySelector('.rt-drawer'); if (d) d.hidden = true; } });
-    // The strip follows the gathering: coverage is read again every 30 s while this tab is showing.
-    setInterval(async () => {
-      if (!live() || document.hidden) return;
-      try { const c = await ui.api('GET', '/tracker/retrace/coverage'); if (!live()) return; S.coverage = c.stores || S.coverage; drawHealth(); } catch (_) { /* the next tick tries again */ }
-    }, 30000);
+    // The strip follows the gathering: the selected store's coverage is read again every 60 s while this tab is showing and the store isn't done.
+    setInterval(() => {
+      const c = S.coverage.find((x) => x.store === S.store);
+      if (!live() || document.hidden || (c && c.progress && c.progress.state === 'done')) return;
+      refreshStrip();
+    }, 60000);
   }
   drawHealth(); drawVerify(); drawQueue();
   if (S.vopen) loadVerify(false);
   if (S.qopen) loadQueue();
   await loadStore({ item: params.get('item'), po: params.get('po'), label: params.get('label') });
+}
+
+// One store's coverage row (?store=: the Worker works out only that store, and keeps its progress 30 s), put in place of the one the strip draws from.
+async function refreshStrip() {
+  const store = S.store;
+  try {
+    const c = await ui.api('GET', '/tracker/retrace/coverage?store=' + store);
+    const row = ((c && c.stores) || []).find((x) => x.store === store);
+    if (!live() || S.store !== store || !row) return;
+    S.coverage = [...S.coverage.filter((x) => x.store !== store), row];
+    drawHealth();
+  } catch (_) { /* the next tick tries again */ }
 }
 
 function emptyCard(title, text, steps) {
@@ -489,7 +502,7 @@ async function switchStore(st) {
   S.store = st; S.item = null; S.po = null; S.data = null; S.label = null; S.results = null; S.q = ''; el.q.value = '';
   S.vopen = false; S.verify = null; el.verify.hidden = true;
   S.qopen = false; S.queue = null; S.qreason = 'all'; S.qitem = ''; el.queue.hidden = true;
-  closeDrawer(); drawHealth();
+  closeDrawer(); drawHealth(); refreshStrip();
   await loadStore({});
 }
 
@@ -689,17 +702,18 @@ function drawItem() {
       h('span', { style: 'margin-left:auto' }, 'Status now: Portal’s status on the label, else its last movement')));
   drawRows(); drawLoose();
 }
-// Where the serial is: its last movement's reference, else the work order / PO the label carries.
+// Where the serial is: its last movement's reference, else the work order / PO the label carries. (last is null for a stored label with no movement yet.)
 function whereEl(r) {
   const l = r.last;
-  if (l.ref_id || l.wo) return refEl(l);
+  if (l && (l.ref_id || l.wo)) return refEl(l);
   return r.wo ? woRef(r.wo) : r.po ? poRef(r.po) : ui.h('span', { class: 'rsoft' }, '—');
 }
 function serialRow(r) {
   const h = ui.h;
   return h('tr', { 'data-l': r.label, class: r.label === S.label ? 'on' : null, onclick: (e) => { if (!e.target.closest('a')) openLabel(r.label); } },
     h('td', { class: 'mono' }, r.label), h('td', null, h('span', { class: 'kd ' + (r.group || 'other') }, r.now)), h('td', null, whereEl(r)),
-    h('td', null, kindChip(r.last.kind), r.last.user ? h('span', { class: 'rsoft rsm', style: 'margin-left:6px' }, r.last.user) : null), h('td', { class: 'num' }, when(r.last.at)), h('td', { class: 'num' }, num(r.moves)));
+    h('td', null, r.last ? kindChip(r.last.kind) : h('span', { class: 'rsoft' }, 'No movement yet'), r.last && r.last.user ? h('span', { class: 'rsoft rsm', style: 'margin-left:6px' }, r.last.user) : null),
+    h('td', { class: 'num' }, r.last ? when(r.last.at) : '—'), h('td', { class: 'num' }, num(r.moves)));
 }
 function drawRows() {
   const h = ui.h, sr = S.sr;

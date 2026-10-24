@@ -218,6 +218,15 @@ assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/retrace/coverage')
 assert.equal((await call('ol@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 403, 'an Owner from before Retrace needs the page added');
 assert.equal((await call('owner@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 200, 'developers: everything');
 assert.equal((await call('mgr@x.com', 'POST', '/api/tracker/retrace/coverage')).status, 403, 'read only: unknown route');
+// coverage for one store (the page's 60 s poll): ?store= goes through the same gate, and only that store comes back
+{
+  const one = await call('mgr@x.com', 'GET', '/api/tracker/retrace/coverage?store=914');
+  assert.equal(one.status, 200); assert.ok(one.j.stores.every((x) => x.store === 914), 'only the asked store (a store with no rows yet has none)');
+  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/coverage?store=326')).status, 403, 'a store that is not theirs');
+  assert.deepEqual((await call('owner@x.com', 'GET', '/api/tracker/retrace/coverage?store=326')).j.stores.map((x) => x.store).filter((n) => n !== 326), [], 'developers: any one store');
+  // a malformed % in a path is a 400 through the gate too, not a 500
+  for (const p of ['item/914/%E0%A4%A', 'serials/914/%', 'label/914/%zz', 'po/914/100%']) assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/' + p)).status, 400, p);
+}
 // Coverage check (Verify coverage): page 'retrace', the store in the path; run and tick are the only POSTs
 {
   const v = '/api/tracker/retrace/verify/';
@@ -250,7 +259,29 @@ assert.equal((await call('mgr@x.com', 'POST', '/api/tracker/retrace/coverage')).
   assert.match(r.text, /if \(S\.range !== 'all'\) p\.set\('days'/, 'the default stays out of the serials query');
   assert.doesNotMatch(r.text, /range: '30'/); assert.match(r.text, /Verify coverage/); assert.match(r.text, /num\(x\.available\) \+ ' available'/, 'the item list shows what is available');
   assert.equal((await call('viewer@x.com', 'GET', '/retrace-ui.js')).status, 403, 'no Retrace page: /retrace-ui.js');
+  // the strip's poll: the selected store only, every 60 s, visible tab only, not once the store is done, once more on a store switch; the first load still reads every store
+  assert.match(r.text, /ui\.api\('GET', '\/tracker\/retrace\/coverage\?store=' \+ store\)/, 'polls one store');
+  assert.match(r.text, /state === 'done'\)\) return;\s*refreshStrip\(\);\s*\}, 60000\)/, 'every 60 s, not when done');
+  assert.match(r.text, /document\.hidden \|\|/); assert.doesNotMatch(r.text, /\}, 30000\)/);
+  assert.match(r.text, /closeDrawer\(\); drawHealth\(\); refreshStrip\(\);/, 'refreshed once on a store switch');
+  assert.match(r.text, /ui\.api\('GET', '\/tracker\/retrace\/coverage'\)\.catch/, 'the first load fills the switcher with every store');
   assert.match((await call('owner@x.com', 'GET', '/')).text, /import\('\/retrace-ui\.js'\)/, 'page.js loads the Retrace page');
+  // the Usage page reuses its load section across filter clicks: reloaded when the range changes or after a minute; a failed read isn't kept
+  {
+    const page = (await call('owner@x.com', 'GET', '/')).text, m = page.match(/(async function loadUsageLoad\(\) \{[\s\S]*?\n\}\n)async function drawUsage/);
+    assert.ok(m, 'page.js has loadUsageLoad'); assert.match(page, /const loadP = loadUsageLoad\(\);/);
+    let calls = 0, fail = false, now = Date.now();
+    const realNow = Date.now; Date.now = () => now;
+    try {
+      const mk = new Function('api', 'let days = 30, usageLoadCache = null;\n' + m[1] + '\nreturn { load: loadUsageLoad, setDays: (d) => { days = d; } };');
+      const u = mk(async () => { calls++; if (fail) throw new Error('down'); return { n: calls }; });
+      assert.deepEqual(await u.load(), { n: 1 }); assert.deepEqual(await u.load(), { n: 1 }, 'a filter click: no reload'); assert.equal(calls, 1);
+      now += 59000; await u.load(); assert.equal(calls, 1, 'under a minute');
+      now += 2000; assert.deepEqual(await u.load(), { n: 2 }, 'after a minute');
+      u.setDays(90); await u.load(); assert.equal(calls, 3, 'a new range reloads');
+      fail = true; now += 61000; assert.deepEqual(await u.load(), { error: 'down' }); fail = false; assert.deepEqual(await u.load(), { n: 5 }, 'an error is not kept: the next draw tries again');
+    } finally { Date.now = realNow; }
+  }
   assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/items?store=914')).status, 200);
   assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/items?store=326')).status, 403, 'items: another store');
   await T.prepare("UPDATE people SET pages = ? WHERE email = 'rep@x.com'").bind(JSON.stringify(['reports', 'usage', 'retrace'])).run();
