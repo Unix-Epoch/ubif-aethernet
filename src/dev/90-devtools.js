@@ -339,6 +339,19 @@
         rtOut.replaceChildren(note('Running a pass (the stock lookup takes a few minutes when it\'s due)…'));
         const r = await AE.retrace.run();
         rtOut.replaceChildren(h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(r || { didNothing: true, state: AE.retrace.state() }, null, 1)));
+      }), btn('Retrace: probe the item lookup', async () => {
+        rtOut.replaceChildren(note('Probing the item lookup (each call takes 10-14 s)…'));
+        const out = [];
+        const tries = [['instore, by available', 'locationType=instore&sortField=availablequantity&sortOrder=desc'], ['0, by available (what the collector sends)', 'locationType=0&sortField=availablequantity&sortOrder=desc'],
+          ['instore, by product name', 'locationType=instore&sortField=productname&sortOrder=asc'], ['no locationType, by available', 'sortField=availablequantity&sortOrder=desc']];
+        for (const [name, q] of tries) {
+          try {
+            const j = await AE.api('GET', '/api/boh/inventory-lookup?pageSize=3&page=1&searchTerm=&categoryFilter=&' + q);
+            const rows = Array.isArray(j) ? j : j && typeof j === 'object' ? (['value', 'data', 'results', 'items', 'rows'].map((k) => j[k]).find(Array.isArray) || []) : [];
+            out.push({ name, query: q, topLevel: Array.isArray(j) ? 'array' : j && typeof j === 'object' ? Object.keys(j) : typeof j, rows: rows.length, first: rows[0] || null, raw: rows.length ? undefined : JSON.stringify(j).slice(0, 400) });
+          } catch (e) { out.push({ name, query: q, error: e.message || String(e) }); }
+          rtOut.replaceChildren(h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(out, null, 1)));
+        }
       }), btn(AE.retrace.recording() ? 'Retrace: stop recording Portal calls' : 'Retrace: record Portal calls', () => {
         const on = !AE.retrace.recording();
         AE.retrace.setRecording(on);
