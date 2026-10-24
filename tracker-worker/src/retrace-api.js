@@ -81,7 +81,7 @@
 
   Admin side: retraceAdmin() below, mounted by trackerRoutes at /api/tracker/retrace/… (page 'retrace'; route list there).
 */
-import { verifyRun, verifyAsk, verifyView, verifyTick } from './retrace-verify.js';
+import { verifyRun, verifyAsk, verifyView, verifyTick, QUEUE_REASON, QUEUE_SINCE } from './retrace-verify.js';
 import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS, serialNow } from './retrace.js';
 
 export const NEED_MAX = 60;
@@ -95,6 +95,8 @@ const MAX = { sweep: 4000000, history: 1000000, watch: 150000 };
 const SWEEP_SOURCES = ['sweep', 'transfer', 'count', 'rma', 'buyback', 'po', 'snapshot'];
 const CURSOR_RE = /^[a-z][a-z0-9_-]{0,30}$/, LAST_SWEEP = 'last_sweep';
 const NEED = { backfill: 1, touched: 2, changed: 3 };
+// The order the sweep hands labels out to read (and the Collection queue panel lists them in): changed > touched > backfill, most recently seen first.
+const QUEUE_ORDER = 'need_history DESC, last_seen DESC, label';
 
 const later = (min) => new Date(Date.now() + min * 60000).toISOString();
 const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
@@ -577,7 +579,7 @@ export async function retraceStore(req, env, url, store, path, H) {
 
     // The history queue: changed > touched > backfill, most recently seen first; claimed so other browsers skip them.
     const want = Math.min(Math.max(Number.isInteger(b.need) ? b.need : NEED_MAX, 0), NEED_CAP);
-    const q = want ? (await T.prepare('SELECT label FROM inv_labels WHERE store = ? AND need_history > 0 AND (claimed_until IS NULL OR claimed_until < ?) ORDER BY need_history DESC, last_seen DESC LIMIT ?')
+    const q = want ? (await T.prepare('SELECT label FROM inv_labels WHERE store = ? AND need_history > 0 AND (claimed_until IS NULL OR claimed_until < ?) ORDER BY ' + QUEUE_ORDER + ' LIMIT ?')
       .bind(store, at, want + 1).all()).results.map((r) => r.label) : [];
     const need = q.slice(0, want);
     if (need.length) await T.prepare('UPDATE inv_labels SET claimed_until = ? WHERE store = ? AND label IN (SELECT value FROM json_each(?))').bind(later(CLAIM_MIN), store, JSON.stringify(need)).run();
@@ -645,6 +647,13 @@ export async function retraceStore(req, env, url, store, path, H) {
         status, moves and who ticked them. Check 5 and `pass` are worked out from the ticks when read.
   POST /retrace/verify/:store/run    → the same, after running the checks again (new spot sample); 409 while the store's baseline isn't frozen
   POST /retrace/verify/:store/tick { label, matches }   → the same: a person's tick on one of the sample's labels (400 for any other), recorded with their email
+  GET /retrace/queue/:store?reason=&item=&limit=&offset=   → the store's history queue (the Collection queue panel): { store, total, counts: { all, never,
+        changed, recheck }, waiting, being_read, read_10min, per_pass, eta_min, items: [{ item, name, n }], rows: [{ pos, label, item, name, reason, since }],
+        recent: [{ label, item, name, at }] }. rows: labels waiting (need_history > 0, not claimed by a browser), in exactly the order the sweep
+        hands them out (QUEUE_ORDER); pos is the place in the whole queue, filters or not. reason: never (history not read yet) | changed (read, then
+        the label changed or a diff saw it change) | recheck (queued again); the same tests as the Stale histories check (retrace-verify.js
+        QUEUE_REASON). counts / items follow the item filter, not the reason; total follows both. being_read: labels with an unexpired claim;
+        read_10min: histories read in the last 10 minutes; eta_min: the queue at PER_PASS.histories a pass, in whole passes. limit ≤ 200 (50). Read only.
   GET /retrace/coverage              → { stores: [{ store, labels, histories, backlog, claimed, items, movements,
         last_history_at, last_sweep_at, last_sweep, progress }] } for the stores the person can see. progress: the store's
         baseline progress (see "Progress" at the top: state, pct, done_at, counted_at, eta_min, steps { stock, labels, histories,
@@ -657,6 +666,36 @@ const MV_FROM = "inv_movements m LEFT JOIN inv_so_wo sw ON m.ref_type = 'sales_o
 const dayFrom = (v) => (/^\d{4}-\d\d-\d\d$/.test(v || '') ? v + 'T00:00:00.000Z' : isoAt(v));
 const dayTo = (v) => (/^\d{4}-\d\d-\d\d$/.test(v || '') ? v + 'T23:59:59.999Z' : isoAt(v));
 const likeEsc = (s) => s.replace(/[\\%_]/g, (c) => '\\' + c);
+
+// The history queue as the sweep sees it, for the admin page's Collection queue panel (see GET /retrace/queue above).
+async function queueView(T, store, o) {
+  const now = new Date().toISOString(), tenAgo = new Date(Date.now() - 10 * 60000).toISOString();
+  const reason = ['never', 'changed', 'recheck'].includes(o.reason) ? o.reason : null, item = o.item || null;
+  const limit = Math.min(Math.max(parseInt(o.limit, 10) || 50, 1), 200), offset = Math.min(Math.max(parseInt(o.offset, 10) || 0, 0), 1e6);
+  // position in the whole waiting queue first (a window over the unclaimed rows, in the sweep's order), then the filters
+  const [rows, counts, claimed, read, items, recent] = await T.batch([
+    T.prepare(`SELECT * FROM (SELECT ROW_NUMBER() OVER (ORDER BY ${QUEUE_ORDER}) AS pos, label, item, ${QUEUE_REASON} AS reason, ${QUEUE_SINCE} AS since
+          FROM inv_labels WHERE store = ?1 AND need_history > 0 AND (claimed_until IS NULL OR claimed_until < ?2)) q
+        WHERE (?3 IS NULL OR reason = ?3) AND (?4 IS NULL OR item = ?4) ORDER BY pos LIMIT ?5 OFFSET ?6`).bind(store, now, reason, item, limit, offset),
+    T.prepare(`SELECT reason, COUNT(*) AS n FROM (SELECT ${QUEUE_REASON} AS reason, item FROM inv_labels WHERE store = ?1 AND need_history > 0 AND (claimed_until IS NULL OR claimed_until < ?2)) q
+        WHERE (?3 IS NULL OR item = ?3) GROUP BY reason`).bind(store, now, item),
+    T.prepare('SELECT COUNT(*) AS n FROM inv_labels WHERE store = ? AND need_history > 0 AND claimed_until > ?').bind(store, now),
+    T.prepare('SELECT COUNT(*) AS n FROM inv_labels WHERE store = ? AND last_history_at >= ?').bind(store, tenAgo),
+    T.prepare(`SELECT l.item, i.name, COUNT(*) AS n FROM inv_labels l LEFT JOIN inv_items i ON i.store = l.store AND i.item = l.item
+        WHERE l.store = ? AND l.need_history > 0 AND (l.claimed_until IS NULL OR l.claimed_until < ?) AND l.item IS NOT NULL GROUP BY l.item ORDER BY n DESC, l.item LIMIT 50`).bind(store, now),
+    T.prepare(`SELECT l.label, l.item, i.name, l.last_history_at AS at FROM inv_labels l LEFT JOIN inv_items i ON i.store = l.store AND i.item = l.item
+        WHERE l.store = ? AND l.last_history_at IS NOT NULL ORDER BY l.last_history_at DESC, l.label LIMIT 10`).bind(store),
+  ]);
+  const by = { never: 0, changed: 0, recheck: 0 };
+  for (const r of counts.results) by[r.reason] = r.n;
+  const waiting = by.never + by.changed + by.recheck, names = new Map();
+  if (rows.results.length) for (const r of (await T.prepare('SELECT item, name FROM inv_items WHERE store = ? AND item IN (SELECT value FROM json_each(?))').bind(store, JSON.stringify(rows.results.map((r) => r.item))).all()).results) names.set(r.item, r.name);
+  // the estimate is for the whole queue (claimed ones are being read now and leave it within a pass), whatever the filters
+  const all = (await T.prepare('SELECT COUNT(*) AS n FROM inv_labels WHERE store = ? AND need_history > 0 AND (claimed_until IS NULL OR claimed_until < ?)').bind(store, now).first()).n;
+  return { store, total: reason ? by[reason] : waiting, counts: { all: waiting, never: by.never, changed: by.changed, recheck: by.recheck }, waiting: all, being_read: claimed.results[0].n, read_10min: read.results[0].n,
+    per_pass: PER_PASS.histories, eta_min: all ? Math.ceil(all / PER_PASS.histories) * PASS_MIN : 0, items: items.results,
+    rows: rows.results.map((r) => ({ pos: r.pos, label: r.label, item: r.item, name: names.get(r.item) || null, reason: r.reason, since: r.since })), recent: recent.results };
+}
 
 export async function retraceAdmin(req, env, url, path, me, email, H) {
   const T = env.TR, q = url.searchParams;
@@ -682,6 +721,14 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     return H.json(await verifyView(T, store), 200, false);
   }
   if (req.method !== 'GET') return H.fail(404, 'not found', false);
+
+  const qm = path.match(/^\/retrace\/queue\/(\d{1,6})$/);
+  if (qm) {
+    const store = Number(qm[1]);
+    if (!canSee(store)) return H.fail(403, 'not your store', false);
+    await H.log(env, email, 'retrace:queue', store);
+    return H.json(await queueView(T, store, { reason: q.get('reason'), item: H.clean(q.get('item'), 40), limit: q.get('limit'), offset: q.get('offset') }), 200, false);
+  }
 
   const im = path.match(/^\/retrace\/item\/(\d{1,6})\/([^/]{1,80})$/);
   if (im) {

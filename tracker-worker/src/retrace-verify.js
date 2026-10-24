@@ -14,7 +14,8 @@
     5 spot     10 labels sampled at random (sold, quarantined, old ones included), kept until the next run; a person opens each
                in Portal and ticks "Matches" (inv_verify_ticks: who and when).
   The result of 1 to 4 and the sample are stored per store (inv_verify.result, JSON, capped); check 5 and the summary are worked
-  out when read, from the ticks. A run happens on demand (POST /retrace/verify/:store/run) and once when the baseline freezes
+  out when read, from the ticks. Check 3's labels are the history queue's: the admin page's Collection queue lists them in read order
+  (retrace-api.js queueView, reasons from QUEUE_REASON below). A run happens on demand (POST /retrace/verify/:store/run) and once when the baseline freezes
   (retrace-api.js settle). Routes: retraceAdmin in retrace-api.js. migrations/2026-10-24-retrace-verify.sql has the tables.
   Passing all five is strong evidence, not proof: Portal stays the only source of truth.
 */
@@ -81,7 +82,14 @@ function qtyCheck(rows) {
 }
 
 // ------------------------------------------------------------------ check 3: stale histories
-const STALE_WHERE = 'store = ?1 AND (last_history_at IS NULL OR need_history >= 2 OR last_change_at > last_history_at OR serial_modified > last_history_at)';
+// Shared with the collection queue (retrace-api.js queueView): a label is stale when its history was never read, was queued again, or the
+// label changed after it was read; the queue says which of those it is (QUEUE_REASON: never / changed / recheck).
+const CHANGED_AFTER = '(last_change_at > last_history_at OR serial_modified > last_history_at)';
+const STALE_WHERE = `store = ?1 AND (last_history_at IS NULL OR need_history >= 2 OR ${CHANGED_AFTER})`;
+// need_history 3 = a diff saw the label change (retrace-api.js NEED.changed); 2 = touched by a movement; 1 = backfill.
+export const QUEUE_REASON = `CASE WHEN last_history_at IS NULL THEN 'never' WHEN ${CHANGED_AFTER} OR need_history >= 3 THEN 'changed' ELSE 'recheck' END`;
+// since when the reason has held (the label's own timestamps; the queue keeps no queued-at)
+export const QUEUE_SINCE = `CASE WHEN last_history_at IS NULL THEN first_seen WHEN ${CHANGED_AFTER} OR need_history >= 3 THEN COALESCE(last_change_at, serial_modified, last_seen) ELSE last_seen END`;
 async function staleCheck(T, store) {
   const [rows, n] = await T.batch([
     T.prepare(`SELECT label, item, serial_status, wh_type, last_change_at, serial_modified, last_seen, last_history_at FROM inv_labels WHERE ${STALE_WHERE}

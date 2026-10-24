@@ -627,7 +627,8 @@ function accessDiff(before, after) {
   GET  /wo/:store/:wo            one WO: row, snapshots (plain + sealed), changes
   …    /assize/…                 Assize rules: list, drafts, publish, history, per-store overrides, test orders
                                  (page 'rules'; src/assize.js has the routes)
-  GET  /retrace/…                Retrace: item movements, label timeline, POs (page and list), search, coverage; the coverage check
+  GET  /retrace/…                Retrace: item movements, label timeline, POs (page and list), search, coverage; the collection queue
+                                 (GET /retrace/queue/:store); the coverage check
                                  (GET /retrace/verify/:store, POST …/run and …/tick: its only writes) (page 'retrace';
                                  src/retrace-api.js has the routes)
   Developers only (People; TRACKER_OWNERS, `owner` in the API):

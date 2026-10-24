@@ -975,6 +975,72 @@ assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 
   assert.deepEqual((await sw({})).j.missedItems.sort(), ['538777', '538999'], 'missedItems carries no labor item');
 }
 
+// ------------------------------------------------------------------ collection queue (the panel's route): read order, reasons, filters, paging
+{
+  const Q = (st, qs = '') => '/retrace/queue/' + st + qs, ago = (m) => new Date(Date.now() - m * 60000).toISOString();
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (539, 'Queue A'), (540, 'Queue B')").run();
+  const lab = (st, label, item, need, x = {}) => T.prepare(`INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen, last_history_at, last_change_at, need_history, claimed_until)
+      VALUES (?, ?, ?, 'Available', ?, ?, ?, ?, ?, ?)`).bind(st, label, item, ago(900), ago(x.seenMin == null ? 5 : x.seenMin), 'hist' in x ? x.hist : null, x.change || null, need, x.claim || null);
+  const l = (n, i) => i + '-' + String(n).padStart(10, '0');
+  await T.batch([
+    T.prepare("INSERT INTO inv_items (store, item, name, first_seen, last_seen) VALUES (539, '539001', 'Screen A', ?, ?), (539, '539002', 'Battery B', ?, ?)").bind(ago(900), ago(5), ago(900), ago(5)),
+    lab(539, l(1, '539001'), '539001', 1, { seenMin: 50 }),                                                        // never read, backfill, seen 50 min ago
+    lab(539, l(2, '539001'), '539001', 1, { seenMin: 10 }),                                                        // never read, backfill, seen 10 min ago: before the one above
+    lab(539, l(1, '539002'), '539002', 3, { hist: ago(300), change: ago(20), seenMin: 20 }),                       // read, then a diff saw it change: first of all
+    lab(539, l(2, '539002'), '539002', 2, { hist: ago(300), seenMin: 30 }),                                        // read, touched by a movement: re-check
+    lab(539, l(3, '539002'), '539002', 1, { hist: ago(300), change: ago(100), seenMin: 90 }),                      // read, changed after: changed
+    lab(539, l(4, '539002'), '539002', 1, { seenMin: 1, claim: new Date(Date.now() + 8 * 60000).toISOString() }),  // claimed by a browser: being read, not in the order
+    lab(539, l(5, '539002'), '539002', 1, { seenMin: 2, claim: ago(3) }),                                          // an expired claim: waiting again
+    lab(539, l(6, '539002'), '539002', 0, { hist: ago(4) }),                                                       // read 4 minutes ago
+    lab(539, l(7, '539002'), '539002', 0, { hist: ago(40) }),                                                      // read 40 minutes ago
+    lab(540, l(1, '540001'), '540001', 3, { hist: ago(300), change: ago(20) })]);                                  // another store
+  const g = await admin('owner@x.com', Q(539)); ok(g, 'queue');
+  // need 3, then 2, then 1; within a need the most recently seen first (the expired claim, seen 2 min ago, leads the backfill)
+  assert.deepEqual(g.j.rows.map((r) => r.label), [l(1, '539002'), l(2, '539002'), l(5, '539002'), l(2, '539001'), l(1, '539001'), l(3, '539002')]);
+  assert.deepEqual(g.j.rows.map((r) => r.pos), [1, 2, 3, 4, 5, 6]);
+  // exactly the sweep's order: asking the sweep for the lot hands out the same labels
+  assert.deepEqual((await call('POST', '/v1/539/tracker/retrace/sweep', { need: 100 })).j.need, g.j.rows.map((r) => r.label), 'the panel lists labels in the sweep\'s order');
+  const claimedNow = (await admin('owner@x.com', Q(539))).j; assert.deepEqual([claimedNow.being_read, claimedNow.total], [7, 0], 'the sweep claimed what it handed out: all being read now');
+  await T.prepare("UPDATE inv_labels SET claimed_until = NULL WHERE store = 539 AND label <> ?").bind(l(4, '539002')).run(); // back to the seeded claims
+  // reasons (the Stale histories check's tests): never read / read then changed / queued again
+  assert.deepEqual(g.j.rows.map((r) => r.reason), ['changed', 'recheck', 'never', 'never', 'never', 'changed']);
+  assert.deepEqual([g.j.rows[0].item, g.j.rows[0].name, g.j.rows[3].name], ['539002', 'Battery B', 'Screen A']);
+  assert.ok(g.j.rows.every((r) => /Z$/.test(r.since)), 'every row says since when');
+  // counts, tiles, claimed labels, recent reads
+  assert.deepEqual([g.j.total, g.j.counts, g.j.waiting], [6, { all: 6, never: 3, changed: 2, recheck: 1 }, 6]);
+  assert.equal(g.j.being_read, 1, 'the unexpired claim is being read, not waiting');
+  assert.ok(!g.j.rows.some((r) => r.label === l(4, '539002')), 'a claimed label is not in the order');
+  assert.equal(g.j.read_10min, 1, 'only the one read 4 minutes ago');
+  assert.deepEqual([g.j.per_pass, g.j.eta_min], [60, 10]);
+  assert.deepEqual(g.j.recent.slice(0, 2).map((r) => r.label), [l(6, '539002'), l(7, '539002')], 'newest read first');
+  assert.ok(g.j.recent.every((r, i) => !i || g.j.recent[i - 1].at >= r.at));
+  assert.equal(g.j.recent[0].name, 'Battery B');
+  assert.deepEqual(g.j.items.map((x) => [x.item, x.n]), [['539002', 4], ['539001', 2]]);
+  // the stale check lists the same labels as stale (shared tests): every queued label with a reason is stale
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_labels WHERE store = 539 AND (last_history_at IS NULL OR need_history >= 2 OR last_change_at > last_history_at)"), 7, '6 waiting + 1 claimed');
+  // filters: by reason (pos stays the place in the whole queue), by item (counts follow the item), both
+  let f = (await admin('owner@x.com', Q(539, '?reason=changed'))).j;
+  assert.deepEqual([f.total, f.rows.map((r) => [r.pos, r.label])], [2, [[1, l(1, '539002')], [6, l(3, '539002')]]]);
+  assert.deepEqual(f.counts, { all: 6, never: 3, changed: 2, recheck: 1 }, 'counts ignore the reason filter');
+  f = (await admin('owner@x.com', Q(539, '?item=539001'))).j;
+  assert.deepEqual([f.total, f.counts.all, f.rows.map((r) => r.pos)], [2, 2, [4, 5]]);
+  assert.equal(f.waiting, 6, 'the estimate is for the whole queue');
+  f = (await admin('owner@x.com', Q(539, '?item=539001&reason=recheck'))).j; assert.deepEqual([f.total, f.rows.length], [0, 0]);
+  f = (await admin('owner@x.com', Q(539, '?reason=bogus'))).j; assert.equal(f.total, 6, 'an unknown reason is no filter');
+  // paging
+  f = (await admin('owner@x.com', Q(539, '?limit=2'))).j; assert.deepEqual([f.rows.map((r) => r.pos), f.total], [[1, 2], 6]);
+  f = (await admin('owner@x.com', Q(539, '?limit=2&offset=4'))).j; assert.deepEqual(f.rows.map((r) => r.pos), [5, 6]);
+  f = (await admin('owner@x.com', Q(539, '?limit=9999&offset=-3'))).j; assert.equal(f.rows.length, 6, 'limit capped, offset floored');
+  // store isolation: the other store's queue is its own, an unknown store is empty, a bad path is no route
+  const o = (await admin('owner@x.com', Q(540))).j; assert.deepEqual([o.total, o.rows.map((r) => r.label), o.being_read], [1, [l(1, '540001')], 0]);
+  assert.equal((await admin('owner@x.com', Q(541))).j.total, 0);
+  assert.equal((await adminPost('owner@x.com', Q(539))).status, 403, 'read only: no POST route');
+  assert.equal((await admin('owner@x.com', '/retrace/queue/abc')).status === 200, false);
+  // a store with nothing queued
+  await T.prepare('UPDATE inv_labels SET need_history = 0, claimed_until = NULL WHERE store = 539').run();
+  const e = (await admin('owner@x.com', Q(539))).j; assert.deepEqual([e.total, e.waiting, e.being_read, e.eta_min, e.rows], [0, 0, 0, 0, []]);
+}
+
 await dispose();
 rmSync('.wrangler-test-retrace', { recursive: true, force: true });
 console.log('retrace: all passed');

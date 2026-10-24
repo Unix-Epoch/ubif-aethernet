@@ -230,6 +230,14 @@ assert.equal((await call('mgr@x.com', 'POST', '/api/tracker/retrace/coverage')).
   for (const [m, p] of [['GET', '914'], ['POST', '914/run'], ['POST', '914/tick']]) assert.equal((await call('viewer@x.com', m, v + p, m === 'POST' ? {} : undefined)).status, 403, 'no Retrace page: ' + m + ' ' + p);
   assert.equal((await call('ol@x.com', 'POST', v + '914/run', {})).status, 403, 'an Owner from before Retrace needs the page added');
   assert.equal((await call('owner@x.com', 'GET', v + '326')).status, 200, 'developers: everything');
+  // collection queue: same gate, read only
+  const qu = '/api/tracker/retrace/queue/';
+  assert.equal((await call('mgr@x.com', 'GET', qu + '914')).status, 200, 'queue: manager, their store');
+  assert.equal((await call('mgr@x.com', 'GET', qu + '326')).status, 403, 'queue: manager, another store');
+  assert.equal((await call('viewer@x.com', 'GET', qu + '914')).status, 403, 'queue: no Retrace page');
+  assert.equal((await call('ol@x.com', 'GET', qu + '914')).status, 403, 'queue: an Owner from before Retrace needs the page added');
+  assert.equal((await call('mgr@x.com', 'POST', qu + '914', {})).status, 403, 'queue: read only');
+  assert.equal((await call('owner@x.com', 'GET', qu + '326')).status, 200, 'queue: developers: everything');
   assert.equal((await call('mgr@x.com', 'GET', v + '914/run')).status, 403, 'run is POST only'); assert.equal((await call('mgr@x.com', 'POST', v + '914', {})).status, 403, 'the result is GET only');
   assert.equal((await call('mgr@x.com', 'DELETE', v + '914')).status, 403, 'no other methods');
   assert.ok((await T.prepare("SELECT COUNT(*) AS n FROM access_log WHERE action = 'denied' AND detail LIKE '%retrace/verify%'").first()).n >= 1, 'refusals logged');

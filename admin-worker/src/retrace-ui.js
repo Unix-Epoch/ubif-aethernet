@@ -7,6 +7,8 @@
 // no label below), a label's whole timeline in a drawer, and a PO's own page. Read only apart from the coverage check
 // (Verify coverage on the strip: five checks that Retrace has seen everything at the store, a spot check of 10 labels the
 // person ticks; its result and ticks are the only things saved); the server checks page and store on every call.
+// Collection queue (the strip's "N labels queued" link, and the Stale histories check): the labels waiting for their serial
+// history, in the order the collector reads them, with why each is queued; one of it and the coverage check is open at a time.
 // Store, item and PO live in the URL hash (#retrace?store=914&item=721276, &po=UBFPO…) so links can be shared.
 
 const CSS = `
@@ -98,6 +100,14 @@ const CSS = `
 .rt .vfoot{padding:10px 16px;font-size:12px;color:var(--soft);background:var(--hd)}
 @media (max-width:640px){.rt .ck{grid-template-columns:28px minmax(0,1fr)} .rt .ck .res{grid-column:2;text-align:left} .rt .ck .det{grid-column:1/-1} .rt .vh .r{margin-left:0}}
 .rt .rnote{font-size:12.5px;color:var(--soft);padding:10px 14px}
+.rt .qlink{font-size:13px;color:var(--p);background:none;border:0;cursor:pointer;text-decoration:underline;padding:0;white-space:nowrap}
+.rt .qs{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:14px 16px}
+.rt .qs div{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:2px} .rt .qs b{font-size:20px;font-variant-numeric:tabular-nums} .rt .qs span{font-size:12px;color:var(--soft)}
+.rt .qf{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 16px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)} .rt .qf .r{margin-left:auto}
+.rt .qf select{height:28px;max-width:100%;border:1px solid var(--line);border-radius:8px;padding:0 8px;background:var(--card);font-size:12.5px;color:var(--fg)}
+.rt .qwhy{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap} .rt .qwhy.never{background:var(--warn);color:var(--warnf)} .rt .qwhy.changed{background:var(--ps);color:var(--p)} .rt .qwhy.recheck{background:var(--line);color:var(--soft)} .rt .qwhy.read{background:var(--ok);color:var(--okf)}
+.rt .qpos{font-variant-numeric:tabular-nums;color:var(--soft)} .rt .qmore{padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--soft)}
+.rt .qrec{margin:0;padding:12px 16px 4px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:400}
 .rt .legend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--soft);padding:8px 14px 12px}
 .rt .seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:2px;gap:2px}
 .rt .seg button{height:26px;padding:0 12px;border:0;border-radius:999px;background:none;font-size:12.5px;cursor:pointer;color:var(--soft)} .rt .seg button.on{background:var(--ps);color:var(--p);font-weight:700}
@@ -140,7 +150,7 @@ const PAUSED_MS = 25 * 60000;
 const EMPTY_SVG = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg>';
 
 let ui = null, S = null, el = {};
-const fresh = () => ({ store: null, view: 'items', item: null, po: null, group: 'all', range: 'all', q: '', stores: [], coverage: [], items: null, itemsTotal: 0, pos: null, posTotal: 0, data: null, sr: null, serials: [], label: null, results: null, vopen: false, verify: null, vbusy: false });
+const fresh = () => ({ store: null, view: 'items', item: null, po: null, group: 'all', range: 'all', q: '', stores: [], coverage: [], items: null, itemsTotal: 0, pos: null, posTotal: 0, data: null, sr: null, serials: [], label: null, results: null, vopen: false, verify: null, vbusy: false, qopen: false, queue: null, qbusy: false, qreason: 'all', qitem: '', qat: null });
 
 // ------------------------------------------------------------------ formatting
 const pad = (n) => String(n).padStart(2, '0');
@@ -226,7 +236,7 @@ export async function draw(m, helpers) {
   el = {};
   el.drawer = drawerEl();
   el.root = h('div', { class: 'rt' },
-    el.health = h('div'), el.verify = h('div', { hidden: true }),
+    el.health = h('div'), el.verify = h('div', { hidden: true }), el.queue = h('div', { hidden: true }),
     h('div', { class: 'rcard search' },
       el.q = h('input', { type: 'search', placeholder: 'Search an item, label, PO, work order, sales order or transfer', 'aria-label': 'Search Retrace', value: S.q,
         onkeydown: (e) => { if (e.key === 'Enter') search(el.q.value.trim()); }, onsearch: (e) => { if (!e.target.value) search(''); } }),
@@ -240,8 +250,9 @@ export async function draw(m, helpers) {
     // Leaving the tab: the drawer is on <body>, so close it.
     addEventListener('hashchange', () => { if (!location.hash.startsWith('#retrace')) { const d = document.querySelector('.rt-drawer'); if (d) d.hidden = true; } });
   }
-  drawHealth(); drawVerify();
+  drawHealth(); drawVerify(); drawQueue();
   if (S.vopen) loadVerify(false);
+  if (S.qopen) loadQueue();
   await loadStore({ item: params.get('item'), po: params.get('po'), label: params.get('label') });
 }
 
@@ -266,7 +277,9 @@ function drawHealth() {
   const h = ui.h, c = S.coverage.find((x) => x.store === S.store) || {}, p = c.progress || { state: 'counting', counting: { items_done: 0, items_total: 0 }, steps: null };
   const age = c.last_sweep_at ? Date.now() - new Date(c.last_sweep_at).getTime() : null;
   const stale = age == null || age > PAUSED_MS, counting = p.state === 'counting', done = p.state === 'done', paused = !done && stale;
-  const where = h('span', { class: 'r' }, h('span', { class: 'rsoft rsm' }, storeName(S.store) + ' · ' + (c.last_sweep_at ? 'last pass ' + ago(c.last_sweep_at) : 'no pass yet')),
+  const where = h('span', { class: 'r' },
+    c.backlog > 0 ? h('button', { class: 'qlink', type: 'button', 'aria-expanded': String(S.qopen), onclick: toggleQueue }, num(c.backlog) + (c.backlog === 1 ? ' label queued' : ' labels queued')) : null,
+    h('span', { class: 'rsoft rsm' }, storeName(S.store) + ' · ' + (c.last_sweep_at ? 'last pass ' + ago(c.last_sweep_at) : 'no pass yet')),
     counting ? null : h('button', { class: 'vbtn p', type: 'button', 'aria-expanded': String(S.vopen), onclick: toggleVerify }, S.vopen ? 'Hide coverage check' : 'Verify coverage'));
   const stp = p.steps || {}, tabLeft = p.eta_min != null ? span(p.eta_min) + ' of an open tab' : '';
   let title, big, sub, note;
@@ -362,7 +375,8 @@ function drawVerify() {
       const [title, why] = CHECK[c.key], icon = c.status === 'pass' ? ['ok', '✓'] : c.status === 'fail' ? ['bad', '!'] : ['todo', '·'];
       const det = c.status === 'pass' && c.key !== 'spot' ? null : checkDetail(c);
       return h('div', { class: 'ck', 'data-check': c.key }, h('span', { class: 'ic ' + icon[0], 'aria-label': c.status }, icon[1]), h('b', null, c.no + ' · ' + title), h('span', { class: 'res' }, c.result), h('span', { class: 'why' },
-        c.key === 'spot' && c.status === 'pass' ? c.total + ' of ' + c.total + ' timelines matched Portal. Last checked ' + when(c.last_checked_at) + '.' : why), det ? h('div', { class: 'det' }, det) : null);
+        c.key === 'spot' && c.status === 'pass' ? c.total + ' of ' + c.total + ' timelines matched Portal. Last checked ' + when(c.last_checked_at) + '.' : why,
+        c.key === 'stale' ? [' ', h('button', { class: 'qlink', type: 'button', onclick: openQueue }, 'Open the collection queue')] : null), det ? h('div', { class: 'det' }, det) : null);
     }),
     h('div', { class: 'vfoot' }, 'Passing all five is strong evidence but not proof, because Portal remains the only source of truth.')));
 }
@@ -386,7 +400,8 @@ async function runVerify() {
   if (st === S.store) drawVerify();
 }
 async function toggleVerify() {
-  S.vopen = !S.vopen; drawHealth(); drawVerify();
+  S.vopen = !S.vopen; if (S.vopen) S.qopen = false;
+  drawHealth(); drawVerify(); drawQueue();
   if (S.vopen && !(S.verify && S.verify.checked_at)) await loadVerify(true);
   else if (S.vopen) loadVerify(false);
 }
@@ -396,10 +411,79 @@ async function tickSpot(label, box) {
   catch (e) { box.checked = !want; ui.toast("Couldn't save the tick: " + e.message); }
 }
 
+// ------------------------------------------------------------------ collection queue
+// The store's history queue (tracker-worker/src/retrace-api.js queueView): labels waiting for their serial history, in the collector's read order.
+const QWHY = { never: 'Never read', changed: 'Changed since read', recheck: 'Re-check' };
+const QPAGE = 50;
+function queueQuery(limit) {
+  return '?limit=' + limit + (S.qreason !== 'all' ? '&reason=' + S.qreason : '') + (S.qitem ? '&item=' + encodeURIComponent(S.qitem) : '');
+}
+function drawQueue() {
+  const h = ui.h, q = S.queue;
+  el.queue.hidden = !S.qopen;
+  if (!S.qopen) return;
+  const head = (extra) => h('div', { class: 'vh' }, h('h3', null, 'Collection queue · ' + storeName(S.store)), h('span', { class: 'r' }, ...extra,
+    h('button', { class: 'vbtn', type: 'button', disabled: S.qbusy, onclick: () => loadQueue() }, S.qbusy ? 'Loading…' : 'Refresh'), h('button', { class: 'vbtn', type: 'button', onclick: toggleQueue }, 'Close')));
+  if (!q || q.error) {
+    el.queue.replaceChildren(h('div', { class: 'rcard vp' }, head([]), h('div', { class: 'rnote' }, q && q.error ? q.error : 'Loading the queue…')));
+    return;
+  }
+  const mins = q.eta_min, eta = !q.waiting ? 'none' : mins < 90 ? '~' + mins + ' min' : '~' + Math.round(mins / 60) + ' hours';
+  const chip = (key, label) => h('button', { type: 'button', class: 'fchip' + (S.qreason === key ? ' on' : ''), onclick: () => { S.qreason = key; loadQueue(); } }, label, ' ', h('small', null, num(q.counts[key] || 0)));
+  const sel = h('select', { 'aria-label': 'Item', onchange: (e) => { S.qitem = e.target.value; loadQueue(); } },
+    h('option', { value: '' }, 'Any item'), (q.items || []).map((x) => { const o = h('option', { value: x.item }, x.item + (x.name ? ' · ' + x.name : '') + ' (' + num(x.n) + ')'); o.selected = x.item === S.qitem; return o; }),
+    S.qitem && !(q.items || []).some((x) => x.item === S.qitem) ? (() => { const o = h('option', { value: S.qitem }, S.qitem); o.selected = true; return o; })() : null);
+  const td = (v, cls) => h('td', { class: cls }, v);
+  const rows = q.rows.map((r) => h('tr', { 'data-l': r.label, onclick: () => openLabel(r.label) }, td(num(r.pos), 'qpos'), td(r.label, 'mono'),
+    td(h('span', null, h('span', { class: 'mono rsoft' }, r.item || '—'), r.name ? ' ' + r.name : '')), td(h('span', { class: 'qwhy ' + r.reason }, QWHY[r.reason] || r.reason)), td(when(r.since), 'num')));
+  const shown = q.rows.length, more = q.total - shown;
+  el.queue.replaceChildren(h('div', { class: 'rcard vp' },
+    head([h('span', { class: 'rsoft rsm' }, 'updated ' + (S.qat ? ago(S.qat) : 'just now'))]),
+    h('div', { class: 'qs' }, h('div', null, h('b', null, num(q.waiting)), h('span', null, 'Waiting to be read')), h('div', null, h('b', null, num(q.being_read)), h('span', null, 'Being read right now')),
+      h('div', null, h('b', null, num(q.read_10min)), h('span', null, 'Read in the last 10 min')), h('div', null, h('b', null, eta), h('span', null, 'of an open tab to clear it, at ' + num(q.per_pass) + ' a pass'))),
+    h('div', { class: 'rsoft rsm', style: 'padding:0 16px 12px' }, 'Labels are read in the order below, ' + num(q.per_pass) + ' per 10-minute pass, only while someone at the store has Portal open with Aethernet on. Nothing is read when no tab is open.'),
+    h('div', { class: 'qf' }, chip('all', 'All'), chip('never', 'Never read'), chip('changed', 'Changed since read'), chip('recheck', 'Re-check'), h('span', { class: 'r' }, sel)),
+    q.rows.length ? table([['#'], ['Label'], ['Item'], ['Why it’s queued'], ['Waiting since', 'num']], rows) : h('div', { class: 'rnote' }, q.counts.all ? 'Nothing queued for this filter.' : 'Nothing is waiting: every known label has its history.'),
+    q.total ? h('div', { class: 'qmore' }, more > 0 ? h('button', { class: 'vbtn', type: 'button', disabled: S.qbusy, onclick: showMoreQueue }, 'Show ' + Math.min(QPAGE, more) + ' more') : null, 'Showing ' + num(shown) + ' of ' + num(q.total)) : null,
+    q.recent && q.recent.length ? h('h4', { class: 'qrec' }, 'Recently read') : null,
+    q.recent && q.recent.length ? table([['Label'], ['Item'], [''], ['Read', 'num']], q.recent.map((r) => h('tr', { 'data-l': r.label, onclick: () => openLabel(r.label) }, td(r.label, 'mono'),
+      td(h('span', null, h('span', { class: 'mono rsoft' }, r.item || '—'), r.name ? ' ' + r.name : '')), td(h('span', { class: 'qwhy read' }, 'Read')), td(when(r.at), 'num')))) : null));
+}
+async function loadQueue() {
+  const st = S.store;
+  if (S.qbusy) return;
+  S.qbusy = true; if (S.queue) drawQueue();
+  try {
+    const q = await ui.api('GET', '/tracker/retrace/queue/' + st + queueQuery(QPAGE));
+    if (st === S.store) { S.queue = q; S.qat = new Date().toISOString(); }
+  } catch (e) { if (st === S.store) { if (S.queue) ui.toast("Couldn't load the queue: " + e.message); else S.queue = { error: "Couldn't load the queue: " + e.message }; } }
+  S.qbusy = false;
+  if (st === S.store) drawQueue();
+}
+// "Show 50 more": the next page by position, appended (a label that left the queue meanwhile just shifts the rest up).
+async function showMoreQueue() {
+  const st = S.store, have = new Set(S.queue.rows.map((r) => r.label));
+  if (S.qbusy) return;
+  S.qbusy = true; drawQueue();
+  try {
+    const q = await ui.api('GET', '/tracker/retrace/queue/' + st + queueQuery(QPAGE) + '&offset=' + S.queue.rows.length);
+    if (st === S.store) { S.queue = Object.assign({}, q, { rows: S.queue.rows.concat(q.rows.filter((r) => !have.has(r.label))) }); S.qat = new Date().toISOString(); }
+  } catch (e) { ui.toast("Couldn't load more: " + e.message); }
+  S.qbusy = false;
+  if (st === S.store) drawQueue();
+}
+async function toggleQueue() {
+  S.qopen = !S.qopen; if (S.qopen) S.vopen = false;
+  drawHealth(); drawVerify(); drawQueue();
+  if (S.qopen) { await loadQueue(); }
+}
+async function openQueue() { if (!S.qopen) await toggleQueue(); el.queue.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+
 // ------------------------------------------------------------------ store: list + right side
 async function switchStore(st) {
   S.store = st; S.item = null; S.po = null; S.data = null; S.label = null; S.results = null; S.q = ''; el.q.value = '';
   S.vopen = false; S.verify = null; el.verify.hidden = true;
+  S.qopen = false; S.queue = null; S.qreason = 'all'; S.qitem = ''; el.queue.hidden = true;
   closeDrawer(); drawHealth();
   await loadStore({});
 }
