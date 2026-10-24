@@ -39,6 +39,8 @@ Flags `AE_DEV` `grep -n 'const AE_DEV = __DEV__;' src/00-core.js`, `AE_DEMO` `gr
 - Sandbox: `python3 sandbox/server.py` then http://localhost:8790 (dev build only).
 - Screenshots/tests: `~/Scripts/ubif-daily-sales/.venv/bin/python sandbox/shot.py /arrivals out.png`, or import `sandbox/shot.py` (`portal_page`, `shot`, `open_menu`, `inject_html`). Needs the sandbox up and `dist-dev/` built. Output goes in `sandbox/shots/` (ignored). Use that venv python: it has Playwright, system python does not.
 - Tests: `cd tracker-worker && npm test`.
+- Client tests (core `AE.api`/`AE.shape`/`AE.health`, Return, Retrace labels, tracker partials, Waymark): `node test-client/run.mjs` (or `cd test-client && npm test`). Loads `src/*.js` in a Node vm with stubbed browser globals (`test-client/harness.mjs`); fixtures come from `tracker-worker/test/fixtures/retrace/` and `sandbox/fixtures/`. Run it after touching `00-core.js` or any shard's Portal reads.
+- Portal answers are never guessed: a guard may only assert keys proven by a captured fixture or by code already reading them in production (`AE.shape` in `00-core.js`).
 
 ## Rules
 - New features go to `dev` plus `build.py --dev`. Never touch `main` or release branches, never deploy the public Worker, and never run `--release`, `--status` or `--demo` unless explicitly asked.
