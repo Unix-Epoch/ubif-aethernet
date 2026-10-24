@@ -408,10 +408,23 @@
       row(btn('Recent Aethernet errors', () => { out.replaceChildren(h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(AE.recentErrors, null, 1) || '[]')); waymark.scrollIntoView(); }),
         btn('Log a test error', () => { AE.noteError('dev tools', new Error('Test error from dev tools')); AE.toast('Dev tools', 'Logged; it shows in bug reports\' technical details.', 'ok'); })));
 
+    // Portal's health (AE.health in 00-core.js): the circuit breaker that pauses background checks while Portal fails.
+    const healthText = () => {
+      const s = AE.health.state(), t = (ms) => (ms ? new Date(ms).toLocaleTimeString() : '—');
+      return (s.down ? 'DOWN since ' + t(s.since) + ' · backoff step ' + (s.level + 1) + ' · ' + (s.probing ? 'probe out' : 'next probe ' + t(s.nextProbe)) : 'UP')
+        + ' · consecutive failures ' + s.failures + ' · outages this tab ' + s.outages + (s.last ? ' · last: ' + s.last.kind + ' ' + (s.last.status || '') + ' ' + s.last.path + ' ' + s.last.message : '');
+    };
+    const healthNote = note(healthText());
+    const portalHealth = section('Portal health',
+      healthNote,
+      row(btn('Refresh', () => { healthNote.textContent = healthText(); }),
+        btn('Simulate an outage (3 failures)', () => { for (let i = 0; i < 3; i++) AE.health.fail('http', { status: 504, path: 'dev tools (simulated)', message: 'simulated' }); healthNote.textContent = healthText(); }, { title: 'Counts three fake 5xx answers: background checks pause and the outage toast shows.' }),
+        btn('Reset', () => { AE.health.reset(); healthNote.textContent = healthText(); })));
+
     const card = h('div', { class: 'sg sg-card sg-dev', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' dev tools' },
       h('div', { class: 'head' }, h('span', { style: 'color:#e0761a;line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Dev tools'), h('span', { class: 'tag' }, 'DEV v' + AE_VERSION),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
-      h('div', { class: 'scroll' }, updates, tracker, retrace, assizeGraphs, sharepoint, notices, access, settings, macro, waymark, rows, scans, recorder, perf, general));
+      h('div', { class: 'scroll' }, portalHealth, updates, tracker, retrace, assizeGraphs, sharepoint, notices, access, settings, macro, waymark, rows, scans, recorder, perf, general));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-dev', onclick: (e) => { if (e.target === scrim) close(); } }, card);
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
