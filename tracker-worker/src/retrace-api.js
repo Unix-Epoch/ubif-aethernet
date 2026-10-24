@@ -1,12 +1,13 @@
 /*
   Retrace on the tracker Worker (Oct 23, 2026): the inventory movement ledger's routes. Tables inv_labels,
-  inv_movements, inv_items, inv_docs, inv_cursors (migrations/2026-10-23-retrace.sql); what a movement is and how
+  inv_movements, inv_items, inv_docs, inv_cursors (migrations/2026-10-23-retrace.sql), inv_item_counts and inv_baseline
+  (migrations/2026-10-24-retrace-baseline.sql); what a movement is and how
   each source becomes one: src/retrace.js (shared with Aethernet, pure). Movements are kept forever (small rows).
 
   Store side (x-aethernet-key + the store's Aethernet access, same as /scan; mounted by storeApi at /v1/:store/tracker/retrace/…).
   Everything is written under the store in the URL and nothing else: a label snapshot naming another store is skipped.
-    POST /retrace/sweep { items, labels, docs, movements, touched, cursors, need, names, nameNeed, by }   one collector pass →
-         { need: [label], more, changedItems: [{ item, why: new|changed }], added, rejected, skipped, written, named, unnamed }
+    POST /retrace/sweep { items, labels, docs, movements, touched, cursors, need, names, nameNeed, labelTotals, countNeed, poTotal, by }   one collector pass →
+         { need: [label], more, changedItems: [{ item, why: new|changed }], added, rejected, skipped, written, named, unnamed, countNeed: [item] }
            items      inventory-lookup rows ({ ItemNumber, ProductName, RetailCategory, WarehouseId, OnHandQuantity,
                       AvailableQuantity, ReservedQuantity, InTransitQuantity, SalesOnOrder, VanNickName }): per item and
                       warehouse; quantities differing from the stored ones (or a new item) come back in changedItems so
@@ -35,11 +36,39 @@
          unnamed: items with a movement or a label at the store and no name, newest first (nameNeed of them; ignored items never)
          need: labels whose serial history should be (re)read, changed > touched > backfill, claimed CLAIM_MIN minutes
          so a second browser skips them (the /scan pattern).
+         The baseline (see "progress" below): labelTotals [{ item, total }] are Portal's label counts per item (the browser reads
+         each lookup item's label list with pageSize=1 and takes its @odata.count), kept until the baseline freezes; countNeed
+         is how many lookup items still without a count to hand out (default 0, at most COUNT_CAP; none once frozen);
+         poTotal is the number of purchase orders (in transit + past) Portal lists, taken once.
     POST /retrace/history { label, rows, by }   the label's serial-history rows (boh/serial-history/{label}: the rows,
          or Portal's { value: [rows] } as is) → { ok, added, same, skipped } · rows normalized here (normalize.historyRows),
          duplicates ignored, rows naming another store or label skipped, the label leaves the queue.
     POST /retrace/watch { movements, by }   up to WATCH_MAX movements the in-page watcher saw Portal write → { ok, added, rejected }
-    GET  /retrace/cursor                   → { cursors: { sweepName: { value, at } } }
+    GET  /retrace/cursor                   → { cursors: { sweepName: { value, at } }, baseline: { frozen, posKnown } }
+    GET  /retrace/progress?seen=<done_at>  → { store, state: 'counting'|'gathering'|'done', pct, done_at, announce }   the client's read-only
+         signal for a future manager popup (same key + store access as the rest). pct: 0–100 once the baseline is frozen, null
+         while counting (Portal's totals aren't all in yet). done_at: when the store's initial gathering completed (the
+         baseline's backfill_done_at), null before. announce: done_at is set and isn't the `seen` the client sent, i.e. show the
+         popup. The client keeps the done_at it last announced (browser storage, per store) and sends it as `seen`; nothing is
+         stored on the server for it, so every browser at the store announces once. If a popup must show once per store across
+         browsers, add an announced_at column and an ack route then (not needed yet).
+  Progress (src/retrace-api.js progress / settle; the admin page's strip and the popup signal): the gathering is measured against a
+  baseline that is set early and then frozen, so the denominators don't move while the browser discovers things:
+    counting    the browser asks Portal each lookup item's label count (one call per item, pageSize=1, location All = sold included)
+                and the PO list counts; nothing is shown as a percentage yet.
+    gathering   all items counted (and PO count known): expected_labels = the sum of the counts, expected_items = items counted,
+                expected_pos = in-transit + past POs. Frozen then (counted_at). Steps, each X of Y against that baseline:
+                  stock lookup  items counted of expected_items · labels found  labels stored for the baseline's items (per item at most its count)
+                  histories read  of those labels, serial history read · purchase orders  read in full (not drafts) of expected_pos
+                  item names  baseline items with a name of expected_items
+                Labels that show up later (new POs, new items) are "new since": they never change the baseline.
+    done        every step at 100% and the PO list read through: backfill_done_at is set once and never cleared or moved. Ordinary
+                later changes (new labels, a PO to read) don't un-done it. There is no re-count route. By hand: deleting a store's
+                inv_item_counts rows and clearing counted_at / expected_* in its inv_baseline row makes it count again and freeze a
+                new baseline; backfill_done_at stays, so the signal doesn't fire a second time (state stays 'done', pct follows the
+                new baseline). To announce again on purpose: set backfill_done_at to NULL.
+    pct is weighted by the work each unit costs (PROGRESS_WEIGHT); eta_min = the longest step at its per-pass rate (PER_PASS) × 10 minutes,
+    which only passes while a store browser has Portal open with Aethernet on.
   WO hook: woRetraceStmts() below, called by POST /v1/:store/tracker/wo/:wo into the same batch as status / RFP periods.
 
   Admin side: retraceAdmin() below, mounted by trackerRoutes at /api/tracker/retrace/… (page 'retrace'; route list there).
@@ -47,12 +76,12 @@
 import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS, serialNow } from './retrace.js';
 
 export const NEED_MAX = 60;
-const NEED_CAP = 200, CLAIM_MIN = 10, WATCH_MAX = 50;
+const NEED_CAP = 200, COUNT_CAP = 300, CLAIM_MIN = 10, WATCH_MAX = 50;
 // Per-request caps. Most rows become a statement and D1 counts queries per Worker invocation (1000 on paid plans,
 // batched or not), so a pass bigger than this goes up in several sweeps (only new / changed rows are written, so a
 // second pass over the same data is mostly reads).
 const PO_DATA_MAX = 200000, PO_NEED_CAP = 100, NAMES_MAX = 200, UNNAMED_CAP = 50;
-const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, rows: 500, cursors: 20, pos: 600, names: NAMES_MAX };
+const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, rows: 500, cursors: 20, pos: 600, names: NAMES_MAX, labelTotals: 800 };
 const MAX = { sweep: 4000000, history: 1000000, watch: 150000 };
 const SWEEP_SOURCES = ['sweep', 'transfer', 'count', 'rma', 'buyback', 'po', 'snapshot'];
 const CURSOR_RE = /^[a-z][a-z0-9_-]{0,30}$/, LAST_SWEEP = 'last_sweep';
@@ -77,6 +106,87 @@ const soWo = (T, store, so, wo, source, at) => T.prepare(`INSERT INTO inv_so_wo 
 const touchLabel = (T, store, label, item, need, at, wo = null) => ignoredItem(item) ? null : T.prepare(`INSERT INTO inv_labels (store, label, item, wo, first_seen, last_seen, need_history) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (store, label) DO UPDATE SET item = COALESCE(item, excluded.item), wo = COALESCE(excluded.wo, wo), need_history = MAX(need_history, excluded.need_history)`)
   .bind(store, label, item, wo, at, at, need);
+
+// ------------------------------------------------------------------ progress (the baseline and the done signal)
+// What a unit of each step costs (about Portal calls: a history is one, a PO two, a name one, a label's listing a small share of a page),
+// so the one bar moves with the time left, not with the biggest count. And what the collector gets through in a pass of 10 minutes
+// (src/28-retrace-collect.js: NEED 60 histories, PO_BUDGET 15, NAME_BUDGET 10).
+export const PROGRESS_WEIGHT = { labels: 0.05, histories: 1, pos: 2, names: 1 };
+export const PER_PASS = { histories: 60, pos: 15, names: 10 };
+const PASS_MIN = 10;
+const nInt = (v) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 1e7 ? v : null);
+
+/*
+  One store's progress, read only. → { out, b, ready, complete }
+    out       what the routes hand out: { store, state, pct, done_at, counted_at, eta_min, steps: { stock, labels, histories, pos, names }
+              each { x, y } (frozen only), counting: { items_done, items_total, pos_known }, new_labels, last_sweep_at }
+    ready     counting is finished (a lookup has run, every lookup item has a count, the PO total is known): settle() freezes
+    complete  frozen and every step has reached its total and the PO list has been read through: settle() records done
+*/
+export async function progress(T, store) {
+  const [bq, itq, lbq, poq, curq] = await T.batch([
+    T.prepare('SELECT * FROM inv_baseline WHERE store = ?').bind(store),
+    T.prepare(`SELECT COUNT(*) AS lookup, COALESCE(SUM(c.item IS NOT NULL), 0) AS counted, COALESCE(SUM(c.item IS NOT NULL AND i.name IS NOT NULL), 0) AS named, COALESCE(SUM(c.labels), 0) AS labels
+        FROM inv_items i LEFT JOIN inv_item_counts c ON c.store = i.store AND c.item = i.item WHERE i.store = ? AND i.qty_hash IS NOT NULL`).bind(store),
+    // Per baseline item, at most its count: a label stored for an item beyond what Portal said it has is "new since", not found.
+    T.prepare(`SELECT COALESCE(SUM(MIN(c.labels, COALESCE(l.n, 0))), 0) AS found, COALESCE(SUM(MIN(c.labels, COALESCE(l.h, 0))), 0) AS read,
+          (SELECT COUNT(*) FROM inv_labels WHERE store = ?1) AS every
+        FROM inv_item_counts c LEFT JOIN (SELECT item, COUNT(*) AS n, SUM(last_history_at IS NOT NULL) AS h FROM inv_labels WHERE store = ?1 GROUP BY item) l ON l.item = c.item
+        WHERE c.store = ?1`).bind(store),
+    T.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(json_extract(data, '$.detailAt') IS NOT NULL), 0) AS read FROM inv_docs WHERE store = ? AND type = 'po' AND lower(COALESCE(status, '')) <> 'draft'`).bind(store),
+    T.prepare("SELECT sweep, value, updated_at FROM inv_cursors WHERE store = ? AND sweep IN ('lookup', 'po_backfill', ?)").bind(store, LAST_SWEEP),
+  ]);
+  const b = bq.results[0] || null, it = itq.results[0], lb = lbq.results[0], po = poq.results[0];
+  const cur = Object.fromEntries(curq.results.map((r) => [r.sweep, r]));
+  const listed = !!(cur.po_backfill && (parse(cur.po_backfill.value) || {}).done === true);
+  const frozen = !!(b && b.counted_at);
+  const posKnown = !!(b && b.expected_pos != null) || listed;
+  const ready = !frozen && !!cur.lookup && it.lookup === it.counted && posKnown;
+  const out = { store, state: b && b.backfill_done_at ? 'done' : frozen ? 'gathering' : 'counting', pct: null, done_at: (b && b.backfill_done_at) || null, counted_at: (b && b.counted_at) || null,
+    eta_min: null, steps: null, counting: { items_done: it.counted, items_total: it.lookup, pos_known: posKnown }, new_labels: null, last_sweep_at: (cur[LAST_SWEEP] && cur[LAST_SWEEP].updated_at) || null };
+  let complete = false;
+  if (frozen) {
+    const eI = b.expected_items || 0, eL = b.expected_labels || 0, eP = b.expected_pos || 0;
+    const steps = { stock: { x: Math.min(it.counted, eI), y: eI }, labels: { x: Math.min(lb.found, eL), y: eL }, histories: { x: Math.min(lb.read, eL), y: eL },
+      pos: { x: Math.min(po.read, eP), y: eP }, names: { x: Math.min(it.named, eI), y: eI } };
+    const w = (k) => PROGRESS_WEIGHT[k], done = Object.values(steps).every((v) => v.x >= v.y);
+    const den = Object.keys(PROGRESS_WEIGHT).reduce((n, k) => n + w(k) * steps[k].y, 0), num = Object.keys(PROGRESS_WEIGHT).reduce((n, k) => n + w(k) * steps[k].x, 0);
+    complete = done && listed;
+    out.steps = steps;
+    out.pct = complete || (done && !den) ? 100 : Math.min(99, Math.floor(den ? (num / den) * 100 : 100));
+    out.eta_min = complete ? 0 : Math.max(1, ...Object.keys(PER_PASS).map((k) => Math.ceil((steps[k].y - steps[k].x) / PER_PASS[k])), steps.labels.x < steps.labels.y ? 1 : 0) * PASS_MIN;
+    out.new_labels = Math.max(0, lb.every - steps.labels.x);
+  }
+  return { out, b, ready, complete, items: it, pos: po };
+}
+
+// Freezes the baseline once counting is finished, records the done time once; → the store's progress after that.
+// Called by the sweep and the history read, i.e. whenever something that moves a step has been written.
+async function settle(T, store, at) {
+  let p = await progress(T, store);
+  if (p.ready) {
+    await T.batch([
+      T.prepare(`INSERT INTO inv_baseline (store, expected_items, expected_labels, expected_pos, pos_counted_at, counted_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?5)
+          ON CONFLICT (store) DO UPDATE SET expected_items = excluded.expected_items, expected_labels = excluded.expected_labels, expected_pos = COALESCE(expected_pos, excluded.expected_pos),
+            pos_counted_at = COALESCE(pos_counted_at, excluded.pos_counted_at), counted_at = excluded.counted_at WHERE counted_at IS NULL`)
+        .bind(store, p.items.counted, p.items.labels, p.pos.n, at),
+      // counts of items the lookup doesn't have (an item that left the lookup before it was counted) aren't part of the baseline
+      T.prepare('DELETE FROM inv_item_counts WHERE store = ? AND item NOT IN (SELECT item FROM inv_items WHERE store = ? AND qty_hash IS NOT NULL)').bind(store, store),
+    ]);
+    p = await progress(T, store);
+  }
+  if (p.complete && !p.out.done_at) {
+    await T.prepare('UPDATE inv_baseline SET backfill_done_at = ? WHERE store = ? AND backfill_done_at IS NULL').bind(at, store).run();
+    p = await progress(T, store);
+  }
+  return p.out;
+}
+
+// A history read can be the last thing a store's gathering was waiting for. Settled only while the store has a baseline that isn't done yet.
+async function settleAfterHistory(T, store, at) {
+  const b = await T.prepare('SELECT backfill_done_at FROM inv_baseline WHERE store = ?').bind(store).first();
+  if (b && !b.backfill_done_at) await settle(T, store, at);
+}
 
 // ------------------------------------------------------------------ item names
 /*
@@ -182,7 +292,13 @@ export async function retraceStore(req, env, url, store, path, H) {
     const r = await T.prepare('SELECT sweep, value, updated_at FROM inv_cursors WHERE store = ?').bind(store).all();
     const cursors = {};
     for (const x of r.results) cursors[x.sweep] = { value: parse(x.value), at: x.updated_at };
-    return H.json({ cursors });
+    const b = await T.prepare('SELECT counted_at, expected_pos FROM inv_baseline WHERE store = ?').bind(store).first();
+    return H.json({ cursors, baseline: { frozen: !!(b && b.counted_at), posKnown: !!(b && b.expected_pos != null) } });
+  }
+
+  if (path === '/retrace/progress' && req.method === 'GET') {
+    const p = (await progress(T, store)).out, seen = H.clean(url.searchParams.get('seen'), 40);
+    return H.json({ store, state: p.state, pct: p.pct, done_at: p.done_at, announce: !!p.done_at && p.done_at !== seen }, 200);
   }
 
   if (path === '/retrace/watch' && req.method === 'POST') {
@@ -214,17 +330,18 @@ export async function retraceStore(req, env, url, store, path, H) {
         ON CONFLICT (store, label) DO UPDATE SET last_history_at = excluded.last_history_at, history_hash = excluded.history_hash, need_history = 0, claimed_until = NULL,
           item = COALESCE(item, excluded.item), serial_status = COALESCE(serial_status, excluded.serial_status)`)
       .bind(store, label, labelSnapshot({ label }).item || null, latest, at, at, at, hash);
-    if (row && row.history_hash === hash) { await done(null).run(); return H.json({ ok: true, added: 0, same: true, skipped }); }
+    if (row && row.history_hash === hash) { await done(null).run(); await settleAfterHistory(T, store, at); return H.json({ ok: true, added: 0, same: true, skipped }); }
     const moves = normalize.historyRows(label, rows);
     const fresh = await newOnly(T, store, moves);
     const latest = moves.length ? moves[moves.length - 1].raw_status : null;
     await chunks(T, [...fresh.map((m) => insertMv(T, store, m, at)), done(latest)]);
+    await settleAfterHistory(T, store, at);
     return H.json({ ok: true, added: fresh.length, same: false, skipped });
   }
 
   if (path === '/retrace/sweep' && req.method === 'POST') {
     const b = await H.readJson(req, MAX.sweep);
-    for (const k of ['items', 'labels', 'docs', 'movements', 'touched', 'pos', 'names']) if (b[k] != null && (!Array.isArray(b[k]) || b[k].length > LIMIT[k])) return H.fail(400, k + ': a list of at most ' + LIMIT[k]);
+    for (const k of ['items', 'labels', 'docs', 'movements', 'touched', 'pos', 'names', 'labelTotals']) if (b[k] != null && (!Array.isArray(b[k]) || b[k].length > LIMIT[k])) return H.fail(400, k + ': a list of at most ' + LIMIT[k]);
     if (b.cursors != null && (typeof b.cursors !== 'object' || Array.isArray(b.cursors) || Object.keys(b.cursors).length > LIMIT.cursors)) return H.fail(400, 'cursors: { sweep: value }');
     const at = H.now(), by = H.clean(b.by, 60) || null, stmts = [], book = nameBook();
     let written = 0, skipped = 0;
@@ -393,6 +510,24 @@ export async function retraceStore(req, env, url, store, path, H) {
       }
     }
 
+    /*
+      The baseline's inputs: label counts per item (only while counting: a frozen baseline never changes) and the PO total
+      (taken once, before the freeze). settle() below decides when counting is finished.
+    */
+    const base = await T.prepare('SELECT counted_at, expected_pos FROM inv_baseline WHERE store = ?').bind(store).first(), frozen = !!(base && base.counted_at);
+    if (!frozen) {
+      for (const x of b.labelTotals || []) {
+        const item = H.clean(x && x.item != null ? String(x.item) : '', 40), total = nInt(x && x.total);
+        if (!item || total == null || ignoredItem(item)) continue;
+        stmts.push(T.prepare(`INSERT INTO inv_item_counts (store, item, labels, counted_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT (store, item) DO UPDATE SET labels = excluded.labels, counted_at = excluded.counted_at`).bind(store, item, total, at));
+      }
+      const pt = nInt(b.poTotal);
+      if (pt != null && !(base && base.expected_pos != null)) {
+        stmts.push(T.prepare(`INSERT INTO inv_baseline (store, expected_pos, pos_counted_at, created_at) VALUES (?1, ?2, ?3, ?3)
+            ON CONFLICT (store) DO UPDATE SET expected_pos = COALESCE(expected_pos, excluded.expected_pos), pos_counted_at = COALESCE(pos_counted_at, excluded.pos_counted_at)`).bind(store, pt, at));
+      }
+    }
     for (const [name, value] of Object.entries(b.cursors || {})) {
       const v = JSON.stringify(value === undefined ? null : value);
       if (!CURSOR_RE.test(name) || name === LAST_SWEEP || v.length > 4000) return H.fail(400, 'bad cursor ' + String(name).slice(0, 40));
@@ -406,6 +541,7 @@ export async function retraceStore(req, env, url, store, path, H) {
     stmts.push(T.prepare('INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, sweep) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at')
       .bind(store, LAST_SWEEP, JSON.stringify({ by, items: items.size, labels: snaps.size, movements: added, changedItems: changedItems.length, named: nameW.length }), at));
     await chunks(T, stmts);
+    const prog = await settle(T, store, at);
 
     // The history queue: changed > touched > backfill, most recently seen first; claimed so other browsers skip them.
     const want = Math.min(Math.max(Number.isInteger(b.need) ? b.need : NEED_MAX, 0), NEED_CAP);
@@ -422,7 +558,12 @@ export async function retraceStore(req, env, url, store, path, H) {
         UNION ALL SELECT item, last_seen AS at FROM inv_labels WHERE store = ?1 AND item IS NOT NULL)
         WHERE item NOT IN (SELECT item FROM inv_items WHERE store = ?1 AND name IS NOT NULL) AND lower(item) NOT IN (SELECT value FROM json_each(?2))
         GROUP BY item ORDER BY last DESC, item LIMIT ?3`).bind(store, JSON.stringify(IGNORED_ITEMS), nameWant).all()).results.map((r) => r.item) : [];
-    return H.json({ need, more: q.length > need.length, changedItems, added, rejected, skipped, written, named: nameW.length, unnamed, pos: poOut });
+    // Lookup items whose label count Portal hasn't been asked for (countNeed: how many, default none), until the baseline is frozen.
+    const countWant = Math.min(Math.max(Number.isInteger(b.countNeed) ? b.countNeed : 0, 0), COUNT_CAP);
+    const countNeed = countWant && prog.state === 'counting' ? (await T.prepare(`SELECT i.item FROM inv_items i LEFT JOIN inv_item_counts c ON c.store = i.store AND c.item = i.item
+        WHERE i.store = ?1 AND i.qty_hash IS NOT NULL AND c.item IS NULL AND lower(i.item) NOT IN (SELECT value FROM json_each(?2)) ORDER BY i.item LIMIT ?3`)
+      .bind(store, JSON.stringify(IGNORED_ITEMS), countWant).all()).results.map((r) => r.item) : [];
+    return H.json({ need, more: q.length > need.length, changedItems, added, rejected, skipped, written, named: nameW.length, unnamed, countNeed, pos: poOut });
   }
   return H.fail(404, 'not found');
 }
@@ -463,7 +604,9 @@ export async function retraceStore(req, env, url, store, path, H) {
         total, remaining, registered, tracking, lines, labels, received, need_detail, updated_at, last_change }], total }
         newest (accounting date) first; from / to on the accounting date; limit ≤ 500 (100). Without store: their stores.
   GET /retrace/coverage              → { stores: [{ store, labels, histories, backlog, claimed, items, movements,
-        last_history_at, last_sweep_at, last_sweep }] } for the stores the person can see.
+        last_history_at, last_sweep_at, last_sweep, progress }] } for the stores the person can see. progress: the store's
+        baseline progress (see "Progress" at the top: state, pct, done_at, counted_at, eta_min, steps { stock, labels, histories,
+        pos, names: { x, y } }, counting { items_done, items_total, pos_known }, new_labels), what the page's strip draws.
 */
 // Movements with the WO behind a sales order (inv_so_wo) as `wo`: serial history leaves the WO number blank.
 const MV_COLS = `m.id, m.store, m.label, m.item, m.at, m.kind, m.raw_status, m.raw_event, m.ref_type, m.ref_id, m.ref_line, m.from_wh, m.to_wh, m.user_name AS user, m.source, m.detail, m.recorded_at,
@@ -683,7 +826,9 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     for (const r of items.results) row(r.store).items = r.items;
     for (const r of moves.results) row(r.store).movements = r.movements;
     for (const r of sweeps.results) Object.assign(row(r.store), { last_sweep_at: r.updated_at, last_sweep: parse(r.value) });
-    return H.json({ stores: [...by.values()].filter((x) => canSee(x.store)).sort((a, b) => a.store - b.store) }, 200, false);
+    const list = [...by.values()].filter((x) => canSee(x.store)).sort((a, b) => a.store - b.store);
+    for (const x of list) x.progress = (await progress(T, x.store)).out;
+    return H.json({ stores: list }, 200, false);
   }
   return H.fail(404, 'not found', false);
 }

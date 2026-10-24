@@ -1,6 +1,7 @@
 // Admin site: the Retrace page (page 'retrace'). Served at /retrace-ui.js and loaded by page.js when the tab opens.
 // Retrace is the inventory movement ledger (tracker-worker/src/retrace.js, retrace-api.js): every label's moves at a
-// store, collected by Aethernet in store browsers. This page reads it: a coverage strip, search, the store's items
+// store, collected by Aethernet in store browsers. This page reads it: a progress strip (one bar against the store's frozen
+// baseline: counting labels, gathering, paused, up to date), search, the store's items
 // (most recent movement first) or its purchase orders, the selected item's counts and its serials (one row per label:
 // status now, where it is, last movement, move count; filtered by status now and by when it last moved; movements with
 // no label below), a label's whole timeline in a drawer, and a PO's own page. Read only; the server checks page and store
@@ -11,7 +12,7 @@ const CSS = `
 .rt{--p:var(--pt);--muted:#7c7b80;--errs:#fde8eb;
   --kin:#dff5e6;--kinf:#0d4a25;--kout:#eceaf0;--koutf:#3b3a40;--kwo:#efe4fb;--kwof:#5a1a99;--kq:#fff0c0;--kqf:#5a4300;--kc:#e2eefb;--kcf:#123d6b;--kbad:#fde8eb;--kbadf:#8f1d2f;
   --shadow:0 1px 2px rgba(20,10,40,.06),0 4px 14px rgba(20,10,40,.07);--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  display:grid;gap:12px}
+  display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 @media (prefers-color-scheme:dark){.rt{--muted:#8b8a90;--err:#ef6b7e;--errs:#3a1a20;
   --kin:#173a24;--kinf:#bff0cf;--kout:#2a2930;--koutf:#d6d4dc;--kwo:#2f2042;--kwof:#dcc2fa;--kq:#3d3410;--kqf:#ffe9a8;--kc:#18283b;--kcf:#bcd8f7;--kbad:#3a1a20;--kbadf:#ffb3bf;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.35)}}
@@ -24,11 +25,20 @@ const CSS = `
 .rt .rsoft{color:var(--soft)} .rt .rsm{font-size:12px} .rt .mono{font-family:var(--mono);font-size:12px}
 .rt .rbtn{height:32px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--card);font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
 .rt .rbtn:hover{border-color:var(--muted)}
-.rt .health{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;padding:10px 14px;font-size:13px}
-.rt .health .r{margin-left:auto}
+.rt .pg{padding:14px 16px;display:grid;gap:10px;font-size:13px}
+.rt .pg .top{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px} .rt .pg .top .dot{align-self:center} .rt .pg .top .t{font-weight:700} .rt .pg .top .r{margin-left:auto}
+.rt .pg .top b.big{font-size:22px;font-variant-numeric:tabular-nums}
+.rt .pg .track{height:10px;border-radius:5px;background:var(--line);overflow:hidden} .rt .pg .track i{display:block;height:100%;background:var(--p);border-radius:5px}
+.rt .pg.done .track i{background:#1baf7a}
+.rt .pg.count .track i{width:35%;background:linear-gradient(90deg,transparent,var(--p),transparent);background-size:200% 100%;animation:rt-indet 1.6s ease-in-out infinite}
+@keyframes rt-indet{0%{margin-left:-35%}100%{margin-left:100%}}
+@media (prefers-reduced-motion:reduce){.rt .pg.count .track i{animation:none;margin-left:32%}}
+.rt .pg .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px 18px;font-size:12.5px}
+.rt .pg .steps div{display:grid;gap:3px} .rt .pg .steps .mb{height:4px;border-radius:2px;background:var(--line);overflow:hidden} .rt .pg .steps .mb i{display:block;height:100%;background:var(--p);opacity:.75}
+.rt .pg .steps .ok i{background:#1baf7a;opacity:1} .rt .pg .steps .wait{color:var(--muted)}
+.rt .pg .note{font-size:12.5px;color:var(--soft)} .rt .pg .note.warn{color:var(--warnf);background:var(--warn);padding:6px 10px;border-radius:8px}
 .rt .dot{width:9px;height:9px;border-radius:50%;background:#1baf7a;flex:none;box-shadow:0 0 0 3px rgba(27,175,122,.18)}
 .rt .dot.old{background:#d9a400;box-shadow:0 0 0 3px rgba(217,164,0,.2)} .rt .dot.none{background:var(--muted);box-shadow:0 0 0 3px color-mix(in srgb,var(--muted) 20%,transparent)}
-.rt .pbar{width:140px;height:6px;border-radius:3px;background:var(--line);overflow:hidden;display:inline-block;vertical-align:middle} .rt .pbar i{display:block;height:100%;background:var(--p)}
 .rt .search{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px}
 .rt .search input{flex:1 1 320px;min-width:0;height:38px;border:1px solid var(--line);border-radius:10px;padding:0 12px;background:var(--card)}
 .rt .search select{height:38px;border:1px solid var(--line);border-radius:10px;padding:0 10px;background:var(--card)}
@@ -110,8 +120,9 @@ const GROUPS = [['all', 'All'], ['in', 'In stock'], ['wo', 'Reserved'], ['out', 
 const SRC = (s) => (s === 'history' ? 'History' : s === 'wo' || s === 'wo_event' ? 'WO' : s === 'watch' ? 'Live' : 'Sweep');
 const RANGES = [['30', 'Moved in the last 30 days'], ['90', 'Moved in the last 90 days'], ['all', 'Any time']];
 const PAGE = 200;
-// The collector reads 60 serial histories a pass, a pass every 10 minutes (src/28-retrace-collect.js).
-const HISTORIES_PER_MIN = 6;
+// A store that hasn't been collected from for this long is "paused": a pass runs every 10 minutes while a store browser has Portal open
+// with Aethernet on, and the stock lookup (the slowest step) every 30.
+const PAUSED_MS = 25 * 60000;
 const EMPTY_SVG = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg>';
 
 let ui = null, S = null, el = {};
@@ -201,7 +212,7 @@ export async function draw(m, helpers) {
   el = {};
   el.drawer = drawerEl();
   el.root = h('div', { class: 'rt' },
-    el.health = h('div', { class: 'rcard health' }),
+    el.health = h('div'),
     h('div', { class: 'rcard search' },
       el.q = h('input', { type: 'search', placeholder: 'Search an item, label, PO, work order, sales order or transfer', 'aria-label': 'Search Retrace', value: S.q,
         onkeydown: (e) => { if (e.key === 'Enter') search(el.q.value.trim()); }, onsearch: (e) => { if (!e.target.value) search(''); } }),
@@ -225,22 +236,44 @@ function emptyCard(title, text, steps) {
     steps ? h('div', { class: 'steps' }, steps.map((s) => h('span', null, s))) : null);
 }
 
-// ------------------------------------------------------------------ coverage strip
+// ------------------------------------------------------------------ progress strip
+// One bar against the store's frozen baseline (tracker-worker/src/retrace-api.js progress, in /retrace/coverage). Four looks:
+// counting labels (Portal's totals not all in: indeterminate, no number), gathering, paused (gathering with no pass lately: collection
+// only runs while a store browser has Portal open with Aethernet on), up to date (done once; stays green, later changes are "new since").
+function span(mins) { return mins < 90 ? 'about ' + Math.max(1, mins) + ' min' : 'about ' + Math.round(mins / 60) + ' hours'; }
+function stepEl(label, st) {
+  const h = ui.h;
+  if (!st) return h('div', { class: 'wait' }, h('span', null, h('b', null, label), ' counting…'), h('span', { class: 'mb' }, h('i', { style: 'width:0' })));
+  const full = st.x >= st.y, pct = st.y ? Math.min(100, Math.floor((st.x / st.y) * 100)) : 100;
+  return h('div', { class: full ? 'ok' : '' }, h('span', null, h('b', null, label), ' ', num(st.x) + ' of ' + num(st.y) + (full ? ' ✓' : '')), h('span', { class: 'mb' }, h('i', { style: 'width:' + pct + '%' })));
+}
 function drawHealth() {
-  const h = ui.h, c = S.coverage.find((x) => x.store === S.store) || { labels: 0, histories: 0, backlog: 0, movements: 0, items: 0, last_sweep_at: null };
-  const pct = c.labels ? Math.round((c.histories / c.labels) * 100) : 0;
+  const h = ui.h, c = S.coverage.find((x) => x.store === S.store) || {}, p = c.progress || { state: 'counting', counting: { items_done: 0, items_total: 0 }, steps: null };
   const age = c.last_sweep_at ? Date.now() - new Date(c.last_sweep_at).getTime() : null;
-  const dot = age == null ? 'none' : age > 60 * 60000 ? 'old' : '';
-  const mins = Math.round((c.backlog || 0) / HISTORIES_PER_MIN);
-  const tabTime = mins < 1 ? 'clear' : mins < 90 ? 'about ' + mins + ' min of an open tab' : 'about ' + Math.round(mins / 60) + ' hours of an open tab';
+  const stale = age == null || age > PAUSED_MS, counting = p.state === 'counting', done = p.state === 'done', paused = !done && stale;
+  const where = h('span', { class: 'r rsoft rsm' }, storeName(S.store) + ' · ' + (c.last_sweep_at ? 'last pass ' + ago(c.last_sweep_at) : 'no pass yet'));
+  const stp = p.steps || {}, tabLeft = p.eta_min != null ? span(p.eta_min) + ' of an open tab' : '';
+  let title, big, sub, note;
+  if (counting) {
+    title = 'Counting labels'; big = '…';
+    sub = p.counting.items_total ? 'asking Portal how many labels the store has · ' + num(p.counting.items_done) + ' of ' + num(p.counting.items_total) + ' items counted' + (p.counting.pos_known ? '' : ', purchase orders next')
+      : 'waiting for the first stock lookup';
+  } else if (done) {
+    title = 'Up to date'; big = '100%';
+    sub = num(stp.labels && stp.labels.y) + ' labels · ' + num(c.movements) + ' movements';
+    note = 'Finished ' + when(p.done_at) + '. New or changed labels are read as they appear' + (p.new_labels ? ' (' + num(p.new_labels) + ' labels added since the baseline)' : '') + '.';
+  } else {
+    title = paused ? 'Paused' : 'Gathering data'; big = p.pct + '%';
+    sub = paused ? 'needs an open Portal tab at store ' + S.store + ' to continue' : tabLeft + ' left';
+  }
+  if (paused) note = (c.last_sweep_at ? 'Nothing has been collected since ' + when(c.last_sweep_at) : 'Nothing has been collected yet') + '. Collection only runs while someone at the store has Portal open with Aethernet on' + (tabLeft ? '; ' + tabLeft + ' of that remains' : '') + '.';
+  const bar = h('div', { class: 'track' }, h('i', { style: counting ? '' : 'width:' + p.pct + '%' }));
+  const steps = counting ? [stepEl('Stock lookup', p.counting.items_total ? { x: p.counting.items_total, y: p.counting.items_total } : null), stepEl('Labels found', null), stepEl('Histories read', null), stepEl('Purchase orders', null), stepEl('Item names', null)]
+    : [stepEl('Stock lookup', stp.stock), stepEl('Labels found', stp.labels), stepEl('Histories read', stp.histories), stepEl('Purchase orders', stp.pos), stepEl('Item names', stp.names)];
+  el.health.className = 'rcard pg' + (done ? ' done' : counting ? ' count' : '');
   el.health.replaceChildren(
-    h('span', { class: 'dot ' + dot, 'aria-hidden': 'true' }),
-    h('span', null, h('b', null, storeName(S.store)), ' · ', c.last_sweep_at ? 'last pass ' + ago(c.last_sweep_at) : 'no pass yet'),
-    h('span', null, 'Labels known ', h('b', null, num(c.labels))),
-    h('span', null, 'Histories read ', h('b', null, num(c.histories)), ' ', h('span', { class: 'pbar', title: pct + '% read' }, h('i', { style: 'width:' + pct + '%' }))),
-    h('span', null, 'Backlog ', h('b', null, num(c.backlog)), ' ', h('span', { class: 'rsoft rsm' }, '· ' + tabTime)),
-    h('span', null, 'Movements ', h('b', null, num(c.movements))),
-    h('span', { class: 'r rsoft rsm' }, c.items ? num(c.items) + ' items in stock lookup' : ''));
+    h('div', { class: 'top' }, h('span', { class: 'dot ' + (paused ? 'old' : counting && age == null ? 'none' : ''), 'aria-hidden': 'true' }), h('span', { class: 't' }, title), h('b', { class: 'big' }, big), h('span', { class: 'rsoft' }, sub), where),
+    bar, h('div', { class: 'steps' }, steps), ...(note ? [h('div', { class: 'note' + (paused ? ' warn' : '') }, note)] : []));
 }
 
 // ------------------------------------------------------------------ store: list + right side

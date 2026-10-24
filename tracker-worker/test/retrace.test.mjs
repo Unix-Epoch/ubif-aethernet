@@ -134,6 +134,7 @@ const { env, dispose } = await getPlatformProxy({ configPath: 'wrangler.toml', p
 for (const stmt of readFileSync('schema.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 // the migration applies on its own too (and again: IF NOT EXISTS everywhere)
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-23-retrace.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
+for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-24-retrace-baseline.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 await env.AE.prepare('CREATE TABLE IF NOT EXISTS store_access (store INTEGER PRIMARY KEY, name TEXT, added_by TEXT, added_at TEXT)').run();
 await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (914, 'Newport News'), (326, 'Lynnhaven')").run();
 const E = Object.assign({}, env, { APP_KEY: 'k', TRACKER_OWNERS: 'owner@x.com', LIMITER: null });
@@ -594,6 +595,100 @@ assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 
   assert.equal((await admin('owner@x.com', '/retrace/item/914/300002')).j.info.name, 'Back Glass');
   const c2 = (await admin('owner@x.com', '/retrace/coverage')).j.stores.find((x) => x.store === 914);
   assert.equal(c2.items, 3, 'coverage counts lookup items only: ' + c2.items);
+}
+
+// ------------------------------------------------------------------ baseline: label totals up front, one progress bar, the done signal
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (536, 'Lexington')").run();
+  const sw5 = (body) => call('POST', '/v1/536/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+  const pr = async (seen) => { const r = await call('GET', '/v1/536/tracker/retrace/progress' + (seen ? '?seen=' + encodeURIComponent(seen) : '')); ok(r, 'progress'); return r.j; };
+  const full = async () => (await admin('owner@x.com', '/retrace/coverage')).j.stores.find((x) => x.store === 536).progress;
+  const lk = (item, name) => Object.assign({ ItemNumber: item, WarehouseId: '536', OnHandQuantity: 2, AvailableQuantity: 2 }, name ? { ProductName: name } : {});
+  const lab = (item, n) => ({ SerialNumber: item + '-' + String(n).padStart(10, '0'), ItemNumber: item, SerialStatus: 'Available', Store: '536', ConsignmentStatus: 'No' });
+  const hist = (item, n) => call('POST', '/v1/536/tracker/retrace/history', { label: item + '-' + String(n).padStart(10, '0'), rows: [] });
+  const PO5 = (id, lines = true) => Object.assign({}, POH, { PurchaseOrderNumber: id, PurchaseOrderLinesV2: lines ? [{ LineNumber: 1, ItemNumber: '500001', LineDescription: 'Part A', OrderedPurchaseQuantity: 1 }] : undefined });
+
+  // nothing yet: counting, no number
+  let p0 = await pr();
+  assert.deepEqual([p0.state, p0.pct, p0.done_at, p0.announce], ['counting', null, null, false]);
+  assert.equal((await call('GET', '/v1/536/tracker/retrace/cursor')).j.baseline.frozen, false);
+
+  // the lookup lists two items (one without a name); the Worker hands out both for counting, nothing else yet
+  let s1 = await sw5({ items: [lk('500001', 'Part A'), lk('500002')], cursors: { lookup: { at: AT } }, countNeed: 10 });
+  ok(s1, 'lookup sweep');
+  assert.deepEqual(s1.j.countNeed, ['500001', '500002']);
+  let pc = (await admin('owner@x.com', '/retrace/coverage')).j.stores.find((x) => x.store === 536).progress;
+  assert.deepEqual([pc.state, pc.pct, pc.steps, pc.counting], ['counting', null, null, { items_done: 0, items_total: 2, pos_known: false }]);
+  // one count in: still counting, and only the other one is handed out; junk totals are refused
+  s1 = await sw5({ labelTotals: [{ item: '500001', total: 3 }, { item: '500002', total: -1 }, { item: '', total: 4 }, { item: 'BB0001', total: 9 }, { item: '500002', total: 'x' }], countNeed: 10 });
+  assert.deepEqual(s1.j.countNeed, ['500002']);
+  assert.equal(await count('SELECT COUNT(*) AS n FROM inv_item_counts WHERE store = 536'), 1, 'only the valid count kept');
+  // the last count; the PO total is still unknown, so it can't freeze
+  s1 = await sw5({ labelTotals: [{ item: '500002', total: 2 }], countNeed: 10 });
+  assert.equal((await pr()).state, 'counting'); assert.deepEqual(s1.j.countNeed, []);
+  assert.equal((await full()).counting.items_done, 2);
+  // the PO total arrives (not a number: ignored): frozen at once, with the sums
+  await sw5({ poTotal: 'many' }); assert.equal((await pr()).state, 'counting');
+  s1 = await sw5({ poTotal: 2, countNeed: 10 });
+  let g = await full();
+  assert.equal(g.state, 'gathering'); assert.ok(g.counted_at); assert.equal(g.done_at, null);
+  assert.deepEqual(g.steps, { stock: { x: 2, y: 2 }, labels: { x: 0, y: 5 }, histories: { x: 0, y: 5 }, pos: { x: 0, y: 2 }, names: { x: 1, y: 2 } });
+  assert.ok(g.pct >= 0 && g.pct < 20, 'the name read from the lookup counts, nothing else does: ' + g.pct); assert.ok(g.eta_min >= 10 && g.eta_min % 10 === 0, 'eta in whole passes: ' + g.eta_min);
+  assert.deepEqual(s1.j.countNeed, [], 'frozen: nothing more to count');
+  assert.equal((await call('GET', '/v1/536/tracker/retrace/cursor')).j.baseline.frozen, true);
+  // set in stone: later totals, a later PO total, and new items don't move it
+  await sw5({ labelTotals: [{ item: '500001', total: 99 }], poTotal: 50, items: [lk('500003', 'Newcomer')] });
+  assert.equal((await call('GET', '/v1/536/tracker/retrace/progress')).j.pct, g.pct);
+  const b0 = await T.prepare('SELECT expected_items, expected_labels, expected_pos FROM inv_baseline WHERE store = 536').first();
+  assert.deepEqual([b0.expected_items, b0.expected_labels, b0.expected_pos], [2, 5, 2]);
+  assert.equal(await count('SELECT COUNT(*) AS n FROM inv_item_counts WHERE store = 536 AND item = ?', '500003'), 0, 'a new item is not in the baseline');
+  assert.deepEqual((await sw5({ countNeed: 10 })).j.countNeed, [], 'and is not asked for');
+
+  // labels found: the bar moves; a label of the new item is "new since" and changes nothing in the steps
+  await sw5({ labels: [lab('500001', 1), lab('500001', 2), lab('500001', 3), lab('500002', 1), lab('500003', 1)], need: 0 });
+  g = await full();
+  assert.deepEqual([g.steps.labels, g.new_labels], [{ x: 4, y: 5 }, 1], JSON.stringify(g));
+  // labels beyond an item's count are new too (a fourth label for an item Portal counted 3 of)
+  await sw5({ labels: [lab('500001', 4)] });
+  g = await full(); assert.deepEqual([g.steps.labels, g.new_labels], [{ x: 4, y: 5 }, 2]);
+  await sw5({ labels: [lab('500002', 2)] });
+  g = await full(); assert.deepEqual(g.steps.labels, { x: 5, y: 5 });
+  // histories: each read moves it; weighted: with labels and 2 of 5 histories read the bar is between 0 and 100
+  await hist('500001', 1); await hist('500001', 2);
+  g = await full(); assert.deepEqual(g.steps.histories, { x: 2, y: 5 }); assert.ok(g.pct > 0 && g.pct < 99, 'pct ' + g.pct);
+  const mid = g.pct;
+  await hist('500001', 3); await hist('500002', 1);
+  g = await full(); assert.ok(g.pct > mid && g.pct < 99); assert.equal(g.state, 'gathering');
+  // names, POs: every step but the last at 100% is still not done (99 at most), the PO list must be read through too
+  await hist('500002', 2);
+  await sw5({ names: [{ item: '500002', name: 'Part B', authoritative: true }] });
+  assert.deepEqual((await full()).steps.names, { x: 2, y: 2 });
+  await sw5({ pos: [{ header: PO5('UBFPO000536001'), receive: { PurchaseOrderId: 'UBFPO000536001', Lines: [] } }, PO5('UBFPO000536002', false), PO5('UBFPO000536003', false)], poNeed: 5 });
+  g = await full(); assert.deepEqual(g.steps.pos, { x: 1, y: 2 }); assert.equal(g.state, 'gathering');
+  assert.equal(g.pct < 100, true);
+  await sw5({ pos: [{ header: PO5('UBFPO000536002'), receive: { PurchaseOrderId: 'UBFPO000536002', Lines: [] } }] });
+  g = await full(); assert.deepEqual(g.steps.pos, { x: 2, y: 2 });
+  assert.equal(g.state, 'gathering', 'everything at its total but the PO list is not read through yet'); assert.equal(g.pct, 99);
+  assert.equal((await pr()).done_at, null);
+  // the list is read through: done, once
+  await sw5({ cursors: { po_backfill: { page: 3, done: true } } });
+  g = await full(); assert.equal(g.state, 'done'); assert.equal(g.pct, 100); assert.equal(g.eta_min, 0);
+  const done = g.done_at; assert.ok(done && /Z$/.test(done));
+  const sig = await pr();
+  assert.deepEqual([sig.state, sig.pct, sig.done_at, sig.announce], ['done', 100, done, true], 'a client that has not announced it');
+  assert.equal((await pr(done)).announce, false, 'announced already');
+  assert.equal((await pr('2020-01-01T00:00:00.000Z')).announce, true, 'a different done_at than the one it announced');
+  // ordinary later changes: new POs, new labels, a new item, more reads: still done, same time, nothing fires again
+  await sw5({ pos: [PO5('UBFPO000536009', false)], labels: [lab('500003', 2)], items: [lk('500004', 'Another')] });
+  await hist('500003', 1);
+  g = await full(); assert.equal(g.state, 'done'); assert.equal(g.done_at, done); assert.ok(g.new_labels >= 3);
+  assert.equal((await pr(done)).announce, false);
+  // the response carries nothing else of the baseline's insides; per store
+  assert.deepEqual(Object.keys(sig).sort(), ['announce', 'done_at', 'pct', 'state', 'store']);
+  assert.equal((await call('GET', '/v1/326/tracker/retrace/progress')).j.state, 'counting', 'another store has its own');
+  assert.equal((await call('GET', '/v1/999/tracker/retrace/progress')).status, 403, 'a store without access');
+  assert.equal((await call('POST', '/v1/536/tracker/retrace/progress', {})).status, 404, 'read only');
+  assert.equal((await admin('mgr@x.com', '/retrace/coverage')).j.stores.some((x) => x.store === 536), false, 'coverage (and its progress) is cut to the person\'s stores');
 }
 
 // ------------------------------------------------------------------ ignored items (BB0001: buyback devices)

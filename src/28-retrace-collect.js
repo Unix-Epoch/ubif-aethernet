@@ -11,6 +11,12 @@
        it can't be filtered to the store's stock). Rows → the sweep's items; the Worker answers which items changed.
        Items that drop out of the lookup are sent once with zero quantities (this browser's list of what it sent),
        so a sell-out reads as a change.
+    2b. Label totals, so the progress bar's denominators are set early instead of growing as labels are found: each lookup
+       item the Worker hasn't a count for (it says which, up to 200 a pass) gets one call, store-products/{item}/inventory
+       with pageSize=1 and location All (sold included), and Portal's @odata.count is its label count. If Portal sent no
+       count, the list is read in full and counted (those snapshots are kept). 404 counts as 0. Once every item has a
+       count and the PO total is known, the Worker freezes the baseline (retrace-api.js "Progress"); the PO total is two
+       calls (in-transit and past lists, pageSize=1, @odata.count), made only while it's unknown.
     3. Labels of changed items (150 items a pass; the rest wait in this browser for the next pass):
        store-products/{item}/inventory, paged → label snapshots.
     4. Documents: outstanding RMA / buyback / salvage parts, RMA orders of the last 30 days (each new or changed
@@ -49,11 +55,12 @@ AE.retrace = (() => {
   const PASS_KEY = 'ae_retrace_pass_at', LAST_KEY = 'ae_retrace_last', QUEUE_KEY = 'ae_retrace_watch_q';
   const STOCK_KEY = (s) => 'ae_retrace_stock_' + s, TODO_KEY = (s) => 'ae_retrace_todo_' + s, SO_KEY = (s) => 'ae_retrace_so_' + s, NAMED_KEY = (s) => 'ae_retrace_named_' + s;
   const PASS_MS = 10 * 60 * 1000, LOOKUP_MS = 30 * 60 * 1000, GAP_MS = 300;
+  const COUNT_KEY = (s) => 'ae_retrace_count_' + s, COUNT_BUDGET = 200;
   const NEED = 60, ITEM_BUDGET = 150, DETAIL_BUDGET = 15, PO_BUDGET = 15, RMA_BUDGET = 20, NAME_ASK = 20, NAME_BUDGET = 10, NAME_RETRY_MS = 86400000;
   const LOOKUP_PAGES = 30, LIST_PAGES = 10, PO_BACKFILL_PAGES = 2, PO_DAYS = 14, RMA_DAYS = 30;
   const WATCH_BATCH = 50, QUEUE_MAX = 500, QUEUE_DAYS = 3;
   // The Worker's per-request caps (retrace-api.js LIMIT): bigger lists go up in several sweeps.
-  const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, pos: 600, names: 200 };
+  const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, pos: 600, names: 200, labelTotals: 800 };
   const enabled = () => AE_SANDBOX || AE.tracker.configured();
   const stopped = () => !!AE.storeChanged() || AE.status.paused('retrace');
   class Stop extends Error {}
@@ -77,11 +84,11 @@ AE.retrace = (() => {
   /*
     One sweep's rows, split into calls under the Worker's caps. need / poNeed / nameNeed / cursors go on the last call
     (the others ask for nothing), so the history queue is claimed once. → { changedItems, need, more, added, written,
-    rejected, skipped, named, unnamed, pos: { need, events, received, written } }
+    rejected, skipped, named, unnamed, countNeed, pos: { need, events, received, written } }
   */
   async function sweep(store, by, body) {
     const n = Math.max(1, ...Object.keys(LIMIT).map((k) => Math.ceil(((body[k] || []).length) / LIMIT[k])));
-    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, named: 0, unnamed: [], pos: { need: [], events: 0, received: 0, written: 0 } };
+    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, named: 0, unnamed: [], countNeed: [], pos: { need: [], events: 0, received: 0, written: 0 } };
     for (let i = 0; i < n; i++) {
       const last = i === n - 1, part = { by };
       for (const k of Object.keys(LIMIT)) { const s = (body[k] || []).slice(i * LIMIT[k], (i + 1) * LIMIT[k]); if (s.length) part[k] = s; }
@@ -89,11 +96,13 @@ AE.retrace = (() => {
       if (last && body.poNeed) part.poNeed = body.poNeed;
       if (last && body.nameNeed) part.nameNeed = body.nameNeed;
       if (last && body.cursors) part.cursors = body.cursors;
+      if (last && body.countNeed) part.countNeed = body.countNeed;
+      if (last && body.poTotal != null) part.poTotal = body.poTotal;
       const j = await worker(store, 'POST', '/sweep', part);
       out.changedItems.push(...(j.changedItems || []));
       for (const k of ['added', 'written', 'rejected', 'skipped', 'named']) out[k] += j[k] || 0;
       if (j.pos) for (const k of ['events', 'received', 'written']) out.pos[k] += j.pos[k] || 0;
-      if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; out.unnamed = j.unnamed || []; }
+      if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; out.unnamed = j.unnamed || []; out.countNeed = j.countNeed || []; }
     }
     return out;
   }
@@ -140,6 +149,29 @@ AE.retrace = (() => {
       if (list.length < 200 || (total && page * 200 >= total)) break;
     }
     return out;
+  }
+
+  // An item's label count for the baseline: the list's own @odata.count at pageSize=1 (one tiny call). No count in the answer:
+  // read the whole list and count it (snaps are kept for the sweep). Portal has no record (404): 0.
+  async function labelTotal(store, item) {
+    try {
+      const j = await portal('GET', '/api/boh/store-products/' + encodeURIComponent(item) + '/inventory?pageSize=1&page=1&searchTerm=&warehouseType=All&warehouseId=' + store);
+      const total = j && !Array.isArray(j) ? j['@odata.count'] : null;
+      if (typeof total === 'number' && Number.isInteger(total) && total >= 0) return { item: String(item), total };
+    } catch (e) { if (e.status === 404) return { item: String(item), total: 0 }; throw e; }
+    const snaps = await labelsOf(store, item);
+    return { item: String(item), total: snaps.length, snaps };
+  }
+  // How many purchase orders Portal lists (in transit + past; drafts come and go): the list calls' @odata.count at pageSize=1. null when any lacks one.
+  async function poTotal() {
+    let sum = 0;
+    for (const orderType of ['in-transit', 'past']) {
+      const j = await portal('POST', '/api/boh/purchase-orders?pageSize=1&page=1&searchTerm=', { orderType });
+      const n = j && !Array.isArray(j) ? j['@odata.count'] : null;
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) return null;
+      sum += n;
+    }
+    return sum;
   }
 
   // Portal's item record (the item page's header call): its ProductName, null when it has none.
@@ -245,7 +277,7 @@ AE.retrace = (() => {
     const t0 = Date.now();
     counts = { portal: 0, worker: 0 };
     const result = { at: new Date().toISOString(), seconds: 0, calls: counts, watched: 0, lookup: null, items: 0, changedItems: 0, itemsRead: 0, itemsWaiting: 0, labels: 0, docs: 0,
-      movements: 0, pos: 0, poDetails: 0, histories: 0, historyRows: 0, details: 0, added: 0, names: 0, named: 0, unnamed: 0, namesRead: 0, backlogMore: false, errors: [] };
+      movements: 0, counted: 0, pos: 0, poDetails: 0, histories: 0, historyRows: 0, details: 0, added: 0, names: 0, named: 0, unnamed: 0, namesRead: 0, backlogMore: false, errors: [] };
     const note = (where, e) => {
       if (result.errors.length < 8) result.errors.push(where + ': ' + ((e && e.message) || e));
       AE.noteError('retrace ' + where, e);
@@ -255,8 +287,10 @@ AE.retrace = (() => {
       if (!p || !p.storeId) throw new Error('No current store');
       const store = p.storeId, by = p.name;
       try { result.watched = await flush(store); } catch (e) { if (e.storeChanged) throw e; note('watch queue', e); }
-      const cursors = (await worker(store, 'GET', '/cursor')).cursors || {};
-      const acc = { items: [], labels: [], docs: [], movements: [], touched: [], pos: [], names: [], cursors: {} };
+      const cur = await worker(store, 'GET', '/cursor'), cursors = cur.cursors || {}, baseline = cur.baseline || {};
+      const acc = { items: [], labels: [], docs: [], movements: [], touched: [], pos: [], names: [], cursors: {}, labelTotals: [] };
+      // Items still to count for the baseline: the stock sweep's answer, else what the last pass was told (frozen = none).
+      let countNeed = baseline.frozen ? [] : GM_getValue(COUNT_KEY(store), []) || [];
 
       // 2. stock, at most every 30 minutes (any browser at the store: the cursor)
       const lastLookup = cursors.lookup && cursors.lookup.value && Date.parse(cursors.lookup.value.at);
@@ -264,12 +298,24 @@ AE.retrace = (() => {
       if (opts.lookup || !lastLookup || Date.now() - lastLookup > LOOKUP_MS - 60000) {
         try {
           const lt = Date.now(), s = await stock(store);
-          const sw = await sweep(store, by, { items: s.items, cursors: { lookup: { at: new Date().toISOString(), rows: s.items.length } } });
+          const sw = await sweep(store, by, { items: s.items, cursors: { lookup: { at: new Date().toISOString(), rows: s.items.length } }, countNeed: baseline.frozen ? 0 : COUNT_BUDGET });
+          if (!baseline.frozen) countNeed = sw.countNeed;
           GM_setValue(STOCK_KEY(store), s.keep);
           result.lookup = { rows: s.items.length, seconds: Math.round((Date.now() - lt) / 1000) };
           result.items = s.items.length; result.changedItems = sw.changedItems.length;
           for (const c of sw.changedItems) todo.add(c.item);
         } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('stock', e); }
+      }
+      // 2b. label totals for the baseline: asked of the Worker when this pass didn't just do the lookup, then one tiny call per item
+      if (!baseline.frozen) {
+        if (!countNeed.length) { try { countNeed = (await sweep(store, by, { countNeed: COUNT_BUDGET, need: 0 })).countNeed; } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('count list', e); } }
+        for (const item of countNeed.slice(0, COUNT_BUDGET)) {
+          try { const t = await labelTotal(store, item); acc.labelTotals.push({ item: t.item, total: t.total }); if (t.snaps) acc.labels.push(...t.snaps); result.counted++; }
+          catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('count ' + item, e); }
+        }
+        if (!baseline.posKnown) {
+          try { acc.poTotal = await poTotal(); } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('po total', e); }
+        }
       }
       // 3. labels of changed items, a budget a pass
       for (const item of [...todo].slice(0, ITEM_BUDGET)) {
@@ -283,7 +329,8 @@ AE.retrace = (() => {
       await docs(store, cursors, acc, note);
       acc.touched = [...new Set(acc.touched.filter(Boolean))];
       Object.assign(result, { labels: acc.labels.length, docs: acc.docs.length, movements: acc.movements.length, pos: acc.pos.length, names: acc.names.length });
-      const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK }));
+      const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK, countNeed: baseline.frozen ? 0 : COUNT_BUDGET }));
+      if (!baseline.frozen) GM_setValue(COUNT_KEY(store), sw.countNeed);
       result.added += sw.added; result.backlogMore = sw.more; result.named += sw.named; result.unnamed = sw.unnamed.length;
       if (sw.pos) result.poEvents = sw.pos.events;
 

@@ -152,7 +152,7 @@ def route(method, p, q, body, s, store, now):
         return 200, {'events': evs, 'lastKey': None}
 
     # ---- the tracker Worker's Retrace routes, stood in for (never the real Worker)
-    m = re.fullmatch(r'sandbox-retrace/(cursor|sweep|history|watch)', p)
+    m = re.fullmatch(r'sandbox-retrace/(cursor|sweep|history|watch|progress)', p)
     if m:
         return worker(m.group(1), method, body or {}, s, now)
     return None
@@ -161,7 +161,10 @@ def route(method, p, q, body, s, store, now):
 def worker(path, method, b, s, now):
     r = s.setdefault('retrace', {'cursors': {}, 'items': {}, 'labels': {}, 'pos': {}, 'watched': 0, 'histories': 0})
     if path == 'cursor' and method == 'GET':
-        return 200, {'cursors': r['cursors']}
+        return 200, {'cursors': r['cursors'], 'baseline': {'frozen': bool(r.get('frozen')), 'posKnown': r.get('po_total') is not None}}
+    if path == 'progress' and method == 'GET':
+        # the stand-in keeps only whether counting is finished (the real Worker's numbers: tracker-worker/src/retrace-api.js progress)
+        return 200, {'store': None, 'state': 'gathering' if r.get('frozen') else 'counting', 'pct': None, 'done_at': None, 'announce': False}
     if path == 'watch' and method == 'POST':
         mv = b.get('movements') or []
         if not mv or len(mv) > 50:
@@ -177,7 +180,7 @@ def worker(path, method, b, s, now):
         r['histories'] += 1
         return 200, {'ok': True, 'added': len(b.get('rows') or []), 'same': False, 'skipped': 0}
     if path == 'sweep' and method == 'POST':
-        caps = {'items': 2400, 'labels': 800, 'docs': 200, 'movements': 500, 'touched': 500, 'pos': 600, 'names': 200}
+        caps = {'items': 2400, 'labels': 800, 'docs': 200, 'movements': 500, 'touched': 500, 'pos': 600, 'names': 200, 'labelTotals': 800}
         for k, n in caps.items():
             if len(b.get(k) or []) > n:
                 return 400, {'error': '%s: a list of at most %d' % (k, n)}
@@ -216,12 +219,24 @@ def worker(path, method, b, s, now):
                 r['pos'][po] = r['pos'].get(po, 1) if not (x.get('receive') or h.get('PurchaseOrderLinesV2') is not None) else 0
         for k, v in (b.get('cursors') or {}).items():
             r['cursors'][k] = {'value': v, 'at': now()}
+        # the baseline: label counts per lookup item, then the PO total; frozen when every lookup item has a count and the PO total is in
+        counts = r.setdefault('counts', {})
+        if not r.get('frozen'):
+            for x in b.get('labelTotals') or []:
+                if str(x.get('item') or '') and isinstance(x.get('total'), int) and x['total'] >= 0 and str(x['item']).lower() != 'bb0001':
+                    counts[str(x['item'])] = x['total']
+            if isinstance(b.get('poTotal'), int) and r.get('po_total') is None:
+                r['po_total'] = b['poTotal']
+            looked = {k.split('|')[0] for k in r['items']}
+            if 'lookup' in r['cursors'] and r.get('po_total') is not None and all(i in counts for i in looked):
+                r['frozen'] = True
+        count_need = [] if r.get('frozen') else sorted({k.split('|')[0] for k in r['items']} - set(counts))[:min(int(b.get('countNeed') or 0), 300)]
         want = b.get('need') if isinstance(b.get('need'), int) else 60
         need = [l for l, n in sorted(r['labels'].items(), key=lambda kv: -kv[1]) if n][:want]
         po_need = [po for po, n in r['pos'].items() if n][:b.get('poNeed') or 0]
         known = list(dict.fromkeys([re.sub(r'^B-', '', l).split('-')[0] for l in reversed(list(r['labels']))]))
         unnamed = [i for i in known if i not in names and i.lower() != 'bb0001'][:min(int(b.get('nameNeed') or 0), 50)]
         return 200, {'need': need, 'more': sum(1 for n in r['labels'].values() if n) > len(need), 'changedItems': changed, 'added': len(b.get('movements') or []),
-                     'rejected': 0, 'skipped': 0, 'written': len(b.get('items') or []) + len(b.get('labels') or []), 'named': named, 'unnamed': unnamed,
+                     'rejected': 0, 'skipped': 0, 'written': len(b.get('items') or []) + len(b.get('labels') or []), 'named': named, 'unnamed': unnamed, 'countNeed': count_need,
                      'pos': {'seen': len(b.get('pos') or []), 'written': 0, 'events': 0, 'received': 0, 'need': po_need}}
     return 404, {'error': 'not found'}

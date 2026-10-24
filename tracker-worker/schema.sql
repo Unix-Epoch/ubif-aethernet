@@ -301,3 +301,18 @@ CREATE TABLE IF NOT EXISTS inv_so_wo (
   PRIMARY KEY (store, sales_order)
 );
 CREATE INDEX IF NOT EXISTS inv_so_wo_wo ON inv_so_wo (store, wo);
+-- Oct 24, 2026: Retrace's frozen baseline (migrations/2026-10-24-retrace-baseline.sql): the totals the gathering is measured against.
+CREATE TABLE IF NOT EXISTS inv_item_counts (
+  store INTEGER NOT NULL, item TEXT NOT NULL,
+  labels INTEGER NOT NULL,             -- Portal's label count for the item at the store (sold included), read while counting
+  counted_at TEXT NOT NULL,
+  PRIMARY KEY (store, item)
+);
+CREATE TABLE IF NOT EXISTS inv_baseline (
+  store INTEGER PRIMARY KEY,
+  expected_items INTEGER, expected_labels INTEGER,   -- set together when the baseline freezes (counted_at); never changed after
+  expected_pos INTEGER, pos_counted_at TEXT,         -- purchase orders (in transit + past), from Portal's list counts; may arrive before the freeze
+  counted_at TEXT,                     -- the baseline froze · NULL = still counting
+  backfill_done_at TEXT,               -- every step reached its total, once, for good (the manager popup's signal)
+  created_at TEXT NOT NULL
+);
