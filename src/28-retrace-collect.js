@@ -274,11 +274,15 @@ AE.retrace = (() => {
   }
 
   // ---------------------------------------------------------------- the pass
-  let running = false;
+  let running = false, runStart = 0;
+  let skip = null; // why the last call to run() did nothing, for the dev tools
+  const skipped = (why) => { skip = { at: new Date().toISOString(), why }; return null; };
   async function run(opts = {}) {
-    if (!enabled() || running || stopped()) return null;
-    if (!opts.force && Date.now() - GM_getValue(PASS_KEY, 0) < PASS_MS - 30000) return null;
-    running = true;
+    if (!enabled()) return skipped('not enabled: no tracker Worker in this build');
+    if (running) return skipped('a pass is already running (started ' + Math.round((Date.now() - runStart) / 1000) + ' s ago)');
+    if (stopped()) return skipped(AE.storeChanged() ? "paused: Portal's store changed, reload the page" : 'paused by a notice');
+    if (!opts.force && Date.now() - GM_getValue(PASS_KEY, 0) < PASS_MS - 30000) return skipped('next pass not due yet (last started ' + new Date(GM_getValue(PASS_KEY, 0)).toLocaleTimeString() + ')');
+    running = true; runStart = Date.now();
     GM_setValue(PASS_KEY, Date.now());
     const t0 = Date.now();
     counts = { portal: 0, worker: 0 };
@@ -511,7 +515,7 @@ AE.retrace = (() => {
   if (enabled() || recording()) hook();
 
   return {
-    run: (opts = {}) => run(Object.assign({ force: true }, opts)), tick: () => run(), last: () => GM_getValue(LAST_KEY, null), flush: async () => { const p = await AE.profile(); return flush(p.storeId); },
+    run: (opts = {}) => run(Object.assign({ force: true }, opts)), tick: () => run(), last: () => GM_getValue(LAST_KEY, null), state: () => ({ enabled: enabled(), running, runningFor: running ? Math.round((Date.now() - runStart) / 1000) : 0, stopped: stopped(), lastPassStart: GM_getValue(PASS_KEY, 0) ? new Date(GM_getValue(PASS_KEY, 0)).toISOString() : null, lastSkip: skip }), flush: async () => { const p = await AE.profile(); return flush(p.storeId); },
     queued: () => queue().length, enabled,
     // dev tools: the Portal call recorder
     recording, setRecording: (on) => { GM_setValue(REC_KEY, !!on); if (on) hook(); }, recorded: () => GM_getValue(REC_LOG, []) || [], clearRecorded: () => GM_deleteValue(REC_LOG),

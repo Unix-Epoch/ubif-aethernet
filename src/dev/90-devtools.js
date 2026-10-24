@@ -333,12 +333,12 @@
     const retrace = section('Retrace',
       note((AE.retrace.enabled() ? 'On' + (AE_SANDBOX ? ' (sandbox stand-in, not the Worker)' : '') : 'Off: no tracker Worker in this build') + '. Last pass: ' + (rtLast ? new Date(rtLast.at).toLocaleString() + ' · ' + rtLast.seconds + ' s · Portal ' + rtLast.calls.portal + ' / Worker ' + rtLast.calls.worker + ' calls · '
         + rtLast.labels + ' labels · ' + rtLast.docs + ' docs · ' + rtLast.pos + ' POs · ' + rtLast.histories + ' histories · ' + rtLast.added + ' added' + (rtLast.note ? ' · ' + rtLast.note : '') + (rtLast.errors.length ? ' · ' + rtLast.errors.join('; ') : '') : 'none yet')
-        + ' · watched moves queued: ' + AE.retrace.queued()),
+        + ' · watched moves queued: ' + AE.retrace.queued() + ' · state: ' + JSON.stringify(AE.retrace.state())),
       row(btn('Run a pass now', async () => {
         if (!AE.retrace.enabled()) throw new Error('No tracker Worker in this build.');
         rtOut.replaceChildren(note('Running a pass (the stock lookup takes a few minutes when it\'s due)…'));
         const r = await AE.retrace.run();
-        rtOut.replaceChildren(h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(r, null, 1)));
+        rtOut.replaceChildren(h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(r || { didNothing: true, state: AE.retrace.state() }, null, 1)));
       }), btn(AE.retrace.recording() ? 'Retrace: stop recording Portal calls' : 'Retrace: record Portal calls', () => {
         const on = !AE.retrace.recording();
         AE.retrace.setRecording(on);
