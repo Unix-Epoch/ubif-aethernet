@@ -249,6 +249,11 @@ export async function draw(m, helpers) {
     addEventListener('keydown', (e) => { if (e.key === 'Escape' && live()) closeDrawer(); });
     // Leaving the tab: the drawer is on <body>, so close it.
     addEventListener('hashchange', () => { if (!location.hash.startsWith('#retrace')) { const d = document.querySelector('.rt-drawer'); if (d) d.hidden = true; } });
+    // The strip follows the gathering: coverage is read again every 30 s while this tab is showing.
+    setInterval(async () => {
+      if (!live() || document.hidden) return;
+      try { const c = await ui.api('GET', '/tracker/retrace/coverage'); if (!live()) return; S.coverage = c.stores || S.coverage; drawHealth(); } catch (_) { /* the next tick tries again */ }
+    }, 30000);
   }
   drawHealth(); drawVerify(); drawQueue();
   if (S.vopen) loadVerify(false);
