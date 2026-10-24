@@ -144,7 +144,7 @@ const addDays = (day, n) => utcDay(Date.parse(day + 'T00:00:00Z') + n * 86400000
 const MONTH = 30;
 
 /*
-  The section's data. `me` = the caller's access: everyone with page 'usage' gets the Retrace stores they can see; only
+  The section's data. `me` = the caller's access (none = no stores and no totals: it fails closed): everyone with page 'usage' gets the Retrace stores they can see; only
   all-stores access gets the Worker-wide totals (global, null otherwise).
   { today, since, firstDay (first day counted, null = nothing yet), scope,
     global: { days: [{ day, requests, rows_read, rows_written, bytes }] (30 days, null before firstDay), month: { requests, rows_read, rows_written },
@@ -153,7 +153,7 @@ const MONTH = 30;
 */
 export async function usageLoad(env, me, now = Date.now()) {
   const T = env.TR, today = utcDay(now), since = addDays(today, -(MONTH - 1)), monthStart = today.slice(0, 8) + '01', from = monthStart < since ? monthStart : since;
-  const wide = !me || me.scope === 'all' || me.owner, passFrom = addDays(today, -6);
+  const wide = !!me && (me.scope === 'all' || !!me.owner), passFrom = addDays(today, -6);
   const [load, sizes, pass, browsers, labels] = await T.batch([
     T.prepare('SELECT day, area, requests, rows_read, rows_written FROM usage_load WHERE day >= ? ORDER BY day').bind(from),
     T.prepare('SELECT day, bytes FROM usage_size WHERE day >= ? ORDER BY day').bind(since),
@@ -164,7 +164,7 @@ export async function usageLoad(env, me, now = Date.now()) {
   const first = (await T.prepare('SELECT MIN(day) AS d FROM usage_load').first()).d || null;
   let names = new Map();
   try { names = new Map(((await (env.AE || env.DB).prepare('SELECT store, name FROM store_access').all()).results || []).map((r) => [r.store, r.name])); } catch (_) {}
-  const seen = (s) => !me || me.scope === 'all' || me.owner || (me.canSee ? me.canSee(s) : (me.stores || []).includes(s));
+  const seen = (s) => !!me && (me.scope === 'all' || !!me.owner || (me.canSee ? me.canSee(s) : (me.stores || []).includes(s)));
   const bro = new Map(browsers.results.map((r) => [r.store, r.n])), lab = new Map(labels.results.map((r) => [r.store, r.n]));
   const ids = [...new Set([...pass.results.map((r) => r.store), ...lab.keys()])].filter(seen).sort((a, b) => a - b);
   const pr = new Map(pass.results.map((r) => [r.store, r]));

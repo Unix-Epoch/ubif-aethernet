@@ -178,6 +178,10 @@ const only326 = { email: 'a@x.com', owner: false, scope: 'stores', stores: [326]
   // scoped: only their stores' rows, no worker-wide totals
   const sc = await usageLoad(env, only326);
   assert.equal(sc.global, null); assert.equal(sc.scope, 'stores'); assert.deepEqual(sc.stores.map((x) => x.store), [326]);
+  // no access object at all: no stores, no totals (fails closed)
+  const nobody = await usageLoad(env, null), undef = await usageLoad(env, undefined);
+  for (const x of [nobody, undef]) { assert.equal(x.global, null); assert.equal(x.scope, 'stores'); assert.deepEqual(x.stores, []); }
+  assert.equal((await usageLoad(env, { email: 'x', scope: 'stores', stores: [] })).stores.length, 0, 'a person with no stores sees none');
   // growth that isn't there is left out, not invented
   await T.prepare('UPDATE usage_size SET bytes = 100000000').run();
   assert.equal((await usageLoad(env, owner)).global.projection.db_growth_per_store_month, null);
