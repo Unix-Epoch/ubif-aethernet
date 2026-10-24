@@ -352,6 +352,15 @@
           } catch (e) { out.push({ name, query: q, error: e.message || String(e) }); }
           rtOut.replaceChildren(h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace' }, JSON.stringify(out, null, 1)));
         }
+      }), btn("Retrace: probe an item's labels", async () => {
+        const item = (window.prompt('Item id to probe (the collector\'s label read for it):', '') || '').trim();
+        if (!item) return;
+        rtOut.replaceChildren(note('Reading the label list of item ' + item + '…'));
+        try {
+          const r = await AE.retrace.probeItem(item);
+          rtOut.replaceChildren(row(btn('Copy', async () => { await navigator.clipboard.writeText(JSON.stringify(r, null, 1)); AE.toast('Copied', 'The probe result is on the clipboard.', 'ok'); })),
+            h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace;max-height:320px;overflow:auto' }, JSON.stringify(r, null, 1)));
+        } catch (e) { rtOut.replaceChildren(note('Probe failed: ' + (e.message || e))); }
       }), btn(AE.retrace.recording() ? 'Retrace: stop recording Portal calls' : 'Retrace: record Portal calls', () => {
         const on = !AE.retrace.recording();
         AE.retrace.setRecording(on);

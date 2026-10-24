@@ -668,6 +668,10 @@ assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 
   assert.deepEqual([b0.expected_items, b0.expected_labels, b0.expected_pos], [2, 5, 2]);
   assert.equal(await count('SELECT COUNT(*) AS n FROM inv_item_counts WHERE store = 536 AND item = ?', '500003'), 0, 'a new item is not in the baseline');
   assert.deepEqual((await sw5({ countNeed: 10 })).j.countNeed, [], 'and is not asked for');
+  // frozen baseline items whose stored labels fall short of Portal's count are handed out for a label read, biggest gap first, only when asked
+  assert.deepEqual((await sw5({})).j.shortItems, [], 'not asked: none');
+  assert.deepEqual((await sw5({ shortNeed: 10 })).j.shortItems, ['500001', '500002'], 'both items have no labels stored');
+  assert.deepEqual((await sw5({ shortNeed: 1 })).j.shortItems, ['500001'], 'a budget, biggest gap first');
 
   // labels found: the bar moves; a label of the new item is "new since" and changes nothing in the steps
   await sw5({ labels: [lab('500001', 1), lab('500001', 2), lab('500001', 3), lab('500002', 1), lab('500003', 1)], need: 0 });

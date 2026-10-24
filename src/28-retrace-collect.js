@@ -61,6 +61,7 @@ AE.retrace = (() => {
   const COUNT_KEY = (s) => 'ae_retrace_count_' + s, COUNT_BUDGET = 200;
   // Quantity-only items (stock, no labels: counted total 0, e.g. the generic SKU 900348): remembered so their quantity changes don't queue a label read that would find nothing.
   const QO_KEY = (s) => 'ae_retrace_qtyonly_' + s;
+  const SHORT_KEY = (s) => 'ae_retrace_short_' + s, SHORT_ASK = 300, SHORT_RETRY_MS = 12 * 3600000;
   const NEED = 60, ITEM_BUDGET = 150, DETAIL_BUDGET = 15, PO_BUDGET = 15, RMA_BUDGET = 20, NAME_ASK = 20, NAME_BUDGET = 10, NAME_RETRY_MS = 86400000;
   const LOOKUP_PAGES = 30, LIST_PAGES = 10, PO_BACKFILL_PAGES = 2, PO_DAYS = 14, RMA_DAYS = 30;
   const WATCH_BATCH = 50, QUEUE_MAX = 500, QUEUE_DAYS = 3;
@@ -325,6 +326,9 @@ AE.retrace = (() => {
           result.lookup = { rows: s.items.length, seconds: Math.round((Date.now() - lt) / 1000) };
           result.items = s.items.length; result.changedItems = sw.changedItems.length;
           for (const c of sw.changedItems) if (!qtyOnly.has(String(c.item))) todo.add(c.item);
+          // The Worker hands a changed / new item out once: kept now, not at the end of the pass (a pass cut short by the counting below, a reload, a session
+          // expiry would lose the whole list; Oct 24 store 914 lost 500+ new items' label reads that way).
+          GM_setValue(TODO_KEY(store), [...todo]);
         } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('stock', e); }
       }
       // 2b. label totals for the baseline: asked of the Worker when this pass didn't just do the lookup, then one tiny call per item
@@ -353,10 +357,15 @@ AE.retrace = (() => {
       await docs(store, cursors, acc, note);
       acc.touched = [...new Set(acc.touched.filter(Boolean))];
       Object.assign(result, { labels: acc.labels.length, docs: acc.docs.length, movements: acc.movements.length, pos: acc.pos.length, names: acc.names.length });
-      const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK, countNeed: baseline.frozen ? 0 : COUNT_BUDGET }));
+      const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK, countNeed: baseline.frozen ? 0 : COUNT_BUDGET, shortNeed: baseline.frozen ? SHORT_ASK : 0 }));
       if (!baseline.frozen) GM_setValue(COUNT_KEY(store), sw.countNeed);
       // Items the Worker's coverage check found referenced but never read: their label lists, next (a budget a pass, like a changed item's)
       for (const i of sw.missedItems) if (!qtyOnly.has(String(i))) todo.add(i);
+      // Baseline items with fewer labels stored than Portal counts (their read was lost, or never made): read like a changed item, each tried once
+      // per SHORT_RETRY_MS (a list can stay short for a reason the read can't fix, e.g. sold labels it doesn't list).
+      const shortTried = GM_getValue(SHORT_KEY(store), {}) || {}, nowMs = Date.now();
+      for (const i of (sw.shortItems || []).filter((x) => !qtyOnly.has(String(x)) && !(nowMs - (shortTried[x] || 0) < SHORT_RETRY_MS)).slice(0, ITEM_BUDGET)) { todo.add(i); shortTried[i] = nowMs; }
+      GM_setValue(SHORT_KEY(store), Object.fromEntries(Object.entries(shortTried).filter(([, t]) => nowMs - t < SHORT_RETRY_MS)));
       GM_setValue(TODO_KEY(store), [...todo]);
       result.itemsWaiting = todo.size;
       result.added += sw.added; result.backlogMore = sw.more; result.named += sw.named; result.unnamed = sw.unnamed.length;
@@ -533,6 +542,27 @@ AE.retrace = (() => {
   if (enabled() || recording()) hook();
 
   return {
+    // Dev tools: the collector's label read for one item, shown raw (see labelsOf): what Portal answers and what each row would do at the Worker.
+    probeItem: async (item) => {
+      const p = await AE.profile(), store = p && p.storeId;
+      if (!store) throw new Error('No current store');
+      const path = '/api/boh/store-products/' + encodeURIComponent(item) + '/inventory?pageSize=200&page=1&searchTerm=&warehouseType=All&warehouseId=' + store;
+      const j = await AE.api('GET', path);
+      const list = R.rowsOf(j), scrub = (r) => Object.fromEntries(Object.entries(r || {}).filter(([k]) => !/customer|phone|email|address|first|last|given|family/i.test(k)));
+      const verdict = (r) => {
+        const sn = R.labelSnapshot(r);
+        if (!sn) return 'rejected: no usable label (SerialNumber / InventSerialId missing or not matching the label check)';
+        if (R.ignoredItem(sn.item)) return 'dropped: ignored item ' + sn.item;
+        const m = /^\s*(\d{1,6})\b/.exec(sn.store == null ? '' : String(sn.store));
+        if (m && Number(m[1]) !== Number(store)) return 'skipped: another store (' + sn.store + ')';
+        return 'stored as ' + sn.label + ' (item ' + sn.item + ', status ' + (sn.status || '-') + ', warehouse ' + (sn.warehouse || '-') + ')';
+      };
+      const tally = {};
+      for (const r of list) { const v = verdict(r).split(' (')[0].split(' as ')[0]; tally[v] = (tally[v] || 0) + 1; }
+      return { store, item: String(item), path, topLevel: Array.isArray(j) ? 'array' : j && typeof j === 'object' ? Object.keys(j) : typeof j,
+        odataCount: j && !Array.isArray(j) ? j['@odata.count'] : null, rows: list.length, tally, first2: list.slice(0, 2).map((r) => ({ row: scrub(r), verdict: verdict(r) })),
+        statuses: Object.fromEntries(list.reduce((m, r) => m.set(String(r && r.SerialStatus), (m.get(String(r && r.SerialStatus)) || 0) + 1), new Map())) };
+    },
     run: (opts = {}) => run(Object.assign({ force: true }, opts)), tick: () => run(), last: () => GM_getValue(LAST_KEY, null), state: () => ({ enabled: enabled(), running, runningFor: running ? Math.round((Date.now() - runStart) / 1000) : 0, stopped: stopped(), lastPassStart: GM_getValue(PASS_KEY, 0) ? new Date(GM_getValue(PASS_KEY, 0)).toISOString() : null, lastSkip: skip }), flush: async () => { const p = await AE.profile(); return flush(p.storeId); },
     queued: () => queue().length, enabled,
     // dev tools: the Portal call recorder

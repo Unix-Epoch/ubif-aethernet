@@ -42,6 +42,8 @@
          is how many lookup items still without a count to hand out (default 0, at most COUNT_CAP; none once frozen);
          missedItems: items the coverage check (src/retrace-verify.js) found referenced at the store with no labels stored, up to 20 a
          sweep, each handed out once: the browser reads their label lists like a changed item's.
+         shortItems: once the baseline is frozen, baseline items with fewer labels stored than Portal's count (shortNeed: how many, default 0,
+         at most SHORT_CAP, biggest gap first): the browser reads their label lists (and remembers which it tried, a list can stay short).
          poTotal is the number of purchase orders (in transit + past) Portal lists, taken once. A lookup cursor with rows 0 is not
          recorded (an empty lookup is a failed one, not "every item counted").
     POST /retrace/history { label, rows, by }   the label's serial-history rows (boh/serial-history/{label}: the rows,
@@ -87,7 +89,7 @@ import { verifyRun, verifyAsk, verifyView, verifyTick, QUEUE_REASON, QUEUE_SINCE
 import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS, serialNow } from './retrace.js';
 
 export const NEED_MAX = 60;
-const NEED_CAP = 200, COUNT_CAP = 300, CLAIM_MIN = 10, WATCH_MAX = 50;
+const NEED_CAP = 200, COUNT_CAP = 300, SHORT_CAP = 300, CLAIM_MIN = 10, WATCH_MAX = 50;
 // Per-request caps. Most rows become a statement and D1 counts queries per Worker invocation (1000 on paid plans,
 // batched or not), so a pass bigger than this goes up in several sweeps (only new / changed rows are written, so a
 // second pass over the same data is mostly reads).
@@ -610,7 +612,13 @@ export async function retraceStore(req, env, url, store, path, H) {
     // Items the coverage check found missed (referenced at the store, no labels stored): handed out once each, the browser reads their labels.
     let missedItems = [];
     try { missedItems = await verifyAsk(T, store, at); } catch (_) {}
-    return H.json({ need, more: q.length > need.length, changedItems, added, rejected, skipped, written, named: nameW.length, unnamed, countNeed, missedItems, pos: poOut });
+    // Baseline items whose stored labels fall short of Portal's count (the item's label list was never read, or its read was lost with the
+    // browser's queue): the browser reads them (shortNeed: how many, default none; biggest gap first). The browser remembers which it tried.
+    const shortWant = Math.min(Math.max(Number.isInteger(b.shortNeed) ? b.shortNeed : 0, 0), SHORT_CAP);
+    const shortItems = shortWant && frozen ? (await T.prepare(`SELECT c.item FROM inv_item_counts c LEFT JOIN (SELECT item, COUNT(*) AS n FROM inv_labels WHERE store = ?1 GROUP BY item) l ON l.item = c.item
+        WHERE c.store = ?1 AND c.labels > COALESCE(l.n, 0) AND lower(c.item) NOT IN (SELECT value FROM json_each(?2)) ORDER BY c.labels - COALESCE(l.n, 0) DESC, c.item LIMIT ?3`)
+      .bind(store, JSON.stringify(IGNORED_ITEMS), shortWant).all()).results.map((r) => r.item) : [];
+    return H.json({ need, more: q.length > need.length, changedItems, added, rejected, skipped, written, named: nameW.length, unnamed, countNeed, missedItems, shortItems, pos: poOut });
   }
   return H.fail(404, 'not found');
 }
