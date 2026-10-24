@@ -64,6 +64,18 @@ def route(method, p, q, body, s, store, now):
                              'SerialStatus': 'Reserved', 'ConsignmentStatus': 'No', 'UbifSerialStatus': 'Received', 'PurchId': 'UBFPO000099002', 'Locked': False, 'Store': str(store),
                              'SerialModified': now(), 'Vendor': 'Vendor One', 'DistroLabelId': '', 'SiteId': str(store), 'SerialCreated': '2026-08-01T12:00:00Z', 'LineNumber': 1})
         return 200, dict(page(rows, q, 200), **{'@odata.context': 'https://example.invalid/$metadata#StoreProductInventory'})
+    m = re.fullmatch(r'boh/store-products/([^/]+)', p)
+    if m and method == 'GET':
+        # the item page's header call: shape not captured beyond ProductName and the quantities (made up from the lookup row,
+        # else a sandbox cart line's name, else a made-up name; 404 for a non-numeric item, as for one Portal doesn't know)
+        item = m.group(1)
+        row = next((r for r in fx('inventory-lookup', store)['value'] if r['ItemNumber'] == item), None)
+        name = row['ProductName'] if row else next((line.get('name') for _, sku, line, _w in cart_labels(s) if sku == item and line.get('name')), None)
+        if not name and not re.fullmatch(r'\d{4,8}', item):
+            return 404, {'message': 'Product not found'}
+        name = name or 'Sandbox part ' + item
+        return 200, {'ItemNumber': item, 'ProductName': name, 'AvailableQuantity': (row or {}).get('AvailableQuantity', 0), 'InTransitQuantity': (row or {}).get('InTransitQuantity', 0),
+                     'RetailCategory': (row or {}).get('RetailCategory', 'Parts')}
     m = re.fullmatch(r'boh/serial-history/([^/]+)', p)
     if m and method == 'GET':
         lab = m.group(1)
@@ -165,7 +177,7 @@ def worker(path, method, b, s, now):
         r['histories'] += 1
         return 200, {'ok': True, 'added': len(b.get('rows') or []), 'same': False, 'skipped': 0}
     if path == 'sweep' and method == 'POST':
-        caps = {'items': 2400, 'labels': 800, 'docs': 200, 'movements': 500, 'touched': 500, 'pos': 600}
+        caps = {'items': 2400, 'labels': 800, 'docs': 200, 'movements': 500, 'touched': 500, 'pos': 600, 'names': 200}
         for k, n in caps.items():
             if len(b.get(k) or []) > n:
                 return 400, {'error': '%s: a list of at most %d' % (k, n)}
@@ -177,10 +189,21 @@ def worker(path, method, b, s, now):
             if old != key and item not in [c['item'] for c in changed]:
                 changed.append({'item': item, 'why': 'changed' if old else 'new'})
             r['items'][item + '|' + str(row.get('WarehouseId'))] = key
+        names, named = r.setdefault('names', {}), 0
+        def name(item, n, auth):
+            nonlocal named
+            if item and n and str(item).lower() != 'bb0001' and (str(item) not in names or (auth and names[str(item)] != n)):
+                names[str(item)] = n
+                named += 1
+        for row in b.get('items') or []:
+            name(row.get('ItemNumber'), row.get('ProductName'), True)
         for x in (b.get('labels') or []):
             lab = x.get('label') or x.get('SerialNumber')
             if lab and lab not in r['labels']:
                 r['labels'][lab] = 1
+            name(x.get('item') or (lab or '').split('-')[0], x.get('product'), x.get('list') is None)
+        for x in b.get('names') or []:
+            name(x.get('item'), x.get('name'), x.get('authoritative') is True)
         for lab in b.get('touched') or []:
             r['labels'][lab] = 2
         for x in b.get('movements') or []:
@@ -196,7 +219,9 @@ def worker(path, method, b, s, now):
         want = b.get('need') if isinstance(b.get('need'), int) else 60
         need = [l for l, n in sorted(r['labels'].items(), key=lambda kv: -kv[1]) if n][:want]
         po_need = [po for po, n in r['pos'].items() if n][:b.get('poNeed') or 0]
+        known = list(dict.fromkeys([re.sub(r'^B-', '', l).split('-')[0] for l in reversed(list(r['labels']))]))
+        unnamed = [i for i in known if i not in names and i.lower() != 'bb0001'][:min(int(b.get('nameNeed') or 0), 50)]
         return 200, {'need': need, 'more': sum(1 for n in r['labels'].values() if n) > len(need), 'changedItems': changed, 'added': len(b.get('movements') or []),
-                     'rejected': 0, 'skipped': 0, 'written': len(b.get('items') or []) + len(b.get('labels') or []),
+                     'rejected': 0, 'skipped': 0, 'written': len(b.get('items') or []) + len(b.get('labels') or []), 'named': named, 'unnamed': unnamed,
                      'pos': {'seen': len(b.get('pos') or []), 'written': 0, 'events': 0, 'received': 0, 'need': po_need}}
     return 404, {'error': 'not found'}

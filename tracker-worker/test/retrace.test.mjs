@@ -454,6 +454,97 @@ const { presetOf } = await import('../src/access.js');
 assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data', 'retrace'] }), 'manager');
 assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data'] }), 'manager', 'a manager from before Retrace is still a manager');
 
+// ------------------------------------------------------------------ item names (inv_items.name from every source)
+{
+  // woNames: cart lines (item as cartDiff works it out) and parts events' items
+  const wn = R.woNames({ cart: { items: [{ name: 'Screen A', sku: '300001', serial: '300001-0000000001' }, { name: 'Labor', sku: 'LABOR9' }, { sku: '300011', serial: '300011-0000000001' },
+    { name: 'From label', serial: '300012-0000000001' }] }, partEvents: [{ eventData: { type: 'add', items: [{ itemId: 1, item: { name: 'Event Part', itemNumber: '300013' } }] } }] });
+  assert.deepEqual(wn, [{ item: '300001', name: 'Screen A', label: '300001-0000000001', event: false }, { item: 'LABOR9', name: 'Labor', label: null, event: false },
+    { item: '300012', name: 'From label', label: '300012-0000000001', event: false }, { item: '300013', name: 'Event Part', label: null, event: true }]);
+  const nameOf = async (item, store = 914) => { const r = await T.prepare('SELECT name, category, qty, qty_hash FROM inv_items WHERE store = ? AND item = ?').bind(store, item).first(); return r ? r.name : undefined; };
+  const sweepN = (body, store = 914) => call('POST', '/v1/' + store + '/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+
+  // WO hook: a labelled line, a labor line (not stock), a known item's line without a label, a known named item (kept)
+  await sweepN({ touched: ['300002-0000000001'] });
+  ok(await sendWo(700010, 10, [{ lineId: 1, name: 'Screen A', sku: '300001', serial: '300001-0000000001', partStatus: 'Reserved', warehouseId: '914', itemId: 9300001 },
+    { lineId: 2, name: 'Labor', sku: 'LABOR9', price: 50 }, { lineId: 3, name: 'Back Glass', sku: '300002' }, { lineId: 4, name: 'Battery X', sku: '180001' }]), 'wo with names');
+  assert.equal(await nameOf('300001'), 'Screen A', 'WO: a labelled line names its item');
+  assert.equal(await nameOf('LABOR9'), undefined, 'WO: a line Retrace doesn\'t know stays out');
+  assert.equal(await nameOf('300002'), 'Back Glass', 'WO: a known item without a label');
+  assert.equal(await nameOf('180001'), 'Galaxy S24 Battery', 'WO: descriptive text never overwrites a name');
+  const nr = await T.prepare("SELECT qty, qty_hash FROM inv_items WHERE store = 914 AND item = '300001'").first();
+  assert.deepEqual([nr.qty, nr.qty_hash], [null, null], 'a name row has no quantities');
+
+  // label snapshots: label details' ProductName is authoritative, outstanding parts' PartName (list set) descriptive
+  let s1 = await sweepN({ labels: [{ SerialNumber: '300003-0000000001', ItemNumber: '300003', ProductName: 'Camera Lens', Store: '914' },
+    ...R.normalize.outstanding({ RMAParts: [{ Store: '914', ItemNumber: '300004', PartName: 'Mic Flex', SerialNumber: '300004-0000000001', SerialStatus: 'Defective' }] }),
+    { SerialNumber: '300001-0000000002', ItemNumber: '300001', ProductName: 'Screen A2', Store: '914' }] });
+  ok(s1, 'sweep names from labels');
+  assert.equal(s1.j.named, 3); assert.equal(s1.j.written, 3, 'name writes aren\'t counted as written');
+  assert.equal(await nameOf('300003'), 'Camera Lens'); assert.equal(await nameOf('300004'), 'Mic Flex');
+  assert.equal(await nameOf('300001'), 'Screen A2', 'an authoritative name renames');
+  s1 = await sweepN({ labels: R.normalize.outstanding({ RMAParts: [{ Store: '914', ItemNumber: '300003', PartName: 'Lens (part)', SerialNumber: '300003-0000000001' }] }) });
+  assert.equal(s1.j.named, 0); assert.equal(await nameOf('300003'), 'Camera Lens', 'outstanding PartName only fills');
+  // the same names again: no write
+  assert.equal((await sweepN({ labels: [{ SerialNumber: '300003-0000000001', ItemNumber: '300003', ProductName: 'Camera Lens', Store: '914' }] })).j.named, 0, 'same name: no write');
+
+  // POs: header LineDescription and receive details' ItemName (descriptive)
+  s1 = await sweepN({ pos: [{ header: { PurchaseOrderNumber: 'UBFPO000099100', PurchaseOrderStatus: 'Backorder', PurchaseOrderLinesV2: [{ LineNumber: 1, ItemNumber: '300005', LineDescription: 'Charge Port' },
+    { LineNumber: 3, ItemNumber: '300003', LineDescription: 'Lens, desc' }] }, receive: { PurchaseOrderId: 'UBFPO000099100', Lines: [{ LineNum: 2, ItemId: '300006', ItemName: 'Speaker', Serials: [] }] } }] });
+  ok(s1, 'PO names');
+  assert.equal(await nameOf('300005'), 'Charge Port'); assert.equal(await nameOf('300006'), 'Speaker'); assert.equal(await nameOf('300003'), 'Camera Lens', 'PO text never renames');
+
+  // names intake: RMA / transfer lines (descriptive), item records (authoritative), validation, caps
+  s1 = await sweepN({ names: [{ item: '300007', name: '  RMA   Battery ' }, { item: 300014, name: 'Numeric id' }, { item: '300003', name: 'Lens via RMA' }, { item: '300004', name: 'Mic Flex Cable', authoritative: true },
+    { item: '300015', name: 'Cat', category: 'Parts' }, { item: '', name: 'x' }, { item: '300008' }, null, 'str', { item: '300009', name: { x: 1 } }] });
+  ok(s1, 'names'); assert.equal(s1.j.named, 4);
+  assert.equal(await nameOf('300007'), 'RMA Battery', 'trimmed'); assert.equal(await nameOf('300014'), 'Numeric id');
+  assert.equal(await nameOf('300003'), 'Camera Lens', 'descriptive never overwrites'); assert.equal(await nameOf('300004'), 'Mic Flex Cable', 'authoritative renames');
+  assert.equal((await T.prepare("SELECT category FROM inv_items WHERE store = 914 AND item = '300015'").first()).category, 'Parts');
+  assert.equal(await nameOf('300008'), undefined); assert.equal(await nameOf('300009'), undefined);
+  assert.equal((await sweepN({ names: [{ item: '300016', name: 'x'.repeat(300) }] })).status, 200);
+  assert.equal((await nameOf('300016')).length, 120, 'capped at 120');
+  assert.equal((await sweepN({ names: 'x' })).status, 400); assert.equal((await sweepN({ names: Array(201).fill({ item: '1', name: 'a' }) })).status, 400, 'names capped');
+  // one sweep: authoritative beats descriptive whatever the order
+  await sweepN({ names: [{ item: '300017', name: 'Desc first' }, { item: '300017', name: 'Record name', authoritative: true }] });
+  assert.equal(await nameOf('300017'), 'Record name');
+  // ignored items: no name rows
+  await sweepN({ names: [{ item: 'BB0001', name: 'Buyback device', authoritative: true }], labels: [{ SerialNumber: 'B-616883-0000103990', ItemNumber: 'BB0001', ProductName: 'Buyback device', Store: '914' }] });
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_items WHERE lower(item) = 'bb0001'"), 0, 'ignored: no name row');
+  // store isolation
+  await sweepN({ names: [{ item: '300018', name: 'Elsewhere' }] }, 326);
+  assert.equal(await nameOf('300018', 326), 'Elsewhere'); assert.equal(await nameOf('300018'), undefined, 'names stay with their store');
+
+  // a name-only row then the item lookup: new (not a false change), then nothing
+  const lk = [{ ItemNumber: '300003', ProductName: 'Camera Lens', RetailCategory: 'Parts', WarehouseId: '914', OnHandQuantity: 1, AvailableQuantity: 1 }];
+  assert.deepEqual((await sweepN({ items: lk })).j.changedItems, [{ item: '300003', why: 'new' }], 'a name row reads as new to the lookup');
+  assert.deepEqual((await sweepN({ items: lk })).j.changedItems, [], 'then unchanged');
+  // the lookup's name wins over another source in the same sweep
+  await sweepN({ items: [Object.assign({}, lk[0], { ProductName: 'Camera Lens Pro' })], labels: [{ SerialNumber: '300003-0000000002', ItemNumber: '300003', ProductName: 'Camera Lens Old', Store: '914' }] });
+  assert.equal(await nameOf('300003'), 'Camera Lens Pro');
+
+  // unnamed: items with a label / movement and no name, ignored ones never, per store, capped
+  await sweepN({ touched: ['300019-0000000001', '300020-0000000001'] });
+  let un = (await sweepN({ nameNeed: 50 })).j.unnamed;
+  assert.ok(un.includes('300019') && un.includes('300020'), JSON.stringify(un));
+  assert.ok(!un.includes('300001') && !un.includes('300003') && !un.some((i) => i.toLowerCase() === 'bb0001'), 'named and ignored items left out');
+  assert.equal((await sweepN({ nameNeed: 1000 })).j.unnamed.length <= 50, true, 'capped');
+  assert.deepEqual((await sweepN({})).j.unnamed, [], 'none unless asked');
+  assert.ok(!(await sweepN({ nameNeed: 50 }, 326)).j.unnamed.includes('300019'), 'per store');
+  await sweepN({ names: [{ item: '300019', name: 'Read from the item record', authoritative: true }] });
+  un = (await sweepN({ nameNeed: 50 })).j.unnamed;
+  assert.ok(!un.includes('300019') && un.includes('300020'), 'named: off the list');
+
+  // admin: the item list and search by name
+  const il = (await admin('owner@x.com', '/retrace/items?store=914&limit=500')).j.items;
+  assert.equal(il.find((x) => x.item === '300001').name, 'Screen A2');
+  const sn = await admin('owner@x.com', '/retrace/search?store=914&q=camera');
+  assert.ok(sn.j.items.some((x) => x.item === '300003'), 'search finds an item by name');
+  assert.equal((await admin('owner@x.com', '/retrace/item/914/300002')).j.info.name, 'Back Glass');
+  const c2 = (await admin('owner@x.com', '/retrace/coverage')).j.stores.find((x) => x.store === 914);
+  assert.equal(c2.items, 3, 'coverage counts lookup items only: ' + c2.items);
+}
+
 // ------------------------------------------------------------------ ignored items (BB0001: buyback devices)
 {
   const { ignoredItem } = await import('../src/retrace.js');

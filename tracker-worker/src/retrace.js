@@ -534,6 +534,28 @@ export function woMovements(prevPlain, plain, ctx) {
   return out;
 }
 
+/*
+  Item names a WO's plain part carries (inv_items.name, descriptive: Portal's cart text), for the WO hook:
+  [{ item, name, label, event }]. Cart lines: the item worked out as cartDiff does (itemNumber / sku, else the label's),
+  label = the line's (null when it has none). Parts events' items (item.itemNumber + item.name): event = true, since
+  each one is a movement already (normalize.partsEvent).
+*/
+export function woNames(plain) {
+  const out = [];
+  for (const i of (plain && plain.cart && Array.isArray(plain.cart.items) ? plain.cart.items : [])) {
+    const label = cleanLabel(i && i.serial), item = (i && str(first(i, ['itemNumber', 'sku']), 40)) || itemOfLabel(label), name = i && str(i.name, 120);
+    if (item && name) out.push({ item, name, label: label || null, event: false });
+  }
+  for (const e of (plain && Array.isArray(plain.partEvents) ? plain.partEvents : [])) {
+    const d = (e && e.eventData) || {};
+    for (const it of [d.item ? { item: d.item } : null, ...(Array.isArray(d.items) ? d.items : [])]) {
+      const item = str(it && it.item && it.item.itemNumber, 40), name = str(it && it.item && it.item.name, 120);
+      if (item && name) out.push({ item, name, label: null, event: true });
+    }
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ the in-page watcher (Aethernet, src/28-retrace-collect.js)
 /*
   Portal's own inventory writes, seen in the page as they happen (request and answer, never changed). Paths are

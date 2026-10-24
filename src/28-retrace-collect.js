@@ -19,8 +19,13 @@
        TODO: completed counts and buyback orders. Portal answered 500 to their date-filtered lists (Oct 23) and
        their date format is unknown. Their labels still reach the ledger through serial history (Count events)
        and outstanding parts.
+       Item names they carry go up too (RMA lines' item_name, transfer lines' itemName; outstanding parts keep their
+       list so the Worker reads PartName as descriptive).
     5. One sweep (split under the Worker's caps) with all of it; the Worker answers with the labels whose serial
-       history to read (60 a pass) and the POs to read in full (15 a pass: header with lines + receive details).
+       history to read (60 a pass), the POs to read in full (15 a pass: header with lines + receive details) and the
+       items still without a name (20). Up to 10 of those get Portal's item record read (store-products/{item}: its
+       ProductName), sent back with the PO readings as authoritative names; an item whose read failed or had no name
+       waits a day in this browser before it's tried again.
     6. Serial history for those labels → POST …/retrace/history. A label whose history names a sales order this
        browser hasn't linked yet also gets its label details read (15 a pass), sent as a snapshot, so the Worker
        learns which WO the sales order belongs to.
@@ -42,13 +47,13 @@ AE.retrace = (() => {
   if (!AE_ON_PORTAL) return { run: async () => null, last: () => null, flush: async () => 0 };
   const R = (() => { /*__RETRACE__*/ })();
   const PASS_KEY = 'ae_retrace_pass_at', LAST_KEY = 'ae_retrace_last', QUEUE_KEY = 'ae_retrace_watch_q';
-  const STOCK_KEY = (s) => 'ae_retrace_stock_' + s, TODO_KEY = (s) => 'ae_retrace_todo_' + s, SO_KEY = (s) => 'ae_retrace_so_' + s;
+  const STOCK_KEY = (s) => 'ae_retrace_stock_' + s, TODO_KEY = (s) => 'ae_retrace_todo_' + s, SO_KEY = (s) => 'ae_retrace_so_' + s, NAMED_KEY = (s) => 'ae_retrace_named_' + s;
   const PASS_MS = 10 * 60 * 1000, LOOKUP_MS = 30 * 60 * 1000, GAP_MS = 300;
-  const NEED = 60, ITEM_BUDGET = 150, DETAIL_BUDGET = 15, PO_BUDGET = 15, RMA_BUDGET = 20;
+  const NEED = 60, ITEM_BUDGET = 150, DETAIL_BUDGET = 15, PO_BUDGET = 15, RMA_BUDGET = 20, NAME_ASK = 20, NAME_BUDGET = 10, NAME_RETRY_MS = 86400000;
   const LOOKUP_PAGES = 30, LIST_PAGES = 10, PO_BACKFILL_PAGES = 2, PO_DAYS = 14, RMA_DAYS = 30;
   const WATCH_BATCH = 50, QUEUE_MAX = 500, QUEUE_DAYS = 3;
   // The Worker's per-request caps (retrace-api.js LIMIT): bigger lists go up in several sweeps.
-  const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, pos: 600 };
+  const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, pos: 600, names: 200 };
   const enabled = () => AE_SANDBOX || AE.tracker.configured();
   const stopped = () => !!AE.storeChanged() || AE.status.paused('retrace');
   class Stop extends Error {}
@@ -70,24 +75,25 @@ AE.retrace = (() => {
     return AE.api(method, '/api/sandbox-retrace' + path, body);
   }
   /*
-    One sweep's rows, split into calls under the Worker's caps. need / poNeed / cursors go on the last call (the
-    others ask for nothing), so the history queue is claimed once. → { changedItems, need, more, added, written,
-    rejected, skipped, pos: { need, events, received, written } }
+    One sweep's rows, split into calls under the Worker's caps. need / poNeed / nameNeed / cursors go on the last call
+    (the others ask for nothing), so the history queue is claimed once. → { changedItems, need, more, added, written,
+    rejected, skipped, named, unnamed, pos: { need, events, received, written } }
   */
   async function sweep(store, by, body) {
     const n = Math.max(1, ...Object.keys(LIMIT).map((k) => Math.ceil(((body[k] || []).length) / LIMIT[k])));
-    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, pos: { need: [], events: 0, received: 0, written: 0 } };
+    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, named: 0, unnamed: [], pos: { need: [], events: 0, received: 0, written: 0 } };
     for (let i = 0; i < n; i++) {
       const last = i === n - 1, part = { by };
       for (const k of Object.keys(LIMIT)) { const s = (body[k] || []).slice(i * LIMIT[k], (i + 1) * LIMIT[k]); if (s.length) part[k] = s; }
       part.need = last && Number.isInteger(body.need) ? body.need : 0;
       if (last && body.poNeed) part.poNeed = body.poNeed;
+      if (last && body.nameNeed) part.nameNeed = body.nameNeed;
       if (last && body.cursors) part.cursors = body.cursors;
       const j = await worker(store, 'POST', '/sweep', part);
       out.changedItems.push(...(j.changedItems || []));
-      for (const k of ['added', 'written', 'rejected', 'skipped']) out[k] += j[k] || 0;
+      for (const k of ['added', 'written', 'rejected', 'skipped', 'named']) out[k] += j[k] || 0;
       if (j.pos) for (const k of ['events', 'received', 'written']) out.pos[k] += j.pos[k] || 0;
-      if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; }
+      if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; out.unnamed = j.unnamed || []; }
     }
     return out;
   }
@@ -136,6 +142,14 @@ AE.retrace = (() => {
     return out;
   }
 
+  // Portal's item record (the item page's header call): its ProductName, null when it has none.
+  async function itemName(store, item) {
+    const j = await portal('GET', '/api/boh/store-products/' + encodeURIComponent(item) + '?warehouseType=All&warehouseId=' + store);
+    const h = j && !Array.isArray(j) && (j.ProductName != null || j.productName != null) ? j : R.rowsOf(j)[0] || {};
+    const name = h.ProductName ?? h.productName;
+    return typeof name === 'string' && name.trim() ? { item: String(item), name: name.trim(), authoritative: true } : null;
+  }
+
   // ---------------------------------------------------------------- 4. documents
   async function pages(path, method, body, size) {
     const all = [];
@@ -158,7 +172,7 @@ AE.retrace = (() => {
     };
     await step('outstanding parts', async () => {
       const snaps = R.normalize.outstanding(await portal('GET', '/api/boh/rma-buyback/outstanding-parts'));
-      acc.labels.push(...snaps.map(({ list, ...s }) => s));
+      acc.labels.push(...snaps); // list stays: the Worker reads their PartName as a descriptive name
       acc.touched.push(...snaps.map((s) => s.label));
     });
     await step('rma orders', async () => {
@@ -176,6 +190,7 @@ AE.retrace = (() => {
         const o = await portal('GET', '/api/boh/rma-order/' + encodeURIComponent(d.id));
         const full = R.normalize.doc('rma', o);
         if (full) acc.docs.push(Object.assign({ type: 'rma' }, full));
+        for (const l of (o && Array.isArray(o.details) ? o.details : [])) if (l && l.item_id != null && l.item_name) acc.names.push({ item: String(l.item_id), name: l.item_name });
         const moves = R.normalize.rma(o, { at });
         acc.movements.push(...moves);
         acc.touched.push(...moves.map((m) => m.label));
@@ -189,7 +204,11 @@ AE.retrace = (() => {
           if (d) acc.docs.push(Object.assign({ type: 'transfer' }, d));
           const moves = R.normalize.transfer(r, { store, warehouses: [String(store), store + 'Q'] });
           acc.movements.push(...moves);
-          for (const l of (r && Array.isArray(r.lines) ? r.lines : [])) { const x = R.cleanLabel(l && l.serialNumber); if (x) acc.touched.push(x); }
+          for (const l of (r && Array.isArray(r.lines) ? r.lines : [])) {
+            const x = R.cleanLabel(l && l.serialNumber);
+            if (x) acc.touched.push(x);
+            if (l && l.itemNumber != null && l.itemName) acc.names.push({ item: String(l.itemNumber), name: l.itemName });
+          }
         }
       }
     });
@@ -226,7 +245,7 @@ AE.retrace = (() => {
     const t0 = Date.now();
     counts = { portal: 0, worker: 0 };
     const result = { at: new Date().toISOString(), seconds: 0, calls: counts, watched: 0, lookup: null, items: 0, changedItems: 0, itemsRead: 0, itemsWaiting: 0, labels: 0, docs: 0,
-      movements: 0, pos: 0, poDetails: 0, histories: 0, historyRows: 0, details: 0, added: 0, backlogMore: false, errors: [] };
+      movements: 0, pos: 0, poDetails: 0, histories: 0, historyRows: 0, details: 0, added: 0, names: 0, named: 0, unnamed: 0, namesRead: 0, backlogMore: false, errors: [] };
     const note = (where, e) => {
       if (result.errors.length < 8) result.errors.push(where + ': ' + ((e && e.message) || e));
       AE.noteError('retrace ' + where, e);
@@ -237,7 +256,7 @@ AE.retrace = (() => {
       const store = p.storeId, by = p.name;
       try { result.watched = await flush(store); } catch (e) { if (e.storeChanged) throw e; note('watch queue', e); }
       const cursors = (await worker(store, 'GET', '/cursor')).cursors || {};
-      const acc = { items: [], labels: [], docs: [], movements: [], touched: [], pos: [], cursors: {} };
+      const acc = { items: [], labels: [], docs: [], movements: [], touched: [], pos: [], names: [], cursors: {} };
 
       // 2. stock, at most every 30 minutes (any browser at the store: the cursor)
       const lastLookup = cursors.lookup && cursors.lookup.value && Date.parse(cursors.lookup.value.at);
@@ -263,9 +282,9 @@ AE.retrace = (() => {
       // 4. documents, then 5. one sweep with everything
       await docs(store, cursors, acc, note);
       acc.touched = [...new Set(acc.touched.filter(Boolean))];
-      Object.assign(result, { labels: acc.labels.length, docs: acc.docs.length, movements: acc.movements.length, pos: acc.pos.length });
-      const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET }));
-      result.added += sw.added; result.backlogMore = sw.more;
+      Object.assign(result, { labels: acc.labels.length, docs: acc.docs.length, movements: acc.movements.length, pos: acc.pos.length, names: acc.names.length });
+      const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK }));
+      result.added += sw.added; result.backlogMore = sw.more; result.named += sw.named; result.unnamed = sw.unnamed.length;
       if (sw.pos) result.poEvents = sw.pos.events;
 
       // POs to read in full: header (lines) + receive details
@@ -277,7 +296,17 @@ AE.retrace = (() => {
           if (header) full.push({ header, receive });
         } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('po ' + po, e); }
       }
-      if (full.length) { const r = await sweep(store, by, { pos: full }); result.poDetails = full.length; result.added += r.added; result.poEvents = (result.poEvents || 0) + r.pos.events; }
+      // Items still without a name: Portal's item record, a budget a pass (one tried lately is skipped)
+      const tried = GM_getValue(NAMED_KEY(store), {}) || {}, names = [];
+      for (const item of sw.unnamed.filter((i) => !(Date.now() - (tried[i] || 0) < NAME_RETRY_MS)).slice(0, NAME_BUDGET)) {
+        try { const n = await itemName(store, item); result.namesRead++; if (n) names.push(n); else tried[item] = Date.now(); }
+        catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; if (e.status !== 404) note('name ' + item, e); tried[item] = Date.now(); } // 404: Portal has no record
+      }
+      GM_setValue(NAMED_KEY(store), Object.fromEntries(Object.entries(tried).filter(([, t]) => Date.now() - t < NAME_RETRY_MS)));
+      if (full.length || names.length) {
+        const r = await sweep(store, by, { pos: full, names });
+        result.poDetails = full.length; result.added += r.added; result.named += r.named; result.poEvents = (result.poEvents || 0) + r.pos.events;
+      }
 
       // 6. serial history for the labels the Worker handed out; label details for unlinked sales orders
       const sos = new Set(GM_getValue(SO_KEY(store), []) || []), snaps = [];

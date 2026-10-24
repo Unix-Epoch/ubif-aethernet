@@ -5,8 +5,8 @@
 
   Store side (x-aethernet-key + the store's Aethernet access, same as /scan; mounted by storeApi at /v1/:store/tracker/retrace/…).
   Everything is written under the store in the URL and nothing else: a label snapshot naming another store is skipped.
-    POST /retrace/sweep { items, labels, docs, movements, touched, cursors, need, by }   one collector pass →
-         { need: [label], more, changedItems: [{ item, why: new|changed }], added, rejected, skipped, written }
+    POST /retrace/sweep { items, labels, docs, movements, touched, cursors, need, names, nameNeed, by }   one collector pass →
+         { need: [label], more, changedItems: [{ item, why: new|changed }], added, rejected, skipped, written, named, unnamed }
            items      inventory-lookup rows ({ ItemNumber, ProductName, RetailCategory, WarehouseId, OnHandQuantity,
                       AvailableQuantity, ReservedQuantity, InTransitQuantity, SalesOnOrder, VanNickName }): per item and
                       warehouse; quantities differing from the stored ones (or a new item) come back in changedItems so
@@ -14,6 +14,8 @@
                       returns Portal's whole catalog, 100 a page): the server only diffs what it's sent.
            labels     label snapshots (labelSnapshot: label details or store-products rows): diffed against the stored
                       one; a status / location / consignment change is a movement and queues the label's history.
+                      A snapshot's product names its item (authoritative: label details' ProductName), except one with
+                      `list` set (outstanding parts, retrace.js normalize.outstanding: PartName, descriptive).
            docs       document headers (normalize.doc shape or Portal's row + type) → inv_docs
            movements  movements the browser built with retrace.js (sweeps of transfers, counts, RMA, buyback, POs),
                       checked like the watcher's (normalize.watch), keys rebuilt here
@@ -24,7 +26,13 @@
                       receive = …/receive-details) or bare list rows; at most 600. Kept in inv_docs (type 'po') with a status
                       history (inv_doc_events), see the PO block in the route below.
            poNeed     how many POs whose lines / receive details should be read next to hand out (default 0, at most 100)
+           names      [{ item, name, authoritative?, category? }] item names the browser read (RMA lines' item_name,
+                      transfer lines: descriptive; Portal's item record for an unnamed item: authoritative); at most
+                      NAMES_MAX, entries without an item or a name skipped. See "item names" above.
+           nameNeed   how many items with no name to hand out (default 0, at most UNNAMED_CAP)
          pos: { seen, written, events, received, need: [po] }   need: POs to read in full (new, or tracked fields moved)
+         named: items whose name this sweep set or changed (any source above, the PO lines' too)
+         unnamed: items with a movement or a label at the store and no name, newest first (nameNeed of them; ignored items never)
          need: labels whose serial history should be (re)read, changed > touched > backfill, claimed CLAIM_MIN minutes
          so a second browser skips them (the /scan pattern).
     POST /retrace/history { label, rows, by }   the label's serial-history rows (boh/serial-history/{label}: the rows,
@@ -36,15 +44,15 @@
 
   Admin side: retraceAdmin() below, mounted by trackerRoutes at /api/tracker/retrace/… (page 'retrace'; route list there).
 */
-import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem } from './retrace.js';
+import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS } from './retrace.js';
 
 export const NEED_MAX = 60;
 const NEED_CAP = 200, CLAIM_MIN = 10, WATCH_MAX = 50;
 // Per-request caps. Most rows become a statement and D1 counts queries per Worker invocation (1000 on paid plans,
 // batched or not), so a pass bigger than this goes up in several sweeps (only new / changed rows are written, so a
 // second pass over the same data is mostly reads).
-const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, rows: 500, cursors: 20, pos: 600 };
-const PO_DATA_MAX = 200000, PO_NEED_CAP = 100;
+const PO_DATA_MAX = 200000, PO_NEED_CAP = 100, NAMES_MAX = 200, UNNAMED_CAP = 50;
+const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, rows: 500, cursors: 20, pos: 600, names: NAMES_MAX };
 const MAX = { sweep: 4000000, history: 1000000, watch: 150000 };
 const SWEEP_SOURCES = ['sweep', 'transfer', 'count', 'rma', 'buyback', 'po', 'snapshot'];
 const CURSOR_RE = /^[a-z][a-z0-9_-]{0,30}$/, LAST_SWEEP = 'last_sweep';
@@ -69,6 +77,51 @@ const soWo = (T, store, so, wo, source, at) => T.prepare(`INSERT INTO inv_so_wo 
 const touchLabel = (T, store, label, item, need, at, wo = null) => ignoredItem(item) ? null : T.prepare(`INSERT INTO inv_labels (store, label, item, wo, first_seen, last_seen, need_history) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (store, label) DO UPDATE SET item = COALESCE(item, excluded.item), wo = COALESCE(excluded.wo, wo), need_history = MAX(need_history, excluded.need_history)`)
   .bind(store, label, item, wo, at, at, need);
+
+// ------------------------------------------------------------------ item names
+/*
+  inv_items.name is an item's one name, whatever source gave it. Authoritative sources (the item lookup's and label
+  details' ProductName, Portal's item record read for the unnamed list) may change a stored name, so a rename in Portal
+  shows up; descriptive ones (cart line text, PO line descriptions, receive details' ItemName, RMA lines' item_name,
+  outstanding parts' PartName, transfer lines) only fill a missing one. Category: filled when missing, never changed
+  here (the item lookup's RetailCategory keeps that). A row made here has no quantities (qty / qty_hash NULL), which
+  the item lookup's diff reads as a new item, never a change. Ignored items get no row.
+*/
+// index.js clean(): the WO hook has no H. Numbers (an item id sent as one) read as their text.
+const cleanText = (v, max) => (typeof v === 'string' || typeof v === 'number' ? String(v).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, max) : '');
+// Names gathered over one request, one per item: the first authoritative one wins, else the first one.
+function nameBook() {
+  const map = new Map();
+  return {
+    map,
+    add(item, name, auth, category) {
+      const i = cleanText(item, 40), n = cleanText(name, 120);
+      if (!i || !n || ignoredItem(i)) return false;
+      const x = map.get(i), c = cleanText(category, 60) || null;
+      if (!x || (auth && !x.auth)) map.set(i, { name: n, auth: !!auth, category: c || (x && x.category) || null });
+      else if (c && !x.category) x.category = c;
+      return true;
+    },
+  };
+}
+// Statements for the names that change something (one read): a missing name, an authoritative rename, a missing category.
+async function nameStmts(T, store, book, at) {
+  const list = [...book.map.keys()], known = new Map();
+  for (let i = 0; i < list.length; i += 500) {
+    const r = await T.prepare('SELECT item, name, category FROM inv_items WHERE store = ? AND item IN (SELECT value FROM json_each(?))').bind(store, JSON.stringify(list.slice(i, i + 500))).all();
+    for (const x of r.results) known.set(x.item, x);
+  }
+  const stmts = [];
+  for (const [item, x] of book.map) {
+    const k = known.get(item);
+    if (k && k.name && !(x.auth && k.name !== x.name) && !(x.category && !k.category)) continue;
+    stmts.push(T.prepare(`INSERT INTO inv_items (store, item, name, category, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (store, item) DO UPDATE SET name = CASE WHEN inv_items.name IS NULL OR ? THEN excluded.name ELSE inv_items.name END, category = COALESCE(inv_items.category, excluded.category)
+        WHERE inv_items.name IS NULL OR (? AND inv_items.name IS NOT excluded.name) OR (inv_items.category IS NULL AND excluded.category IS NOT NULL)`)
+      .bind(store, item, x.name, x.category, at, at, x.auth ? 1 : 0, x.auth ? 1 : 0));
+  }
+  return stmts;
+}
 
 /*
   Only movements not already stored (one read, by key): the same record coming back (a re-sent cart, a history read
@@ -97,7 +150,10 @@ async function movementStmts(T, store, moves, at, need, wo = null) {
 /*
   POST /wo/:wo: the cart lines' labels and the WO's parts events, before and after (src/retrace.js woMovements:
   reserved / unreserved / used, swapped_out + swapped_in), as statements for the WO upload's own batch. The labels
-  get the WO linked and a history read queued. Never fails the upload: any error here gives no statements.
+  get the WO linked and a history read queued. Items named on the WO (retrace.js woNames: cart line text, parts events'
+  item names) get inv_items.name when they have none: a line with a label, an event's item, or a line whose item
+  Retrace already knows (a label or a movement at the store); service and labor lines stay out. Never fails the
+  upload: any error here gives no statements.
 */
 export async function woRetraceStmts(T, store, wo, prevPlain, plain, at) {
   try {
@@ -108,6 +164,12 @@ export async function woRetraceStmts(T, store, wo, prevPlain, plain, at) {
     for (const so of sos(plain)) if (!had.has(so)) stmts.push(soWo(T, store, so, wo, 'wo', at));
     const moves = woMovements(prevPlain, plain, { wo, at });
     if (moves.length) stmts.push(...(await movementStmts(T, store, moves, at, NEED.touched, String(wo))).stmts);
+    const named = woNames(plain), book = nameBook(), ask = [...new Set(named.filter((x) => !x.label && !x.event).map((x) => x.item))];
+    const known = new Set(ask.length ? (await T.prepare(`SELECT item FROM inv_labels WHERE store = ?1 AND item IN (SELECT value FROM json_each(?2))
+        UNION SELECT item FROM inv_movements WHERE store = ?1 AND item IN (SELECT value FROM json_each(?2))`)
+      .bind(store, JSON.stringify(ask)).all()).results.map((r) => r.item) : []);
+    for (const x of named) if (x.label || x.event || known.has(x.item)) book.add(x.item, x.name, false);
+    if (book.map.size) stmts.push(...(await nameStmts(T, store, book, at)));
     return stmts;
   } catch (_) { return []; }
 }
@@ -162,9 +224,9 @@ export async function retraceStore(req, env, url, store, path, H) {
 
   if (path === '/retrace/sweep' && req.method === 'POST') {
     const b = await H.readJson(req, MAX.sweep);
-    for (const k of ['items', 'labels', 'docs', 'movements', 'touched', 'pos']) if (b[k] != null && (!Array.isArray(b[k]) || b[k].length > LIMIT[k])) return H.fail(400, k + ': a list of at most ' + LIMIT[k]);
+    for (const k of ['items', 'labels', 'docs', 'movements', 'touched', 'pos', 'names']) if (b[k] != null && (!Array.isArray(b[k]) || b[k].length > LIMIT[k])) return H.fail(400, k + ': a list of at most ' + LIMIT[k]);
     if (b.cursors != null && (typeof b.cursors !== 'object' || Array.isArray(b.cursors) || Object.keys(b.cursors).length > LIMIT.cursors)) return H.fail(400, 'cursors: { sweep: value }');
-    const at = H.now(), by = H.clean(b.by, 60) || null, stmts = [];
+    const at = H.now(), by = H.clean(b.by, 60) || null, stmts = [], book = nameBook();
     let written = 0, skipped = 0;
 
     /*
@@ -191,8 +253,9 @@ export async function retraceStore(req, env, url, store, path, H) {
         .bind(store, JSON.stringify([...items.keys()])).all()).results.map((r) => [r.item, r]));
       for (const [item, x] of items) {
         const qty = JSON.stringify(Object.fromEntries(Object.entries(x.qty).sort(([a], [c]) => (a < c ? -1 : 1)))), qh = hash53(qty), k = known.get(item);
+        // A row with no quantities was made by a name (see "item names"): the lookup sees the item for the first time.
         const changed = k && k.qty_hash !== qh;
-        if (!k) changedItems.push({ item, why: 'new' }); else if (changed) changedItems.push({ item, why: 'changed' });
+        if (!k || k.qty_hash == null) changedItems.push({ item, why: 'new' }); else if (changed) changedItems.push({ item, why: 'changed' });
         if (k && !changed && k.name === x.name && k.category === x.category && String(k.last_seen).slice(0, 10) === at.slice(0, 10)) continue;
         written++;
         stmts.push(T.prepare(`INSERT INTO inv_items (store, item, name, category, qty, qty_hash, first_seen, last_seen, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -214,6 +277,7 @@ export async function retraceStore(req, env, url, store, path, H) {
       const own = storeNo(s.store);
       if (own != null && own !== store) { skipped++; continue; } // another store's label: never written here
       snaps.set(s.label, Object.assign(snaps.get(s.label) || {}, s));
+      if (s.product) book.add(s.item, s.product, r.list == null);
     }
     const diffMoves = [];
     if (snaps.size) {
@@ -271,6 +335,9 @@ export async function retraceStore(req, env, url, store, path, H) {
       Labels on the receive details: known from now on with the PO linked, and queued for a history read when new or
       when their receive status changed. POs sent through `docs` (type 'po') come here as list rows.
     */
+    // Names the browser read (see "item names"): only `authoritative: true` may rename.
+    for (const x of b.names || []) if (x && typeof x === 'object') book.add(x.item, x.name, x.authoritative === true, x.category);
+
     const poIn = [...(b.pos || []), ...(b.docs || []).filter((d) => d && d.type === 'po')];
     const poOut = { seen: 0, written: 0, events: 0, received: 0 };
     if (poIn.length) {
@@ -279,6 +346,7 @@ export async function retraceStore(req, env, url, store, path, H) {
         const detail = !!(x && (x.receive || (x.header && Array.isArray(x.header.PurchaseOrderLinesV2))));
         const st = x && poState(x.header || x, x.receive);
         if (!st) continue;
+        for (const l of st.lines || []) book.add(l.item, l.desc, false); // LineDescription / receive ItemName: descriptive
         const r = readings.get(st.id);
         readings.set(st.id, r ? { st: mergePo(r.st, st), detail: r.detail || detail } : { st, detail });
       }
@@ -330,9 +398,13 @@ export async function retraceStore(req, env, url, store, path, H) {
       if (!CURSOR_RE.test(name) || name === LAST_SWEEP || v.length > 4000) return H.fail(400, 'bad cursor ' + String(name).slice(0, 40));
       stmts.push(T.prepare('INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, sweep) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at').bind(store, name, v, at));
     }
+    // An item the lookup named in this sweep keeps the lookup's name (written with its quantities above).
+    for (const [item, x] of items) if (x.name) book.map.delete(item);
+    const nameW = book.map.size ? await nameStmts(T, store, book, at) : [];
+    stmts.push(...nameW);
     const added = diffs.length + fromSweep.added + poOut.received;
     stmts.push(T.prepare('INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, sweep) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at')
-      .bind(store, LAST_SWEEP, JSON.stringify({ by, items: items.size, labels: snaps.size, movements: added, changedItems: changedItems.length }), at));
+      .bind(store, LAST_SWEEP, JSON.stringify({ by, items: items.size, labels: snaps.size, movements: added, changedItems: changedItems.length, named: nameW.length }), at));
     await chunks(T, stmts);
 
     // The history queue: changed > touched > backfill, most recently seen first; claimed so other browsers skip them.
@@ -344,7 +416,13 @@ export async function retraceStore(req, env, url, store, path, H) {
     // POs whose lines / receive details to read next (poNeed: how many, default none), newest first.
     const poWant = Math.min(Math.max(Number.isInteger(b.poNeed) ? b.poNeed : 0, 0), PO_NEED_CAP);
     poOut.need = poWant ? (await T.prepare("SELECT id FROM inv_docs WHERE store = ? AND type = 'po' AND need_detail = 1 ORDER BY at DESC, id DESC LIMIT ?").bind(store, poWant).all()).results.map((r) => r.id) : [];
-    return H.json({ need, more: q.length > need.length, changedItems, added, rejected, skipped, written, pos: poOut });
+    // Items with movements or labels and no name yet (nameNeed: how many, default none), newest first: the browser reads their item record.
+    const nameWant = Math.min(Math.max(Number.isInteger(b.nameNeed) ? b.nameNeed : 0, 0), UNNAMED_CAP);
+    const unnamed = nameWant ? (await T.prepare(`SELECT item, MAX(at) AS last FROM (SELECT item, at FROM inv_movements WHERE store = ?1 AND item IS NOT NULL
+        UNION ALL SELECT item, last_seen AS at FROM inv_labels WHERE store = ?1 AND item IS NOT NULL)
+        WHERE item NOT IN (SELECT item FROM inv_items WHERE store = ?1 AND name IS NOT NULL) AND lower(item) NOT IN (SELECT value FROM json_each(?2))
+        GROUP BY item ORDER BY last DESC, item LIMIT ?3`).bind(store, JSON.stringify(IGNORED_ITEMS), nameWant).all()).results.map((r) => r.item) : [];
+    return H.json({ need, more: q.length > need.length, changedItems, added, rejected, skipped, written, named: nameW.length, unnamed, pos: poOut });
   }
   return H.fail(404, 'not found');
 }
@@ -556,7 +634,8 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     const [labels, items, moves, sweeps] = await T.batch([
       T.prepare(`SELECT store, COUNT(*) AS labels, SUM(CASE WHEN last_history_at IS NOT NULL THEN 1 ELSE 0 END) AS histories, SUM(CASE WHEN need_history > 0 THEN 1 ELSE 0 END) AS backlog,
           SUM(CASE WHEN claimed_until > ? THEN 1 ELSE 0 END) AS claimed, MAX(last_history_at) AS last_history_at FROM inv_labels WHERE ${s.sql} GROUP BY store`).bind(at, ...s.args),
-      T.prepare(`SELECT store, COUNT(*) AS items FROM inv_items WHERE ${s.sql} GROUP BY store`).bind(...s.args),
+      // items: the ones the item lookup has quantities for (rows made by a name alone aren't counted)
+      T.prepare(`SELECT store, COUNT(qty_hash) AS items FROM inv_items WHERE ${s.sql} GROUP BY store`).bind(...s.args),
       T.prepare(`SELECT store, COUNT(*) AS movements FROM inv_movements WHERE ${s.sql} GROUP BY store`).bind(...s.args),
       T.prepare(`SELECT store, value, updated_at FROM inv_cursors WHERE ${s.sql} AND sweep = ?`).bind(...s.args, LAST_SWEEP),
     ]);
