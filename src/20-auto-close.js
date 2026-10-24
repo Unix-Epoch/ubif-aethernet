@@ -148,7 +148,7 @@ AE.shard({
       };
       const getWo = async () => {
         const r = await api('GET', '/api/workorder/' + woId);
-        const wo = Object.assign({}, (r && r.workorder) || unwrap(r));
+        const wo = Object.assign({}, AE.shape.workorder(r, 'Swiftcast work order ' + woId)); // never PUT back a body built from a malformed answer
         delete wo.workorderId;
         return wo;
       };

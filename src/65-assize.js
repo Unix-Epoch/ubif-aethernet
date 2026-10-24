@@ -117,6 +117,7 @@ AE.shard({
       if (busy || AE.status.paused('assize')) return;
       const lock = key('scan_at');
       if (!force && Date.now() - GM_getValue(lock, 0) < SCAN_MS - 30000) return;
+      if (!force && AE.health.down()) return; // Portal is down: skip quietly, the next probe retries
       GM_setValue(lock, Date.now());
       busy = true; render();
       loadDismissed(true);

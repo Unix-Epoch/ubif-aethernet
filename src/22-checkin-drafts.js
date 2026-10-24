@@ -265,8 +265,9 @@ AE.shard({
     async function checkDone() {
       if (!current || !current.woId) return;
       let wo;
-      try { const j = await AE.api('GET', '/api/workorder/' + current.woId); wo = (j && j.workorder) || AE.unwrap(j); } catch (_) { return; }
-      if (wo && Number(wo.workorderStatusId) !== INITIAL_CHECKIN) {
+      // Only a real work order (an object with a numeric workorderStatusId) can say it left Initial check-in: a failed call or a malformed 200 changes nothing, and the draft stays.
+      try { wo = AE.shape.workorder(await AE.api('GET', '/api/workorder/' + current.woId)); } catch (_) { return; }
+      if (Number(wo.workorderStatusId) !== INITIAL_CHECKIN) {
         const done = current; current = null;
         try { await call('POST', '/' + done.id + '/remove', {}); AE.track('checkinDrafts:finished'); } catch (_) { current = done; }
       }

@@ -129,7 +129,7 @@ AE.decipher = (() => {
     if (tried.has(woId) || seenWos().has(woId)) return;
     tried.add(woId);
     const j = await AE.api('GET', '/api/workorder/' + woId);
-    const item = fromWo((j && j.workorder) || AE.unwrap(j));
+    const item = fromWo(AE.shape.workorder(j, 'Decipher work order ' + woId));
     if (!item) return;
     await record([item]);
     const seen = [...seenWos(), woId].slice(-SEEN_MAX);

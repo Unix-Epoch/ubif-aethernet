@@ -98,6 +98,7 @@ AE.tracker = (() => {
     const coreP = AE.api('GET', '/api/workorder/' + wo).catch((e) => { if (/HTTP 404/.test(e.message || '')) e.gone = true; throw e; });
     const cartP = coreP.then((core) => { const id = core && core.workorder && core.workorder.csuCartId; return id ? soft(AE.api('GET', '/api/get-cart/' + id + '?includePartStatus=true')) : null; }, () => null);
     const [core, audit, notes, cart, events] = await Promise.all([coreP, soft(AE.api('GET', '/api/workorder-audit-trail/' + wo)), soft(notesOf(wo)), cartP, soft(eventsOf(wo))]);
+    AE.shape.workorder(core, 'work order ' + wo); // a malformed 200 is an error, not a work order with nothing in it
     return { d: scrub({ workorder: core, audit_trail: audit, notes, cart, events }), failed };
   }
   function wodGet(store, wo, opts = {}) {
@@ -113,7 +114,7 @@ AE.tracker = (() => {
       const w = d.workorder && d.workorder.workorder;
       if (!failed && w) all[id] = { at, u: w.updatedAt || null, d }; else delete all[id];
       GM_setValue(k, all);
-      return Object.assign({ at }, d);
+      return Object.assign({ at, failed }, d); // failed: a part (audit trail, notes, cart, events) didn't load; the tracker doesn't send it
     }).finally(() => { if (wodLoading.get(k + ':' + id) === run) wodLoading.delete(k + ':' + id); });
     wodLoading.set(k + ':' + id, run);
     return run;
@@ -123,17 +124,17 @@ AE.tracker = (() => {
   // The tracker's copy: the shared detail plus the customer record (fetched alongside, never kept).
   async function detailOf(store, wo, opts) {
     const [x, customer] = await Promise.all([wodGet(store, wo, opts), AE.api('GET', '/api/v1/workorder/' + wo + '/demographic/customer-data').catch(() => null)]);
-    return scrub({ workorder: x.workorder, audit_trail: x.audit_trail, customer_data: customer, notes: x.notes, cart: x.cart, events: x.events });
+    return { d: scrub({ workorder: x.workorder, audit_trail: x.audit_trail, customer_data: customer, notes: x.notes, cart: x.cart, events: x.events }), failed: !!x.failed };
   }
 
   // One WO, ready to send (or to look at, for the dev tools' dry run).
   async function prepare(store, wo, listRow, jwk, opts = {}) {
-    const d = await detailOf(store, wo, opts);
+    const { d, failed } = await detailOf(store, wo, opts);
     const own = d.workorder && d.workorder.workorder;
     if (own && own.storeId != null && Number(own.storeId) !== Number(store)) throw Object.assign(new Error("another store's work order"), { otherStore: Number(own.storeId) });
     if (listRow) d.list_row = scrub(listRow);
     const plain = plainPart(d, listRow), card = cardOf(d, listRow);
-    const out = { plain, card, detail: d, hash: await C.hashJson([plain, d]), detailBytes: JSON.stringify(d).length };
+    const out = { plain, card, detail: d, failed, hash: await C.hashJson([plain, d]), detailBytes: JSON.stringify(d).length };
     if (jwk) { out.sealed = await C.sealJson(d, jwk, C.aad.snapshot(store, wo)); out.cardSealed = await C.sealJson(card, jwk, C.aad.card(store, wo)); }
     return out;
   }
@@ -141,11 +142,11 @@ AE.tracker = (() => {
   // ---------------------------------------------------------------- the scan
   let running = false;
   async function scan(opts = {}) {
-    if (!configured() || running || AE.status.paused('tracker')) return null;
+    if (!configured() || running || AE.status.paused('tracker') || AE.health.down()) return null;
     if (!opts.force && Date.now() - GM_getValue(SCAN_KEY, 0) < SCAN_MS - 30000) return null;
     running = true;
     GM_setValue(SCAN_KEY, Date.now());
-    const result = { at: new Date().toISOString(), sent: 0, same: 0, gone: 0, failed: 0, errors: [] };
+    const result = { at: new Date().toISOString(), sent: 0, same: 0, gone: 0, failed: 0, partial: 0, errors: [] };
     try {
       const p = await AE.profile();
       if (!p.storeId) throw new Error('No current store');
@@ -158,10 +159,13 @@ AE.tracker = (() => {
       const s = await call('POST', '/v1/' + store + '/tracker/scan', { rows: rows.map(scanRow), storeName: p.storeName, by: p.name });
       Object.assign(result, { open: rows.length, need: s.need.length, note: s.note || null });
       for (const n of s.need) {
+        if (AE.health.tripped()) { result.note = 'Portal is down: stopped, the rest next scan'; break; } // AE.health: no more calls while Portal fails
         try {
           // A missing order needs Portal's own answer (a 404 closes it); the rest may use Assize's recent copy.
           const row = byId.get(n.wo) || null;
           const x = await prepare(store, n.wo, row, jwk, n.why === 'missing' ? { force: true } : { updatedAt: row && row.updatedAt });
+          // Part of the detail failed to load (audit trail, notes, cart or events): that is not the order's state. Not sent; asked for again next scan.
+          if (x.failed) { result.partial++; if (result.errors.length < 5) result.errors.push(n.wo + ': partial detail, not sent'); await AE.sleep(GAP_MS); continue; }
           const j = await call('POST', '/v1/' + store + '/tracker/wo/' + n.wo, { hash: x.hash, trigger: n.why, plain: x.plain, sealed: x.sealed, card: x.cardSealed, by: p.name });
           if (j.same) result.same++; else result.sent++;
         } catch (e) {
@@ -267,7 +271,7 @@ AE.tracker = (() => {
     const d = x.detail, notes = (d.notes && d.notes.notes) || [];
     const sealedParts = { notes: notes.length, noteChars: notes.reduce((n, t) => n + String(t.noteText || '').length, 0), customerRecord: !!d.customer_data,
       statusHistory: Array.isArray(d.audit_trail) ? d.audit_trail.length : 0, cartLines: d.cart ? (d.cart.cartItems || []).length : 0 };
-    return { wo: Number(wo), inList: !!row, plain: x.plain, card: x.card, sealedParts, hash: x.hash, detailBytes: x.detailBytes, sealedBytes: x.sealed.length, cardBytes: x.cardSealed.length };
+    return { wo: Number(wo), partial: !!x.failed, inList: !!row, plain: x.plain, card: x.card, sealedParts, hash: x.hash, detailBytes: x.detailBytes, sealedBytes: x.sealed.length, cardBytes: x.cardSealed.length };
   }
 
   // The store's RFP total, cached 2 minutes (Master's Mend → RFP total).

@@ -47,8 +47,7 @@ AE.shard({
       loadingFor = woId;
       if (!quiet || !state || state.woId !== woId) { state = { woId, status: 'loading' }; render(); }
       try {
-        const j = await AE.api('GET', '/api/workorder/' + woId);
-        const wo = (j && j.workorder) || AE.unwrap(j);
+        const wo = AE.shape.workorder(await AE.api('GET', '/api/workorder/' + woId), 'Esuna work order ' + woId);
         const created = Date.parse(wo.createdAt) || Date.now();
         const dev = wo.CustomerDevice || {};
         // Shaped like a list row so AE.data.belongs() can compare it; the list's own
@@ -167,7 +166,7 @@ AE.shard({
       if (!woId) { document.getElementById(PILL_ID)?.remove(); document.getElementById(POP_ID)?.remove(); state = null; loadingFor = null; return; }
       const stale = state && state.status !== 'loading' && Date.now() - state.at > REFRESH_MS && !document.hidden;
       if (!state || state.woId !== woId) { if (loadingFor !== woId) load(woId); }
-      else if (stale) { state.at = Date.now(); load(woId, true); }
+      else if (stale && !AE.health.down()) { state.at = Date.now(); load(woId, true); } // the background refresh waits while Portal is down
       render(); // Portal re-renders the header; put the pill back
     });
     // Same frame as Portal's heading (2.23): starts the lookup on a new WO and puts the pill back if Portal redraws.

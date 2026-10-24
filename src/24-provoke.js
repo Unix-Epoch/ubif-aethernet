@@ -315,7 +315,7 @@ AE.shard({
         const items = (leads && leads.data && leads.data.items) || [];
         const b2 = msgBox();
         if (!items.length || !b2 || woIdNow() !== woId) return;
-        const wo = (j && j.workorder) || AE.unwrap(j) || {};
+        const wo = AE.shape.workorder(j, 'Provoke work order ' + woId);
         const name = wo.workorderStatusName || (wo.WorkorderStatus && wo.WorkorderStatus.name) || (wo.workorderStatus && wo.workorderStatus.name) || '';
         chatStatus = { key: byStatus(name, Number(wo.workorderStatusId)), name };
         unplace();

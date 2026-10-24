@@ -207,7 +207,8 @@ AE.waymark = (() => {
     customerDeviceId: dev.customerDeviceId, customerId: dev.customerId, passcode: dev.passcode, serial: dev.serial,
     imei: dev.imei, deviceCatalogId: dev.deviceCatalogId, name,
   });
-  const woDetail = async (woId) => { const j = await AE.api('GET', '/api/workorder/' + woId); return (j && j.workorder) || AE.unwrap(j); };
+  // The work order, or a BadShape when Portal's answer isn't one (a {} or a string is not "a WO in no marked status").
+  const woDetail = async (woId) => AE.shape.workorder(await AE.api('GET', '/api/workorder/' + woId), 'Waymark work order ' + woId);
   // Set the nickname to the mark's date, only while the WO is in its mark's status.
   // Sends the device record back unchanged apart from `name`, as Portal's own edit does.
   async function syncNickname(woId, due, wo) {
@@ -326,10 +327,12 @@ AE.waymark = (() => {
     server may have ignored marks that were removed with ×).
   */
   function planScan(rows, c, noCreate) {
-    const plan = { create: [], follow: [], rename: [], waiting: [], end: [] };
+    const plan = { create: [], follow: [], rename: [], waiting: [], end: [], unknown: [] };
     const removed = new Map((c.removed || []).map((x) => (typeof x === 'object' ? [Number(x.wo), x.kind || 'rfp'] : [Number(x), null])));
     for (const r of rows) {
       const wo = Number(r.workorderId), nick = ((r.customerDevice && r.customerDevice.name) || '').trim();
+      // A row without a numeric status is unknown, not "left its status": nothing is ended, created or renamed for it.
+      if (r.workorderStatusId == null || r.workorderStatusId === '' || !Number.isFinite(Number(r.workorderStatusId))) { plan.unknown.push(wo); continue; }
       const kind = kindOfStatus(r.workorderStatusId);
       // Left the status its mark belongs to (or one removed with × in another status): the mark ends.
       if ((c.auto[wo] && markKind(c.auto[wo]) !== kind) || (removed.has(wo) && removed.get(wo) !== kind)) {
@@ -373,12 +376,14 @@ AE.waymark = (() => {
   async function scan(rows, opts = {}) {
     if (!rows) {
       if (!opts.force && Date.now() - GM_getValue(SCAN_KEY, 0) < SCAN_MS - 30000) return null;
+      if (!opts.force && AE.health.down()) return null; // Portal is down: skip quietly, the next probe retries
       GM_setValue(SCAN_KEY, Date.now());
       rows = await AE.data.workorders(Date.now(), 0);
     }
     GM_setValue(OPEN_KEY, { at: Date.now(), ids: rows.map((r) => Number(r.workorderId)) });
     let c = await load(true);
     let plan = planScan(rows, c);
+    if (plan.unknown.length) AE.noteError('waymark scan', new Error(plan.unknown.length + ' list row(s) without a numeric workorderStatusId were skipped (WO ' + plan.unknown.slice(0, 5).join(', ') + ')'));
     if (opts.dryRun) return Object.assign(plan, { rows });
     if (!AE.status.paused('waymark')) {
       for (const e of plan.end) {

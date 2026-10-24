@@ -51,7 +51,7 @@ AE.shard({
         AE.api('GET', '/api/workorder/' + woId),
         AE.api('GET', '/api/v1/workorder/' + woId + '/demographic/customer-data'),
       ]);
-      const wo = (woRes && woRes.workorder) || AE.unwrap(woRes) || {};
+      const wo = AE.shape.workorder(woRes, 'Recitation work order ' + woId); // the note's status tag comes from it
       const customerId = cust && cust.customerId;
       if (!customerId) return 0;
       const hist = await AE.api('GET', '/api/messages/v1/customers/' + customerId + '?page=1&pageSize=10&sortOrder=DESC&storeId=' + (prof.storeId || ''));

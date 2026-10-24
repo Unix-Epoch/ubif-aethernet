@@ -465,11 +465,13 @@ AE.shard({
 
     const onPortal = () => !/^\/login/.test(location.pathname);
     AE.every(1500, () => { if (onPortal()) renderBadge(); }); // SPA re-renders can drop the badge
-    setInterval(() => { if (onPortal() && !document.hidden) refresh(); }, REFRESH_MS);
+    // The timer's, the tab's and the first load's refreshes wait while Portal is down (AE.health); a click on the badge's refresh or a cleaning change still go.
+    const autoRefresh = () => { if (!AE.health.down()) refresh(); };
+    setInterval(() => { if (onPortal() && !document.hidden) autoRefresh(); }, REFRESH_MS);
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && onPortal() && (!last || Date.now() - last.at > REFRESH_MS)) refresh();
+      if (!document.hidden && onPortal() && (!last || Date.now() - last.at > REFRESH_MS)) autoRefresh();
     });
     AE.on('cleaning-changed', () => refresh());
-    if (onPortal()) refresh();
+    if (onPortal()) autoRefresh();
   },
 });

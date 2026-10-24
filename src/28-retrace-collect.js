@@ -159,28 +159,36 @@ AE.retrace = (() => {
   }
 
   // ---------------------------------------------------------------- 3. labels of an item
+  /*
+    An item's label list answers { "@odata.context", "@odata.count": N, "value": [rows] } (captured live at store 914, Oct 24 2026;
+    tracker-worker/test/fixtures/retrace/store-products.json). A real zero is @odata.count 0 with value []. An answer without both
+    keys (a {}, a string, another envelope) is a FAILED read, never "no labels": the item stays queued and nothing is marked
+    quantity-only or locked out. A count above the rows returned is not an error (sold labels aren't listed).
+  */
+  function labelPage(j, what) {
+    AE.shape.obj(j, ['@odata.count', 'value'], what);
+    const list = AE.shape.list(j, 'value', what), count = j['@odata.count'];
+    if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) throw new AE.BadShape(what, '@odata.count is not a whole number', typeof count);
+    return { list, count };
+  }
   async function labelsOf(store, item) {
     const out = [];
     for (let page = 1; page <= 20; page++) {
       const j = await portal('GET', '/api/boh/store-products/' + encodeURIComponent(item) + '/inventory?pageSize=200&page=' + page + '&searchTerm=&warehouseType=All&warehouseId=' + store);
-      const list = R.rowsOf(j);
+      const { list, count } = labelPage(j, 'labels of item ' + item);
       for (const r of list) { const s = R.labelSnapshot(r); if (s) out.push(s); }
-      const total = j && Number(j['@odata.count']);
-      if (list.length < 200 || (total && page * 200 >= total)) break;
+      if (list.length < 200 || (count && page * 200 >= count)) break;
     }
     return out;
   }
 
-  // An item's label count for the baseline: the list's own @odata.count at pageSize=1 (one tiny call). No count in the answer:
-  // read the whole list and count it (snaps are kept for the sweep). Portal has no record (404): 0.
+  // An item's label count for the baseline: the list's own @odata.count at pageSize=1 (one tiny call). The answer must carry it
+  // (labelPage): no numeric count is a failed read, not 0. Portal has no record (404): 0.
   async function labelTotal(store, item) {
     try {
       const j = await portal('GET', '/api/boh/store-products/' + encodeURIComponent(item) + '/inventory?pageSize=1&page=1&searchTerm=&warehouseType=All&warehouseId=' + store);
-      const total = j && !Array.isArray(j) ? j['@odata.count'] : null;
-      if (typeof total === 'number' && Number.isInteger(total) && total >= 0) return { item: String(item), total };
+      return { item: String(item), total: labelPage(j, 'label count of item ' + item).count };
     } catch (e) { if (httpOf(e) === 404) return { item: String(item), total: 0 }; throw e; }
-    const snaps = await labelsOf(store, item);
-    return { item: String(item), total: snaps.length, snaps };
   }
   // How many purchase orders Portal lists (in transit + past; drafts come and go): the list calls' @odata.count at pageSize=1. null when any lacks one.
   async function poTotal() {
@@ -203,11 +211,18 @@ AE.retrace = (() => {
   }
 
   // ---------------------------------------------------------------- 4. documents
+  // Portal's list envelopes (the ones R.rowsOf reads). An answer that is none of them is a failed read, not an empty list.
+  const ENVELOPES = ['value', 'data', 'results', 'items', 'rows', 'orders', 'transferOrders', 'OnHandItemDetails'];
+  function listOf(j, what) {
+    const rows = R.rowsOf(j);
+    if (!rows.length && !Array.isArray(j) && !(AE.shape.isObj(j) && ENVELOPES.some((k) => Array.isArray(j[k])))) throw new AE.BadShape(what, 'no list in the answer', Array.isArray(j) ? 'array' : j === null ? 'null' : typeof j);
+    return rows;
+  }
   async function pages(path, method, body, size) {
     const all = [];
     for (let page = 1; page <= LIST_PAGES; page++) {
       const j = await portal(method, path.replace('{page}', page), body);
-      const list = R.rowsOf(j);
+      const list = listOf(j, path.replace(/\?.*$/, ''));
       all.push(...list);
       const total = j && Number(j['@odata.count']);
       if (list.length < size || (total && page * size >= total)) break;
@@ -225,7 +240,10 @@ AE.retrace = (() => {
       }
     };
     await step('outstanding parts', async () => {
-      const snaps = R.normalize.outstanding(await portal('GET', '/api/boh/rma-buyback/outstanding-parts'));
+      const parts = await portal('GET', '/api/boh/rma-buyback/outstanding-parts');
+      // { RMAParts, BuybackParts, SalvageParts } (fixtures/retrace/outstanding-parts.json): none of the three lists = a failed read
+      if (!AE.shape.isObj(parts) || !['RMAParts', 'BuybackParts', 'SalvageParts'].some((k) => Array.isArray(parts[k]))) throw new AE.BadShape('outstanding parts', 'none of RMAParts / BuybackParts / SalvageParts', typeof parts);
+      const snaps = R.normalize.outstanding(parts);
       acc.labels.push(...snaps); // list stays: the Worker reads their PartName as a descriptive name
       acc.touched.push(...snaps.map((s) => s.label));
     });
@@ -267,7 +285,7 @@ AE.retrace = (() => {
       }
     });
     await step('vans', async () => {
-      for (const r of R.rowsOf(await portal('GET', '/api/boh/remote-tech/van-warehouses'))) { const d = R.normalize.doc('van', r); if (d) acc.docs.push(Object.assign({ type: 'van' }, d)); }
+      for (const r of listOf(await portal('GET', '/api/boh/remote-tech/van-warehouses'), 'van warehouses')) { const d = R.normalize.doc('van', r); if (d) acc.docs.push(Object.assign({ type: 'van' }, d)); }
     });
     // POs: list rows go up as they are; the Worker keeps their status history and says which to read in full.
     await step('purchase orders', async () => {
@@ -280,7 +298,7 @@ AE.retrace = (() => {
         let page = bf.page, done = false;
         for (let i = 0; i < PO_BACKFILL_PAGES && !done; i++, page++) {
           const j = await portal('POST', '/api/boh/purchase-orders?pageSize=50&page=' + page + '&searchTerm=', { orderType: 'past' });
-          const rows = R.rowsOf(j), total = j && Number(j['@odata.count']);
+          const rows = listOf(j, 'purchase orders backfill'), total = j && Number(j['@odata.count']); // a bad answer throws: the backfill page is not marked done
           acc.pos.push(...rows);
           done = rows.length < 50 || (total > 0 && page * 50 >= total);
         }
@@ -298,6 +316,7 @@ AE.retrace = (() => {
     if (running) return skipped('a pass is already running (started ' + Math.round((Date.now() - runStart) / 1000) + ' s ago)');
     if (stopped()) return skipped(AE.storeChanged() ? "paused: Portal's store changed, reload the page" : 'paused by a notice');
     if (!opts.force && Date.now() - GM_getValue(PASS_KEY, 0) < PASS_MS - 30000) return skipped('next pass not due yet (last started ' + new Date(GM_getValue(PASS_KEY, 0)).toLocaleTimeString() + ')');
+    if (!opts.force && AE.health.down()) return skipped('Portal is down (AE.health): waiting for its next probe');
     running = true; runStart = Date.now();
     GM_setValue(PASS_KEY, Date.now());
     const t0 = Date.now();
@@ -310,7 +329,10 @@ AE.retrace = (() => {
       if (!result.firstError) result.firstError = where + ': ' + ((e && e.message) || e);
       AE.noteError('retrace ' + where, e);
     };
-    const trouble = { on: false }; // the circuit breaker: set at the first Portal 5xx / timeout, item / PO / history reads stop for the rest of the pass
+    // The circuit breaker: set at the first Portal 5xx / timeout, item / PO / history reads stop for the rest of the pass. It also reads AE.health
+    // (Portal down for the whole tab: 3 failures in a row, any shard), except in a forced pass (the dev tools' Run now).
+    let hit = false;
+    const trouble = { get on() { return hit || (!opts.force && AE.health.tripped()); }, set on(v) { hit = !!v; } };
     const tripped = (where, e) => { trouble.on = true; result.portalTrouble = true; if (!result.troubleAt) result.troubleAt = where; };
     try {
       const p = await AE.profile();
@@ -339,17 +361,18 @@ AE.retrace = (() => {
           // The Worker hands a changed / new item out once: kept now, not at the end of the pass (a pass cut short by the counting below, a reload, a session
           // expiry would lose the whole list; Oct 24 store 914 lost 500+ new items' label reads that way).
           GM_setValue(TODO_KEY(store), [...todo]);
-        } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('stock', e); }
+        } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('stock', e); if (portalDown(e)) tripped('stock', e); }
       }
       // 2b. label totals for the baseline: asked of the Worker when this pass didn't just do the lookup, then one tiny call per item
       if (!baseline.frozen) {
         if (!countNeed.length) { try { countNeed = (await sweep(store, by, { countNeed: COUNT_BUDGET, need: 0 })).countNeed; } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('count list', e); } }
         for (const item of countNeed.slice(0, COUNT_BUDGET)) {
+          if (trouble.on) break; // Portal is in trouble: the other items' counts wait for a later pass
           try {
-            const t = await labelTotal(store, item); acc.labelTotals.push({ item: t.item, total: t.total }); if (t.snaps) acc.labels.push(...t.snaps); result.counted++;
+            const t = await labelTotal(store, item); acc.labelTotals.push({ item: t.item, total: t.total }); result.counted++; // total comes only from a valid count answer (or a 404)
             if (t.total === 0) { qtyOnly.add(t.item); todo.delete(t.item); GM_setValue(QO_KEY(store), [...qtyOnly]); result.quantityOnly = (result.quantityOnly || 0) + 1; } // 404 or 0: quantity-only
           }
-          catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('count ' + item, e); }
+          catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('count ' + item, e); if (portalDown(e)) tripped('count ' + item, e); }
         }
         if (!baseline.posKnown) {
           try { acc.poTotal = await poTotal(); } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('po total', e); }

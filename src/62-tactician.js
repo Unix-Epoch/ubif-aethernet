@@ -468,7 +468,7 @@ AE.shard({
       AE.every(1000, () => {
         if (!/^\/reporting\/metrics/.test(location.pathname)) { shownFor = null; document.querySelectorAll('.ae-splh-scroll').forEach((x) => x.classList.remove('ae-splh-scroll')); return; }
         const reports = document.querySelector('.reports-card');
-        if (reports && (!document.getElementById(RP) || shownFor !== reports || (!busy && Date.now() - loadedAt > STALE_MS))) { shownFor = reports; showSplh(); }
+        if (reports && (!document.getElementById(RP) || shownFor !== reports || (!busy && Date.now() - loadedAt > STALE_MS && !AE.health.down()))) { shownFor = reports; showSplh(); }
         const card = document.getElementById(RP); // Portal's Reports page clips anything taller than the window: let it scroll
         for (let x = card && card.parentElement; x; x = x.parentElement) {
           const oy = getComputedStyle(x).overflowY, over = x.scrollHeight > x.clientHeight + 1;

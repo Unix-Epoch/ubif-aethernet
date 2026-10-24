@@ -101,8 +101,7 @@ AE.shard({
 
       async function collectData(woId) {
         const json = await AE.api('GET', '/api/workorder/' + woId);
-        if (!json || !json.workorder) throw new Error('Portal returned no work order data');
-        const wo = json.workorder;
+        const wo = AE.shape.workorder(json, 'Macrocosmos work order ' + woId);
         const device = wo.CustomerDevice || {};
         const attrs = (wo.PartnerJob || {}).PartnerJobAttributes || [];
         // attribute type 53 = the "GSPN No." ticket (confirmed on two WOs);
