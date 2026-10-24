@@ -332,7 +332,7 @@
     drawRtRec();
     const retrace = section('Retrace',
       note((AE.retrace.enabled() ? 'On' + (AE_SANDBOX ? ' (sandbox stand-in, not the Worker)' : '') : 'Off: no tracker Worker in this build') + '. Last pass: ' + (rtLast ? new Date(rtLast.at).toLocaleString() + ' · ' + rtLast.seconds + ' s · Portal ' + rtLast.calls.portal + ' / Worker ' + rtLast.calls.worker + ' calls · '
-        + rtLast.labels + ' labels · ' + rtLast.docs + ' docs · ' + rtLast.pos + ' POs · ' + rtLast.histories + ' histories · ' + rtLast.added + ' added' + (rtLast.note ? ' · ' + rtLast.note : '') + (rtLast.errors.length ? ' · ' + rtLast.errors.join('; ') : '') : 'none yet')
+        + rtLast.labels + ' labels · items read ' + (rtLast.itemsRead || 0) + ', waiting ' + (rtLast.itemsWaiting || 0) + ', failed ' + (rtLast.itemsFailed || 0) + ' · short queued ' + (rtLast.shortQueued || 0) + ', skipped (read lately) ' + (rtLast.shortSkippedTried || 0) + (rtLast.portalTrouble ? ' · PORTAL TROUBLE (5xx/timeout' + (rtLast.troubleAt ? ' at ' + rtLast.troubleAt : '') + ', item / PO / history reads stopped)' : '') + ' · ' + rtLast.docs + ' docs · ' + rtLast.pos + ' POs · ' + rtLast.histories + ' histories · ' + rtLast.added + ' added' + (rtLast.note ? ' · ' + rtLast.note : '') + (rtLast.errors.length ? ' · first error: ' + (rtLast.firstError || rtLast.errors[0]) + ' · all: ' + rtLast.errors.join('; ') : '') : 'none yet')
         + ' · watched moves queued: ' + AE.retrace.queued() + ' · state: ' + JSON.stringify(AE.retrace.state())),
       row(btn('Run a pass now', async () => {
         if (!AE.retrace.enabled()) throw new Error('No tracker Worker in this build.');

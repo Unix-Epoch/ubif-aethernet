@@ -61,7 +61,12 @@ AE.retrace = (() => {
   const COUNT_KEY = (s) => 'ae_retrace_count_' + s, COUNT_BUDGET = 200;
   // Quantity-only items (stock, no labels: counted total 0, e.g. the generic SKU 900348): remembered so their quantity changes don't queue a label read that would find nothing.
   const QO_KEY = (s) => 'ae_retrace_qtyonly_' + s;
-  const SHORT_KEY = (s) => 'ae_retrace_short_' + s, SHORT_ASK = 300, SHORT_RETRY_MS = 12 * 3600000;
+  // short2: a baseline item is locked out only after a read that SUCCEEDED (2 h); v1 (marked at queue time, 12 h) lost reads and is not read any more.
+  // fail: consecutive failed reads per item, kept in the todo until FAIL_MAX, then back to the short list.
+  const SHORT_KEY = (s) => 'ae_retrace_short2_' + s, FAIL_KEY = (s) => 'ae_retrace_fail_' + s, SHORT_ASK = 300, SHORT_RETRY_MS = 2 * 3600000, FAIL_MAX = 5;
+  // Portal answering 5xx / timing out ("Endpoint request timed out", HTTP 504): it's in trouble, the rest of the pass doesn't pile on.
+  const httpOf = (e) => (e && e.status) || Number((/HTTP (\d{3})/.exec((e && e.message) || '') || [])[1]) || 0;
+  const portalDown = (e) => httpOf(e) >= 500 || /timed out|timeout/i.test((e && e.message) || '');
   const NEED = 60, ITEM_BUDGET = 150, DETAIL_BUDGET = 15, PO_BUDGET = 15, RMA_BUDGET = 20, NAME_ASK = 20, NAME_BUDGET = 10, NAME_RETRY_MS = 86400000;
   const LOOKUP_PAGES = 30, LIST_PAGES = 10, PO_BACKFILL_PAGES = 2, PO_DAYS = 14, RMA_DAYS = 30;
   const WATCH_BATCH = 50, QUEUE_MAX = 500, QUEUE_DAYS = 3;
@@ -93,11 +98,11 @@ AE.retrace = (() => {
   /*
     One sweep's rows, split into calls under the Worker's caps. need / poNeed / nameNeed / cursors go on the last call
     (the others ask for nothing), so the history queue is claimed once. → { changedItems, need, more, added, written,
-    rejected, skipped, named, unnamed, countNeed, missedItems, pos: { need, events, received, written } }
+    rejected, skipped, named, unnamed, countNeed, missedItems, shortItems, pos: { need, events, received, written } }
   */
   async function sweep(store, by, body) {
     const n = Math.max(1, ...Object.keys(LIMIT).map((k) => Math.ceil(((body[k] || []).length) / LIMIT[k])));
-    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, named: 0, unnamed: [], countNeed: [], missedItems: [], pos: { need: [], events: 0, received: 0, written: 0 } };
+    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, named: 0, unnamed: [], countNeed: [], missedItems: [], shortItems: [], pos: { need: [], events: 0, received: 0, written: 0 } };
     for (let i = 0; i < n; i++) {
       const last = i === n - 1, part = { by };
       for (const k of Object.keys(LIMIT)) { const s = (body[k] || []).slice(i * LIMIT[k], (i + 1) * LIMIT[k]); if (s.length) part[k] = s; }
@@ -112,7 +117,7 @@ AE.retrace = (() => {
       out.missedItems.push(...(j.missedItems || [])); // handed out once, on whichever call
       for (const k of ['added', 'written', 'rejected', 'skipped', 'named']) out[k] += j[k] || 0;
       if (j.pos) for (const k of ['events', 'received', 'written']) out.pos[k] += j.pos[k] || 0;
-      if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; out.unnamed = j.unnamed || []; out.countNeed = j.countNeed || []; }
+      if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; out.unnamed = j.unnamed || []; out.countNeed = j.countNeed || []; out.shortItems = j.shortItems || []; }
     }
     return out;
   }
@@ -173,7 +178,7 @@ AE.retrace = (() => {
       const j = await portal('GET', '/api/boh/store-products/' + encodeURIComponent(item) + '/inventory?pageSize=1&page=1&searchTerm=&warehouseType=All&warehouseId=' + store);
       const total = j && !Array.isArray(j) ? j['@odata.count'] : null;
       if (typeof total === 'number' && Number.isInteger(total) && total >= 0) return { item: String(item), total };
-    } catch (e) { if (e.status === 404) return { item: String(item), total: 0 }; throw e; }
+    } catch (e) { if (httpOf(e) === 404) return { item: String(item), total: 0 }; throw e; }
     const snaps = await labelsOf(store, item);
     return { item: String(item), total: snaps.length, snaps };
   }
@@ -209,12 +214,14 @@ AE.retrace = (() => {
     }
     return all;
   }
-  async function docs(store, cursors, acc, note) {
+  async function docs(store, cursors, acc, note, trouble) {
     const at = new Date().toISOString();
     const step = async (name, fn) => {
+      if (trouble.on) return; // Portal is timing out: no more calls this pass
       try { await fn(); } catch (e) {
         if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e;
         note(name, e);
+        if (portalDown(e)) trouble.on = true;
       }
     };
     await step('outstanding parts', async () => {
@@ -296,12 +303,15 @@ AE.retrace = (() => {
     const t0 = Date.now();
     counts = { portal: 0, worker: 0 };
     let passStore = null; // set once the store is known: the pass's own counts go to the Worker when it ends
-    const result = { at: new Date().toISOString(), seconds: 0, calls: counts, watched: 0, lookup: null, items: 0, changedItems: 0, itemsRead: 0, itemsWaiting: 0, labels: 0, docs: 0,
+    const result = { at: new Date().toISOString(), seconds: 0, calls: counts, watched: 0, lookup: null, items: 0, changedItems: 0, itemsRead: 0, itemsWaiting: 0, itemsFailed: 0, shortQueued: 0, shortSkippedTried: 0, portalTrouble: false, labels: 0, docs: 0,
       movements: 0, counted: 0, pos: 0, poDetails: 0, histories: 0, historyRows: 0, details: 0, added: 0, names: 0, named: 0, unnamed: 0, namesRead: 0, backlogMore: false, errors: [] };
     const note = (where, e) => {
       if (result.errors.length < 8) result.errors.push(where + ': ' + ((e && e.message) || e));
+      if (!result.firstError) result.firstError = where + ': ' + ((e && e.message) || e);
       AE.noteError('retrace ' + where, e);
     };
+    const trouble = { on: false }; // the circuit breaker: set at the first Portal 5xx / timeout, item / PO / history reads stop for the rest of the pass
+    const tripped = (where, e) => { trouble.on = true; result.portalTrouble = true; if (!result.troubleAt) result.troubleAt = where; };
     try {
       const p = await AE.profile();
       if (!p || !p.storeId) throw new Error('No current store');
@@ -345,27 +355,45 @@ AE.retrace = (() => {
           try { acc.poTotal = await poTotal(); } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('po total', e); }
         }
       }
-      // 3. labels of changed items, a budget a pass
+      // 3. labels of changed items, a budget a pass. An item leaves the todo only once the sweep below has delivered its labels (they are held in
+      // `acc` until then: a pass cut short between the read and the sweep used to lose them for good). A failed read keeps the item, with a count.
+      const fails = GM_getValue(FAIL_KEY(store), {}) || {}, readOk = new Set(), nowMs = Date.now();
       for (const item of [...todo].slice(0, ITEM_BUDGET)) {
-        try { acc.labels.push(...(await labelsOf(store, item))); todo.delete(item); result.itemsRead++; }
-        catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('labels ' + item, e); todo.delete(item); }
+        if (trouble.on) break;
+        try { acc.labels.push(...(await labelsOf(store, item))); readOk.add(item); result.itemsRead++; }
+        catch (e) {
+          if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e;
+          note('labels ' + item, e); result.itemsFailed++;
+          fails[item] = (fails[item] || 0) + 1;
+          if (portalDown(e)) tripped('labels ' + item, e);
+          if (fails[item] >= FAIL_MAX) { todo.delete(item); delete fails[item]; } // given up here; the short list offers it again after the lockout
+          else { todo.delete(item); todo.add(item); } // to the back of the queue
+        }
       }
       GM_setValue(TODO_KEY(store), [...todo]);
+      GM_setValue(FAIL_KEY(store), fails);
       result.itemsWaiting = todo.size;
 
       // 4. documents, then 5. one sweep with everything
-      await docs(store, cursors, acc, note);
+      await docs(store, cursors, acc, note, trouble);
+      if (trouble.on) result.portalTrouble = true;
       acc.touched = [...new Set(acc.touched.filter(Boolean))];
       Object.assign(result, { labels: acc.labels.length, docs: acc.docs.length, movements: acc.movements.length, pos: acc.pos.length, names: acc.names.length });
       const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK, countNeed: baseline.frozen ? 0 : COUNT_BUDGET, shortNeed: baseline.frozen ? SHORT_ASK : 0 }));
       if (!baseline.frozen) GM_setValue(COUNT_KEY(store), sw.countNeed);
+      // The labels are delivered: the items read leave the todo, and (short list) are locked out for SHORT_RETRY_MS. Only a read that succeeded locks.
+      const shortTried = GM_getValue(SHORT_KEY(store), {}) || {};
+      for (const i of readOk) { todo.delete(i); delete fails[i]; shortTried[i] = nowMs; }
       // Items the Worker's coverage check found referenced but never read: their label lists, next (a budget a pass, like a changed item's)
       for (const i of sw.missedItems) if (!qtyOnly.has(String(i))) todo.add(i);
-      // Baseline items with fewer labels stored than Portal counts (their read was lost, or never made): read like a changed item, each tried once
-      // per SHORT_RETRY_MS (a list can stay short for a reason the read can't fix, e.g. sold labels it doesn't list).
-      const shortTried = GM_getValue(SHORT_KEY(store), {}) || {}, nowMs = Date.now();
-      for (const i of (sw.shortItems || []).filter((x) => !qtyOnly.has(String(x)) && !(nowMs - (shortTried[x] || 0) < SHORT_RETRY_MS)).slice(0, ITEM_BUDGET)) { todo.add(i); shortTried[i] = nowMs; }
+      // Baseline items with fewer labels stored than Portal counts (their read was lost, or never made): read like a changed item, skipping those read
+      // successfully within SHORT_RETRY_MS (a list can stay short for a reason the read can't fix, e.g. sold labels it doesn't list).
+      const shortAll = (sw.shortItems || []).filter((x) => !qtyOnly.has(String(x)) && !todo.has(x));
+      const shortFresh = shortAll.filter((x) => !(nowMs - (shortTried[x] || 0) < SHORT_RETRY_MS));
+      result.shortSkippedTried = shortAll.length - shortFresh.length;
+      for (const i of shortFresh.slice(0, ITEM_BUDGET)) { todo.add(i); result.shortQueued++; }
       GM_setValue(SHORT_KEY(store), Object.fromEntries(Object.entries(shortTried).filter(([, t]) => nowMs - t < SHORT_RETRY_MS)));
+      GM_setValue(FAIL_KEY(store), fails);
       GM_setValue(TODO_KEY(store), [...todo]);
       result.itemsWaiting = todo.size;
       result.added += sw.added; result.backlogMore = sw.more; result.named += sw.named; result.unnamed = sw.unnamed.length;
@@ -374,17 +402,18 @@ AE.retrace = (() => {
       // POs to read in full: header (lines) + receive details
       const full = [];
       for (const po of sw.pos.need.slice(0, PO_BUDGET)) {
+        if (trouble.on) break;
         try {
           const header = await portal('GET', '/api/boh/purchase-orders/' + encodeURIComponent(po));
           const receive = await portal('GET', '/api/boh/purchase-orders/' + encodeURIComponent(po) + '/receive-details').catch((e) => { if (/session expired/i.test(e.message || '')) throw e; note('po receive ' + po, e); return null; });
           if (header) full.push({ header, receive });
-        } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('po ' + po, e); }
+        } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('po ' + po, e); if (portalDown(e)) tripped('po ' + po, e); }
       }
       // Items still without a name: Portal's item record, a budget a pass (one tried lately is skipped)
       const tried = GM_getValue(NAMED_KEY(store), {}) || {}, names = [];
-      for (const item of sw.unnamed.filter((i) => !(Date.now() - (tried[i] || 0) < NAME_RETRY_MS)).slice(0, NAME_BUDGET)) {
+      for (const item of trouble.on ? [] : sw.unnamed.filter((i) => !(Date.now() - (tried[i] || 0) < NAME_RETRY_MS)).slice(0, NAME_BUDGET)) {
         try { const n = await itemName(store, item); result.namesRead++; if (n) names.push(n); else tried[item] = Date.now(); }
-        catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; if (e.status !== 404) note('name ' + item, e); tried[item] = Date.now(); } // 404: Portal has no record
+        catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; if (httpOf(e) !== 404) note('name ' + item, e); tried[item] = Date.now(); } // 404: Portal has no record
       }
       GM_setValue(NAMED_KEY(store), Object.fromEntries(Object.entries(tried).filter(([, t]) => Date.now() - t < NAME_RETRY_MS)));
       if (full.length || names.length) {
@@ -395,6 +424,7 @@ AE.retrace = (() => {
       // 6. serial history for the labels the Worker handed out; label details for unlinked sales orders
       const sos = new Set(GM_getValue(SO_KEY(store), []) || []), snaps = [];
       for (const label of sw.need) {
+        if (trouble.on) break;
         try {
           const h = await portal('GET', '/api/boh/serial-history/' + encodeURIComponent(label));
           const rows = R.rowsOf(h);
@@ -407,7 +437,7 @@ AE.retrace = (() => {
             if (s) snaps.push(s);
             sos.add(so); result.details++;
           }
-        } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('history ' + label, e); }
+        } catch (e) { if (e instanceof Stop || e.storeChanged || /session expired/i.test(e.message || '')) throw e; note('history ' + label, e); if (portalDown(e)) tripped('history ' + label, e); }
       }
       if (snaps.length) { const r = await sweep(store, by, { labels: snaps }); result.added += r.added; }
       GM_setValue(SO_KEY(store), [...sos].slice(-2000));
