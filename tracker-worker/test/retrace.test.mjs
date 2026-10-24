@@ -8,6 +8,7 @@ import { getPlatformProxy } from 'wrangler';
 import worker, { trackerAdmin } from '../src/index.js';
 import * as R from '../src/retrace.js';
 import * as S from '../src/shape.js';
+import { resetCaches } from '../src/retrace-api.js';
 
 const fx = (name) => JSON.parse(readFileSync(new URL('./fixtures/retrace/' + name + '.json', import.meta.url), 'utf8'));
 const kinds = (ms) => ms.map((m) => m.kind);
@@ -113,7 +114,7 @@ assert.equal(R.kindOf({ status: 'Available', prevStatus: 'Received' }), 'status_
   assert.deepEqual(kinds(rma), ['rma']); assert.equal(rma[0].ref_id, 'UBFPO000099005'); assert.equal(rma[0].raw_status, 'Accepted'); assert.match(rma[0].detail, /Wrong item/); assert.equal(rma[0].at, AT);
   const bb = R.normalize.buyback({ OrderId: 'BB-1', CreatedDate: '2026-10-06T10:00:00Z', lines: [{ SerialNumber: 'B-210004-0000000044', ItemDescription: 'iPhone 12', LineStatus: 'Shipped', Destination: 'UROC' },
     { SerialNumber: 'B-210004-0000000045', LineStatus: 'Shipped', Destination: 'Salvage' }] });
-  assert.deepEqual(kinds(bb), ['buyback', 'salvage']); assert.equal(bb[0].item, '210004');
+  assert.deepEqual(kinds(bb), ['buyback', 'salvage']); assert.equal(bb[0].item, null, 'a buyback label\'s number is not its item');
   const po = R.normalize.poReceive({ Lines: [{ ItemId: '180001', ItemName: 'Battery', QtyReceived: 2, Serials: [{ SerialNumber: '180001-0000600010', Status: 'Received' }, { SerialNumber: '180001-0000600011', Status: 'Received' }] }] }, { po: 'UBFPO000099006', at: AT });
   assert.deepEqual(kinds(po), ['received', 'received']); assert.equal(po[0].ref_id, 'UBFPO000099006');
   const os = R.normalize.outstanding(fx('outstanding-parts'));
@@ -144,7 +145,9 @@ const call = async (method, path, body) => {
   const r = await worker.fetch(new Request('https://t.test' + path, { method, headers: { 'x-aethernet-key': 'k', 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }), E, {});
   return { status: r.status, j: await r.json() };
 };
-const admin = async (email, path) => {
+// (the coverage strip's progress is kept 30 s in memory: every call here starts clean unless it asks to keep it)
+const admin = async (email, path, keep = false) => {
+  if (!keep) resetCaches();
   const r = await trackerAdmin(new Request('https://a.test/api/tracker' + path), E, new URL('https://a.test/api/tracker' + path), path.split('?')[0], email);
   return { status: r.status, j: await r.json() };
 };
@@ -1071,6 +1074,307 @@ assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 
   v = await vr();
   assert.equal(kind('counts')(v).status, 'fail'); assert.equal(kind('counts')(v).rows[0].item, '546001');
   assert.equal(kind('qty')(v).status, 'fail'); assert.deepEqual(kind('qty')(v).rows.map((r) => r.item), ['546001']);
+}
+
+// ------------------------------------------------------------------ Worker review fixes (Oct 24, 2026)
+// A D1 binding that logs every statement prepared (the cost tests below count them).
+const logged = () => {
+  const sql = [];
+  const proxy = { prepare: (s) => { sql.push(s); return T.prepare(s); }, batch: (l) => T.batch(l), exec: (...a) => T.exec(...a) };
+  const E2 = Object.assign({}, E, { TR: proxy });
+  const call2 = async (method, path, body) => {
+    const r = await worker.fetch(new Request('https://t.test' + path, { method, headers: { 'x-aethernet-key': 'k', 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }), E2, {});
+    return { status: r.status, j: await r.json() };
+  };
+  const admin2 = async (email, path) => {
+    const r = await trackerAdmin(new Request('https://a.test/api/tracker' + path), E2, new URL('https://a.test/api/tracker' + path), path.split('?')[0], email);
+    return { status: r.status, j: await r.json() };
+  };
+  return { sql, call2, admin2, n: (re) => sql.filter((s) => re.test(s)).length };
+};
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---- 1 + 2: buyback B- labels (the live case: touched B- labels under item 542070 whose history names BB0001), and the label's CURRENT item
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (547, 'Buyback labels')").run();
+  const st = 547, at = new Date().toISOString(), sw = (body) => call('POST', '/v1/547/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+  const hs = (label, rows) => call('POST', '/v1/547/tracker/retrace/history', { label, rows });
+  const row = (label, item, t, ev = 'SerialReserved') => ({ InventSerialId: label, ItemId: item, Store: '547', DateTime: t, SerialEventType: ev, SerialStatus: 'Received', RefTable: 'Sales orders', SourceKey: 'FSO000547001', SourceKeyLineNum: 1, User: 'System' });
+  const lbl = (label) => T.prepare('SELECT label, item, need_history, claimed_until FROM inv_labels WHERE store = 547 AND label = ?').bind(label).first();
+  const legacy = (label, item, x = {}) => T.prepare(`INSERT INTO inv_labels (store, label, item, serial_status, product, wo, last_history_at, first_seen, last_seen, need_history) VALUES (547, ?, ?, ?, ?, ?, ?, ?, ?, 2)`)
+    .bind(label, item, x.status || null, x.product || null, x.wo || null, x.hist || null, at, at);
+  // what the live store held: junk under the prefix item (nothing from Portal), plus B- labels that must stay: Portal's status, a WO, a history read, a movement
+  await T.batch([legacy('B-542070-0000018241', '542070'), legacy('B-542092-0000022273', '542092'), legacy('B-542070-0000019999', '542070', { status: 'Available' }), legacy('B-542070-0000019998', '542070', { wo: '500547' }),
+    legacy('B-542070-0000019997', '542070', { hist: at }), legacy('B-542070-0000019996', '542070'), legacy('B-542070-0000019995', '999999'),
+    T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, source, key, recorded_at) VALUES (547, 'B-542070-0000019996', '542070', ?, 'buyback', 'buyback', 'bb-mv-1', ?)").bind(at, at)]);
+  // the next sweep clears the junk (and nothing else) without any hand-made SQL; the junk was named by `touched` again on the way
+  let s1 = await sw({ touched: ['B-542070-0000018241', 'B-542092-0000022273'] });
+  assert.equal(s1.j.prunedLabels, 2, 'the two labels Portal never said anything about');
+  assert.equal(await lbl('B-542070-0000018241'), null); assert.equal(await lbl('B-542092-0000022273'), null);
+  for (const l of ['B-542070-0000019999', 'B-542070-0000019998', 'B-542070-0000019997', 'B-542070-0000019996']) assert.ok(await lbl(l), l + ' has data and stays');
+  assert.equal((await lbl('B-542070-0000019995')).item, '999999', 'under another number than its own: not the prefix guess');
+  assert.equal((await sw({})).j.prunedLabels, 0, 'nothing left to prune');
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_labels WHERE store = 547 AND label = 'B-542070-0000019996' AND item = '542070'"), 1, 'a label with a movement is never touched');
+
+  // the live scenario: a touched B- label under 542070. Stored with NO item (the number isn't its item), queued, handed out; its history says BB0001
+  const bb = 'B-542070-0000020001';
+  s1 = await sw({ touched: [bb], need: 100 });
+  assert.deepEqual(await lbl(bb), { label: bb, item: null, need_history: 2, claimed_until: (await lbl(bb)).claimed_until }, 'stored with no item');
+  assert.ok(s1.j.need.includes(bb), 'queued for its history');
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_labels WHERE store = 547 AND item = '542070' AND label = ?", bb), 0, 'never filed under the prefix item');
+  let h = await hs(bb, [row(bb, 'BB0001', '2026-10-20T10:00:00Z')]);
+  assert.deepEqual([h.j.ignored, h.j.deletedLabels, h.j.added], [true, 1, 0]);
+  assert.equal(await lbl(bb), null, 'deleted');
+  assert.equal((await T.prepare('SELECT reason FROM inv_ignored_labels WHERE store = 547 AND label = ?').bind(bb).first()).reason, 'item BB0001', 'and remembered');
+  // it does not come back: not from touched, a snapshot, a sweep's movement, the watcher, a PO's receive details, and is never handed out
+  const bbSnap = { SerialNumber: bb, ProductName: 'Phone', SerialStatus: 'Received', Store: '547' };
+  s1 = await sw({ touched: [bb], labels: [bbSnap], need: 100,
+    movements: [{ label: bb, at, kind: 'buyback', source: 'buyback', raw_event: 'buyback line', ref_type: 'buyback', ref_id: 'BB-9' }],
+    pos: [{ header: { PurchaseOrderNumber: 'UBFPO000547001', PurchaseOrderLinesV2: [] }, receive: { PurchaseOrderId: 'UBFPO000547001', Lines: [{ ItemId: '542070', Serials: [{ SerialNumber: bb, Status: 'Received' }] }] } }] });
+  ok(s1, 'sweep after the delete');
+  assert.equal(await lbl(bb), null, 'not queued again by touched / snapshot / PO');
+  assert.ok(!s1.j.need.includes(bb), 'not handed out again');
+  assert.equal(await count('SELECT COUNT(*) AS n FROM inv_movements WHERE store = 547 AND label = ?', bb), 0, 'its movements are not stored either');
+  const wt = await call('POST', '/v1/547/tracker/retrace/watch', { movements: [{ label: bb, kind: 'reserved', source: 'watch', at, ref_type: 'wo', ref_id: '500547' }] });
+  assert.equal(wt.j.added, 0, 'watcher: not stored'); assert.equal(await lbl(bb), null);
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_labels WHERE store = 547 AND (item = '542070' AND label = ?)", bb), 0);
+
+  // its movements and the stored row were deleted with it: a label already holding rows (watched movement under the prefix) loses them too
+  const bb2 = 'B-542070-0000020002';
+  await T.batch([legacy(bb2, '542070'), T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, source, key, recorded_at) VALUES (547, ?, '542070', ?, 'buyback', 'buyback', 'bb-mv-2', ?)").bind(bb2, at, at)]);
+  h = await hs(bb2, [row(bb2, 'BB0001', '2026-10-20T10:00:00Z')]);
+  assert.equal(h.j.deletedLabels, 1); assert.equal(await count('SELECT COUNT(*) AS n FROM inv_movements WHERE store = 547 AND label = ?', bb2), 0);
+  // a stale read of an already-forgotten label deletes nothing and says so
+  h = await hs(bb, [row(bb, 'BB0001', '2026-10-20T10:00:00Z')]);
+  assert.deepEqual([h.j.ignored, h.j.deletedLabels], [true, 0]);
+
+  // 2: decided on the label's CURRENT item (the newest row by DateTime, whatever the order of the list), not on any row naming BB0001
+  const became = 'B-542071-0000030001', sold = '210004-0000030002', toBb = '210004-0000030003';
+  for (const l of [became, sold, toBb]) await T.prepare("INSERT INTO inv_labels (store, label, need_history, first_seen, last_seen, claimed_until) VALUES (547, ?, 2, ?, ?, NULL)").bind(l, at, at).run();
+  h = await hs(became, [row(became, 'BB0001', '2026-10-01T10:00:00Z'), row(became, '210004', '2026-10-10T10:00:00Z', 'SerialSold')]);
+  assert.equal(h.j.ignored, undefined, 'a device that later became a stock SKU is not deleted'); assert.ok(h.j.added >= 1);
+  assert.equal((await lbl(became)).item, '210004', 'filed under its current item'); assert.equal((await lbl(became)).need_history, 0);
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_movements WHERE store = 547 AND label = ? AND lower(item) = 'bb0001'", became), 0, 'the BB0001 rows are still not stored');
+  // the same rows, newest first in the list
+  h = await hs(sold, [row(sold, '210004', '2026-10-10T10:00:00Z', 'SerialSold'), row(sold, 'BB0001', '2026-10-01T10:00:00Z')]);
+  assert.equal(h.j.ignored, undefined, 'order in the list does not matter: DateTime does'); assert.ok(await lbl(sold));
+  // a stock label that later turned into a buyback device (BB0001 newest) is dropped, as a pure BB0001 device is
+  h = await hs(toBb, [row(toBb, '210004', '2026-10-01T10:00:00Z'), row(toBb, 'BB0001', '2026-10-10T10:00:00Z')]);
+  assert.deepEqual([h.j.ignored, h.j.deletedLabels], [true, 1]);
+  // a tombstone is lifted when the label turns out to be stock after all
+  await T.prepare("INSERT INTO inv_ignored_labels (store, label, reason, at) VALUES (547, ?, 'item BB0001', ?)").bind(sold, at).run();
+  h = await hs(sold, [row(sold, '210004', '2026-10-10T10:00:00Z', 'SerialSold'), row(sold, 'BB0001', '2026-10-01T10:00:00Z'), row(sold, '210004', '2026-10-11T10:00:00Z', 'SerialReserved')]);
+  assert.equal(await count('SELECT COUNT(*) AS n FROM inv_ignored_labels WHERE store = 547 AND label = ?', sold), 0, 'a stock label has no tombstone');
+}
+
+// ---- 8: a history read doesn't clear a label that was queued again after the read was handed out; 9: claims are atomic
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (548, 'Claims')").run();
+  const sw = (body) => call('POST', '/v1/548/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+  const lab = (n) => '548001-' + String(n).padStart(10, '0');
+  const st = (label) => T.prepare('SELECT need_history, claimed_until, queued_at FROM inv_labels WHERE store = 548 AND label = ?').bind(label).first();
+  const hist = (label) => call('POST', '/v1/548/tracker/retrace/history', { label, rows: [] });
+  // handed out (claimed), queued again by a movement / sweep while the browser reads, then its history arrives: it stays queued, unclaimed
+  let s1 = await sw({ touched: [lab(1), lab(2)], need: 1 });
+  const first = s1.j.need[0]; assert.equal(s1.j.need.length, 1);
+  assert.ok((await st(first)).claimed_until);
+  await pause(8);
+  await sw({ touched: [first] });
+  assert.ok((await st(first)).claimed_until, 'still claimed by the first browser');
+  await hist(first);
+  let r = await st(first);
+  assert.deepEqual([r.need_history, r.claimed_until], [2, null], 'queued again meanwhile: stays queued, and another browser may take it');
+  s1 = await sw({ need: 5 });
+  assert.ok(s1.j.need.includes(first), 'handed out again');
+  await hist(first);
+  assert.equal((await st(first)).need_history, 0, 'nothing named it since this claim: cleared');
+  // a read nobody handed out (no claim) always clears; and touching it in the same sweep that claims it is not "queued again"
+  await T.prepare('UPDATE inv_labels SET claimed_until = NULL, need_history = 2 WHERE store = 548').run();
+  await hist(lab(2)); assert.equal((await st(lab(2))).need_history, 0, 'unclaimed read clears');
+  await sw({ touched: [lab(3)], need: 10 }); await hist(lab(3));
+  assert.equal((await st(lab(3))).need_history, 0, 'touched and claimed by the same sweep: the read clears it');
+  // old rows (no queued_at yet) behave as before
+  await T.prepare("UPDATE inv_labels SET need_history = 2, queued_at = NULL, claimed_until = ? WHERE store = 548 AND label = ?").bind(new Date(Date.now() + 60000).toISOString(), lab(3)).run();
+  await hist(lab(3)); assert.equal((await st(lab(3))).need_history, 0);
+
+  // atomic claims: two sweeps at once over 100 queued labels never get the same label
+  await T.batch(Array.from({ length: 100 }, (_, i) => T.prepare("INSERT INTO inv_labels (store, label, item, need_history, first_seen, last_seen) VALUES (548, ?, '548002', 1, ?, ?)").bind('548002-' + String(i).padStart(10, '0'), AT, AT)));
+  await T.prepare("UPDATE inv_labels SET need_history = 0 WHERE store = 548 AND item IS NOT '548002'").run();
+  const [a, b] = await Promise.all([sw({ need: 60 }), sw({ need: 60 })]);
+  assert.equal(a.j.need.length + b.j.need.length, 100, 'every queued label handed out once: ' + a.j.need.length + ' + ' + b.j.need.length);
+  assert.equal(new Set([...a.j.need, ...b.j.need]).size, 100, 'no label to both');
+  assert.ok(a.j.more === false || b.j.more === false || true);
+  // order: changed > touched > backfill, newest first, still
+  await T.prepare("UPDATE inv_labels SET claimed_until = NULL, need_history = 1 WHERE store = 548").run();
+  await T.prepare("UPDATE inv_labels SET need_history = 3, last_seen = '2026-10-01T00:00:00.000Z' WHERE store = 548 AND label = ?").bind('548002-0000000007').run();
+  await T.prepare("UPDATE inv_labels SET need_history = 2, last_seen = '2030-01-01T00:00:00.000Z' WHERE store = 548 AND label = ?").bind('548002-0000000008').run();
+  s1 = await sw({ need: 3 });
+  assert.deepEqual(s1.j.need.slice(0, 2), ['548002-0000000007', '548002-0000000008'], 'in the queue order'); assert.equal(s1.j.more, true);
+}
+
+// ---- 3: settle after a history read is throttled, but the last read still finishes the store promptly
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (549, 'Settle')").run();
+  const L = logged(), progresses = () => L.n(/^SELECT \* FROM inv_baseline/);
+  const sw = (body) => L.call2('POST', '/v1/549/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+  const hist = (n) => L.call2('POST', '/v1/549/tracker/retrace/history', { label: '549001-' + String(n).padStart(10, '0'), rows: [] });
+  const lab = (n) => ({ SerialNumber: '549001-' + String(n).padStart(10, '0'), ItemNumber: '549001', SerialStatus: 'Available', Store: '549' });
+  resetCaches();
+  await sw({ items: [{ ItemNumber: '549001', ProductName: 'Part', WarehouseId: '549', OnHandQuantity: 3, AvailableQuantity: 3 }], cursors: { lookup: { at: AT, rows: 1 }, po_backfill: { done: true } },
+    labelTotals: [{ item: '549001', total: 3 }], poTotal: 0, labels: [lab(1), lab(2), lab(3)] });
+  const bl = () => T.prepare('SELECT counted_at, backfill_done_at FROM inv_baseline WHERE store = 549').first();
+  assert.ok((await bl()).counted_at, 'frozen by the sweep'); assert.equal((await bl()).backfill_done_at, null);
+  resetCaches();
+  const p0 = progresses();
+  await hist(1);                                   // 2 still queued: settles (the first in a minute)
+  assert.ok(progresses() > p0, 'the first read settles');
+  const p1 = progresses();
+  await hist(2);                                   // 1 queued, a read a moment ago: skipped
+  assert.equal(progresses(), p1, 'a second read within a minute is not settled');
+  assert.equal((await bl()).backfill_done_at, null);
+  await hist(3);                                   // the queue is empty: settles at once, and the store is done
+  assert.ok(progresses() > p1, 'the read that empties the queue settles at once');
+  assert.ok((await bl()).backfill_done_at, 'the done signal is set by the last history');
+  const p2 = progresses();
+  await hist(1);
+  assert.equal(progresses(), p2, 'a done store is not settled by reads');
+  // a frozen store with more queued than the done test allows: a read can't finish it, so nothing is settled at all
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (550, 'Settle big')").run();
+  await T.batch([T.prepare('INSERT INTO inv_baseline (store, expected_items, expected_labels, expected_pos, counted_at, created_at) VALUES (550, 1, 100, 0, ?, ?)').bind(AT, AT),
+    ...Array.from({ length: 60 }, (_, i) => T.prepare("INSERT INTO inv_labels (store, label, item, need_history, first_seen, last_seen) VALUES (550, ?, '550001', 1, ?, ?)").bind('550001-' + String(i).padStart(10, '0'), AT, AT))]);
+  resetCaches();
+  const p3 = progresses();
+  for (let i = 0; i < 3; i++) await L.call2('POST', '/v1/550/tracker/retrace/history', { label: '550001-' + String(i).padStart(10, '0'), rows: [] });
+  assert.equal(progresses(), p3, '57+ labels still queued: no settle on any read');
+  // a bogus baseline (frozen with no items) is still cleared by a read
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (551, 'Settle bogus')").run();
+  await T.prepare('INSERT INTO inv_baseline (store, expected_items, expected_labels, expected_pos, counted_at, backfill_done_at, created_at) VALUES (551, 0, 0, 0, ?, ?, ?)').bind(AT, AT, AT).run();
+  await L.call2('POST', '/v1/551/tracker/retrace/history', { label: '551001-0000000001', rows: [] });
+  assert.equal((await T.prepare('SELECT counted_at FROM inv_baseline WHERE store = 551').first()).counted_at, null, 'the empty baseline is cleared');
+}
+
+// ---- 4: coverage for one store, and its progress kept 30 s
+{
+  const L = logged(), progresses = () => L.n(/^SELECT \* FROM inv_baseline/);
+  resetCaches();
+  const all = await L.admin2('owner@x.com', '/retrace/coverage');
+  ok(all, 'coverage, every store'); assert.ok(all.j.stores.length > 3); assert.ok(all.j.stores.every((s) => s.progress));
+  const n0 = progresses(); assert.equal(n0, all.j.stores.length, 'one progress per store');
+  const mark = L.sql.length, one = await L.admin2('owner@x.com', '/retrace/coverage?store=914');
+  assert.equal(L.sql.slice(mark).filter((q) => /FROM inv_movements WHERE store = \?/.test(q)).length, 1, 'the movement count is for the one store');
+  assert.equal(L.sql.slice(mark).filter((q) => /FROM inv_movements WHERE 1 = 1|store IN \(SELECT value/.test(q)).length, 0);
+  assert.deepEqual(one.j.stores.map((s) => s.store), [914], 'only that store');
+  assert.equal(progresses(), n0, 'its progress came from the 30 s cache the full list filled');
+  resetCaches();
+  const n1 = progresses();
+  const two = await L.admin2('owner@x.com', '/retrace/coverage?store=914'), again = await L.admin2('owner@x.com', '/retrace/coverage?store=914');
+  assert.equal(progresses() - n1, 1, 'worked out once for a store, not at each poll');
+  assert.deepEqual(two.j.stores[0].progress, again.j.stores[0].progress);
+  assert.equal((await L.admin2('mgr@x.com', '/retrace/coverage?store=326')).status, 403, 'a store that is not theirs');
+  assert.equal((await L.admin2('owner@x.com', '/retrace/coverage?store=914&store=326')).j.stores.length, 1);
+}
+
+// ---- 7: the serials list includes stored labels with no movements; 10: a malformed % is a 400
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (552, 'Serials')").run();
+  const at = new Date().toISOString();
+  await T.batch([
+    T.prepare("INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen) VALUES (552, '552001-0000000001', '552001', 'Available', ?, ?), (552, '552001-0000000002', '552001', 'Sold', ?, ?), (552, '552001-0000000003', '552001', 'Available', ?, ?)").bind(at, at, at, at, at, at),
+    T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, source, key, recorded_at) VALUES (552, '552001-0000000002', '552001', ?, 'sold', 'watch', 's552-1', ?), (552, '552001-0000000004', '552001', ?, 'received', 'watch', 's552-2', ?), (552, '552001-0000000004', '552001', ?, 'reserved', 'watch', 's552-3', ?)")
+      .bind('2026-10-20T10:00:00.000Z', at, '2026-10-21T10:00:00.000Z', at, '2026-10-22T10:00:00.000Z', at)]);
+  const r = (await admin('owner@x.com', '/retrace/serials/552/552001')).j;
+  assert.deepEqual(r.serials.map((s) => s.label).sort(), ['552001-0000000001', '552001-0000000002', '552001-0000000003', '552001-0000000004'], 'a label with no movements is a serial too');
+  assert.equal(r.total, 4); assert.equal(r.groups.all, 4);
+  const none = r.serials.find((s) => s.label === '552001-0000000001'), moved = r.serials.find((s) => s.label === '552001-0000000004');
+  assert.deepEqual([none.last, none.moves, none.serial_status], [null, 0, 'Available']);
+  assert.deepEqual([moved.moves, moved.last.kind, moved.serial_status], [2, 'reserved', null], 'a label only the movements know: as before');
+  assert.equal(r.serials[0].label, '552001-0000000004', 'newest last movement first, those with none last'); assert.equal(r.serials[r.serials.length - 1].last, null);
+  assert.equal(r.serials.find((s) => s.label === '552001-0000000002').last.kind, 'sold');
+  const g = r.groups; assert.equal(g.all, r.total, 'groups and total agree');
+  const days = (await admin('owner@x.com', '/retrace/serials/552/552001?days=1')).j;
+  assert.equal(days.serials.length, 0, 'days: only serials whose last movement is that recent (none has one in a day)');
+  const out = (await admin('owner@x.com', '/retrace/serials/552/552001?group=out')).j;
+  assert.equal(out.total, out.serials.length); assert.ok(out.groups.all === 4);
+  // malformed % in the path: 400, never 500
+  for (const p of ['/retrace/item/552/%E0%A4%A', '/retrace/serials/552/%', '/retrace/label/552/%zz', '/retrace/po/552/100%']) {
+    const x = await admin('owner@x.com', p);
+    assert.equal(x.status, 400, p + ' → ' + x.status);
+  }
+  assert.equal((await admin('owner@x.com', '/retrace/item/552/552001%20x')).status, 200, 'a good escape still works');
+}
+
+// ---- 12: a PO's receive details missing or null never mark it fully read; 13: the first sweep of a day is one UPDATE, not an upsert per item
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (553, 'POs and items')").run();
+  const L = logged(), sw = (body) => L.call2('POST', '/v1/553/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+  const hdr = (id) => Object.assign({}, POH, { PurchaseOrderNumber: id, PurchaseOrderLinesV2: [{ LineNumber: 1, ItemNumber: '553001', LineDescription: 'Part', OrderedPurchaseQuantity: 1 }] });
+  const need = (id) => T.prepare("SELECT need_detail FROM inv_docs WHERE store = 553 AND type = 'po' AND id = ?").bind(id).first().then((r) => r.need_detail);
+  let s = await sw({ pos: [{ header: hdr('UBFPO000553001'), receive: null }, { header: hdr('UBFPO000553002') }, { header: hdr('UBFPO000553003'), receive: { PurchaseOrderId: 'UBFPO000553003', Lines: [] } }], poNeed: 10 });
+  assert.deepEqual([await need('UBFPO000553001'), await need('UBFPO000553002'), await need('UBFPO000553003')], [1, 1, 0], 'lines alone are not a full read');
+  assert.deepEqual(s.j.pos.need.sort(), ['UBFPO000553001', 'UBFPO000553002'], 'still to be read');
+  s = await sw({ pos: [{ header: hdr('UBFPO000553001'), receive: null }], poNeed: 10 });
+  assert.equal(await need('UBFPO000553001'), 1, 'seen again without receive details: still to read');
+  await sw({ pos: [{ header: hdr('UBFPO000553001'), receive: { PurchaseOrderId: 'UBFPO000553001', Lines: [] } }] });
+  assert.equal(await need('UBFPO000553001'), 0, 'read in full');
+  await sw({ pos: [{ header: hdr('UBFPO000553001'), receive: null }] });
+  assert.equal(await need('UBFPO000553001'), 0, 'a later list-style reading does not undo a full read');
+
+  // 1,500 items: the first sweep writes them; the next UTC day's sweep (same data) is one UPDATE and results are the same
+  const rows = Array.from({ length: 1500 }, (_, i) => ({ ItemNumber: '553' + String(i + 100).padStart(3, '0') + String(i), ProductName: 'Item ' + i, RetailCategory: 'Parts', WarehouseId: '553', OnHandQuantity: i % 5, AvailableQuantity: i % 5, ReservedQuantity: 0, InTransitQuantity: 0 }));
+  s = await sw({ items: rows });
+  assert.equal(s.j.written, 1500); assert.equal(s.j.changedItems.length, 1500);
+  await T.prepare("UPDATE inv_items SET last_seen = '2026-10-01T09:00:00.000Z' WHERE store = 553").run();
+  const before = L.sql.length, qty0 = (await T.prepare("SELECT qty, qty_hash, changed_at, first_seen FROM inv_items WHERE store = 553 AND item = ?").bind(rows[7].ItemNumber).first());
+  rows[3] = Object.assign({}, rows[3], { OnHandQuantity: 99, AvailableQuantity: 99 }); rows[4] = Object.assign({}, rows[4], { ProductName: 'Renamed' });
+  s = await sw({ items: rows });
+  const mine = L.sql.slice(before);
+  assert.equal(s.j.written, 1500, 'results the same: every item counted as written'); assert.deepEqual(s.j.changedItems, [{ item: rows[3].ItemNumber, why: 'changed' }]);
+  assert.equal(mine.filter((q) => /^INSERT INTO inv_items/.test(q)).length, 2, 'only the two that changed are upserted');
+  assert.equal(mine.filter((q) => /^UPDATE inv_items SET last_seen/.test(q)).length, 1, 'one statement refreshes the rest');
+  assert.ok(mine.length < 60, 'a sweep of 1,500 items prepares ' + mine.length + ' statements');
+  const today = new Date().toISOString().slice(0, 10);
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_items WHERE store = 553 AND qty_hash IS NOT NULL AND substr(last_seen, 1, 10) = ?", today), 1500, 'every item seen today');
+  const qty1 = await T.prepare("SELECT qty, qty_hash, changed_at, first_seen FROM inv_items WHERE store = 553 AND item = ?").bind(rows[7].ItemNumber).first();
+  assert.deepEqual(qty1, qty0, 'quantities, hash, changed_at and first_seen of an unchanged item are untouched');
+  assert.equal((await T.prepare('SELECT name FROM inv_items WHERE store = 553 AND item = ?').bind(rows[4].ItemNumber).first()).name, 'Renamed');
+  s = await sw({ items: rows });
+  assert.equal(s.j.written, 0, 'seen today: nothing at all'); assert.equal(L.sql.slice(before).filter((q) => /^UPDATE inv_items SET last_seen/.test(q)).length, 1, 'no second refresh');
+}
+
+// ---- 6: check 4 follows the collector without Run: labels that arrived leave the list, the clock turns queued into empty
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (554, 'Verify stale')").run();
+  const ago = (m) => new Date(Date.now() - m * 60000).toISOString();
+  await T.batch([T.prepare('INSERT INTO inv_baseline (store, expected_items, expected_labels, expected_pos, counted_at, created_at) VALUES (554, 1, 1, 0, ?, ?)').bind(ago(500), ago(500)),
+    T.prepare('INSERT INTO inv_item_counts (store, item, labels, counted_at) VALUES (554, ?, 1, ?)').bind('554001', ago(500)),
+    T.prepare("INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen, last_history_at) VALUES (554, '554001-0000000001', '554001', 'Available', ?, ?, ?)").bind(ago(400), ago(5), ago(60)),
+    ...['554097', '554098', '554099'].map((it, i) => T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, ref_type, ref_id, source, key, recorded_at) VALUES (554, NULL, ?, ?, 'used', 'wo', ?, 'wo', ?, ?)").bind(it, ago(50), '55400' + i, 'v554-' + i, ago(50)))]);
+  const m = async () => (await admin('owner@x.com', '/retrace/verify/554')).j.checks.find((c) => c.key === 'missed');
+  const run = await adminPost('owner@x.com', '/retrace/verify/554/run'); ok(run, 'run');
+  assert.deepEqual(await call('POST', '/v1/554/tracker/retrace/sweep', { need: 0 }).then((r) => r.j.missedItems.slice().sort()), ['554097', '554098', '554099']);
+  let c = await m();
+  assert.deepEqual([c.status, c.n, c.empty, c.rows.map((r) => r.state)], ['fail', 3, 0, ['queued', 'queued', 'queued']]);
+  // the collector reads 554099's labels: no Run pressed, the panel already shows it gone
+  await T.prepare("INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen) VALUES (554, '554099-0000000001', '554099', 'Available', ?, ?)").bind(ago(1), ago(1)).run();
+  c = await m();
+  assert.deepEqual([c.status, c.n, c.rows.map((r) => r.item).sort()], ['fail', 2, ['554097', '554098']]); assert.match(c.result, /^2 items/);
+  // 554098 was asked for 40 minutes ago and has nothing: empty by the clock; 554097 asked a minute ago: still queued
+  {
+    const res = JSON.parse((await T.prepare('SELECT result FROM inv_verify WHERE store = 554').first()).result);
+    for (const r of res.missed.rows) r.asked_at = r.item === '554098' ? ago(40) : ago(1);
+    await T.prepare('UPDATE inv_verify SET result = ? WHERE store = 554').bind(JSON.stringify(res)).run();
+  }
+  c = await m();
+  const by = Object.fromEntries(c.rows.map((r) => [r.item, r.state]));
+  assert.deepEqual([c.n, c.empty], [1, 1]); assert.deepEqual(by, { 554097: 'queued', 554098: 'empty' });
+  // the last queued one has its labels now: the check passes, with one referenced item still without
+  const queuedItem = '554097';
+  await T.prepare("INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen) VALUES (554, ?, ?, 'Available', ?, ?)").bind(queuedItem + '-0000000001', queuedItem, ago(1), ago(1)).run();
+  c = await m();
+  assert.deepEqual([c.status, c.n, c.empty], ['pass', 0, 1]); assert.match(c.result, /^none \(1 referenced item without labels/);
+  const view = (await admin('owner@x.com', '/retrace/verify/554')).j;
+  assert.equal(view.pass, view.checks.filter((x) => x.status === 'pass').length, 'the summary follows the fresh check');
+  assert.equal(JSON.parse((await T.prepare('SELECT result FROM inv_verify WHERE store = 554').first()).result).missed.n, 3, 'the stored run is not rewritten by a read');
 }
 
 await dispose();

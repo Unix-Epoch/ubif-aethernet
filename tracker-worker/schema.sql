@@ -231,10 +231,19 @@ CREATE TABLE IF NOT EXISTS inv_labels (
   history_hash TEXT,                   -- hash of the rows read then (same rows again = nothing to insert)
   need_history INTEGER NOT NULL DEFAULT 0,  -- 0 no · 1 backfill (never read) · 2 touched by a sweep / the watcher / a WO · 3 changed
   claimed_until TEXT,                  -- a browser is reading its history until then (others skip it)
+  queued_at TEXT,                      -- last time a sweep / movement queued it (a read claimed before this doesn't clear need_history)
   PRIMARY KEY (store, label)
 );
 CREATE INDEX IF NOT EXISTS inv_labels_need ON inv_labels (store, need_history, last_seen);
 CREATE INDEX IF NOT EXISTS inv_labels_item ON inv_labels (store, item);
+-- Labels dropped as not stock (history's current item BB0001): never queued, touched or stored again (migrations/2026-10-24-retrace-ignored-labels.sql).
+CREATE TABLE IF NOT EXISTS inv_ignored_labels (
+  store INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  reason TEXT,
+  at TEXT NOT NULL,
+  PRIMARY KEY (store, label)
+);
 -- One row per movement of a label (or, label NULL, of an item: a WO parts event without a serial). Never trimmed.
 -- kind / source / key: tracker-worker/src/retrace.js. key is the dedupe key: the same record read twice adds nothing.
 CREATE TABLE IF NOT EXISTS inv_movements (

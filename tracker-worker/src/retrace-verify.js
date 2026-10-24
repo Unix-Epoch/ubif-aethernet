@@ -19,6 +19,8 @@
   out when read, from the ticks. Check 3's labels are the history queue's: the admin page's Collection queue lists them in read order
   (retrace-api.js queueView, reasons from QUEUE_REASON below). A run happens on demand (POST /retrace/verify/:store/run) and once when the baseline freezes
   (retrace-api.js settle). Routes: retraceAdmin in retrace-api.js. migrations/2026-10-24-retrace-verify.sql has the tables.
+  Check 4's items are looked at again when the result is read (verifyView): an item whose labels have arrived since the run drops out, and
+  queued turns to empty once 30 minutes have passed since it was asked for, so the panel follows the collector without pressing Run.
   Passing all five is strong evidence, not proof: Portal stays the only source of truth.
 */
 import { IGNORED_ITEMS, NON_STOCK, serialNow } from './retrace.js';
@@ -203,11 +205,27 @@ export async function verifyAsk(T, store, at) {
   return r.meta && r.meta.changes ? now : [];
 }
 
+// Check 4 as of now: the stored rows (at most ROWS of them; the totals cover the rest, which stay as stored) minus the items that have labels
+// stored since the run, each queued / empty by the clock (asked EMPTY_AFTER_MS ago and still no labels = empty). Nothing stored is changed.
+async function freshMissed(T, store, m, nowMs) {
+  if (!m || !Array.isArray(m.rows)) return m;
+  const items = m.rows.map((r) => r.item), have = new Set();
+  if (items.length) for (const r of (await T.prepare('SELECT DISTINCT item FROM inv_labels WHERE store = ? AND item IN (SELECT value FROM json_each(?))').bind(store, JSON.stringify(items)).all()).results) have.add(r.item);
+  const cutoff = nowMs - EMPTY_AFTER_MS;
+  const rows = m.rows.filter((r) => !have.has(r.item)).map((r) => Object.assign({}, r, { state: r.asked_at && Date.parse(r.asked_at) <= cutoff ? 'empty' : 'queued' }));
+  const storedOpen = m.rows.filter((r) => r.state === 'queued').length, storedEmpty = m.rows.length - storedOpen;
+  const open = Math.max(0, (m.n || 0) - storedOpen) + rows.filter((r) => r.state === 'queued').length, empty = Math.max(0, (m.empty || 0) - storedEmpty) + rows.filter((r) => r.state === 'empty').length;
+  rows.sort((a, b) => (a.state === b.state ? 0 : a.state === 'queued' ? -1 : 1));
+  return Object.assign({}, m, { status: open ? 'fail' : 'pass', n: open, empty, rows,
+    result: open ? plural(open, 'item') + ', their labels will be read' : empty ? 'none (' + plural(empty, 'referenced item') + ' without labels at the store)' : 'none' });
+}
+
 // ------------------------------------------------------------------ read: the stored result plus the live spot rows and ticks
 export async function verifyView(T, store) {
   const row = await T.prepare('SELECT checked_at, result FROM inv_verify WHERE store = ?').bind(store).first();
   const res = row ? parse(row.result) : null;
   if (!res) return { store, checked_at: null };
+  res.missed = await freshMissed(T, store, res.missed, Date.now());
   const labels = Array.isArray(res.spot) ? res.spot : [], json = JSON.stringify(labels);
   const [rows, ticks] = labels.length ? await T.batch([
     T.prepare(`SELECT l.label, l.item, l.serial_status, l.wh_type, l.last_seen, i.name,

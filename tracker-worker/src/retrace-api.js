@@ -1,14 +1,15 @@
 /*
   Retrace on the tracker Worker (Oct 23, 2026): the inventory movement ledger's routes. Tables inv_labels,
   inv_movements, inv_items, inv_docs, inv_cursors (migrations/2026-10-23-retrace.sql), inv_item_counts and inv_baseline
-  (migrations/2026-10-24-retrace-baseline.sql); what a movement is and how
+  (migrations/2026-10-24-retrace-baseline.sql), inv_ignored_labels (2026-10-24-retrace-ignored-labels.sql) and inv_labels.queued_at
+  (2026-10-24-retrace-queued-at.sql, apply once, before deploying); what a movement is and how
   each source becomes one: src/retrace.js (shared with Aethernet, pure). Movements are kept forever (small rows).
 
   Store side (x-aethernet-key + the store's Aethernet access, same as /scan; mounted by storeApi at /v1/:store/tracker/retrace/…).
   Everything is written under the store in the URL and nothing else: a label snapshot naming another store is skipped.
     POST /retrace/pass { portalCalls, workerCalls, seconds, lookupSeconds?, browser?, by? }   a finished pass's own counts (optional; src/usage.js) → { ok }
     POST /retrace/sweep { items, labels, docs, movements, touched, cursors, need, names, nameNeed, labelTotals, countNeed, poTotal, by }   one collector pass →
-         { need: [label], more, changedItems: [{ item, why: new|changed }], added, rejected, skipped, written, named, unnamed, countNeed: [item], missedItems: [item] }
+         { need: [label], more, changedItems: [{ item, why: new|changed }], added, rejected, skipped, written, prunedLabels, named, unnamed, countNeed: [item], missedItems: [item] }
            items      inventory-lookup rows (Portal's envelope is { OnHandItemDetails: [rows], TotalRecords, … }; the collector sends the rows: { ItemNumber, ProductName, RetailCategory, WarehouseId, OnHandQuantity,
                       AvailableQuantity, ReservedQuantity, InTransitQuantity, SalesOnOrder, VanNickName }): per item and
                       warehouse; quantities differing from the stored ones (or a new item) come back in changedItems so
@@ -36,7 +37,10 @@
          named: items whose name this sweep set or changed (any source above, the PO lines' too)
          unnamed: items with a movement or a label at the store and no name, newest first (nameNeed of them; ignored items never)
          need: labels whose serial history should be (re)read, changed > touched > backfill, claimed CLAIM_MIN minutes
-         so a second browser skips them (the /scan pattern).
+         so a second browser skips them (the /scan pattern; picked and claimed in one statement).
+         prunedLabels: buyback labels (B-<n>-<digits>) filed under their number as an item before that stopped (Oct 24, 2026) with nothing from
+         Portal behind them (no status, product, location, PO, WO, change, history, movement), deleted; see PRUNE_BUYBACK. A buyback label's
+         number is not its item: from a touch alone it is stored with no item and its history says what it is.
          The baseline (see "progress" below): labelTotals [{ item, total }] are Portal's label counts per item (the browser reads
          each lookup item's label list with pageSize=1 and takes its @odata.count), kept until the baseline freezes; countNeed
          is how many lookup items still without a count to hand out (default 0, at most COUNT_CAP; none once frozen);
@@ -48,7 +52,11 @@
          recorded (an empty lookup is a failed one, not "every item counted").
     POST /retrace/history { label, rows, by }   the label's serial-history rows (boh/serial-history/{label}: the rows,
          or Portal's { value: [rows] } as is) → { ok, added, same, skipped } · rows normalized here (normalize.historyRows),
-         duplicates ignored, rows naming another store or label skipped, the label leaves the queue.
+         duplicates ignored, rows naming another store or label skipped, the label leaves the queue (unless a sweep or movement queued it
+         again after the read was handed out: queued_at; then it stays, unclaimed). A label whose CURRENT item (the newest row's ItemId) is
+         BB0001 comes back as { ok, added: 0, ignored: true, deletedLabels: 0 | 1, skipped }: the label and its movements are deleted and it
+         is remembered (inv_ignored_labels), so touched / snapshot / movement / PO mentions of it never queue or store it again.
+         Settling the baseline after a read is throttled (settleAfterHistory).
     POST /retrace/watch { movements, by }   up to WATCH_MAX movements the in-page watcher saw Portal write → { ok, added, rejected }
     GET  /retrace/cursor                   → { cursors: { sweepName: { value, at } }, baseline: { frozen, posKnown } }
     GET  /retrace/progress?seen=<done_at>  → { store, state: 'counting'|'gathering'|'done', pct, done_at, announce }   the client's read-only
@@ -102,11 +110,12 @@ const NEED = { backfill: 1, touched: 2, changed: 3 };
 // The order the sweep hands labels out to read (and the Collection queue panel lists them in): changed > touched > backfill, most recently seen first.
 const QUEUE_ORDER = 'need_history DESC, last_seen DESC, label';
 
-const later = (min) => new Date(Date.now() + min * 60000).toISOString();
 const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 // Statements left out (an ignored item's insert / touch is null) are dropped here.
 const chunks = async (T, list) => { const out = [], stmts = list.filter(Boolean); for (let i = 0; i < stmts.length; i += 100) out.push(...(await T.batch(stmts.slice(i, i + 100)))); return out; };
 const lc = (v) => (v == null ? null : String(v).toLowerCase());
+// decodeURIComponent throws on a malformed % in the path: null instead (the routes answer 400, not 500).
+const unesc = (v) => { try { return decodeURIComponent(v); } catch (_) { return null; } };
 // Leading store number in Portal's Store text ("914", "914 - Newport News"); null when it has none.
 const storeNo = (v) => { const m = /^\s*(\d{1,6})\b/.exec(v == null ? '' : String(v)); return m ? Number(m[1]) : null; };
 
@@ -118,9 +127,38 @@ const insertMv = (T, store, m, at) => ignoredItem(m.item) ? null : T.prepare(`IN
 const soWo = (T, store, so, wo, source, at) => T.prepare(`INSERT INTO inv_so_wo (store, sales_order, wo, source, updated_at) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT (store, sales_order) DO UPDATE SET wo = excluded.wo, source = excluded.source, updated_at = excluded.updated_at WHERE wo IS NOT excluded.wo`).bind(store, so, String(wo), source, at);
 // A label a movement names: known from now on, and queued for a history read at `need` (never lowered here).
-const touchLabel = (T, store, label, item, need, at, wo = null) => ignoredItem(item) ? null : T.prepare(`INSERT INTO inv_labels (store, label, item, wo, first_seen, last_seen, need_history) VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (store, label) DO UPDATE SET item = COALESCE(item, excluded.item), wo = COALESCE(excluded.wo, wo), need_history = MAX(need_history, excluded.need_history)`)
-  .bind(store, label, item, wo, at, at, need);
+// queued_at: when the label was last queued (any touch): a history read that began before it doesn't clear the queue (see /retrace/history).
+const touchLabel = (T, store, label, item, need, at, wo = null) => ignoredItem(item) ? null : T.prepare(`INSERT INTO inv_labels (store, label, item, wo, first_seen, last_seen, need_history, queued_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (store, label) DO UPDATE SET item = COALESCE(item, excluded.item), wo = COALESCE(excluded.wo, wo), need_history = MAX(need_history, excluded.need_history), queued_at = excluded.queued_at`)
+  .bind(store, label, item, wo, at, at, need, at);
+
+// Labels remembered as not stock (inv_ignored_labels: their history named BB0001 as the current item). Never queued, touched or stored again.
+async function tombs(T, store, labels) {
+  const list = [...new Set(labels.filter(Boolean))], dead = new Set();
+  for (let i = 0; i < list.length; i += 500) {
+    const r = await T.prepare('SELECT label FROM inv_ignored_labels WHERE store = ? AND label IN (SELECT value FROM json_each(?))').bind(store, JSON.stringify(list.slice(i, i + 500))).all();
+    for (const x of r.results) dead.add(x.label);
+  }
+  return dead;
+}
+// A label's item now: the ItemId of its newest history row (by DateTime; the later one in the list on a tie; rows with no date only count when none has one).
+function currentItem(rows) {
+  let best = null, when = '';
+  for (const r of rows) {
+    const id = r && r.ItemId != null ? String(r.ItemId).trim().slice(0, 40) : '';
+    if (!id) continue;
+    const t = isoAt(r.DateTime) || '';
+    if (best == null || t >= when) { best = id; when = t; }
+  }
+  return best;
+}
+// Buyback labels (B-<n>-<digits>) filed before their number stopped counting as an item (Oct 24, 2026) sit under that number with nothing
+// from Portal: no status, product, location, PO, WO, change, history, and no movements. Those, and only those, go: the next touch or
+// sweep that names the label puts it back with no item, its history decides (BB0001: dropped for good). Anything Portal ever said about a label keeps it.
+const PRUNE_BUYBACK = `DELETE FROM inv_labels WHERE store = ?1 AND label >= 'B-' AND label < 'B.' AND item IS NOT NULL
+    AND lower(item) = lower(substr(label, 3, instr(substr(label, 3), '-') - 1))
+    AND serial_status IS NULL AND product IS NULL AND wh_type IS NULL AND po IS NULL AND wo IS NULL AND sales_order IS NULL AND last_history_at IS NULL AND last_change_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM inv_movements m WHERE m.store = inv_labels.store AND m.label = inv_labels.label)`;
 
 // ------------------------------------------------------------------ progress (the baseline and the done signal)
 // What a unit of each step costs (about Portal calls: a history is one, a PO two, a name one, a label's listing a small share of a page),
@@ -148,11 +186,11 @@ export async function progress(T, store) {
     T.prepare('SELECT * FROM inv_baseline WHERE store = ?').bind(store),
     T.prepare(`SELECT COUNT(*) AS lookup, COALESCE(SUM(c.item IS NOT NULL), 0) AS counted, COALESCE(SUM(c.item IS NOT NULL AND i.name IS NOT NULL), 0) AS named, COALESCE(SUM(c.labels), 0) AS labels
         FROM inv_items i LEFT JOIN inv_item_counts c ON c.store = i.store AND c.item = i.item WHERE i.store = ? AND i.qty_hash IS NOT NULL`).bind(store),
-    // Per baseline item, at most its count: a label stored for an item beyond what Portal said it has is "new since", not found.
-    T.prepare(`SELECT COALESCE(SUM(MIN(c.labels, COALESCE(l.n, 0))), 0) AS found, COALESCE(SUM(MIN(c.labels, COALESCE(l.h, 0))), 0) AS read,
-          (SELECT COUNT(*) FROM inv_labels WHERE store = ?1) AS every, (SELECT COUNT(*) FROM inv_labels WHERE store = ?1 AND need_history > 0) AS queued
-        FROM inv_item_counts c LEFT JOIN (SELECT item, COUNT(*) AS n, SUM(last_history_at IS NOT NULL) AS h FROM inv_labels WHERE store = ?1 GROUP BY item) l ON l.item = c.item
-        WHERE c.store = ?1`).bind(store),
+    // One pass over the store's labels (grouped per item), the baseline's counts joined on. Per baseline item, at most its count: a label stored
+    // for an item beyond what Portal said it has is "new since", not found. every / queued: all the store's labels, baseline item or not.
+    T.prepare(`SELECT COALESCE(SUM(MIN(c.labels, l.n)), 0) AS found, COALESCE(SUM(MIN(c.labels, l.h)), 0) AS read, COALESCE(SUM(l.n), 0) AS every, COALESCE(SUM(l.q), 0) AS queued
+        FROM (SELECT item, COUNT(*) AS n, SUM(last_history_at IS NOT NULL) AS h, SUM(need_history > 0) AS q FROM inv_labels WHERE store = ?1 GROUP BY item) l
+        LEFT JOIN inv_item_counts c ON c.store = ?1 AND c.item = l.item`).bind(store),
     T.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(json_extract(data, '$.detailAt') IS NOT NULL), 0) AS read FROM inv_docs WHERE store = ? AND type = 'po' AND lower(COALESCE(status, '')) <> 'draft'`).bind(store),
     T.prepare("SELECT sweep, value, updated_at FROM inv_cursors WHERE store = ? AND sweep IN ('lookup', 'po_backfill', ?)").bind(store, LAST_SWEEP),
   ]);
@@ -216,11 +254,37 @@ async function settle(T, store, at) {
   return p.out;
 }
 
-// A history read can be the last thing a store's gathering was waiting for. Settled only while the store has a baseline that isn't done yet (or an empty one to clear).
+/*
+  A history read can be the last thing a store's gathering was waiting for, and nothing else: it moves neither the counting nor the freeze.
+  settle() costs ~11k rows read at a store of 900 items (measured Oct 24), so it isn't run on every read (60 an hour-pass, never stopping until done):
+    - a store with no baseline, one still counting or one already done: nothing to settle (an empty baseline to clear is settled, it's rare)
+    - more labels still queued than the done test allows (QUEUE_SLACK / QUEUE_SHARE): this read can't finish it (one cheap indexed count)
+    - otherwise at most once a minute per store per Worker instance, except when the queue just emptied: the last read settles at once, so the
+      done signal and the freeze (the coverage check) are prompt. The sweep settles on its own either way.
+*/
+const SETTLE_EVERY_MS = 60000, settledAt = new Map(), PROGRESS_TTL_MS = 30000, progressAt = new Map();
 async function settleAfterHistory(T, store, at) {
-  const b = await T.prepare('SELECT backfill_done_at, counted_at, expected_items FROM inv_baseline WHERE store = ?').bind(store).first();
-  if (b && (!b.backfill_done_at || (b.counted_at && !b.expected_items))) await settle(T, store, at);
+  const b = await T.prepare('SELECT backfill_done_at, counted_at, expected_items, expected_labels FROM inv_baseline WHERE store = ?').bind(store).first();
+  if (!b) return;
+  if (!(b.counted_at && !b.expected_items)) {
+    if (b.backfill_done_at || !b.counted_at) return;
+    const queued = (await T.prepare('SELECT COUNT(*) AS n FROM inv_labels WHERE store = ? AND need_history > 0').bind(store).first()).n;
+    if (queued > Math.max(QUEUE_SLACK, Math.ceil((b.expected_labels || 0) * QUEUE_SHARE))) return;
+    if (queued > 0 && Date.now() - (settledAt.get(store) || 0) < SETTLE_EVERY_MS) return;
+  }
+  settledAt.set(store, Date.now());
+  await settle(T, store, at);
 }
+// The admin page's strip: a store's progress at most every PROGRESS_TTL_MS per Worker instance (progress() reads the store's labels; the page polls).
+async function cachedProgress(T, store) {
+  const c = progressAt.get(store);
+  if (c && Date.now() - c.at < PROGRESS_TTL_MS) return c.out;
+  const out = (await progress(T, store)).out;
+  progressAt.set(store, { at: Date.now(), out });
+  return out;
+}
+// Tests: forget what the throttles and caches remember (per Worker instance, in memory).
+export function resetCaches() { settledAt.clear(); progressAt.clear(); }
 
 // ------------------------------------------------------------------ item names
 /*
@@ -284,7 +348,8 @@ async function newOnly(T, store, moves) {
 }
 // Statements for new movements plus their labels' queue entries. → { stmts, added }
 async function movementStmts(T, store, moves, at, need, wo = null) {
-  const fresh = await newOnly(T, store, moves), stmts = [], labels = new Map();
+  const dead = await tombs(T, store, moves.map((m) => m && m.label));
+  const fresh = (await newOnly(T, store, moves)).filter((m) => !m.label || !dead.has(m.label)), stmts = [], labels = new Map();
   for (const m of fresh) { stmts.push(insertMv(T, store, m, at)); if (m.label && !labels.has(m.label)) labels.set(m.label, m.item); }
   for (const [label, item] of labels) stmts.push(touchLabel(T, store, label, item, need, at, wo));
   return { stmts: stmts.filter(Boolean), added: fresh.length };
@@ -363,22 +428,33 @@ export async function retraceStore(req, env, url, store, path, H) {
     // Each row names its store and label (Store "914", InventSerialId): another store's or label's rows are never written here.
     const rows = all.filter((r) => r && typeof r === 'object' && (storeNo(r.Store) == null || storeNo(r.Store) === store) && (r.InventSerialId == null || cleanLabel(r.InventSerialId) === label));
     const skipped = all.length - rows.length;
-    // A label whose history names an ignored item (Portal's ItemId BB0001: a buyback device) isn't stock: dropped.
-    if (rows.some((r) => ignoredItem(r.ItemId))) {
-      await T.prepare('DELETE FROM inv_labels WHERE store = ? AND label = ?').bind(store, label).run();
-      return H.json({ ok: true, added: 0, ignored: true, skipped });
+    // A label whose CURRENT item (the newest history row's ItemId) is an ignored one (Portal's BB0001: a buyback device) isn't stock: dropped with
+    // what was stored for it, and remembered (inv_ignored_labels) so no sweep queues it again. A device that later became a stock SKU stays (its
+    // BB0001 rows are skipped on insert), and its tombstone, if it had one, goes.
+    const now = currentItem(rows);
+    if (ignoredItem(now)) {
+      const at = H.now(), r = await T.batch([
+        T.prepare('DELETE FROM inv_labels WHERE store = ? AND label = ?').bind(store, label),
+        T.prepare('DELETE FROM inv_movements WHERE store = ? AND label = ?').bind(store, label),
+        T.prepare(`INSERT INTO inv_ignored_labels (store, label, reason, at) VALUES (?, ?, ?, ?)
+            ON CONFLICT (store, label) DO UPDATE SET reason = excluded.reason, at = excluded.at`).bind(store, label, 'item ' + now, at),
+      ]);
+      return H.json({ ok: true, added: 0, ignored: true, deletedLabels: (r[0].meta && r[0].meta.changes) || 0, skipped });
     }
     const at = H.now(), hash =hash53(JSON.stringify(rows.map(({ ['@odata.etag']: _e, ...r }) => r)));
     const row = await T.prepare('SELECT history_hash FROM inv_labels WHERE store = ? AND label = ?').bind(store, label).first();
+    // Clears the queue only when nothing queued the label after this read's claim began (queued_at newer than claimed_until - CLAIM_MIN: a sweep
+    // or a movement named it meanwhile); then it stays queued, unclaimed, for another read. No claim (a read nobody handed out) always clears.
     const done = (latest) => T.prepare(`INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen, last_history_at, history_hash, need_history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
-        ON CONFLICT (store, label) DO UPDATE SET last_history_at = excluded.last_history_at, history_hash = excluded.history_hash, need_history = 0, claimed_until = NULL,
+        ON CONFLICT (store, label) DO UPDATE SET last_history_at = excluded.last_history_at, history_hash = excluded.history_hash, claimed_until = NULL,
+          need_history = CASE WHEN claimed_until IS NOT NULL AND queued_at IS NOT NULL AND queued_at > strftime('%Y-%m-%dT%H:%M:%fZ', claimed_until, '-${CLAIM_MIN} minutes') THEN need_history ELSE 0 END,
           item = COALESCE(item, excluded.item), serial_status = COALESCE(serial_status, excluded.serial_status)`)
-      .bind(store, label, labelSnapshot({ label }).item || null, latest, at, at, at, hash);
+      .bind(store, label, now || labelSnapshot({ label }).item || null, latest, at, at, at, hash);
     if (row && row.history_hash === hash) { await done(null).run(); await settleAfterHistory(T, store, at); return H.json({ ok: true, added: 0, same: true, skipped }); }
     const moves = normalize.historyRows(label, rows);
     const fresh = await newOnly(T, store, moves);
     const latest = moves.length ? moves[moves.length - 1].raw_status : null;
-    await chunks(T, [...fresh.map((m) => insertMv(T, store, m, at)), done(latest)]);
+    await chunks(T, [...fresh.map((m) => insertMv(T, store, m, at)), done(latest), T.prepare('DELETE FROM inv_ignored_labels WHERE store = ? AND label = ?').bind(store, label)]);
     await settleAfterHistory(T, store, at);
     return H.json({ ok: true, added: fresh.length, same: false, skipped });
   }
@@ -392,8 +468,8 @@ export async function retraceStore(req, env, url, store, path, H) {
 
     /*
       Items: inventory-lookup rows folded per item ({ warehouseId: { available, reserved, inTransit, van } }). A row is
-      written when it's new, its quantities or name changed, or it wasn't seen today (last_seen stays useful without
-      rewriting every item on every pass).
+      written when it's new or its quantities / name changed; one not seen today only gets last_seen (a single UPDATE for all of them, so
+      last_seen stays useful without rewriting every item on every pass).
     */
     const items = new Map();
     for (const r of b.items || []) {
@@ -408,7 +484,7 @@ export async function retraceStore(req, env, url, store, path, H) {
         van: H.clean(r.VanNickName, 40) || null };
       items.set(item, x);
     }
-    const changedItems = [];
+    const changedItems = [], seenToday = [];
     if (items.size) {
       const known = new Map((await T.prepare('SELECT item, name, category, qty_hash, last_seen FROM inv_items WHERE store = ? AND item IN (SELECT value FROM json_each(?))')
         .bind(store, JSON.stringify([...items.keys()])).all()).results.map((r) => [r.item, r]));
@@ -417,13 +493,19 @@ export async function retraceStore(req, env, url, store, path, H) {
         // A row with no quantities was made by a name (see "item names"): the lookup sees the item for the first time.
         const changed = k && k.qty_hash !== qh;
         if (!k || k.qty_hash == null) changedItems.push({ item, why: 'new' }); else if (changed) changedItems.push({ item, why: 'changed' });
-        if (k && !changed && k.name === x.name && k.category === x.category && String(k.last_seen).slice(0, 10) === at.slice(0, 10)) continue;
+        if (k && !changed && k.name === x.name && k.category === x.category) {
+          // nothing about it moved: seen today = no write; seen on an earlier day = last_seen only, all of them in one statement below
+          if (String(k.last_seen).slice(0, 10) !== at.slice(0, 10)) { written++; seenToday.push(item); }
+          continue;
+        }
         written++;
         stmts.push(T.prepare(`INSERT INTO inv_items (store, item, name, category, qty, qty_hash, first_seen, last_seen, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (store, item) DO UPDATE SET name = COALESCE(excluded.name, name), category = COALESCE(excluded.category, category), qty = excluded.qty, qty_hash = excluded.qty_hash,
               last_seen = excluded.last_seen, changed_at = CASE WHEN qty_hash IS NOT excluded.qty_hash THEN excluded.last_seen ELSE changed_at END`)
           .bind(store, item, x.name, x.category, qty, qh, at, at, at));
       }
+      // The first sweep of a UTC day: one UPDATE for every unchanged item (a store of 900+ items used to be 900+ upserts, against D1's ~1000 queries per invocation).
+      if (seenToday.length) stmts.push(T.prepare('UPDATE inv_items SET last_seen = ? WHERE store = ? AND item IN (SELECT value FROM json_each(?))').bind(at, store, JSON.stringify(seenToday)));
     }
 
     /*
@@ -440,6 +522,10 @@ export async function retraceStore(req, env, url, store, path, H) {
       snaps.set(s.label, Object.assign(snaps.get(s.label) || {}, s));
       if (s.product) book.add(s.item, s.product, r.list == null);
     }
+    // Labels whose history named BB0001 (inv_ignored_labels) are never stored or queued again, whoever names them.
+    const touchedIn = [...new Set((b.touched || []).map(cleanLabel).filter(Boolean))];
+    const dead = await tombs(T, store, [...snaps.keys(), ...touchedIn]);
+    for (const l of dead) snaps.delete(l);
     const diffMoves = [];
     if (snaps.size) {
       const known = new Map((await T.prepare(`SELECT label, item, product, serial_status, consignment, wh_type, wh_id, cost, po, wo, sales_order, arrival, oem_serial, imei, serial_modified, last_seen, last_history_at
@@ -459,11 +545,12 @@ export async function retraceStore(req, env, url, store, path, H) {
         const touched = k && s.modified && ((k.serial_modified && s.modified !== k.serial_modified) || (k.last_history_at && s.modified > k.last_history_at));
         const need = !k ? NEED.backfill : moves.length || touched ? NEED.changed : 0;
         if (s.sales_order && s.wo && (!k || k.sales_order !== s.sales_order || k.wo !== s.wo)) stmts.push(soWo(T, store, s.sales_order, s.wo, 'label', at));
-        stmts.push(T.prepare(`INSERT INTO inv_labels (store, label, ${COLS.map(([c]) => c).join(', ')}, first_seen, last_seen, last_change_at, need_history)
-            VALUES (?, ?, ${COLS.map(() => '?').join(', ')}, ?, ?, ?, ?)
+        stmts.push(T.prepare(`INSERT INTO inv_labels (store, label, ${COLS.map(([c]) => c).join(', ')}, first_seen, last_seen, last_change_at, need_history, queued_at)
+            VALUES (?, ?, ${COLS.map(() => '?').join(', ')}, ?, ?, ?, ?, ?)
             ON CONFLICT (store, label) DO UPDATE SET ${COLS.map(([c]) => c + ' = COALESCE(excluded.' + c + ', ' + c + ')').join(', ')}, last_seen = excluded.last_seen,
-              last_change_at = COALESCE(excluded.last_change_at, last_change_at), need_history = MAX(need_history, excluded.need_history)`)
-          .bind(store, label, ...COLS.map(([, f]) => (s[f] === undefined ? null : s[f])), at, at, differs && k ? at : null, need));
+              last_change_at = COALESCE(excluded.last_change_at, last_change_at), need_history = MAX(need_history, excluded.need_history),
+              queued_at = CASE WHEN excluded.need_history > 0 THEN excluded.queued_at ELSE queued_at END`)
+          .bind(store, label, ...COLS.map(([, f]) => (s[f] === undefined ? null : s[f])), at, at, differs && k ? at : null, need, need ? at : null));
       }
     }
 
@@ -474,7 +561,7 @@ export async function retraceStore(req, env, url, store, path, H) {
     for (const m of diffs) stmts.push(insertMv(T, store, m, at));
     const fromSweep = await movementStmts(T, store, sent.filter((m) => !diffs.some((d) => d.key === m.key)), at, NEED.touched);
     stmts.push(...fromSweep.stmts);
-    for (const t of new Set((b.touched || []).map(cleanLabel).filter(Boolean))) stmts.push(touchLabel(T, store, t, labelSnapshot({ label: t }).item || null, NEED.touched, at));
+    for (const t of touchedIn) if (!dead.has(t)) stmts.push(touchLabel(T, store, t, labelSnapshot({ label: t }).item || null, NEED.touched, at));
 
     // Documents: written only when something about the header changed. POs have their own path below (status history).
     for (const d of b.docs || []) {
@@ -492,7 +579,7 @@ export async function retraceStore(req, env, url, store, path, H) {
       Purchase orders: { header, receive } (or a bare list row) → the stored PO (retrace.js poState / mergePo, in inv_docs
       type 'po'), its status history (inv_doc_events: poEvents) and a 'received' movement per label going In Transit →
       Received (poMovements; skipped when serial history already gave that label a received row on this PO). A reading
-      with lines or receive details clears need_detail; a list row that's new, or whose tracked fields moved, sets it.
+      with receive details clears need_detail (lines alone don't, nor a null / missing `receive`); a list row that's new, or whose tracked fields moved, sets it.
       Labels on the receive details: known from now on with the PO linked, and queued for a history read when new or
       when their receive status changed. POs sent through `docs` (type 'po') come here as list rows.
     */
@@ -504,7 +591,8 @@ export async function retraceStore(req, env, url, store, path, H) {
     if (poIn.length) {
       const readings = new Map();
       for (const x of poIn) {
-        const detail = !!(x && (x.receive || (x.header && Array.isArray(x.header.PurchaseOrderLinesV2))));
+        // Read in full = the receive details came (a header with lines alone isn't: the labels are on the receive details); a null / missing one keeps need_detail
+        const detail = !!(x && x.receive);
         const st = x && poState(x.header || x, x.receive);
         if (!st) continue;
         for (const l of st.lines || []) book.add(l.item, l.desc, false); // LineDescription / receive ItemName: descriptive
@@ -527,13 +615,15 @@ export async function retraceStore(req, env, url, store, path, H) {
         poMoves.push(...poMovements(prev, next, at));
         // Labels new to this PO or whose receive status changed: linked to the PO and queued.
         const old = new Map(((prev && prev.labels) || []).map((l) => [l.label, l]));
+        const poDead = await tombs(T, store, next.labels && st.labels ? next.labels.filter((l) => !(old.get(l.label) && old.get(l.label).status === l.status)).map((l) => l.label) : []);
         for (const l of next.labels && st.labels ? next.labels : []) {
           const o = old.get(l.label);
           if ((o && o.status === l.status) || ignoredItem(l.item)) continue;
-          stmts.push(T.prepare(`INSERT INTO inv_labels (store, label, item, po, oem_serial, imei, first_seen, last_seen, need_history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          if (poDead.has(l.label)) continue;
+          stmts.push(T.prepare(`INSERT INTO inv_labels (store, label, item, po, oem_serial, imei, first_seen, last_seen, need_history, queued_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT (store, label) DO UPDATE SET item = COALESCE(item, excluded.item), po = COALESCE(po, excluded.po), oem_serial = COALESCE(oem_serial, excluded.oem_serial),
-                imei = COALESCE(imei, excluded.imei), need_history = MAX(need_history, excluded.need_history)`)
-            .bind(store, l.label, l.item || null, id, l.oem || null, l.imei || null, at, at, NEED.touched));
+                imei = COALESCE(imei, excluded.imei), need_history = MAX(need_history, excluded.need_history), queued_at = excluded.queued_at`)
+            .bind(store, l.label, l.item || null, id, l.oem || null, l.imei || null, at, at, NEED.touched, at));
         }
         const data = JSON.stringify(next);
         if (k && k.data === data && need === k.need_detail) continue; // nothing new (a list row repeating the stored values)
@@ -587,14 +677,19 @@ export async function retraceStore(req, env, url, store, path, H) {
     stmts.push(T.prepare('INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, sweep) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at')
       .bind(store, LAST_SWEEP, JSON.stringify({ by, items: items.size, labels: snaps.size, movements: added, changedItems: changedItems.length, named: nameW.length }), at));
     await chunks(T, stmts);
+    // Buyback junk from before their number stopped counting as an item (PRUNE_BUYBACK): only labels Portal never said anything about.
+    const prunedLabels = ((await T.prepare(PRUNE_BUYBACK).bind(store).run()).meta || {}).changes || 0;
     const prog = await settle(T, store, at);
 
-    // The history queue: changed > touched > backfill, most recently seen first; claimed so other browsers skip them.
+    // The history queue: changed > touched > backfill, most recently seen first; claimed in the same statement that picks them (RETURNING), so two
+    // browsers sweeping at once never get the same label. The claim runs CLAIM_MIN minutes from this request's `at`, which is when the claim began
+    // (POST /history compares queued_at with it). RETURNING has no order: put them back in QUEUE_ORDER here.
     const want = Math.min(Math.max(Number.isInteger(b.need) ? b.need : NEED_MAX, 0), NEED_CAP);
-    const q = want ? (await T.prepare('SELECT label FROM inv_labels WHERE store = ? AND need_history > 0 AND (claimed_until IS NULL OR claimed_until < ?) ORDER BY ' + QUEUE_ORDER + ' LIMIT ?')
-      .bind(store, at, want + 1).all()).results.map((r) => r.label) : [];
-    const need = q.slice(0, want);
-    if (need.length) await T.prepare('UPDATE inv_labels SET claimed_until = ? WHERE store = ? AND label IN (SELECT value FROM json_each(?))').bind(later(CLAIM_MIN), store, JSON.stringify(need)).run();
+    const need = want ? (await T.prepare(`UPDATE inv_labels SET claimed_until = ?1 WHERE store = ?2 AND (claimed_until IS NULL OR claimed_until < ?3) AND label IN
+        (SELECT label FROM inv_labels WHERE store = ?2 AND need_history > 0 AND (claimed_until IS NULL OR claimed_until < ?3) ORDER BY ${QUEUE_ORDER} LIMIT ?4) RETURNING label, need_history, last_seen`)
+      .bind(new Date(Date.parse(at) + CLAIM_MIN * 60000).toISOString(), store, at, want).all()).results
+      .sort((x, y) => y.need_history - x.need_history || (x.last_seen < y.last_seen ? 1 : x.last_seen > y.last_seen ? -1 : 0) || (x.label < y.label ? -1 : x.label > y.label ? 1 : 0)).map((r) => r.label) : [];
+    const more = want ? !!(await T.prepare('SELECT 1 AS n FROM inv_labels WHERE store = ? AND need_history > 0 AND (claimed_until IS NULL OR claimed_until < ?) LIMIT 1').bind(store, at).first()) : false;
     // POs whose lines / receive details to read next (poNeed: how many, default none), newest first.
     const poWant = Math.min(Math.max(Number.isInteger(b.poNeed) ? b.poNeed : 0, 0), PO_NEED_CAP);
     poOut.need = poWant ? (await T.prepare("SELECT id FROM inv_docs WHERE store = ? AND type = 'po' AND need_detail = 1 ORDER BY at DESC, id DESC LIMIT ?").bind(store, poWant).all()).results.map((r) => r.id) : [];
@@ -618,7 +713,7 @@ export async function retraceStore(req, env, url, store, path, H) {
     const shortItems = shortWant && frozen ? (await T.prepare(`SELECT c.item FROM inv_item_counts c LEFT JOIN (SELECT item, COUNT(*) AS n FROM inv_labels WHERE store = ?1 GROUP BY item) l ON l.item = c.item
         WHERE c.store = ?1 AND c.labels > COALESCE(l.n, 0) AND lower(c.item) NOT IN (SELECT value FROM json_each(?2)) ORDER BY c.labels - COALESCE(l.n, 0) DESC, c.item LIMIT ?3`)
       .bind(store, JSON.stringify(IGNORED_ITEMS), shortWant).all()).results.map((r) => r.item) : [];
-    return H.json({ need, more: q.length > need.length, changedItems, added, rejected, skipped, written, named: nameW.length, unnamed, countNeed, missedItems, shortItems, pos: poOut });
+    return H.json({ need, more, changedItems, added, rejected, skipped, written, prunedLabels, named: nameW.length, unnamed, countNeed, missedItems, shortItems, pos: poOut });
   }
   return H.fail(404, 'not found');
 }
@@ -637,9 +732,10 @@ export async function retraceStore(req, env, url, store, path, H) {
         the date range and kinds without the user filter (its person picker); first_at / all_total: every movement of the
         item, no filter; sold90: 'sold' movements in the last 90 days.
   GET /retrace/serials/:store/:item?group&days&limit&offset   → { store, item, serials: [{ label, now, group, serial_status, wh_type, wo, po,
-        moves, last: { at, kind, user, source, ref_type, ref_id, wo, from_wh, to_wh, detail } }], total, groups: { all, in, wo, out, q, bad },
+        moves, last: { at, kind, user, source, ref_type, ref_id, wo, from_wh, to_wh, detail } | null }], total, groups: { all, in, wo, out, q, bad },
         loose: [movements with no label], loose_total }
-        the item list's one row per serial (the page's item view): last = the newest movement, moves = all of the label's movements,
+        the item list's one row per serial (the page's item view): the labels the item's movements name plus the labels stored for it (one with no
+        movement yet has last null, moves 0); last = the newest movement, moves = all of the label's movements,
         now / group = where it stands (retrace.js serialNow: Portal's status on the label, else the last movement, which wins when newer than the label's last snapshot). groups: how many
         serials are in each group (days applied, group not); group: in|wo|out|q|bad; days: only serials whose last movement is that
         recent (1-3650); newest last movement first; limit ≤ 500 (200). loose: the item's movements with no label (days applied), 50 newest.
@@ -672,8 +768,10 @@ export async function retraceStore(req, env, url, store, path, H) {
         the label changed or a diff saw it change) | recheck (queued again); the same tests as the Stale histories check (retrace-verify.js
         QUEUE_REASON). counts / items follow the item filter, not the reason; total follows both. being_read: labels with an unexpired claim;
         read_10min: histories read in the last 10 minutes; eta_min: the queue at PER_PASS.histories a pass, in whole passes. limit ≤ 200 (50). Read only.
-  GET /retrace/coverage              → { stores: [{ store, labels, histories, backlog, claimed, items, movements,
-        last_history_at, last_sweep_at, last_sweep, progress }] } for the stores the person can see. progress: the store's
+  GET /retrace/coverage?store=       → { stores: [{ store, labels, histories, backlog, claimed, items, movements,
+        last_history_at, last_sweep_at, last_sweep, progress }] } for the stores the person can see; with ?store= only that store's row is
+        worked out (the page polls it so; without, every store the person can see: the store switcher's first load). progress is kept for
+        PROGRESS_TTL_MS (30 s) per store in memory, so polls in between read nothing. progress: the store's
         baseline progress (see "Progress" at the top: state, pct, done_at, counted_at, eta_min, steps { stock, labels, histories,
         pos, names: { x, y } }, counting { items_done, items_total, pos_known }, new_labels), what the page's strip draws.
 */
@@ -750,7 +848,7 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
 
   const im = path.match(/^\/retrace\/item\/(\d{1,6})\/([^/]{1,80})$/);
   if (im) {
-    const store = Number(im[1]), item = H.clean(decodeURIComponent(im[2]), 40);
+    const store = Number(im[1]), item = H.clean(unesc(im[2]), 40);
     if (!canSee(store)) return H.fail(403, 'not your store', false);
     if (!item) return H.fail(400, 'item required', false);
     const where = ['m.store = ?', 'm.item = ?'], args = [store, item];
@@ -789,7 +887,7 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
 
   const sm = path.match(/^\/retrace\/serials\/(\d{1,6})\/([^/]{1,80})$/);
   if (sm) {
-    const store = Number(sm[1]), item = H.clean(decodeURIComponent(sm[2]), 40);
+    const store = Number(sm[1]), item = H.clean(unesc(sm[2]), 40);
     if (!canSee(store)) return H.fail(403, 'not your store', false);
     if (!item) return H.fail(400, 'item required', false);
     const group = q.get('group') || 'all';
@@ -798,20 +896,23 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     if (q.get('days') && (days == null || days < 1 || days > 3650)) return H.fail(400, 'days: 1 to 3650', false);
     const since = days ? new Date(Date.now() - days * 86400000).toISOString() : null;
     const limit = Math.min(H.int(q.get('limit')) || 200, 500), offset = H.int(q.get('offset')) || 0;
+    // One row per serial: the labels the item's movements name plus the labels stored for it (a label with no movements yet is a serial too, `last` null),
+    // each with its newest movement of this item.
     const [last, loose, looseN] = await T.batch([
-      T.prepare(`SELECT r.*, l.serial_status, l.wh_type, l.wo AS label_wo, l.po AS label_po, l.last_seen AS label_seen FROM (
-          SELECT ${MV_COLS}, ROW_NUMBER() OVER (PARTITION BY m.label ORDER BY m.at DESC, m.id DESC) AS rn, COUNT(*) OVER (PARTITION BY m.label) AS moves
-          FROM ${MV_FROM} WHERE m.store = ? AND m.item = ? AND m.label IS NOT NULL) r
-        LEFT JOIN inv_labels l ON l.store = r.store AND l.label = r.label WHERE r.rn = 1 ${since ? 'AND r.at >= ?' : ''} ORDER BY r.at DESC, r.id DESC LIMIT 5000`).bind(...[store, item, since].filter((v) => v != null)),
+      T.prepare(`SELECT k.label AS klabel, r.*, l.serial_status, l.wh_type, l.wo AS label_wo, l.po AS label_po, l.last_seen AS label_seen FROM (
+          SELECT label FROM inv_movements WHERE store = ?1 AND item = ?2 AND label IS NOT NULL UNION SELECT label FROM inv_labels WHERE store = ?1 AND item = ?2) k
+        LEFT JOIN (SELECT * FROM (SELECT ${MV_COLS}, ROW_NUMBER() OVER (PARTITION BY m.label ORDER BY m.at DESC, m.id DESC) AS rn, COUNT(*) OVER (PARTITION BY m.label) AS moves
+          FROM ${MV_FROM} WHERE m.store = ?1 AND m.item = ?2 AND m.label IS NOT NULL) WHERE rn = 1) r ON r.label = k.label
+        LEFT JOIN inv_labels l ON l.store = ?1 AND l.label = k.label ${since ? 'WHERE r.at >= ?3' : ''} ORDER BY r.at DESC, r.id DESC, k.label LIMIT 5000`).bind(...[store, item, since].filter((v) => v != null)),
       T.prepare(`SELECT ${MV_COLS} FROM ${MV_FROM} WHERE m.store = ? AND m.item = ? AND m.label IS NULL ${since ? 'AND m.at >= ?' : ''} ORDER BY m.at DESC, m.id DESC LIMIT 50`).bind(...[store, item, since].filter((v) => v != null)),
       T.prepare(`SELECT COUNT(*) AS n FROM inv_movements m WHERE m.store = ? AND m.item = ? AND m.label IS NULL ${since ? 'AND m.at >= ?' : ''}`).bind(...[store, item, since].filter((v) => v != null)),
     ]);
     const groups = { all: 0, in: 0, wo: 0, out: 0, q: 0, bad: 0 };
     const rows = last.results.map((r) => {
-      const [now, g] = serialNow(r.serial_status, r.wh_type, r.kind, !!r.label_seen && r.at > r.label_seen);
+      const [now, g] = serialNow(r.serial_status, r.wh_type, r.kind, !!r.label_seen && !!r.at && r.at > r.label_seen);
       groups.all++; if (g) groups[g]++;
-      return { label: r.label, now, group: g, serial_status: r.serial_status || null, wh_type: r.wh_type || null, wo: r.label_wo || null, po: r.label_po || null, moves: r.moves,
-        last: { at: r.at, kind: r.kind, user: r.user, source: r.source, ref_type: r.ref_type, ref_id: r.ref_id, wo: r.wo, from_wh: r.from_wh, to_wh: r.to_wh, detail: r.detail } };
+      return { label: r.klabel, now, group: g, serial_status: r.serial_status || null, wh_type: r.wh_type || null, wo: r.label_wo || null, po: r.label_po || null, moves: r.moves || 0,
+        last: r.id == null ? null : { at: r.at, kind: r.kind, user: r.user, source: r.source, ref_type: r.ref_type, ref_id: r.ref_id, wo: r.wo, from_wh: r.from_wh, to_wh: r.to_wh, detail: r.detail } };
     });
     const shown = group === 'all' ? rows : rows.filter((r) => r.group === group);
     await H.log(env, email, 'retrace:serials', store, null, item);
@@ -820,7 +921,7 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
 
   const lm = path.match(/^\/retrace\/label\/(\d{1,6})\/([^/]{1,80})$/);
   if (lm) {
-    const store = Number(lm[1]), label = cleanLabel(decodeURIComponent(lm[2]));
+    const store = Number(lm[1]), label = cleanLabel(unesc(lm[2]));
     if (!canSee(store)) return H.fail(403, 'not your store', false);
     if (!label) return H.fail(400, 'not a label', false);
     const [row, moves] = await T.batch([
@@ -886,7 +987,7 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
 
   const pm = path.match(/^\/retrace\/po\/(\d{1,6})\/([^/]{1,80})$/);
   if (pm) {
-    const store = Number(pm[1]), po = H.clean(decodeURIComponent(pm[2]), 40);
+    const store = Number(pm[1]), po = H.clean(unesc(pm[2]), 40);
     if (!canSee(store)) return H.fail(403, 'not your store', false);
     if (!po) return H.fail(400, 'po required', false);
     const [doc, events, moves] = await T.batch([
@@ -959,7 +1060,7 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     for (const r of moves.results) row(r.store).movements = r.movements;
     for (const r of sweeps.results) Object.assign(row(r.store), { last_sweep_at: r.updated_at, last_sweep: parse(r.value) });
     const list = [...by.values()].filter((x) => canSee(x.store)).sort((a, b) => a.store - b.store);
-    for (const x of list) x.progress = (await progress(T, x.store)).out;
+    for (const x of list) x.progress = await cachedProgress(T, x.store);
     return H.json({ stores: list }, 200, false);
   }
   return H.fail(404, 'not found', false);

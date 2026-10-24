@@ -9,7 +9,7 @@
     { label, item, at, kind, raw_status, raw_event, ref_type, ref_id, ref_line, from_wh, to_wh, user, source, detail, key }
     label     the inventory label (Portal's SerialNumber on a label, e.g. 176255-0000514371; buyback B-<item>-<digits>).
               null only for item-level records (a WO parts event with no serial).
-    item      Portal's item number (the label's first part when nothing better is known)
+    item      Portal's item number (the label's first part when nothing better is known; none for a buyback label, whose number isn't its item)
     at        ISO UTC (…Z). Portal times without a zone are read as UTC (same as metrics.js isoZ; check against captures).
     kind      one of KINDS. Unknown raw values are kept as 'status_changed' with the raw fields: nothing is dropped,
               and since raw_status / raw_event / detail are stored, kinds can be worked out again once captures arrive.
@@ -166,11 +166,13 @@ export function cleanLabel(v) {
   const s = str(v, 40);
   return s && /^[A-Za-z0-9][A-Za-z0-9._\-/]{2,39}$/.test(s) ? s : null;
 }
-export const itemOfLabel = (label) => { const p = parseLabel(label); return p ? p.item : null; };
+// A buyback label's number (B-542070-…) is NOT its item: Portal files those devices under BB0001 (ignored below), and the number in
+// the label named a stock SKU that was never theirs (Oct 24, 2026: filed under it, then deleted and re-queued every sweep). So it names none.
+export const itemOfLabel = (label) => { const p = parseLabel(label); return p && !p.buyback ? p.item : null; };
 /*
   Items Retrace leaves out entirely (case-insensitive): BB0001 is Portal's generic SKU for buyback devices, so its
   labels (B-<item>-<digits>) aren't stock and would swamp the item lists. Nothing for them is stored; a label whose
-  history turns out to be one of these is dropped.
+  history turns out to be one of these (its CURRENT item, the newest row's) is dropped and remembered (inv_ignored_labels).
 */
 export const IGNORED_ITEMS = ['bb0001'];
 export const ignoredItem = (item) => item != null && IGNORED_ITEMS.includes(String(item).trim().toLowerCase());
