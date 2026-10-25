@@ -302,22 +302,43 @@ AE.shard({
       document.querySelectorAll('[data-ae-provoke-hid]').forEach((el) => el.removeAttribute('data-ae-provoke-hid'));
     }
 
-    // Built each time the panel opens, so the status is current (a WO just set to Ready for pickup).
+    /*
+      Built each time the panel opens, so the status is current (a WO just set to Ready for pickup). The status only orders the chips:
+      when the work order read fails (or its answer isn't a work order) the row is placed anyway, without status ordering, as before
+      the guard. The read is then retried with a backoff (30 s, doubling, 10 min at most) instead of on every 1 s tick.
+    */
     let chatStatus = null, chatBuilding = false;
+    const statusMiss = new Map(); // woId → { n, next }: when the status read may be tried again
+    const STATUS_RETRY_MS = 30000, STATUS_RETRY_MAX = 10 * 60000;
+    async function statusOf(woId) {
+      let j;
+      try { j = await AE.api('GET', '/api/workorder/' + woId); }
+      catch (_) { j = undefined; } // a failed call: nothing to look at (never shape-checked)
+      let wo = null;
+      if (j !== undefined) { try { wo = AE.shape.workorder(j, 'Provoke work order ' + woId); } catch (_) { wo = null; } }
+      if (!wo) {
+        const m = statusMiss.get(woId) || { n: 0 };
+        statusMiss.set(woId, { n: m.n + 1, next: Date.now() + Math.min(STATUS_RETRY_MS * 2 ** m.n, STATUS_RETRY_MAX) });
+        return null;
+      }
+      statusMiss.delete(woId);
+      const name = wo.workorderStatusName || (wo.WorkorderStatus && wo.WorkorderStatus.name) || (wo.workorderStatus && wo.workorderStatus.name) || '';
+      return { key: byStatus(name, Number(wo.workorderStatusId)), name };
+    }
     async function chat() {
       const old = document.getElementById(CHAT_ID), woId = woIdNow(), box = woId && msgBox();
       if (!box || box.disabled || box.readOnly) { if (old) unplace(); return; } // texting off for this customer: Portal's own message shows
-      if (old && old.dataset.wo === woId) { place(old, box); return; }
+      const miss = statusMiss.get(woId);
+      if (old && old.dataset.wo === woId && !(miss && Date.now() >= miss.next)) { place(old, box); return; } // built (a row without its status: until the retry is due)
       if (chatBuilding) return;
       chatBuilding = true;
       try {
-        const [leads, j] = await Promise.all([sheet('leads'), AE.api('GET', '/api/workorder/' + woId).catch(() => null)]);
+        const retryStatus = !(miss && Date.now() < miss.next); // inside the backoff: the row goes in without its status, no call
+        const [leads, st] = await Promise.all([sheet('leads'), retryStatus ? statusOf(woId) : null]);
         const items = (leads && leads.data && leads.data.items) || [];
         const b2 = msgBox();
         if (!items.length || !b2 || woIdNow() !== woId) return;
-        const wo = AE.shape.workorder(j, 'Provoke work order ' + woId);
-        const name = wo.workorderStatusName || (wo.WorkorderStatus && wo.WorkorderStatus.name) || (wo.workorderStatus && wo.workorderStatus.name) || '';
-        chatStatus = { key: byStatus(name, Number(wo.workorderStatusId)), name };
+        chatStatus = st;
         unplace();
         const row = renderChat(items, leads, woId);
         if (!place(row, b2)) row.remove();

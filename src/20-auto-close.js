@@ -67,8 +67,8 @@ AE.shard({
     let checkedArrivalId = null, isCleaning = false, running = false, stopRequested = false;
     let siblings = [], thisArrival = null; // Dualcast: other cleaning arrivals waiting for the same device
 
-    async function api(method, path, body) {
-      const r = await AE.api(method, path, body, { shouldStop: () => stopRequested });
+    async function api(method, path, body, opts) {
+      const r = await AE.api(method, path, body, Object.assign({ shouldStop: () => stopRequested }, opts));
       await AE.sleep(STEP_DELAY_MS);
       return r;
     }
@@ -177,7 +177,9 @@ AE.shard({
       }
 
       // 4. Checkout — only if the cart really nets to $0.
-      await api('GET', '/api/checkout/workorder/' + woId);
+      // Portal's checkout page makes this call first; its answer is unused here and uncaptured, so it is read raw: a text 2xx
+      // can't stop the run between the status changes and complete-order.
+      await api('GET', '/api/checkout/workorder/' + woId, undefined, { raw: true });
       const wo = await getWo();
       const readCart = async () => unwrap(await api('GET', '/api/get-cart/' + encodeURIComponent(wo.csuCartId) + '?includePartStatus=true'));
       const payOf = (c) => (c && (c.payment || (c.cart && c.cart.payment))) || null;

@@ -993,7 +993,7 @@ AE.shard({
             if (scanPage()) return 'scans are data entry on this page';
             const id = wo[1];
             if (path().startsWith('/repair/workorder/' + id)) return 'already on WO ' + id;
-            try { await AE.api('GET', '/api/workorder/' + id); } catch (e) {
+            try { await AE.api('GET', '/api/workorder/' + id, undefined, { raw: true }); } catch (e) { // only whether it exists: the answer is unused
               AE.toast('Scan', { html: AE.esc("Couldn't open WO " + id + (/HTTP 404/.test(e.message) ? ': no such work order.' : '.')) + ' If you keep seeing this, ' +
                 AE.bugLink('report a bug', { where: "Master's Mend", error: 'Scan to open WO ' + id + ' failed: ' + e.message }) + '!' }, 'err', 8000);
               return 'WO lookup failed';
