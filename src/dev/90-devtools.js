@@ -332,7 +332,7 @@
     drawRtRec();
     const retrace = section('Retrace',
       note((AE.retrace.enabled() ? 'On' + (AE_SANDBOX ? ' (sandbox stand-in, not the Worker)' : '') : 'Off: no tracker Worker in this build') + '. Last pass: ' + (rtLast ? new Date(rtLast.at).toLocaleString() + ' · ' + rtLast.seconds + ' s · Portal ' + rtLast.calls.portal + ' / Worker ' + rtLast.calls.worker + ' calls · '
-        + rtLast.labels + ' labels · items read ' + (rtLast.itemsRead || 0) + ', waiting ' + (rtLast.itemsWaiting || 0) + ', failed ' + (rtLast.itemsFailed || 0) + ' · short queued ' + (rtLast.shortQueued || 0) + ', skipped (read lately) ' + (rtLast.shortSkippedTried || 0) + (rtLast.portalTrouble ? ' · PORTAL TROUBLE (5xx/timeout' + (rtLast.troubleAt ? ' at ' + rtLast.troubleAt : '') + ', item / PO / history reads stopped)' : '') + ' · ' + rtLast.docs + ' docs · ' + rtLast.pos + ' POs · ' + rtLast.histories + ' histories · ' + rtLast.added + ' added' + (rtLast.note ? ' · ' + rtLast.note : '') + (rtLast.errors.length ? ' · first error: ' + (rtLast.firstError || rtLast.errors[0]) + ' · all: ' + rtLast.errors.join('; ') : '') : 'none yet')
+        + rtLast.labels + ' labels · items read ' + (rtLast.itemsRead || 0) + ', waiting ' + (rtLast.itemsWaiting || 0) + ', failed ' + (rtLast.itemsFailed || 0) + ', parked ' + (rtLast.itemsParked || 0) + ', back from parking ' + (rtLast.itemsUnparked || 0) + (rtLast.resting && rtLast.resting.length ? ' · resting after repeated failures: ' + rtLast.resting.join(', ') : '') + ' · short queued ' + (rtLast.shortQueued || 0) + ', skipped (read lately) ' + (rtLast.shortSkippedTried || 0) + (rtLast.portalTrouble ? ' · PORTAL TROUBLE (2+ 5xx/timeouts in a row or Portal down' + (rtLast.troubleAt ? ' at ' + rtLast.troubleAt : '') + ', item / PO / history reads stopped)' : '') + ' · ' + rtLast.docs + ' docs · ' + rtLast.pos + ' POs · ' + rtLast.histories + ' histories · ' + rtLast.added + ' added' + (rtLast.note ? ' · ' + rtLast.note : '') + (rtLast.errors.length ? ' · first error: ' + (rtLast.firstError || rtLast.errors[0]) + ' · all: ' + rtLast.errors.join('; ') : '') : 'none yet')
         + ' · watched moves queued: ' + AE.retrace.queued() + ' · state: ' + JSON.stringify(AE.retrace.state())),
       row(btn('Run a pass now', async () => {
         if (!AE.retrace.enabled()) throw new Error('No tracker Worker in this build.');
@@ -411,14 +411,17 @@
     // Portal's health (AE.health in 00-core.js): the circuit breaker that pauses background checks while Portal fails.
     const healthText = () => {
       const s = AE.health.state(), t = (ms) => (ms ? new Date(ms).toLocaleTimeString() : '—');
-      return (s.down ? 'DOWN since ' + t(s.since) + ' · backoff step ' + (s.level + 1) + ' · ' + (s.probing ? 'probe out' : 'next probe ' + t(s.nextProbe)) : 'UP')
-        + ' · consecutive failures ' + s.failures + ' · outages this tab ' + s.outages + (s.last ? ' · last: ' + s.last.kind + ' ' + (s.last.status || '') + ' ' + s.last.path + ' ' + s.last.message : '');
+      return (s.mode === 'down' ? 'DOWN since ' + t(s.since) + ' · backoff step ' + (s.level + 1) + ' · ' + (s.probing ? 'probe out' : 'next probe ' + t(s.nextProbe))
+        : s.mode === 'recovering' ? 'RECOVERING (outage since ' + t(s.since) + ') · successes ' + s.recoverOks + ' · backoff step ' + (s.level + 1) + ' kept' : 'UP')
+        + ' · consecutive failures ' + s.failures + ' · outages this tab ' + s.outages + ' · re-trips ' + s.retrips + ' · last outage toast ' + t(s.lastToast)
+        + (s.last ? ' · last: ' + s.last.kind + ' ' + (s.last.status || '') + ' ' + s.last.path + ' ' + s.last.message : '')
+        + ' · shape failures (not outages) ' + s.shapeFails + (s.lastShape ? ' · last shape: ' + s.lastShape.path + ' ' + s.lastShape.message : '');
     };
     const healthNote = note(healthText());
     const portalHealth = section('Portal health',
       healthNote,
       row(btn('Refresh', () => { healthNote.textContent = healthText(); }),
-        btn('Simulate an outage (3 failures)', () => { for (let i = 0; i < 3; i++) AE.health.fail('http', { status: 504, path: 'dev tools (simulated)', message: 'simulated' }); healthNote.textContent = healthText(); }, { title: 'Counts three fake 5xx answers: background checks pause and the outage toast shows.' }),
+        btn('Simulate an outage (3 failures)', () => { for (let i = 0; i < 3; i++) AE.health.fail('http', { status: 504, path: 'dev tools (simulated)', message: 'simulated' }); healthNote.textContent = healthText(); }, { title: 'Counts three fake 5xx answers: background checks pause and the outage toast shows (at most once every 10 minutes).' }),
         btn('Reset', () => { AE.health.reset(); healthNote.textContent = healthText(); })));
 
     const card = h('div', { class: 'sg sg-card sg-dev', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' dev tools' },
