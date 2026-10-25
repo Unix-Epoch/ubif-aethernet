@@ -35,20 +35,50 @@ function fakeEl() {
 }
 
 /*
-  load(files, opts) → { AE, ctx, gm, calls, fetchLog, toasts, setFetch }
+  load(files, opts) → { AE, ctx, gm, fetchLog, requests, toasts, scripts, clock, setFetch, advance, settle, pendingTimers, online }
     files    src file names (e.g. ['00-core.js', '27-tracker.js'])
-    opts.fetch(url, init) → a Response-like { status, body } (object = JSON, string = text) or throws; recorded in fetchLog
+    opts.fetch(url, init) → a Response-like { status, body } (object = JSON, string = text) or throws, or a promise of either.
+             EVERY request is recorded in fetchLog as { url, path, method, body (parsed JSON, else the text), timeoutMs? } before the
+             stub sees it: tests assert what was SENT (requests(re, method) filters it), not what a stub chose to answer.
     opts.gm  initial GM storage ({key: value})
-    opts.fast  timers run after 1 ms (default true) so the collector's pauses don't slow the tests
+    opts.timers
+      'fast' (default)  real timers, pauses of 2 ms – 5 s shrink to 1 ms (the collector's 300 ms gaps); setInterval does nothing
+      'fake'            a virtual clock: setTimeout / setInterval / Date run on it only when the test calls advance(ms) (timers due
+                        on the way fire in order, promises settle between them). For loops, backoff, timeouts and timer leaks.
+    opts.online  navigator.onLine (default true); env.online(false) changes it later
 */
 export function load(files, opts = {}) {
   const gm = new Map(Object.entries(opts.gm || {}).map(([k, v]) => [k, JSON.parse(JSON.stringify(v))]));
-  const fetchLog = [], toasts = [];
+  const fetchLog = [], toasts = [], scripts = [];
   let fetchImpl = opts.fetch || (() => ({ status: 404, body: { error: 'no stub' } }));
-  const real = { setTimeout, clearTimeout, setInterval };
-  const fast = opts.fast !== false;
+  const real = { setTimeout, clearTimeout, setInterval, setImmediate };
+  const mode = opts.timers || (opts.fast === false ? 'real' : 'fast');
+  const fast = mode === 'fast';
   const listeners = new Map();
   const clock = { now: Date.now() };
+  const nav = { userAgent: 'node-test', onLine: opts.online !== false };
+  // ---- the virtual clock (timers: 'fake')
+  const vt = new Map(); let vtId = 0;
+  const vAdd = (fn, ms, args, every) => { const id = ++vtId; const d = Math.max(0, Number(ms) || 0); vt.set(id, { fn, at: clock.now + d, every: every ? Math.max(1, d) : 0, args }); return id; };
+  const vClear = (id) => { vt.delete(id); };
+  // Let promises (and real async work such as WebCrypto) finish: a few real turns of the event loop.
+  async function settle(rounds = 6) { for (let i = 0; i < rounds; i++) await new Promise((r) => real.setImmediate(r)); await new Promise((r) => real.setTimeout(r, 0)); }
+  async function advance(ms) {
+    const end = clock.now + ms;
+    await settle();
+    for (let guard = 0; guard < 100000; guard++) {
+      let next = null;
+      for (const [id, t] of vt) if (t.at <= end && (!next || t.at < next[1].at || (t.at === next[1].at && id < next[0]))) next = [id, t];
+      if (!next) break;
+      const [id, t] = next;
+      clock.now = Math.max(clock.now, t.at);
+      if (t.every) t.at += t.every; else vt.delete(id);
+      try { t.fn(...(t.args || [])); } catch (_) {}
+      await settle(2);
+    }
+    clock.now = end;
+    await settle();
+  }
   class FakeDate extends Date { constructor(...a) { if (a.length) super(...a); else super(clock.now); } static now() { return clock.now; } }
   // An element that remembers what was set on it (innerHTML, attributes) and ignores everything else.
   const rec = (tag) => {
@@ -64,13 +94,15 @@ export function load(files, opts = {}) {
     GM_deleteValue: (k) => { gm.delete(k); },
     GM_addStyle() {}, GM_xmlhttpRequest() {}, GM_info: { script: { version: 'test' } },
     location: { hostname: opts.hostname || 'portal.ubreakifix.net', host: opts.hostname || 'portal.ubreakifix.net', pathname: opts.pathname || '/', href: 'https://portal.ubreakifix.net/', origin: 'https://portal.ubreakifix.net' },
-    document: new Proxy({ hidden: false, body, head: fakeEl(), documentElement: fakeEl(),
+    // head / documentElement record the scripts appended to them (Retrace's watcher, the bridge): env.scripts = [{ id, code }]
+    document: new Proxy({ hidden: false, body, head: { append(el) { if (el && el.tag === 'script') scripts.push({ id: el.id, code: el.textContent }); }, appendChild(el) { this.append(el); return el; }, querySelector: () => null, querySelectorAll: () => [] },
+      documentElement: new Proxy({ dataset: {}, append(el) { if (el && el.tag === 'script') scripts.push({ id: el.id, code: el.textContent }); } }, { get: (t, k) => (k in t ? t[k] : fakeEl()[k]) }),
       addEventListener: (n, fn) => { listeners.set(n, [...(listeners.get(n) || []), fn]); },
       dispatchEvent: (e) => { for (const fn of listeners.get(e.type) || []) fn(e); return true; },
       createElement: (tag) => rec(tag), createElementNS: (ns, tag) => rec(tag), createTextNode: () => fakeEl(), createDocumentFragment: () => fakeEl(),
       getElementById: () => null, querySelector: () => null, querySelectorAll: () => [], readyState: 'complete', cookie: '' }, {
       get: (t, k) => (k in t ? t[k] : fakeEl()[k]), set: (t, k, v) => { t[k] = v; return true; } }),
-    navigator: { userAgent: 'node-test' },
+    navigator: nav,
     CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init && init.detail; } },
     AbortController, URL, URLSearchParams, TextEncoder, TextDecoder, Promise, JSON, Math, Date: FakeDate, Number, String, Object, Array, Set, Map, Error, RegExp, Symbol, Intl,
     crypto: globalThis.crypto, btoa, atob, CompressionStream, DecompressionStream, Blob, Response, ReadableStream, WritableStream, performance, structuredClone,
@@ -80,10 +112,14 @@ export function load(files, opts = {}) {
     addEventListener() {}, removeEventListener() {}, requestAnimationFrame: (fn) => real.setTimeout(fn, 0), cancelAnimationFrame() {},
     getComputedStyle: () => ({}),
     // fast: the collector's pauses (300 ms and the like) shrink to 1 ms; long timers (the 45 s Retrace tick) never keep Node alive
-    setTimeout: (fn, ms, ...a) => { const t = real.setTimeout(fn, fast && ms > 1 && ms <= 5000 ? 1 : ms, ...a); if (ms > 5000) t.unref(); return t; },
-    clearTimeout: real.clearTimeout, setInterval: () => 0, clearInterval() {},
+    setTimeout: mode === 'fake' ? (fn, ms, ...a) => vAdd(fn, ms, a, false)
+      : (fn, ms, ...a) => { const t = real.setTimeout(fn, fast && ms > 1 && ms <= 5000 ? 1 : ms, ...a); if (ms > 5000) t.unref(); return t; },
+    clearTimeout: mode === 'fake' ? vClear : real.clearTimeout,
+    setInterval: mode === 'fake' ? (fn, ms, ...a) => vAdd(fn, ms, a, true) : () => 0,
+    clearInterval: mode === 'fake' ? vClear : () => {},
     fetch: async (url, init = {}) => {
-      fetchLog.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : undefined });
+      let body; if (init.body) { try { body = JSON.parse(init.body); } catch (_) { body = init.body; } }
+      fetchLog.push({ url: String(url), path: String(url).replace(/^https?:\/\/[^/]+/, ''), method: init.method || 'GET', body, at: clock.now });
       const r = await new Promise((resolve, reject) => {
         if (init.signal) init.signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })));
         Promise.resolve().then(() => fetchImpl(String(url), init)).then(resolve, reject);
@@ -111,7 +147,8 @@ export function load(files, opts = {}) {
   if (!files.includes('02-status.js')) hook.splice(1, 0, "\nAE.status = { paused: () => false, blocked: () => false };\n");
   vm.runInContext(hook.join(''), ctx, { filename: 'aethernet-test-bundle.js' });
   const AE = ctx.AE;
-  return { AE, ctx, gm, fetchLog, toasts, clock, setFetch: (fn) => { fetchImpl = fn; } };
+  const requests = (re, method) => fetchLog.filter((r) => (!method || r.method === method) && re.test(r.path));
+  return { AE, ctx, gm, fetchLog, requests, toasts, scripts, clock, setFetch: (fn) => { fetchImpl = fn; }, advance, settle, pendingTimers: () => vt.size, online: (v) => { nav.onLine = v; } };
 }
 
 // The source of one function in a src file, found by its header text (brace matching), so a test can run the real code
