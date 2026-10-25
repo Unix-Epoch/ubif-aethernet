@@ -24,9 +24,10 @@ AE.tracker = (() => {
   const SCAN_MS = 10 * 60 * 1000, GAP_MS = 300, NOTE_PAGE = 30, NOTE_PAGES = 20;
   const configured = () => (AE_SANDBOX ? /^http:\/\/localhost[:/]/.test(API) : /^(https:\/\/|http:\/\/localhost[:/])/.test(API));
 
-  async function call(method, path, body) {
+  // opts.timeoutMs: a longer wait than workerCall's 30 s (Retrace's big sweeps).
+  async function call(method, path, body, opts = {}) {
     if (method !== 'GET') await AE.assertSameStore(); // never upload under this page's store once Portal has switched
-    return AE.workerCall(method, API + path, { credentials: 'omit', headers: { 'content-type': 'application/json', 'x-aethernet-key': KEY }, body: body ? JSON.stringify(body) : undefined });
+    return AE.workerCall(method, API + path, { credentials: 'omit', headers: { 'content-type': 'application/json', 'x-aethernet-key': KEY }, body: body ? JSON.stringify(body) : undefined }, opts.timeoutMs);
   }
 
   // The store's public key: from the Worker, or made here (needs the master public key).
@@ -92,14 +93,18 @@ AE.tracker = (() => {
     }
     return { events: all };
   }
+  /*
+    failed: the parts that didn't load, each with its HTTP status (0 = no answer), e.g. ['notes:504', 'cart:404'], or false. A part's 404
+    is kept apart from the rest (status 404) but still a failure: what a 404 means for these calls ("none" or "not reachable") isn't captured.
+  */
   async function fetchDetail(wo) {
-    let failed = false;
-    const soft = (pr) => pr.catch(() => { failed = true; return null; });
+    const failed = [];
+    const soft = (name, pr) => pr.catch((e) => { failed.push(name + ':' + ((e && e.status) || 0)); return null; });
     const coreP = AE.api('GET', '/api/workorder/' + wo).catch((e) => { if (/HTTP 404/.test(e.message || '')) e.gone = true; throw e; });
-    const cartP = coreP.then((core) => { const id = core && core.workorder && core.workorder.csuCartId; return id ? soft(AE.api('GET', '/api/get-cart/' + id + '?includePartStatus=true')) : null; }, () => null);
-    const [core, audit, notes, cart, events] = await Promise.all([coreP, soft(AE.api('GET', '/api/workorder-audit-trail/' + wo)), soft(notesOf(wo)), cartP, soft(eventsOf(wo))]);
+    const cartP = coreP.then((core) => { const id = core && core.workorder && core.workorder.csuCartId; return id ? soft('cart', AE.api('GET', '/api/get-cart/' + id + '?includePartStatus=true')) : null; }, () => null);
+    const [core, audit, notes, cart, events] = await Promise.all([coreP, soft('audit_trail', AE.api('GET', '/api/workorder-audit-trail/' + wo)), soft('notes', notesOf(wo)), cartP, soft('events', eventsOf(wo))]);
     AE.shape.workorder(core, 'work order ' + wo); // a malformed 200 is an error, not a work order with nothing in it
-    return { d: scrub({ workorder: core, audit_trail: audit, notes, cart, events }), failed };
+    return { d: scrub({ workorder: core, audit_trail: audit, notes, cart, events }), failed: failed.length ? failed.sort() : false };
   }
   function wodGet(store, wo, opts = {}) {
     const id = String(wo), k = wodKey(store);
@@ -114,7 +119,7 @@ AE.tracker = (() => {
       const w = d.workorder && d.workorder.workorder;
       if (!failed && w) all[id] = { at, u: w.updatedAt || null, d }; else delete all[id];
       GM_setValue(k, all);
-      return Object.assign({ at, failed }, d); // failed: a part (audit trail, notes, cart, events) didn't load; the tracker doesn't send it
+      return Object.assign({ at, failed }, d); // failed: the parts (audit trail, notes, cart, events) that didn't load, or false
     }).finally(() => { if (wodLoading.get(k + ':' + id) === run) wodLoading.delete(k + ':' + id); });
     wodLoading.set(k + ':' + id, run);
     return run;
@@ -124,22 +129,38 @@ AE.tracker = (() => {
   // The tracker's copy: the shared detail plus the customer record (fetched alongside, never kept).
   async function detailOf(store, wo, opts) {
     const [x, customer] = await Promise.all([wodGet(store, wo, opts), AE.api('GET', '/api/v1/workorder/' + wo + '/demographic/customer-data').catch(() => null)]);
-    return { d: scrub({ workorder: x.workorder, audit_trail: x.audit_trail, customer_data: customer, notes: x.notes, cart: x.cart, events: x.events }), failed: !!x.failed };
+    return { d: scrub({ workorder: x.workorder, audit_trail: x.audit_trail, customer_data: customer, notes: x.notes, cart: x.cart, events: x.events }), failed: x.failed || false };
   }
 
   // One WO, ready to send (or to look at, for the dev tools' dry run).
+  // opts.partialOk: send a partial detail anyway, flagged (plain.partial = the parts that failed, e.g. ['notes:504']).
   async function prepare(store, wo, listRow, jwk, opts = {}) {
     const { d, failed } = await detailOf(store, wo, opts);
     const own = d.workorder && d.workorder.workorder;
     if (own && own.storeId != null && Number(own.storeId) !== Number(store)) throw Object.assign(new Error("another store's work order"), { otherStore: Number(own.storeId) });
     if (listRow) d.list_row = scrub(listRow);
     const plain = plainPart(d, listRow), card = cardOf(d, listRow);
+    if (failed && opts.partialOk) plain.partial = failed;
     const out = { plain, card, detail: d, failed, hash: await C.hashJson([plain, d]), detailBytes: JSON.stringify(d).length };
     if (jwk) { out.sealed = await C.sealJson(d, jwk, C.aad.snapshot(store, wo)); out.cardSealed = await C.sealJson(card, jwk, C.aad.card(store, wo)); }
     return out;
   }
 
   // ---------------------------------------------------------------- the scan
+  /*
+    A WO whose detail came back partial is skipped and asked for again next scan, PARTIAL_MAX times in a row at most: then it is
+    sent anyway with plain.partial naming the failed parts, so one sub-call that always fails can't keep a WO from ever being sent.
+    Counted per store in GM storage ({ wo: n }), cleared on a complete send; entries untouched for a week are dropped.
+  */
+  const PARTIAL_MAX = 3, partialKey = (store) => 'ae_tracker_partial_' + store;
+  function partialSeen(store, wo, bump) {
+    const all = GM_getValue(partialKey(store), {}) || {}, now = Date.now();
+    for (const [w, x] of Object.entries(all)) if (!x || now - x.at > 7 * 86400000) delete all[w];
+    if (bump) all[wo] = { n: ((all[wo] && all[wo].n) || 0) + 1, at: now }; else delete all[wo];
+    GM_setValue(partialKey(store), all);
+    return bump ? all[wo].n : 0;
+  }
+  const partialCount = (store, wo) => { const x = (GM_getValue(partialKey(store), {}) || {})[wo]; return (x && x.n) || 0; };
   let running = false;
   async function scan(opts = {}) {
     if (!configured() || running || AE.status.paused('tracker') || AE.health.down()) return null;
@@ -163,10 +184,18 @@ AE.tracker = (() => {
         try {
           // A missing order needs Portal's own answer (a 404 closes it); the rest may use Assize's recent copy.
           const row = byId.get(n.wo) || null;
-          const x = await prepare(store, n.wo, row, jwk, n.why === 'missing' ? { force: true } : { updatedAt: row && row.updatedAt });
+          // After PARTIAL_MAX partial tries in a row, this one is sent even if partial (flagged).
+          const partialOk = partialCount(store, n.wo) >= PARTIAL_MAX;
+          const x = await prepare(store, n.wo, row, jwk, Object.assign(n.why === 'missing' ? { force: true } : { updatedAt: row && row.updatedAt }, { partialOk }));
           // Part of the detail failed to load (audit trail, notes, cart or events): that is not the order's state. Not sent; asked for again next scan.
-          if (x.failed) { result.partial++; if (result.errors.length < 5) result.errors.push(n.wo + ': partial detail, not sent'); await AE.sleep(GAP_MS); continue; }
+          if (x.failed && !partialOk) {
+            const tries = partialSeen(store, n.wo, true);
+            result.partial++; if (result.errors.length < 5) result.errors.push(n.wo + ': partial detail (' + x.failed.join(', ') + '), not sent (' + tries + '/' + PARTIAL_MAX + ')');
+            await AE.sleep(GAP_MS); continue;
+          }
           const j = await call('POST', '/v1/' + store + '/tracker/wo/' + n.wo, { hash: x.hash, trigger: n.why, plain: x.plain, sealed: x.sealed, card: x.cardSealed, by: p.name });
+          if (x.failed) { result.sentPartial = (result.sentPartial || 0) + 1; AE.noteError('tracker', new Error('WO ' + n.wo + ' sent with a partial detail after ' + PARTIAL_MAX + ' tries (' + x.failed.join(', ') + ')')); }
+          if (partialCount(store, n.wo)) partialSeen(store, n.wo, false); // a complete send starts the count again
           if (j.same) result.same++; else result.sent++;
         } catch (e) {
           if (/session expired/i.test(e.message || '') || e.storeChanged) throw e; // signed out or store switched: stop
@@ -254,7 +283,7 @@ AE.tracker = (() => {
       GM_setValue(DAILY_KEY, keep);
       return true;
     } catch (e) {
-      if (e.status === 403) return false; // no access for that store (or sandbox data): expected, not an error
+      if (e.worker && e.status === 403) return false; // the Worker: no access for that store (or sandbox data), expected, not an error
       if (!e.storeChanged) { console.warn('[Aethernet] daily upload failed', e); AE.noteError('tracker daily', e); }
       return false;
     }
@@ -271,7 +300,7 @@ AE.tracker = (() => {
     const d = x.detail, notes = (d.notes && d.notes.notes) || [];
     const sealedParts = { notes: notes.length, noteChars: notes.reduce((n, t) => n + String(t.noteText || '').length, 0), customerRecord: !!d.customer_data,
       statusHistory: Array.isArray(d.audit_trail) ? d.audit_trail.length : 0, cartLines: d.cart ? (d.cart.cartItems || []).length : 0 };
-    return { wo: Number(wo), partial: !!x.failed, inList: !!row, plain: x.plain, card: x.card, sealedParts, hash: x.hash, detailBytes: x.detailBytes, sealedBytes: x.sealed.length, cardBytes: x.cardSealed.length };
+    return { wo: Number(wo), partial: x.failed || false, inList: !!row, plain: x.plain, card: x.card, sealedParts, hash: x.hash, detailBytes: x.detailBytes, sealedBytes: x.sealed.length, cardBytes: x.cardSealed.length };
   }
 
   // The store's RFP total, cached 2 minutes (Master's Mend → RFP total).
