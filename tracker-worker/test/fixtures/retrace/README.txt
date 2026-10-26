@@ -8,3 +8,10 @@ inventory-lookup.json is the exception: its envelope and row fields are as captu
 OnHandQuantity, InTransitQuantity, ReservedQuantity, SalesOnOrder, AvailableQuantity, BackOrderedQyantity, SalesPrice, RetailCategory, VanNickName, LocalPrice,
 ModifiedDateTime). The values here are still sample (and Success / ModifiedDateTime are guesses; the capture showed them truncated).
 Portal also lists quantity-only SKUs there (e.g. 900348, "Generic - Liquid Glass (Individual)", 9,995 in stock, no labels); the tests build those inline.
+
+wo-salesorder.json: GET /api/workorder/{wo}/salesorder/{csuCartId} (Oct 26, 2026). Top-level keys and line keys are the ones captured live by Garrett
+for a sold WO at 914 on Oct 25, 2026 (vault "Retrace and Tracker Interop" → "Sold work order parts"): salesId, salesLines, cartId, salesDate, storeId,
+payment { amountPaid, subtotal, discount, tax, total }, paymentTypes; lines lineId, lineNumber, productId, name, price, grossAmount, quantity, serial,
+serialStatus, sku, lineType, isChild, parentLineId, isScanned, program, originalLineId. Part lines carry serial + serialStatus "Sold"; labor / credit
+lines an empty serial; the BB0001 buyback line a B- serial (Available). Every VALUE here is made up, and the value kinds of lineId, productId,
+lineType for a part line, salesDate's format and storeId's type are GUESSES until a raw answer is saved over this file.

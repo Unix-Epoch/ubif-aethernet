@@ -380,3 +380,25 @@ CREATE TABLE IF NOT EXISTS inv_item_listed (
   listed_at TEXT NOT NULL,             -- when the listing was delivered (the sweep's time)
   PRIMARY KEY (store, item)
 );
+-- Oct 26, 2026: parts sold on each work order (migrations/2026-10-26-retrace-wo-parts.sql, src/retrace-wo-parts.js).
+CREATE TABLE IF NOT EXISTS inv_wo_sold (
+  store INTEGER NOT NULL, wo TEXT NOT NULL,
+  cart_id TEXT,                        -- the WO's csuCartId (from the tracker's plain part)
+  sales_order TEXT,                    -- the answer's salesId (FSO…)
+  state TEXT NOT NULL,                 -- pending (handed out) | done | empty (no part lines) | failed (tried again) | gave_up (TRIES_MAX failures)
+  lines INTEGER, labels INTEGER,       -- sales lines in the answer; part lines kept
+  tries INTEGER NOT NULL DEFAULT 0,    -- failed reads in a row
+  claimed_until TEXT, last_error TEXT,
+  updated_at TEXT NOT NULL, done_at TEXT,
+  PRIMARY KEY (store, wo)
+);
+CREATE TABLE IF NOT EXISTS inv_wo_parts (
+  store INTEGER NOT NULL, wo TEXT NOT NULL,
+  line TEXT NOT NULL,                  -- the sales line's lineId (else n<lineNumber>)
+  label TEXT, item TEXT, sku TEXT, name TEXT,
+  quantity REAL, price REAL, serial_status TEXT, line_type TEXT,
+  sales_order TEXT, sold_at TEXT,      -- the answer's salesId and salesDate (else the WO's sold_at)
+  recorded_at TEXT NOT NULL,
+  PRIMARY KEY (store, wo, line)
+);
+CREATE INDEX IF NOT EXISTS inv_wo_parts_label ON inv_wo_parts (store, label);

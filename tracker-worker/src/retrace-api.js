@@ -98,6 +98,7 @@
 */
 import { passStmts } from './usage.js';
 import { TARGET_LISTED, LISTED_JOIN_SQL } from './retrace-listed.js';
+import { woSoldRoute } from './retrace-wo-parts.js';
 import { verifyRun, verifyAsk, verifyView, verifyTick, QUEUE_REASON, QUEUE_SINCE } from './retrace-verify.js';
 import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS } from './retrace.js';
 import { nowCols, rowNow, nowCountsStmt, nowCountsRows, nowCounts, availRes } from './retrace-now.js';
@@ -119,7 +120,7 @@ const QUEUE_ORDER = 'need_history DESC, last_seen DESC, label';
 
 const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 // Statements left out (an ignored item's insert / touch is null) are dropped here.
-const chunks = async (T, list) => { const out = [], stmts = list.filter(Boolean); for (let i = 0; i < stmts.length; i += 100) out.push(...(await T.batch(stmts.slice(i, i + 100)))); return out; };
+export const chunks = async (T, list) => { const out = [], stmts = list.filter(Boolean); for (let i = 0; i < stmts.length; i += 100) out.push(...(await T.batch(stmts.slice(i, i + 100)))); return out; };
 const lc = (v) => (v == null ? null : String(v).toLowerCase());
 // decodeURIComponent throws on a malformed % in the path: null instead (the routes answer 400, not 500).
 const unesc = (v) => { try { return decodeURIComponent(v); } catch (_) { return null; } };
@@ -128,10 +129,10 @@ const storeNo = (v) => { const m = /^\s*(\d{1,6})\b/.exec(v == null ? '' : Strin
 
 // ------------------------------------------------------------------ shared writes
 // Both give null for an ignored item (retrace.js IGNORED_ITEMS: BB0001, buyback devices), which chunks() drops.
-const insertMv = (T, store, m, at) => ignoredItem(m.item) ? null : T.prepare(`INSERT OR IGNORE INTO inv_movements (store, label, item, at, kind, raw_status, raw_event, ref_type, ref_id, ref_line, from_wh, to_wh, user_name, source, detail, key, recorded_at)
+export const insertMv = (T, store, m, at) => ignoredItem(m.item) ? null : T.prepare(`INSERT OR IGNORE INTO inv_movements (store, label, item, at, kind, raw_status, raw_event, ref_type, ref_id, ref_line, from_wh, to_wh, user_name, source, detail, key, recorded_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   .bind(store, m.label, m.item, m.at, m.kind, m.raw_status, m.raw_event, m.ref_type, m.ref_id, m.ref_line, m.from_wh, m.to_wh, m.user, m.source, m.detail, m.key, at);
-const soWo = (T, store, so, wo, source, at) => T.prepare(`INSERT INTO inv_so_wo (store, sales_order, wo, source, updated_at) VALUES (?, ?, ?, ?, ?)
+export const soWo = (T, store, so, wo, source, at) => T.prepare(`INSERT INTO inv_so_wo (store, sales_order, wo, source, updated_at) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT (store, sales_order) DO UPDATE SET wo = excluded.wo, source = excluded.source, updated_at = excluded.updated_at WHERE wo IS NOT excluded.wo`).bind(store, so, String(wo), source, at);
 // A label a movement names: known from now on, and queued for a history read at `need` (never lowered here).
 // queued_at: when the label was last queued (any touch): a history read that began before it doesn't clear the queue (see /retrace/history).
@@ -140,7 +141,7 @@ const touchLabel = (T, store, label, item, need, at, wo = null) => ignoredItem(i
   .bind(store, label, item, wo, at, at, need, at);
 
 // Labels remembered as not stock (inv_ignored_labels: their history named BB0001 as the current item). Never queued, touched or stored again.
-async function tombs(T, store, labels) {
+export async function tombs(T, store, labels) {
   const list = [...new Set(labels.filter(Boolean))], dead = new Set();
   for (let i = 0; i < list.length; i += 500) {
     const r = await T.prepare('SELECT label FROM inv_ignored_labels WHERE store = ? AND label IN (SELECT value FROM json_each(?))').bind(store, JSON.stringify(list.slice(i, i + 500))).all();
@@ -433,6 +434,7 @@ export async function woRetraceStmts(T, store, wo, prevPlain, plain, at) {
 // ------------------------------------------------------------------ store side
 export async function retraceStore(req, env, url, store, path, H) {
   const T = env.TR;
+  if (path.startsWith('/retrace/wo-sold')) { const r = await woSoldRoute(req, T, store, path, H); if (r) return r; } // sold WOs' parts (retrace-wo-parts.js)
 
   if (path === '/retrace/cursor' && req.method === 'GET') {
     const r = await T.prepare('SELECT sweep, value, updated_at FROM inv_cursors WHERE store = ?').bind(store).all();

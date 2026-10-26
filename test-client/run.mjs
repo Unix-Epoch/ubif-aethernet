@@ -439,6 +439,7 @@ const trackerEnv = async (overrides = {}) => {
   const cartId = overrides.cartId || WO_ANSWER.workorder.csuCartId;
   const per = (name, dflt) => (b, path) => { const wo = Number((/(\d{4,})/.exec(path) || [])[1]); const o = (overrides.byWo && overrides.byWo[wo] && overrides.byWo[wo][name]) || overrides[name]; return o || dflt(wo); };
   const routes = [
+    ...(overrides.routes || []),
     ['GET', /^\/api\/auth\/user$/, ok(USER)],
     ['POST', /^\/api\/workorders$/, (b) => ok({ workOrders: b.primaryFilter === 'Active' ? wos.map(rowOf) : [], rowCount: b.primaryFilter === 'Active' ? wos.length : 0 })],
     ['GET', /^\/v1\/914\/tracker\/key$/, ok({ publicJwk })],
@@ -463,6 +464,62 @@ await t('Tracker: a complete detail is posted (control)', async () => {
   assert.equal(r.sent, 1, JSON.stringify(r)); assert.equal(r.partial, 0);
   assert.equal(posted(env.fetchLog, /tracker\/wo\/1001$/).length, 1);
   assert.ok(env.gm.get('ae_wod_914') && env.gm.get('ae_wod_914')['1001'], 'a complete copy is cached');
+});
+// ---- Tracker: sold WOs' parts for Retrace (GET /api/workorder/{wo}/salesorder/{csuCartId} → POST …/retrace/wo-sold)
+const SALES_ORDER = retraceFx('wo-salesorder'); // keys as captured Oct 25, 2026; values made up (fixtures README)
+const soldEnv = (o = {}) => trackerEnv(Object.assign({ cartId: CART_ID, routes: [
+  ['GET', /^\/api\/workorder\/\d+\/salesorder\//, o.salesOrder || ok({ ...SALES_ORDER, cartId: CART_ID })],
+  ['POST', /^\/v1\/914\/tracker\/retrace\/wo-sold\/need$/, o.need || ok({ wos: [], left: 0 })],
+  ['POST', /^\/v1\/914\/tracker\/retrace\/wo-sold$/, (b) => ok({ done: b.results.filter((r) => r.order).length, empty: 0, failed: b.results.filter((r) => r.failed).length })],
+  ...(o.routes || []),
+] }, o.env || {}));
+const soldPosts = (env) => env.requests(/\/retrace\/wo-sold$/, 'POST').map((r) => r.body);
+await t('Tracker sold parts: a WO uploaded as Sale complete gets its sales order read; only part lines go up (no labor, credit, B- buyback)', async () => {
+  const env = await soldEnv();
+  const r = await env.AE.tracker.scan({ force: true });
+  const reads = env.requests(/\/salesorder\//);
+  assert.equal(reads.length, 1); assert.match(reads[0].url, /\/api\/workorder\/1001\/salesorder\/CART-1$/);
+  const [first] = soldPosts(env);
+  assert.equal(first.results.length, 1); assert.equal(first.results[0].wo, '1001'); assert.equal(first.results[0].cart_id, CART_ID);
+  const o = first.results[0].order;
+  assert.deepEqual(plain(o.salesLines.map((l) => l.serial)), ['180001-0000600001'], 'part lines only');
+  assert.deepEqual(Object.keys(o).sort(), ['cartId', 'salesDate', 'salesId', 'salesLines', 'storeId'], 'no payment sent');
+  assert.ok(!('grossAmount' in o.salesLines[0]) && !('program' in o.salesLines[0]), 'only the kept line fields');
+  assert.equal(o.salesId, 'FSO000700001');
+  assert.deepEqual(plain(env.requests(/wo-sold\/need$/, 'POST').map((x) => x.body.want)), [25], 'then the backfill asks for 25');
+  assert.equal(r.soldParts.read, 1); assert.equal(r.soldParts.done, 1);
+});
+await t('Tracker sold parts: the backfill reads what the Worker hands out (oldest first, its order), skipping a WO already read this scan, 25 at most', async () => {
+  const wos = [{ wo: '1001', cart_id: CART_ID }, ...Array.from({ length: 30 }, (_, i) => ({ wo: String(2000 + i), cart_id: 'C-' + i }))];
+  const env = await soldEnv({ need: ok({ wos, left: 31 }) });
+  const r = await env.AE.tracker.scan({ force: true });
+  const reads = env.requests(/\/salesorder\//).map((x) => x.url.replace(/^.*\/api\/workorder\//, ''));
+  assert.equal(reads.length, 1 + 25); assert.equal(reads[1], '2000/salesorder/C-0'); assert.ok(!reads.slice(1).some((u) => u.startsWith('1001/')));
+  assert.equal(soldPosts(env).at(-1).results.length, 25); assert.equal(r.soldParts.left, 31);
+});
+await t('Tracker sold parts: a WO that is not Sale complete is not read', async () => {
+  const env = await soldEnv({ env: { core: ok({ ...WO_ANSWER, workorder: { ...WO_ANSWER.workorder, workorderId: 1001, workorderStatusId: 10, csuCartId: CART_ID } }) } });
+  await env.AE.tracker.scan({ force: true });
+  assert.equal(env.requests(/\/salesorder\//).length, 0); assert.equal(soldPosts(env).length, 0);
+});
+for (const [name, answer] of [['{}', ok({})], ['salesLines not a list', ok({ ...SALES_ORDER, salesLines: 'x' })], ['the SPA shell (text)', { status: 200, body: '<!doctype html><html></html>' }], ['a 404', { status: 404, body: { message: 'Not Found' } }]]) {
+  await t('Tracker sold parts: ' + name + ' is reported as a failed read, never as a sale with no parts', async () => { // SYNTHETIC bad answers
+    const env = await soldEnv({ salesOrder: answer });
+    await env.AE.tracker.scan({ force: true });
+    const [p0] = soldPosts(env);
+    assert.ok(p0 && p0.results.length === 1 && p0.results[0].failed && !p0.results[0].order, JSON.stringify(p0));
+  });
+}
+await t('Tracker sold parts: Portal in trouble (504) stops the reads and reports nothing (an outage never uses up a WO\'s tries)', async () => {
+  const env = await soldEnv({ salesOrder: { status: 504, body: 'Endpoint request timed out' }, need: ok({ wos: [{ wo: '2001', cart_id: 'C-1' }], left: 1 }) });
+  const r = await env.AE.tracker.scan({ force: true });
+  assert.equal(env.requests(/\/salesorder\//).length, 1); assert.equal(soldPosts(env).length, 0); assert.match(r.soldParts.stopped, /Portal trouble/);
+  assert.equal(env.requests(/wo-sold\/need$/, 'POST').length, 0, 'no backfill either');
+});
+await t('Tracker sold parts: a Worker without the route (404) is skipped quietly', async () => {
+  const env = await soldEnv({ routes: [] , need: { status: 404, body: { error: 'not found' } } });
+  const r = await env.AE.tracker.scan({ force: true });
+  assert.ok(!r.errors.some((e) => /sold parts/.test(e)), JSON.stringify(r.errors)); assert.equal(r.soldParts.note, 'tracker Worker has no sold-parts route yet');
 });
 for (const [part, override] of [['audit trail', { audit: { status: 500, body: 'x' } }], ['notes', { notes: { status: 504, body: 'x' } }], ['cart', { cartId: CART_ID, cart: { status: 500, body: 'x' } }], ['events', { events: { status: 500, body: 'x' } }]]) {
   await t('Tracker: a failed ' + part + ' means no upload for that work order, and nothing cached', async () => {

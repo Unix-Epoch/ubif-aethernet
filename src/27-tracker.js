@@ -161,6 +161,63 @@ AE.tracker = (() => {
     return bump ? all[wo].n : 0;
   }
   const partialCount = (store, wo) => { const x = (GM_getValue(partialKey(store), {}) || {})[wo]; return (x && x.n) || 0; };
+
+  /*
+    Sold WOs' parts, for Retrace (tracker-worker/src/retrace-wo-parts.js). Portal empties the cart at Sale complete, but
+    GET /api/workorder/{wo}/salesorder/{csuCartId} still answers the lines (captured live Oct 25, 2026: { salesId, salesLines, cartId,
+    salesDate, storeId, payment, paymentTypes }; tracker-worker/test/fixtures/retrace/wo-salesorder.json). Read for each WO this scan
+    uploaded as Sale complete (status 14), then a paced backfill: the Worker hands out SOLD_ASK stored sold WOs a scan, oldest sale first,
+    until every one is done. Only part lines go up (a label serial, not a B-… buyback, not BB0001), with only the fields the Worker keeps.
+    An answer without a salesLines list, or a 4xx, is a failed read (reported: the Worker tries it again, then gives up). Portal in trouble
+    (5xx, timeout, no answer) stops the loop and reports nothing, so an outage never uses up a WO's tries. A Worker without the route (404) is skipped.
+  */
+  const SOLD_STATUS = 14, SOLD_ASK = 25;
+  const partLine = (l) => !!l && typeof l === 'object' && typeof l.serial === 'string' && l.serial.trim() !== '' && !/^B-/i.test(l.serial.trim()) && !/^bb0001$/i.test(String(l.sku || '').trim());
+  const LINE_KEYS = ['lineId', 'lineNumber', 'productId', 'sku', 'name', 'quantity', 'price', 'serial', 'serialStatus', 'lineType'];
+  async function salesOrderOf(wo, cartId) {
+    const j = await AE.api('GET', '/api/workorder/' + encodeURIComponent(wo) + '/salesorder/' + encodeURIComponent(cartId));
+    if (!AE.shape.isObj(j) || !Array.isArray(j.salesLines)) throw AE.shape.bad('sales order of WO ' + wo, 'no salesLines list', j);
+    const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
+    return Object.assign(pick(j, ['salesId', 'cartId', 'salesDate', 'storeId']), { salesLines: j.salesLines.filter(partLine).map((l) => pick(l, LINE_KEYS)) });
+  }
+  const httpOf = (e) => (e && e.status) || Number((/HTTP (\d{3})/.exec((e && e.message) || '') || [])[1]) || 0;
+  async function soldParts(store, by, justSold, result) {
+    const out = { read: 0, done: 0, empty: 0, failed: 0, left: null };
+    result.soldParts = out;
+    const send = async (results) => {
+      if (!results.length) return;
+      const j = await call('POST', '/v1/' + store + '/tracker/retrace/wo-sold', { results, by });
+      for (const k of ['done', 'empty', 'failed']) out[k] += (j && j[k]) || 0;
+    };
+    const readAll = async (list) => {
+      const results = [];
+      for (const x of list) {
+        if (AE.health.tripped()) { out.stopped = 'Portal is down'; break; }
+        try { results.push({ wo: String(x.wo), cart_id: x.cart_id, order: await salesOrderOf(x.wo, x.cart_id) }); out.read++; }
+        catch (e) {
+          if (/session expired/i.test(e.message || '') || e.storeChanged) throw e;
+          const st = httpOf(e);
+          if (e.name === 'BadShape' || e.notJson || (st >= 400 && st < 500 && st !== 429)) results.push({ wo: String(x.wo), cart_id: x.cart_id, failed: String(e.message || e).slice(0, 200) });
+          else { out.stopped = 'Portal trouble: ' + String(e.message || e).slice(0, 80); break; } // 5xx / timeout / no answer: not the WO's fault
+        }
+        await AE.sleep(GAP_MS);
+      }
+      await send(results);
+    };
+    try {
+      await readAll(justSold);
+      if (out.stopped) return out;
+      const n = await call('POST', '/v1/' + store + '/tracker/retrace/wo-sold/need', { want: SOLD_ASK });
+      out.left = n && Number.isInteger(n.left) ? n.left : null;
+      const seen = new Set(justSold.map((x) => String(x.wo)));
+      await readAll(((n && Array.isArray(n.wos)) ? n.wos : []).filter((x) => x && x.wo && x.cart_id && !seen.has(String(x.wo))).slice(0, SOLD_ASK));
+    } catch (e) {
+      if (/session expired/i.test(e.message || '') || e.storeChanged) throw e;
+      if (e.worker && e.status === 404) { out.note = 'tracker Worker has no sold-parts route yet'; return out; }
+      result.errors.push('sold parts: ' + (e.message || e));
+    }
+    return out;
+  }
   let running = false;
   async function scan(opts = {}) {
     if (!configured() || running || AE.status.paused('tracker') || AE.health.down()) return null;
@@ -179,6 +236,7 @@ AE.tracker = (() => {
       const byId = new Map(rows.map((r) => [Number(r.workorderId), r]));
       const s = await call('POST', '/v1/' + store + '/tracker/scan', { rows: rows.map(scanRow), storeName: p.storeName, by: p.name });
       Object.assign(result, { open: rows.length, need: s.need.length, note: s.note || null });
+      const justSold = []; // uploaded as Sale complete this scan: their sales order lines are read right after (soldParts)
       for (const n of s.need) {
         if (AE.health.tripped()) { result.note = 'Portal is down: stopped, the rest next scan'; break; } // AE.health: no more calls while Portal fails
         try {
@@ -197,6 +255,8 @@ AE.tracker = (() => {
           if (x.failed) { result.sentPartial = (result.sentPartial || 0) + 1; AE.noteError('tracker', new Error('WO ' + n.wo + ' sent with a partial detail after ' + PARTIAL_MAX + ' tries (' + x.failed.join(', ') + ')')); }
           if (partialCount(store, n.wo)) partialSeen(store, n.wo, false); // a complete send starts the count again
           if (j.same) result.same++; else result.sent++;
+          const pw = x.plain && x.plain.workorder;
+          if (pw && Number(pw.statusId) === SOLD_STATUS && pw.csuCartId) justSold.push({ wo: n.wo, cart_id: String(pw.csuCartId) });
         } catch (e) {
           if (/session expired/i.test(e.message || '') || e.storeChanged) throw e; // signed out or store switched: stop
           if (e.otherStore) { // never upload another store's work order; one on record here was moved there
@@ -210,6 +270,7 @@ AE.tracker = (() => {
         }
         await AE.sleep(GAP_MS);
       }
+      if (!AE.health.tripped()) await soldParts(store, p.name, justSold, result);
       try { const sales = await salesSync(store, jwk, opts.force); if (sales) result.sales = Object.fromEntries(Object.entries(sales).map(([d, x]) => [d, x.count + ' sales, $' + x.total])); }
       catch (e) { result.errors.push('sales: ' + (e.message || e)); }
       return result;
@@ -314,7 +375,7 @@ AE.tracker = (() => {
     return data;
   }
 
-  return { configured, scan, dryRun, rfp, call, daily, last: () => GM_getValue(LAST_KEY, null), plainPart, cardOf, scrub, crypto: C };
+  return { configured, scan, dryRun, rfp, call, daily, salesOrderOf, last: () => GM_getValue(LAST_KEY, null), plainPart, cardOf, scrub, crypto: C };
 })();
 
 if (AE.tracker.configured()) {

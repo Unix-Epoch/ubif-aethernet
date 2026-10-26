@@ -296,7 +296,7 @@
     const woInput = h('input', { type: 'text', inputmode: 'numeric', placeholder: 'WO #', style: 'width:110px', value: (location.pathname.match(/\/workorder\/(\d+)/) || [])[1] || '' });
     const trLast = AE.tracker.last();
     const tracker = section('Work order tracker',
-      note(AE.tracker.configured() ? 'On (Worker set). Last scan: ' + (trLast ? new Date(trLast.at).toLocaleString() + ' · open ' + (trLast.open ?? '—') + ' · sent ' + trLast.sent + ' · unchanged ' + trLast.same + ' · failed ' + trLast.failed + (trLast.note ? ' · ' + trLast.note : '') + (trLast.errors.length ? ' · ' + trLast.errors.join('; ') : '') : 'none yet')
+      note(AE.tracker.configured() ? 'On (Worker set). Last scan: ' + (trLast ? new Date(trLast.at).toLocaleString() + ' · open ' + (trLast.open ?? '—') + ' · sent ' + trLast.sent + ' · unchanged ' + trLast.same + ' · failed ' + trLast.failed + (trLast.soldParts ? ' · sold parts: read ' + trLast.soldParts.read + ', done ' + trLast.soldParts.done + ', empty ' + trLast.soldParts.empty + ', failed ' + trLast.soldParts.failed + (trLast.soldParts.left != null ? ', left ' + trLast.soldParts.left : '') + (trLast.soldParts.stopped ? ' (' + trLast.soldParts.stopped + ')' : '') + (trLast.soldParts.note ? ' (' + trLast.soldParts.note + ')' : '') : '') + (trLast.note ? ' · ' + trLast.note : '') + (trLast.errors.length ? ' · ' + trLast.errors.join('; ') : '') : 'none yet')
         : 'Off: no tracker Worker in this build. The dry run still works (it seals with a throwaway key).'),
       row(btn('Scan now', async () => {
         if (!AE.tracker.configured()) throw new Error('No tracker Worker in this build.');
@@ -359,6 +359,19 @@
         try {
           const r = await AE.retrace.probeItem(item);
           rtOut.replaceChildren(row(btn('Copy', async () => { await navigator.clipboard.writeText(JSON.stringify(r, null, 1)); AE.toast('Copied', 'The probe result is on the clipboard.', 'ok'); })),
+            h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace;max-height:320px;overflow:auto' }, JSON.stringify(r, null, 1)));
+        } catch (e) { rtOut.replaceChildren(note('Probe failed: ' + (e.message || e))); }
+      }), btn("Retrace: probe a sold WO's sales order", async () => {
+        // The raw answer of GET /api/workorder/{wo}/salesorder/{csuCartId}, to save over tracker-worker/test/fixtures/retrace/wo-salesorder.json
+        const wo = (window.prompt('Sold work order number:', '') || '').trim();
+        if (!/^\d+$/.test(wo)) return;
+        rtOut.replaceChildren(note('Reading WO ' + wo + ' and its sales order…'));
+        try {
+          const core = await AE.api('GET', '/api/workorder/' + wo), cart = core && core.workorder && core.workorder.csuCartId;
+          if (!cart) throw new Error('WO ' + wo + ' has no csuCartId');
+          const raw = await AE.api('GET', '/api/workorder/' + wo + '/salesorder/' + encodeURIComponent(cart));
+          const r = { wo, csuCartId: cart, raw };
+          rtOut.replaceChildren(row(btn('Copy', async () => { await navigator.clipboard.writeText(JSON.stringify(r, null, 1)); AE.toast('Copied', 'The sales order answer is on the clipboard.', 'ok'); })),
             h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace;max-height:320px;overflow:auto' }, JSON.stringify(r, null, 1)));
         } catch (e) { rtOut.replaceChildren(note('Probe failed: ' + (e.message || e))); }
       }), btn(AE.retrace.recording() ? 'Retrace: stop recording Portal calls' : 'Retrace: record Portal calls', () => {

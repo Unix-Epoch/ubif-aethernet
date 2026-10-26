@@ -137,6 +137,7 @@ for (const stmt of readFileSync('schema.sql', 'utf8').replace(/--[^\n]*/g, '').s
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-23-retrace.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-24-retrace-baseline.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-24-retrace-verify.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
+for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-26-retrace-wo-parts.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-26-retrace-listed.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-25-retrace-so-need.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 await env.AE.prepare('CREATE TABLE IF NOT EXISTS store_access (store INTEGER PRIMARY KEY, name TEXT, added_by TEXT, added_at TEXT)').run();
@@ -1548,6 +1549,71 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.deepEqual((await pr()).steps.labels, { x: 2, y: 3 }, 'storable above the count: the frozen count');
   await T.prepare("UPDATE inv_item_listed SET storable = 2, listed_at = '2026-10-24T17:00:00.000Z' WHERE store = 566").run();
   assert.deepEqual((await pr()).steps.labels, { x: 2, y: 3 }, 'before the freeze: not used');
+}
+
+// ------------------------------------------------------------------ sold WOs' parts (retrace-wo-parts.js): salesorder lines -> label/WO links, a backfill that ends
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (567, 'Sold Parts')").run();
+  const need = (want) => call('POST', '/v1/567/tracker/retrace/wo-sold/need', { want });
+  const post = (results) => call('POST', '/v1/567/tracker/retrace/wo-sold', { results, by: 'Tech Alpha' });
+  const FX = fx('wo-salesorder');
+  const order = (over = {}) => Object.assign(JSON.parse(JSON.stringify(FX)), { storeId: 567, cartId: '567-111' }, over);
+  const wo = (id, sold, cart, status = 14) => T.prepare('INSERT INTO workorders (store, wo, status_id, sold_at, plain) VALUES (567, ?, ?, ?, ?)').bind(id, status, sold, JSON.stringify({ workorder: { workorderId: id, statusId: status, csuCartId: cart } }));
+  await T.batch([wo(700001, '2026-10-20T15:00:00.000Z', '567-111'), wo(700002, '2026-10-10T15:00:00.000Z', '567-222'), wo(700003, null, '567-333', 10), wo(700004, '2026-10-05T15:00:00.000Z', null),
+    wo(700005, '2026-10-12T15:00:00.000Z', '567-555'), wo(700006, null, '567-666', 14)]);
+  // oldest sale first; open WOs and WOs without a cart id stay out; status 14 with no sold_at counts (sorted last)
+  let r = await need(2); assert.ok(r.status < 300, JSON.stringify(r));
+  assert.deepEqual(r.j.wos, [{ wo: '700002', cart_id: '567-222' }, { wo: '700005', cart_id: '567-555' }]); assert.equal(r.j.left, 4);
+  r = await need(25); assert.deepEqual(r.j.wos.map((x) => x.wo), ['700001', '700006'], 'claimed ones are not handed out twice');
+  assert.deepEqual((await need(25)).j.wos, []);
+  assert.ok((await need(99)).j.wos.length === 0 && (await need('x')).status < 300, 'want is capped / defaulted');
+  // a real answer: the part line is linked, labor / credit / BB0001 buyback lines are not
+  r = await post([{ wo: '700001', cart_id: '567-111', order: order() }]);
+  assert.deepEqual(r.j, { done: 1, empty: 0, failed: 0, gave_up: 0, rejected: 0, labels: 1 });
+  const parts = (await T.prepare("SELECT wo, line, label, item, sku, name, serial_status, sales_order, sold_at FROM inv_wo_parts WHERE store = 567").all()).results;
+  assert.deepEqual(parts, [{ wo: '700001', line: 'L-2', label: '180001-0000600001', item: '180001', sku: '180001', name: 'iPhone 13 Glass/LCD', serial_status: 'Sold', sales_order: 'FSO000700001', sold_at: '2026-10-20T15:30:00.000Z' }]);
+  let lb = await T.prepare("SELECT wo, sales_order, need_history FROM inv_labels WHERE store = 567 AND label = '180001-0000600001'").first();
+  assert.deepEqual([lb.wo, lb.sales_order, lb.need_history], ['700001', 'FSO000700001', 2], 'a new label: linked and queued for its history');
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_labels WHERE store = 567 AND label LIKE 'B-%'"), 0, 'the buyback line is skipped');
+  assert.equal((await T.prepare("SELECT wo FROM inv_so_wo WHERE store = 567 AND sales_order = 'FSO000700001'").first()).wo, '700001');
+  const mv = (await T.prepare("SELECT kind, ref_type, ref_id, at, source FROM inv_movements WHERE store = 567").all()).results;
+  assert.deepEqual(mv, [{ kind: 'used', ref_type: 'wo', ref_id: '700001', at: '2026-10-20T15:30:00.000Z', source: 'wo' }]);
+  assert.equal((await T.prepare("SELECT state, lines, labels FROM inv_wo_sold WHERE store = 567 AND wo = '700001'").first()).state, 'done');
+  // sent again (the WO seen sold again): nothing doubles
+  await post([{ wo: '700001', cart_id: '567-111', order: order() }]);
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_movements WHERE store = 567"), 1); assert.equal(await count("SELECT COUNT(*) AS n FROM inv_wo_parts WHERE store = 567"), 1);
+  // an OLDER sale of the same label (backfill runs oldest first, so a later sale may already be linked): the label keeps the later WO;
+  // a label the WO's own cart already sold ('used' on that WO) gets no second movement
+  await T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, ref_type, ref_id, source, key, recorded_at) VALUES (567, '180001-0000600002', '180001', ?, 'used', 'wo', '700002', 'wo', 'k-cart-used', ?)").bind('2026-10-10T15:00:00.000Z', AT).run();
+  const two = order({ cartId: '567-222', salesId: 'FSO000700002', salesDate: '2026-10-10T15:00:00Z' });
+  two.salesLines.push(Object.assign({}, two.salesLines[1], { lineId: 'L-5', serial: '180001-0000600002' }));
+  r = await post([{ wo: '700002', cart_id: '567-222', order: two }]);
+  assert.equal(r.j.labels, 2);
+  lb = await T.prepare("SELECT wo, sales_order FROM inv_labels WHERE store = 567 AND label = '180001-0000600001'").first();
+  assert.deepEqual([lb.wo, lb.sales_order], ['700001', 'FSO000700001'], 'the later sale keeps the label');
+  assert.equal((await T.prepare("SELECT wo FROM inv_labels WHERE store = 567 AND label = '180001-0000600002'").first()).wo, '700002');
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_movements WHERE store = 567 AND label = '180001-0000600002'"), 1, 'the cart diff\'s used row is the only one');
+  // no part lines: 'empty', done
+  r = await post([{ wo: '700005', cart_id: '567-555', order: order({ cartId: '567-555', salesLines: [FX.salesLines[0]] }) }]);
+  assert.equal(r.j.empty, 1);
+  // failures: a read that failed, an answer that isn't a sales order, another cart's, another store's; a WO the tracker doesn't hold is rejected
+  r = await post([{ wo: '700006', cart_id: '567-666', failed: 'HTTP 504' }, { wo: '700006', cart_id: '567-666', order: { message: 'Unauthorized' } }, { wo: '700006', order: order({ cartId: '567-999' }) },
+    { wo: '700006', order: order({ cartId: '567-666', storeId: 914 }) }, { wo: '999999', order: order() }, { wo: 'abc', order: order() }]);
+  assert.deepEqual([r.j.failed, r.j.gave_up, r.j.rejected], [4, 0, 2], JSON.stringify(r.j));
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_wo_parts WHERE store = 567 AND wo = '700006'"), 0, 'nothing written from a failure');
+  // the fifth failure gives up, so the backfill ends
+  r = await post([{ wo: '700006', failed: 'HTTP 500' }]); assert.equal(r.j.gave_up, 1);
+  const st = (await T.prepare("SELECT state, tries, last_error FROM inv_wo_sold WHERE store = 567 AND wo = '700006'").first());
+  assert.deepEqual([st.state, st.tries, st.last_error], ['gave_up', 5, 'HTTP 500']);
+  r = await need(25); assert.deepEqual([r.j.wos, r.j.left], [[], 0], 'every stored sold WO done or given up: the backfill has ended');
+  // a failed (not given up) WO comes back once its claim is over; a done WO sent failed later stays done
+  await post([{ wo: '700001', failed: 'HTTP 504' }]);
+  assert.equal((await T.prepare("SELECT state FROM inv_wo_sold WHERE store = 567 AND wo = '700001'").first()).state, 'done');
+  await T.prepare("INSERT INTO workorders (store, wo, status_id, sold_at, plain) VALUES (567, 700007, 14, '2026-10-25T10:00:00.000Z', ?)").bind(JSON.stringify({ workorder: { csuCartId: '567-777' } })).run();
+  await post([{ wo: '700007', failed: 'HTTP 504' }]);
+  assert.deepEqual((await need(25)).j.wos, [{ wo: '700007', cart_id: '567-777' }], 'failed once: handed out again');
+  assert.equal((await post('nope')).status, 400);
+  assert.equal((await call('POST', '/v1/567/tracker/retrace/wo-sold', { results: Array(51).fill({}) })).status, 400);
 }
 
 // the admin page's source: the drawer reads the derived status, not the raw word; an unlinked sales order is said so

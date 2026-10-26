@@ -1,0 +1,14 @@
+{
+  "salesId": "FSO000700001",
+  "salesLines": [
+    { "lineId": "L-1", "lineNumber": 1, "productId": 1001, "name": "iPhone 13 Screen Repair", "price": 129.99, "grossAmount": 129.99, "quantity": 1, "serial": "", "serialStatus": "", "sku": "SRV-100", "lineType": "labor", "isChild": false, "parentLineId": null, "isScanned": false, "program": "Walk-in", "originalLineId": null },
+    { "lineId": "L-2", "lineNumber": 2, "productId": 1002, "name": "iPhone 13 Glass/LCD", "price": 0, "grossAmount": 0, "quantity": 1, "serial": "180001-0000600001", "serialStatus": "Sold", "sku": "180001", "lineType": "part", "isChild": true, "parentLineId": "L-1", "isScanned": true, "program": "Walk-in", "originalLineId": null },
+    { "lineId": "L-3", "lineNumber": 3, "productId": 1003, "name": "Trade-in credit", "price": -50, "grossAmount": -50, "quantity": 1, "serial": "", "serialStatus": "", "sku": "TRADE-1", "lineType": "trade_credit", "isChild": false, "parentLineId": null, "isScanned": false, "program": "Walk-in", "originalLineId": null },
+    { "lineId": "L-4", "lineNumber": 4, "productId": 1004, "name": "Buyback device", "price": 0, "grossAmount": 0, "quantity": 1, "serial": "B-210004-0000000044", "serialStatus": "Available", "sku": "BB0001", "lineType": "part", "isChild": false, "parentLineId": null, "isScanned": true, "program": "Walk-in", "originalLineId": null }
+  ],
+  "cartId": "914-1792856582593",
+  "salesDate": "2026-10-20T15:30:00Z",
+  "storeId": 914,
+  "payment": { "amountPaid": 79.99, "subtotal": 79.99, "discount": 0, "tax": 0, "total": 79.99 },
+  "paymentTypes": []
+}
