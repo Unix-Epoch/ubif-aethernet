@@ -855,6 +855,36 @@ await t('Retrace soNeed: over the history loop\'s detail budget the sales order 
   assert.equal(r.details, 15, JSON.stringify(r)); assert.equal(r.detailsDeferred, 5, 'counted, and still unlinked at the Worker (its soNeed lists them)');
 });
 
+// ---- B3: serial history answering 404 (by status only; no 404 body shape is assumed)
+const HL = ['176255-0000514371', '176255-0000514372'];
+const h404Env = (history, gm = {}) => retraceEnv(ok(LABELS), { todo: [], gm, history, sweep: (b) => (b.need > 0 ? { need: HL } : {}) });
+const histPosts = (env) => env.requests(/\/retrace\/history$/, 'POST').map((r) => r.body);
+const firstNotFound = (_b, path) => (path.endsWith(HL[0]) ? { status: 404, body: { message: 'Not Found' } } : ok(SERIAL.sold)); // SYNTHETIC 404 (status is all that is read)
+await t('Retrace history 404: once is a failed read (nothing posted for it, counted), the next label is still read, no Portal trouble', async () => {
+  const env = h404Env(firstNotFound);
+  const r = await env.AE.retrace.run();
+  assert.deepEqual(plain(histPosts(env).map((b) => b.label)), [HL[1]]);
+  assert.equal(env.gm.get('ae_retrace_h404_914')[HL[0]].n, 1); assert.equal(r.history404, 1); assert.equal(r.portalTrouble, false);
+});
+await t('Retrace history 404: the third in a row is sent as none: 404 (no rows), and the count is cleared', async () => {
+  const env = h404Env(firstNotFound, { ae_retrace_h404_914: { [HL[0]]: { n: 2, at: Date.now() } } });
+  const r = await env.AE.retrace.run();
+  const none = histPosts(env).find((b) => b.label === HL[0]);
+  assert.ok(none, JSON.stringify(histPosts(env))); assert.equal(none.none, 404); assert.deepEqual(plain(none.rows), []);
+  assert.equal(env.gm.get('ae_retrace_h404_914')[HL[0]], undefined); assert.equal(r.historyNone, 1);
+});
+await t('Retrace history 404: a 5xx is not a 404 (never none, not counted; the breaker trips after two)', async () => {
+  const env = h404Env(() => ({ status: 504, body: 'Endpoint request timed out' }), { ae_retrace_h404_914: { [HL[0]]: { n: 2, at: Date.now() } } });
+  const r = await env.AE.retrace.run();
+  assert.ok(histPosts(env).every((b) => b.none === undefined)); assert.equal(env.gm.get('ae_retrace_h404_914')[HL[0]].n, 2); assert.equal(r.portalTrouble, true);
+});
+await t('Retrace history 404: a real read clears the count', async () => {
+  const env = h404Env(() => ok(SERIAL.sold), { ae_retrace_h404_914: { [HL[0]]: { n: 2, at: Date.now() } } });
+  await env.AE.retrace.run();
+  assert.equal(env.gm.get('ae_retrace_h404_914')[HL[0]], undefined);
+  assert.ok(histPosts(env).every((b) => b.none === undefined && b.rows.length));
+});
+
 // ---- C: purchase orders
 const poRun = (poReceive, poHeader) => retraceEnv(ok(LABELS), { todo: [], poReceive, poHeader, sweep: (b) => (b.poNeed > 0 ? { pos: { need: ['UBFPO000099001'], events: 0 } } : {}) });
 await t('Retrace POs: header + receive details go up together (control)', async () => {

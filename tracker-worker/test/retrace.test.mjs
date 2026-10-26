@@ -1640,6 +1640,33 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.equal((await admin('both@x.com', '/retrace/wo/567/700001')).status, 200);
 }
 
+// ------------------------------------------------------------------ serial history 404 (none: 404): out of the queue, retried weekly
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (568, 'No History')").run();
+  const L1 = '568001-0000000001', L2 = '568001-0000000002';
+  await T.batch([L1, L2].map((l) => T.prepare("INSERT INTO inv_labels (store, label, item, first_seen, last_seen, need_history, queued_at) VALUES (568, ?, '568001', ?, ?, 1, ?)").bind(l, AT, AT, AT)));
+  const sw = (body) => call('POST', '/v1/568/tracker/retrace/sweep', Object.assign({ need: 10 }, body));
+  assert.deepEqual((await sw({})).j.need.sort(), [L1, L2]);
+  let r = await call('POST', '/v1/568/tracker/retrace/history', { label: L1, rows: [], none: 404 });
+  assert.ok(r.status < 300, JSON.stringify(r));
+  const row = await T.prepare('SELECT need_history, history_hash, last_history_at, claimed_until FROM inv_labels WHERE store = 568 AND label = ?').bind(L1).first();
+  assert.deepEqual([row.need_history, row.history_hash, !!row.last_history_at, row.claimed_until], [0, 'none:404', true, null], 'out of the queue, marked');
+  await call('POST', '/v1/568/tracker/retrace/history', { label: L2, rows: [], none: '404' }); // not the number: an ordinary empty history
+  assert.notEqual((await T.prepare('SELECT history_hash FROM inv_labels WHERE store = 568 AND label = ?').bind(L2).first()).history_hash, 'none:404');
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_movements WHERE store = 568"), 0, 'nothing invented');
+  await T.prepare('UPDATE inv_labels SET claimed_until = NULL WHERE store = 568').run();
+  assert.deepEqual((await sw({})).j.need, [], 'not handed out again within the week');
+  // Verify check 3 doesn't count it stale (baseline needed for a run)
+  await T.batch([T.prepare("INSERT INTO inv_item_counts (store, item, labels, counted_at) VALUES (568, '568001', 2, ?)").bind(AT), T.prepare("INSERT INTO inv_baseline (store, expected_items, expected_labels, expected_pos, counted_at, created_at) VALUES (568, 1, 2, 0, ?, ?)").bind(AT, AT)]);
+  const st = (await adminPost('owner@x.com', '/retrace/verify/568/run')).j.checks.find((c) => c.key === 'stale');
+  assert.equal(st.n, 0, JSON.stringify(st));
+  // a week on: queued again (as backfill), and a real history then replaces the marker
+  await T.prepare("UPDATE inv_labels SET last_history_at = ? WHERE store = 568 AND label = ?").bind(new Date(Date.now() - 8 * 86400000).toISOString(), L1).run();
+  assert.deepEqual((await sw({})).j.need, [L1]);
+  await call('POST', '/v1/568/tracker/retrace/history', { label: L1, rows: fx('serial-history').sold.value.map((x) => ({ ...x, InventSerialId: L1, Store: '568', ItemId: '568001' })) });
+  assert.notEqual((await T.prepare('SELECT history_hash FROM inv_labels WHERE store = 568 AND label = ?').bind(L1).first()).history_hash, 'none:404');
+}
+
 // the admin page's source: the drawer reads the derived status, not the raw word; an unlinked sales order is said so
 {
   const ui = readFileSync('../admin-worker/src/retrace-ui.js', 'utf8');

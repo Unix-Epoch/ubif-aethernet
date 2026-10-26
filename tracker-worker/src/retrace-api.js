@@ -115,6 +115,9 @@ const MAX = { sweep: 4000000, history: 1000000, watch: 150000 };
 const SWEEP_SOURCES = ['sweep', 'transfer', 'count', 'rma', 'buyback', 'po', 'snapshot'];
 const CURSOR_RE = /^[a-z][a-z0-9_-]{0,30}$/, LAST_SWEEP = 'last_sweep';
 const NEED = { backfill: 1, touched: 2, changed: 3 };
+// A label whose serial history Portal answered 404 for, repeatedly (POST /retrace/history { none: 404 }): its history_hash, and how long until it's tried again.
+export const NONE_404 = 'none:404';
+const NONE_RETRY_MS = 7 * 86400000;
 // The order the sweep hands labels out to read (and the Collection queue panel lists them in): changed > touched > backfill, most recently seen first.
 const QUEUE_ORDER = 'need_history DESC, last_seen DESC, label';
 
@@ -488,7 +491,11 @@ export async function retraceStore(req, env, url, store, path, H) {
       ]);
       return H.json({ ok: true, added: 0, ignored: true, deletedLabels: (r[0].meta && r[0].meta.changes) || 0, skipped });
     }
-    const at = H.now(), hash =hash53(JSON.stringify(rows.map(({ ['@odata.etag']: _e, ...r }) => r)));
+    // none: 404 with no rows = Portal answered 404 for this label's history several times in a row (the collector counts them; the status only,
+    // never a 404 body). Recorded as read with the NONE_404 marker, so it leaves the queue and stops holding up progress / Verify check 3;
+    // the sweep queues it again after NONE_RETRY_MS in case Portal has it by then.
+    const none = b.none === 404 && !all.length;
+    const at = H.now(), hash = none ? NONE_404 : hash53(JSON.stringify(rows.map(({ ['@odata.etag']: _e, ...r }) => r)));
     const row = await T.prepare('SELECT history_hash FROM inv_labels WHERE store = ? AND label = ?').bind(store, label).first();
     // Clears the queue only when nothing queued the label after this read's claim began (queued_at newer than claimed_until - CLAIM_MIN: a sweep
     // or a movement named it meanwhile); then it stays queued, unclaimed, for another read. No claim (a read nobody handed out) always clears.
@@ -736,6 +743,9 @@ export async function retraceStore(req, env, url, store, path, H) {
     // browsers sweeping at once never get the same label. The claim runs CLAIM_MIN minutes from this request's `at`, which is when the claim began
     // (POST /history compares queued_at with it). RETURNING has no order: put them back in QUEUE_ORDER here.
     const want = Math.min(Math.max(Number.isInteger(b.need) ? b.need : NEED_MAX, 0), NEED_CAP);
+    // labels Portal had no history for (NONE_404) come back, as backfill, once a week
+    if (want) await T.prepare(`UPDATE inv_labels SET need_history = ${NEED.backfill}, queued_at = ?1 WHERE store = ?2 AND history_hash = '${NONE_404}' AND need_history = 0 AND last_history_at < ?3`)
+      .bind(at, store, new Date(Date.parse(at) - NONE_RETRY_MS).toISOString()).run();
     const need = want ? (await T.prepare(`UPDATE inv_labels SET claimed_until = ?1 WHERE store = ?2 AND (claimed_until IS NULL OR claimed_until < ?3) AND label IN
         (SELECT label FROM inv_labels WHERE store = ?2 AND need_history > 0 AND (claimed_until IS NULL OR claimed_until < ?3) ORDER BY ${QUEUE_ORDER} LIMIT ?4) RETURNING label, need_history, last_seen`)
       .bind(new Date(Date.parse(at) + CLAIM_MIN * 60000).toISOString(), store, at, want).all()).results

@@ -65,6 +65,9 @@ AE.retrace = (() => {
   const R = (() => { /*__RETRACE__*/ })();
   const BROWSER_KEY = 'ae_retrace_browser';
   const PASS_KEY = 'ae_retrace_pass_at', LAST_KEY = 'ae_retrace_last', QUEUE_KEY = 'ae_retrace_watch_q';
+  // Serial history answered 404 (by status, never a 404 body): { label: { n, at } }. Below H404_MAX in a row the label just stays queued at the
+  // Worker (a failed read); at H404_MAX it is sent as { none: 404 }, which the Worker records as "no history from Portal" and retries weekly.
+  const H404_KEY = (s) => 'ae_retrace_h404_' + s, H404_MAX = 3, H404_KEEP_MS = 30 * 86400000;
   const STOCK_KEY = (s) => 'ae_retrace_stock_' + s, TODO_KEY = (s) => 'ae_retrace_todo_' + s, SO_KEY = (s) => 'ae_retrace_so_' + s, NAMED_KEY = (s) => 'ae_retrace_named_' + s;
   const PASS_MS = 10 * 60 * 1000, LOOKUP_MS = 30 * 60 * 1000, GAP_MS = 300;
   const COUNT_KEY = (s) => 'ae_retrace_count_' + s, COUNT_BUDGET = 200;
@@ -602,6 +605,7 @@ AE.retrace = (() => {
 
       // 6. serial history for the labels the Worker handed out; label details for unlinked sales orders
       const sos = new Set(GM_getValue(SO_KEY(store), []) || []), snaps = [];
+      const h404 = gmMap(H404_KEY(store));
       for (const label of sw.need) {
         if (trouble.on) { trouble.mark('history ' + label); break; }
         try {
@@ -611,6 +615,7 @@ AE.retrace = (() => {
           AE.shape.obj(h, ['value'], 'serial history ' + label);
           const rows = AE.shape.list(h, 'value', 'serial history ' + label);
           const j = await worker(store, 'POST', '/history', { label, rows, by });
+          if (h404.has(label)) h404.delete(label); // Portal has it now
           result.histories++; result.historyRows += rows.length; result.added += j.added || 0;
           const so = rows.map((r) => r && r.RefTable && /^sales orders?$/i.test(r.RefTable) && r.SourceKey).filter(Boolean).pop();
           if (so && !sos.has(so) && result.details < DETAIL_BUDGET) {
@@ -622,8 +627,22 @@ AE.retrace = (() => {
               if (sn) { snaps.push(sn); sos.add(so); } else note('label details ' + label, AE.shape.bad('label details ' + label, 'no usable label', d));
             } catch (e) { if (fatal(e)) throw e; note('label details ' + label, e); trouble.mark('label details ' + label); }
           } else if (so && !sos.has(so)) result.detailsDeferred++; // over budget: the Worker still lists this sales order in soNeed (no inv_so_wo row), read below / next pass
-        } catch (e) { if (fatal(e)) throw e; note('history ' + label, e); trouble.mark('history ' + label); }
+        } catch (e) {
+          if (fatal(e)) throw e;
+          if (httpOf(e) === 404 && !e.worker) {
+            // Portal's 404 for this label's history: counted; only H404_MAX in a row is "none from Portal" (5xx / timeouts stay with the breaker)
+            const n = ((h404.get(label) && h404.get(label).n) || 0) + 1;
+            result.history404 = (result.history404 || 0) + 1;
+            if (n >= H404_MAX) {
+              try { await worker(store, 'POST', '/history', { label, rows: [], none: 404, by }); h404.delete(label); result.historyNone = (result.historyNone || 0) + 1; }
+              catch (e2) { if (fatal(e2)) throw e2; h404.set(label, { n, at: Date.now() }); note('history ' + label, e2); }
+            } else h404.set(label, { n, at: Date.now() });
+            continue;
+          }
+          note('history ' + label, e); trouble.mark('history ' + label);
+        }
       }
+      h404.save((k, v) => v && Date.now() - v.at < H404_KEEP_MS);
       /*
         Sales orders the Worker lists as unlinked (soNeed: no inv_so_wo row), each with one label whose newest sales order it is: its label details
         (fixtures/retrace/label-details.json: SalesOrderNumber + WorkOrderId) are read and posted as a snapshot, which links them. The answer must be a

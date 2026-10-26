@@ -780,7 +780,7 @@ async function openLabel(label) {
     ['Work order', wo ? woRef(wo, wo + ' ↗') : soNow ? h('span', { class: 'rsoft', title: 'Serial history names the sales order only; the Worker links it to a work order from the tracker or the label details' }, 'not linked yet · sales order ' + soNow) : null],
     ['Sales order', l.sales_order || null],
     ['OEM serial', l.oem_serial || null], ['IMEI', l.imei || null],
-    ['History read', l.last_history_at ? when(l.last_history_at) : l.need_history ? 'Queued' : null],
+    ['History read', l.history_hash === 'none:404' ? 'None from Portal (its history answered 404), tried ' + when(l.last_history_at) + '; tried again weekly' : l.last_history_at ? when(l.last_history_at) : l.need_history ? 'Queued' : null],
   ].filter(([, v]) => v);
   el.dsub.textContent = mv.length ? 'Full history, oldest first' : 'No movements recorded yet';
   const usedBox = wo ? usedOnWo(label, wo, mv) : null;
