@@ -24,7 +24,8 @@
               so the backfill always ends. A WO this store's tracker doesn't hold is rejected.
           State per WO: inv_wo_sold (migrations/2026-10-26-retrace-wo-parts.sql).
 */
-import { cleanLabel, itemOfLabel, isoAt, ignoredItem } from './retrace.js';
+import { cleanLabel, itemOfLabel, isoAt, ignoredItem, NOW_KIND } from './retrace.js';
+import { nowCols, rowNow } from './retrace-now.js';
 import { insertMv, soWo, tombs, chunks } from './retrace-api.js';
 
 export const WOS_ASK = 25, TRIES_MAX = 5;
@@ -122,4 +123,63 @@ export async function woSoldRoute(req, T, store, path, H) {
     return H.json(out);
   }
   return null;
+}
+
+/*
+  Admin: one work order's parts and labels, for the Work orders page's "Parts and labels" tab and the Retrace label drawer's
+  "Used on work order" block. GET /api/tracker/retrace/wo/:store/:wo (gate: page 'retrace' for the store, and here page 'wos' too:
+  it is a work order view). Only Retrace's own tables (inv_*): no workorders / snapshots field leaves through this route.
+    → { store, wo, sold: { state, sales_order, lines, labels, done_at, last_error } | null, sales_orders: [FSO…],
+        parts: [{ label, item, name, line, at_sale, now, group, last: { kind, at, user } | null, reserved: { at, user } | null, used_at, source, via }],
+        loose: [{ item, name, kind, at, user }], still_reserved: [label] }
+    parts, in this order: the sold WO's sales order lines (source 'sales order', at_sale = the line's serialStatus), then labels the WO's cart /
+    parts events moved (source 'work order'), then labels linked through one of its sales orders in serial history (source 'retrace', via = the FSO)
+    or carrying the WO on the label. now / group: where the label stands now (retrace-now.js). still_reserved: labels of this WO Reserved now.
+    loose: item-level movements on the WO (no label: quantity-only parts), newest per item.
+*/
+export async function woPartsView(T, store, wo) {
+  const [sold, sos, parts] = await T.batch([
+    T.prepare('SELECT state, sales_order, lines, labels, done_at, last_error FROM inv_wo_sold WHERE store = ? AND wo = ?').bind(store, wo),
+    T.prepare('SELECT sales_order FROM inv_so_wo WHERE store = ? AND wo = ? ORDER BY sales_order').bind(store, wo),
+    T.prepare('SELECT label, item, name, line, serial_status, sales_order FROM inv_wo_parts WHERE store = ? AND wo = ? ORDER BY line').bind(store, wo),
+  ]);
+  const soList = sos.results.map((r) => r.sales_order);
+  const fromParts = new Map(parts.results.map((p) => [p.label, p]));
+  // every label tied to the WO, with how: its movements on the WO (cart diff, parts events, the sales order lines), a sales order movement, the label's own wo
+  const tied = (await T.prepare(`SELECT label, MIN(how) AS how, MAX(via) AS via FROM (
+        SELECT label, 2 AS how, NULL AS via FROM inv_movements WHERE store = ?1 AND ref_type = 'wo' AND ref_id = ?2 AND label IS NOT NULL AND COALESCE(raw_event, '') <> 'sales order line'
+        UNION ALL SELECT label, 3, ref_id FROM inv_movements WHERE store = ?1 AND ref_type = 'sales_order' AND ref_id IN (SELECT value FROM json_each(?3)) AND label IS NOT NULL
+        UNION ALL SELECT label, 4, sales_order FROM inv_labels WHERE store = ?1 AND wo = ?2)
+      GROUP BY label ORDER BY label LIMIT 300`).bind(store, wo, JSON.stringify(soList)).all()).results;
+  const labels = [...new Set([...fromParts.keys(), ...tied.map((t) => t.label)])];
+  const how = new Map(tied.map((t) => [t.label, t]));
+  const [lrows, mrows, loose] = labels.length ? await T.batch([
+    T.prepare(`SELECT l.label, l.item, l.serial_status, l.wh_type, l.last_seen, l.wo, ${nowCols('l')}, COALESCE(i.name, l.product) AS name FROM inv_labels l
+        LEFT JOIN inv_items i ON i.store = l.store AND i.item = l.item WHERE l.store = ? AND l.label IN (SELECT value FROM json_each(?))`).bind(store, JSON.stringify(labels)),
+    T.prepare(`SELECT label, kind, at, user_name AS user, ref_type, ref_id FROM inv_movements WHERE store = ? AND label IN (SELECT value FROM json_each(?)) ORDER BY at, id`).bind(store, JSON.stringify(labels)),
+    T.prepare(`SELECT m.item, COALESCE(i.name, m.item) AS name, m.kind, m.at, m.user_name AS user FROM inv_movements m LEFT JOIN inv_items i ON i.store = m.store AND i.item = m.item
+        WHERE m.store = ? AND m.ref_type = 'wo' AND m.ref_id = ? AND m.label IS NULL ORDER BY m.at DESC, m.id DESC LIMIT 50`).bind(store, wo),
+  ]) : [{ results: [] }, { results: [] }, await T.prepare(`SELECT m.item, COALESCE(i.name, m.item) AS name, m.kind, m.at, m.user_name AS user FROM inv_movements m LEFT JOIN inv_items i ON i.store = m.store AND i.item = m.item
+        WHERE m.store = ? AND m.ref_type = 'wo' AND m.ref_id = ? AND m.label IS NULL ORDER BY m.at DESC, m.id DESC LIMIT 50`).bind(store, wo).all()];
+  const lab = new Map(lrows.results.map((r) => [r.label, r])), moves = new Map();
+  for (const m of mrows.results) { const l = moves.get(m.label); if (l) l.push(m); else moves.set(m.label, [m]); }
+  const onWo = (m) => (m.ref_type === 'wo' && m.ref_id === wo) || (m.ref_type === 'sales_order' && soList.includes(m.ref_id));
+  const out = labels.map((label) => {
+    const p = fromParts.get(label), l = lab.get(label), t = how.get(label), mv = moves.get(label) || [];
+    const [now, group] = l ? rowNow(l) : ['Unknown', null];
+    const last = mv.length ? mv[mv.length - 1] : null, mine = mv.filter(onWo);
+    const res = mine.find((m) => m.kind === 'reserved'), used = [...mine].reverse().find((m) => m.kind === 'used' || m.kind === 'sold');
+    const statusOnWo = [...mine].reverse().find((m) => NOW_KIND[m.kind]);
+    return { label, item: (p && p.item) || (l && l.item) || null, name: (p && p.name) || (l && l.name) || null, line: p ? p.line : null,
+      at_sale: p ? p.serial_status : statusOnWo ? NOW_KIND[statusOnWo.kind][0] : null, now, group,
+      last: last ? { kind: last.kind, at: last.at, user: last.user || null } : null, reserved: res ? { at: res.at, user: res.user || null } : null, used_at: used ? used.at : null,
+      source: p ? 'sales order' : t && t.how === 2 ? 'work order' : 'retrace', via: p ? p.sales_order : t && t.how >= 3 ? t.via || null : null,
+      label_wo: l ? l.wo : null };
+  });
+  const order = { 'sales order': 0, 'work order': 1, retrace: 2 };
+  out.sort((a, b) => order[a.source] - order[b.source] || (a.label < b.label ? -1 : 1));
+  const seenItem = new Set(), looseOut = [];
+  for (const m of loose.results) if (!seenItem.has(m.item)) { seenItem.add(m.item); looseOut.push(m); }
+  return { store, wo, sold: sold.results[0] || null, sales_orders: soList, parts: out.map(({ label_wo, ...x }) => x), loose: looseOut,
+    still_reserved: out.filter((x) => x.group === 'wo' && x.label_wo === wo).map((x) => x.label) };
 }

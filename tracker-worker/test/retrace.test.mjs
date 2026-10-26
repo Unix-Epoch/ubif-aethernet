@@ -1594,7 +1594,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.equal((await T.prepare("SELECT wo FROM inv_labels WHERE store = 567 AND label = '180001-0000600002'").first()).wo, '700002');
   assert.equal(await count("SELECT COUNT(*) AS n FROM inv_movements WHERE store = 567 AND label = '180001-0000600002'"), 1, 'the cart diff\'s used row is the only one');
   // no part lines: 'empty', done
-  r = await post([{ wo: '700005', cart_id: '567-555', order: order({ cartId: '567-555', salesLines: [FX.salesLines[0]] }) }]);
+  r = await post([{ wo: '700005', cart_id: '567-555', order: order({ cartId: '567-555', salesId: 'FSO000700005', salesLines: [FX.salesLines[0]] }) }]);
   assert.equal(r.j.empty, 1);
   // failures: a read that failed, an answer that isn't a sales order, another cart's, another store's; a WO the tracker doesn't hold is rejected
   r = await post([{ wo: '700006', cart_id: '567-666', failed: 'HTTP 504' }, { wo: '700006', cart_id: '567-666', order: { message: 'Unauthorized' } }, { wo: '700006', order: order({ cartId: '567-999' }) },
@@ -1614,6 +1614,30 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.deepEqual((await need(25)).j.wos, [{ wo: '700007', cart_id: '567-777' }], 'failed once: handed out again');
   assert.equal((await post('nope')).status, 400);
   assert.equal((await call('POST', '/v1/567/tracker/retrace/wo-sold', { results: Array(51).fill({}) })).status, 400);
+
+  // the admin view of one WO's parts: inv_* only, both pages needed
+  await T.batch([
+    T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, ref_type, ref_id, source, key, recorded_at) VALUES (567, '180001-0000600003', '180001', '2026-10-19T10:00:00.000Z', 'reserved', 'wo', '700001', 'wo', 'k-res-3', ?)").bind(AT),
+    T.prepare("INSERT INTO inv_labels (store, label, item, serial_status, wo, first_seen, last_seen) VALUES (567, '180001-0000600003', '180001', 'Reserved', '700001', ?, ?)").bind(AT, AT),
+    T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, ref_type, ref_id, source, key, recorded_at) VALUES (567, '180001-0000600004', '180001', '2026-10-20T15:31:00.000Z', 'sold', 'sales_order', 'FSO000700001', 'history', 'k-so-4', ?)").bind(AT),
+    T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, ref_type, ref_id, source, key, recorded_at) VALUES (567, NULL, '404446', '2026-10-20T13:50:00.000Z', 'used', 'wo', '700001', 'wo_event', 'k-loose', ?)").bind(AT),
+  ]);
+  const v = await admin('owner@x.com', '/retrace/wo/567/700001');
+  assert.equal(v.status, 200, JSON.stringify(v.j));
+  assert.deepEqual(v.j.parts.map((x) => [x.label, x.source, x.via]), [['180001-0000600001', 'sales order', 'FSO000700001'], ['180001-0000600003', 'work order', null], ['180001-0000600004', 'retrace', 'FSO000700001']]);
+  const p1 = v.j.parts[0];
+  assert.deepEqual([p1.name, p1.at_sale, p1.now, p1.used_at], ['iPhone 13 Glass/LCD', 'Sold', 'Used on repair', '2026-10-20T15:30:00.000Z']);
+  assert.deepEqual(v.j.still_reserved, ['180001-0000600003'], 'reserved on this WO and still Reserved');
+  assert.deepEqual(v.j.loose.map((x) => [x.item, x.kind]), [['404446', 'used']]);
+  assert.deepEqual(v.j.sales_orders, ['FSO000700001']); assert.equal(v.j.sold.state, 'done');
+  const keys = new Set(); const walk = (o) => { if (o && typeof o === 'object') for (const [k, x] of Object.entries(o)) { keys.add(k); walk(x); } }; walk(v.j);
+  for (const k of ['plain', 'sealed', 'card', 'status_name', 'device', 'customer', 'program_name', 'cart_value']) assert.ok(!keys.has(k), 'no tracker field: ' + k);
+  assert.equal((await admin('owner@x.com', '/retrace/wo/567/799999')).j.parts.length, 0, 'a WO with nothing linked: empty, not an error');
+  await T.prepare("INSERT OR REPLACE INTO people (email, scope, stores, pages, details) VALUES ('rt-only@x.com', 'stores', '[567]', '[\"retrace\"]', 0), ('wos-only@x.com', 'stores', '[567]', '[\"wos\"]', 0), ('both@x.com', 'stores', '[567]', '[\"wos\",\"retrace\"]', 0), ('other@x.com', 'stores', '[914]', '[\"wos\",\"retrace\"]', 0)").run();
+  assert.equal((await admin('rt-only@x.com', '/retrace/wo/567/700001')).status, 403, 'Retrace without Work orders');
+  assert.equal((await admin('wos-only@x.com', '/retrace/wo/567/700001')).status, 403, 'Work orders without Retrace');
+  assert.equal((await admin('other@x.com', '/retrace/wo/567/700001')).status, 403, 'another store');
+  assert.equal((await admin('both@x.com', '/retrace/wo/567/700001')).status, 200);
 }
 
 // the admin page's source: the drawer reads the derived status, not the raw word; an unlinked sales order is said so

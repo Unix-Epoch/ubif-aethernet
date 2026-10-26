@@ -298,7 +298,7 @@ async function drawData(m) {
 // Work orders + People: the tracker UI (tracker-ui.js), loaded on first use. Unlocking happens there, in this browser.
 async function drawTracker(which, m) {
   const mod = await import('/tracker-ui.js');
-  await mod.draw(which, m, { h, api, toast, fmt, woLink, tab: () => tab, redraw: draw });
+  await mod.draw(which, m, { h, api, toast, fmt, woLink, access: ACCESS, tab: () => tab, redraw: draw });
 }
 // Metrics: the dashboard (metrics-ui.js), loaded on first use.
 async function drawMetrics(m) { const mod = await import('/metrics-ui.js'); await mod.draw(m, { h, api, toast }); }

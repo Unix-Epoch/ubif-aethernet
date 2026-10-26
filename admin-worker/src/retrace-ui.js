@@ -83,6 +83,7 @@ const CSS = `
 .rt-drawer .db{overflow-y:auto;padding:14px 16px;display:grid;gap:14px;align-content:start}
 .rt-drawer .rsoft{color:var(--soft)} .rt-drawer .rsm{font-size:12px}
 .rt .kv,.rt-drawer .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:12.5px;margin:0} .rt-drawer .kv dt{color:var(--soft)} .rt-drawer .kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.rt-drawer .usedwo{background:var(--kc);color:var(--kcf);border-radius:10px;padding:10px 12px;margin:0 0 12px;display:grid;gap:6px} .rt-drawer .usedwo .kv dt{color:inherit;opacity:.75} .rt-drawer .usedwo a.ref{color:inherit;text-decoration:underline}
 .rt .tl,.rt-drawer .tl{list-style:none;margin:0;padding:0;position:relative} .rt .tl::before,.rt-drawer .tl::before{content:"";position:absolute;left:5px;top:6px;bottom:6px;width:2px;background:var(--line)}
 .rt .tl li,.rt-drawer .tl li{position:relative;padding:0 0 14px 22px} .rt .tl li::before,.rt-drawer .tl li::before{content:"";position:absolute;left:0;top:5px;width:12px;height:12px;border-radius:50%;background:var(--card);border:2px solid var(--p)}
 .rt .tl li .w,.rt-drawer .tl li .w{font-size:11.5px;color:var(--soft);font-variant-numeric:tabular-nums} .rt .tl li .t,.rt-drawer .tl li .t{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:2px} .rt .tl li p,.rt-drawer .tl li p{margin:3px 0 0;font-size:12.5px;color:var(--soft)}
@@ -141,7 +142,8 @@ const kindOf = (k) => KIND[k] || [String(k || 'Unknown').replace(/_/g, ' '), 'ot
 // The filter chips: a serial's status now (retrace-api.js serialNow groups), not the kind of a movement.
 const GROUPS = [['all', 'All'], ['in', 'In stock'], ['wo', 'Reserved'], ['out', 'Used, sold, moved'], ['q', 'Defective & returns'], ['bad', 'Lost & missing']];
 // retrace.js SOURCES → the four names the page shows.
-const SRC = (s) => (s === 'history' ? 'History' : s === 'wo' || s === 'wo_event' ? 'WO' : s === 'watch' ? 'Live' : 'Sweep');
+// A sold WO's sales order line (tracker-worker/src/retrace-wo-parts.js: source 'wo', raw_event 'sales order line') reads "Sales order".
+const SRC = (s, ev) => (s === 'history' ? 'History' : s === 'wo' && ev === 'sales order line' ? 'Sales order' : s === 'wo' || s === 'wo_event' ? 'WO' : s === 'watch' ? 'Live' : 'Sweep');
 const RANGES = [['30', 'Moved in the last 30 days'], ['90', 'Moved in the last 90 days'], ['all', 'Any time']];
 const PAGE = 200;
 // A store that hasn't been collected from for this long is "paused": a pass runs every 10 minutes while a store browser has Portal open
@@ -781,14 +783,44 @@ async function openLabel(label) {
     ['History read', l.last_history_at ? when(l.last_history_at) : l.need_history ? 'Queued' : null],
   ].filter(([, v]) => v);
   el.dsub.textContent = mv.length ? 'Full history, oldest first' : 'No movements recorded yet';
+  const usedBox = wo ? usedOnWo(label, wo, mv) : null;
   el.db.replaceChildren(
+    usedBox,
     h('dl', { class: 'kv' }, kv.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])),
     h('ol', { class: 'tl' }, mv.map((m) => {
       const ft = m.from_wh || m.to_wh ? (m.from_wh || '?') + ' → ' + (m.to_wh || '?') : null;
       const p = [m.detail, ft, m.user ? 'by ' + m.user : null].filter(Boolean).join(' · ');
       return h('li', null, h('div', { class: 'w' }, when(m.at)), h('div', { class: 't' }, kindChip(m.kind), m.ref_id || m.wo ? refEl(m) : null),
-        h('p', null, p || '', h('span', { class: 'rsoft', style: 'font-size:11px;margin-left:6px;opacity:.8' }, SRC(m.source))));
+        h('p', null, p || '', h('span', { class: 'rsoft', style: 'font-size:11px;margin-left:6px;opacity:.8' }, SRC(m.source, m.raw_event))));
     })));
+}
+
+/*
+  "Used on work order" (Oct 26, 2026): the work order the label went to, from its own movements (reserved → used / sold on that WO or one of its
+  sales orders), plus, for people who also have Work orders, the WO's parts view (GET /tracker/retrace/wo/:store/:wo: the sales order line
+  and source) and a link to the tracker's own view of the WO (#wos?store&wo). Everyone gets Portal's WO page.
+*/
+const canWos = () => !!(ui.access && (ui.access.owner || (ui.access.pages || []).includes('wos')));
+function usedOnWo(label, wo, mv) {
+  const h = ui.h, store = S.store;
+  const mine = mv.filter((m) => String(m.wo || '') === String(wo));
+  const res = mine.find((m) => m.kind === 'reserved'), used = [...mine].reverse().find((m) => m.kind === 'used' || m.kind === 'sold');
+  const so = ([...mine].reverse().find((m) => m.ref_type === 'sales_order' && m.ref_id) || {}).ref_id || null;
+  const dl = h('dl', { class: 'kv' });
+  const rows = (extra) => {
+    const kv = [
+      ['Work order', h('span', null, canWos() ? h('a', { class: 'ref', href: '#wos?store=' + store + '&wo=' + wo }, String(wo)) : h('span', { class: 'pref' }, String(wo)), ' · ', woRef(wo, 'Open in Portal ↗'))],
+      ['Part line', extra && extra.name ? extra.name : null],
+      ['Reserved', res ? when(res.at) + (res.user ? ' by ' + res.user : '') : null],
+      [used && used.kind === 'sold' ? 'Sold' : 'Used', used ? when(used.at) : null],
+      ['Sales order', (extra && extra.via) || so ? h('span', { class: 'pref' }, (extra && extra.via) || so) : null],
+      ['Linked from', extra ? (extra.source === 'retrace' ? 'Retrace (serial history' + (extra.via ? ' via ' + extra.via : '') + ')' : 'the ' + extra.source) : null],
+    ].filter(([, v]) => v);
+    dl.replaceChildren(...kv.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
+  };
+  rows(null);
+  if (canWos()) ui.api('GET', '/tracker/retrace/wo/' + store + '/' + wo).then((j) => { if (S.label === label) rows((j.parts || []).find((p) => p.label === label) || null); }).catch(() => {});
+  return h('div', { class: 'usedwo' }, h('b', null, 'Used on work order'), dl);
 }
 
 // ------------------------------------------------------------------ PO page

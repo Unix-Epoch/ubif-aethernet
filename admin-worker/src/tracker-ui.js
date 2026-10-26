@@ -6,6 +6,15 @@ import * as C from '/crypto.js';
 const CSS = '.unlocked{padding:3px 10px;border-radius:999px;background:var(--ps);color:var(--p);font-weight:700;font-size:12px;cursor:pointer}'
   + '.srch{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.srch .qq{flex:1;min-width:280px;height:42px;font-size:15px;border-radius:999px;padding:0 18px}'
   + '.chk{display:inline-flex;gap:6px;align-items:center;font-size:13px;color:var(--soft)}.chk input{height:auto}'
+  // Parts and labels (Retrace): the same chip colours as the Retrace page
+  + '.wp{--kin:#dff5e6;--kinf:#0d4a25;--kout:#eceaf0;--koutf:#3b3a40;--kwo:#efe4fb;--kwof:#5a1a99;--kq:#fff0c0;--kqf:#5a4300;--kbad:#fde8eb;--kbadf:#8f1d2f;--kc:#e2eefb;--kcf:#123d6b}'
+  + '@media (prefers-color-scheme:dark){.wp{--kin:#173a24;--kinf:#bff0cf;--kout:#2a2930;--koutf:#d6d4dc;--kwo:#2f2042;--kwof:#dcc2fa;--kq:#3d3410;--kqf:#ffe9a8;--kbad:#3a1a20;--kbadf:#ffb3bf;--kc:#18283b;--kcf:#bcd8f7}}'
+  + '.wp .pk{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:6px;font-size:11.5px;font-weight:700;white-space:nowrap;background:var(--kout);color:var(--koutf)}'
+  + '.wp .pk.in{background:var(--kin);color:var(--kinf)}.wp .pk.wo{background:var(--kwo);color:var(--kwof)}.wp .pk.q{background:var(--kq);color:var(--kqf)}.wp .pk.bad{background:var(--kbad);color:var(--kbadf)}'
+  + '.wp .srcx{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid var(--line);color:var(--soft);white-space:nowrap}.wp .srcx.rt{background:var(--kc);color:var(--kcf);border-color:transparent}'
+  + '.wp .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12px}.wp .tw{overflow-x:auto}.wp table{width:100%}.wp td{vertical-align:top}'
+  + '.wp table.tl td{padding:7px 8px;font-size:12.5px}.wp td.pt{min-width:210px;width:52%}.wp .lab{margin-top:2px;font-size:12px;color:var(--soft)}.wp .lab .mono{white-space:nowrap}.wp .lm{min-width:104px}.wp .tlink{color:var(--p);text-decoration:none;font-size:12px}.wp .tlink:hover{text-decoration:underline}'
+  + '.wp .alert{margin-top:10px;padding:9px 12px;border-radius:8px;background:var(--kq);color:var(--kqf);font-size:13px}.wp .tbtn{height:26px;padding:0 10px;font-size:12px}'
   + '.res td{cursor:pointer}.res tr.sel td{background:var(--ps)}.hit{margin-top:3px;font-size:12px;color:var(--soft)}mark{background:#fff0a8;color:#1a1c1e;padding:0 2px;border-radius:3px}'
   + '.st{display:inline-flex;min-height:20px;align-items:center;padding:0 8px;border-radius:999px;font-size:11px;font-weight:700;background:var(--line);color:var(--fg)}'
   + '.st.rfp{background:#c5ffc8;color:#062011}.st.rfpi{background:#ffe1c2;color:#4a2300}.st.done{color:var(--soft)}.st.wait{background:#fff0c0;color:#3a3000}.st.wip{background:#eef1ff;color:#2f47c9}'
@@ -335,6 +344,13 @@ async function drawWos(m) {
       : [h('div', { class: 'soft' }, term ? 'No matches.' : 'No work orders yet.')]));
   }
   await run(false);
+  // #wos?store=914&wo=500679344 (Retrace's "Used on work order" links here): open that work order
+  const lp = new URLSearchParams(location.hash.split('?')[1] || ''), lwo = Number(lp.get('wo')), lst = Number(lp.get('store'));
+  if (lwo && lst) {
+    const hit = rows.find((x) => Number(x.wo) === lwo && Number(x.store) === lst);
+    sel = lst + '|' + lwo;
+    showWo(drawer, hit || { store: lst, wo: lwo }).catch((e) => drawer.replaceChildren(h('div', { class: 'soft' }, "Couldn't open WO " + lwo + ': ' + (e.message || e))));
+  }
 }
 
 async function showWo(drawer, r) {
@@ -349,7 +365,8 @@ async function showWo(drawer, r) {
   const w = plain.workorder || {}, pay = (plain.cart && plain.cart.payment) || {};
   if (w.statusId != null) r = Object.assign({}, r, { status_id: w.statusId, status_name: w.status || null, service_outcome: w.outcome || r.service_outcome }); // newest snapshot beats the list
   const notes = notesOf(d), hide = plainMode();
-  const tabs = [hide ? null : ['notes', 'Notes (' + notes.length + ')'], ['history', 'Status history (' + (plain.auditTrail || []).length + ')'], ['cart', 'Cart (' + ((plain.cart && plain.cart.items) || []).length + ')'], ['changes', 'Changes (' + j.changes.length + ')'], ['snaps', 'Snapshots (' + snaps.length + ')']].filter(Boolean);
+  const canParts = !!(ui.access && (ui.access.owner || (ui.access.pages || []).includes('retrace')));
+  const tabs = [hide ? null : ['notes', 'Notes (' + notes.length + ')'], canParts ? ['parts', 'Parts and labels'] : null, ['history', 'Status history (' + (plain.auditTrail || []).length + ')'], ['cart', 'Cart (' + ((plain.cart && plain.cart.items) || []).length + ')'], ['changes', 'Changes (' + j.changes.length + ')'], ['snaps', 'Snapshots (' + snaps.length + ')']].filter(Boolean);
   let cur = hide ? 'history' : 'notes';
   const body = h('div');
   const nav = h('div', { class: 'dtabs' });
@@ -361,6 +378,7 @@ async function showWo(drawer, r) {
     if (cur === 'cart') body.replaceChildren(h('table', { class: 'tl' }, ((plain.cart && plain.cart.items) || []).map((i) => h('tr', null, h('td', null, i.name || ''), h('td', { class: 'soft' }, i.sku || ''), h('td', null, (i.quantity || 1) + ' × ' + money(i.price))))),
       h('div', { style: 'margin-top:8px' }, 'Total ' + money(pay.total) + ' · paid ' + money(pay.amountPaid) + ' · due ' + money(pay.amountDue)));
     if (cur === 'changes') body.replaceChildren(h('table', { class: 'tl' }, j.changes.slice(0, 300).map((x) => h('tr', null, h('td', { class: 'soft' }, ui.fmt(x.changed_at)), h('td', null, x.field), h('td', { class: 'soft' }, (x.old || '∅') + ' → ' + (x.new || '∅'))))));
+    if (cur === 'parts') drawParts(body, r, w);
     if (cur === 'snaps') body.replaceChildren(h('table', { class: 'tl' }, snaps.map((s) => h('tr', null, h('td', null, ui.fmt(s.fetched_at)), h('td', { class: 'soft' }, s.trigger || ''), h('td', { class: 'soft' }, s.by_name || '')))));
   };
   drawTab();
@@ -373,6 +391,52 @@ async function showWo(drawer, r) {
       h('dt', null, 'Value'), h('dd', null, h('b', null, money(r.cart_value)), h('span', { class: 'soft' }, ' cart before tax, partner credits ignored')),
       h('dt', null, r.status_id === 13 ? 'Due at pickup' : 'Customer owes'), h('dd', null, money(pay.amountDue) + ' of ' + money(pay.total) + (pay.amountPaid ? ' · ' + money(pay.amountPaid) + ' paid' : ''))),
     nav, body);
+}
+
+/*
+  Parts and labels (Retrace, Oct 26, 2026): the labels this work order used, from Retrace's own tables (GET /tracker/retrace/wo/:store/:wo,
+  tracker-worker/src/retrace-wo-parts.js; needs pages 'wos' and 'retrace'). Sources: the sold WO's sales order lines, the WO's cart and
+  parts events, or serial history through one of its sales orders. Timeline opens the label in Retrace.
+*/
+const NOW_CLS = { in: 'in', wo: 'wo', out: '', q: 'q', bad: 'bad' };
+const SALE_CLS = (t) => (/^sold|used/i.test(t || '') ? '' : /^reserved/i.test(t || '') ? 'wo' : /^available|in transit|received/i.test(t || '') ? 'in' : '');
+const KIND_TEXT = { used: 'Used on repair', sold: 'Sold', reserved: 'Reserved', unreserved: 'Unreserved', received: 'Received', consignment_changed: 'Consigned → owned', swapped_in: 'Swapped in', swapped_out: 'Swapped out', transfer_out: 'Transferred out', transfer_in: 'Transferred in', defective: 'Defective', rma: 'RMA', lost: 'Lost', shipped_to_store: 'Shipped to store', status_changed: 'Status changed' };
+const kindText = (k) => KIND_TEXT[k] || String(k || '').replace(/_/g, ' ');
+const SOLD_STATUS = [14, 15];
+async function drawParts(body, r, w) {
+  const { h } = ui;
+  body.replaceChildren(h('div', { class: 'soft' }, 'Loading parts…'));
+  let j;
+  try { j = await ui.api('GET', '/tracker/retrace/wo/' + r.store + '/' + r.wo); }
+  catch (e) { return body.replaceChildren(h('div', { class: 'soft' }, "Couldn't load the parts: " + (e.message || e))); }
+  const timeline = (label) => h('a', { class: 'tlink', href: '#retrace?store=' + r.store + '&label=' + encodeURIComponent(label) }, 'Timeline');
+  const parts = j.parts || [], loose = j.loose || [], so = (j.sold && j.sold.sales_order) || (j.sales_orders || [])[0] || w.csuSalesOrderId || null;
+  const src = (x) => x.source === 'sales order' ? h('span', { class: 'srcx' }, 'sales order') : x.source === 'work order' ? h('span', { class: 'srcx' }, 'work order') : h('span', { class: 'srcx rt', title: 'Found in serial history' + (x.via ? ' through sales order ' + x.via : '') }, 'Retrace' + (x.via ? ' via ' + x.via : ''));
+  if (!parts.length && !loose.length) {
+    const st = j.sold ? j.sold.state : null;
+    const why = st === 'empty' ? 'Its sales order lists no labelled parts.' : st === 'gave_up' ? 'Reading its sales order failed several times (' + (j.sold.last_error || 'no answer') + ').'
+      : 'Retrace links parts through the sales order' + (so ? ' (' + so + ', not matched yet)' : '') + ' and is still catching up on ' + r.store + '.';
+    return body.replaceChildren(h('div', { class: 'wp' }, h('div', { class: 'soft' }, 'No labels linked to this work order yet. ' + why)));
+  }
+  const nLabels = parts.length, from = [...new Set(parts.map((x) => x.source))].map((x) => x === 'retrace' ? 'Retrace' : 'the ' + x).join(' and ');
+  const rows = parts.map((x) => h('tr', null,
+    h('td', { class: 'pt' }, h('b', null, x.name || 'Item ' + (x.item || '?')), h('div', { class: 'lab' }, h('span', { class: 'mono' }, x.label), ' · ', timeline(x.label)), h('div', { class: 'lab' }, src(x))),
+    h('td', null, x.at_sale ? h('span', { class: 'pk ' + SALE_CLS(x.at_sale) }, x.at_sale) : h('span', { class: 'soft' }, SOLD_STATUS.includes(Number(r.status_id)) ? 'cart was empty' : '—')),
+    h('td', null, h('span', { class: 'pk ' + (NOW_CLS[x.group] || '') }, x.now || 'Unknown')),
+    h('td', { class: 'lm' }, x.last ? [kindText(x.last.kind), h('div', { class: 'soft' }, ui.fmt(x.last.at))] : h('span', { class: 'soft' }, 'no movement yet')),
+  ));
+  const looseRows = loose.map((x) => h('tr', null,
+    h('td', { class: 'pt' }, h('b', null, x.name || x.item), h('div', { class: 'lab soft' }, 'no label recorded · item ' + (x.item || '?')), h('div', { class: 'lab' }, h('span', { class: 'srcx' }, 'work order'))),
+    h('td', null, h('span', { class: 'pk ' + SALE_CLS(kindText(x.kind)) }, kindText(x.kind))), h('td', null, h('span', { class: 'soft' }, 'quantity only')),
+    h('td', { class: 'lm' }, 'Part event', h('div', { class: 'soft' }, ui.fmt(x.at)))));
+  const sold = SOLD_STATUS.includes(Number(r.status_id));
+  const still = sold ? parts.filter((x) => (j.still_reserved || []).includes(x.label)) : [];
+  body.replaceChildren(h('div', { class: 'wp' },
+    h('div', { class: 'soft', style: 'margin-bottom:6px' }, [loose.length + nLabels + ' part' + (loose.length + nLabels === 1 ? '' : 's'), nLabels + ' label' + (nLabels === 1 ? '' : 's'), from ? 'from ' + from : null, so ? 'sales order ' + so : null].filter(Boolean).join(' · ')),
+    h('div', { class: 'tw' }, h('table', { class: 'tl' }, h('tr', null, ['Part, label and source', 'At sale', 'Now', 'Last movement'].map((x) => h('th', null, x))), rows, looseRows)),
+    still.length ? h('div', { class: 'alert' }, h('b', null, still.length === 1 ? '1 label is still Reserved after the sale: ' : still.length + ' labels are still Reserved after the sale: '),
+      still.map((x, i) => [i ? ', ' : '', h('span', { class: 'mono' }, x.label), x.name ? ' (' + x.name + ')' : '']), '. Reserved on this work order and never used or sold.') : null,
+    h('div', { class: 'soft', style: 'margin-top:8px;font-size:12px' }, 'Timeline opens the label’s full history in Retrace. Sold work orders’ parts come from Portal’s sales order; others from the cart and parts events.')));
 }
 
 // ------------------------------------------------------------------ Sales

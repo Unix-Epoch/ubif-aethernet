@@ -98,7 +98,7 @@
 */
 import { passStmts } from './usage.js';
 import { TARGET_LISTED, LISTED_JOIN_SQL } from './retrace-listed.js';
-import { woSoldRoute } from './retrace-wo-parts.js';
+import { woSoldRoute, woPartsView } from './retrace-wo-parts.js';
 import { verifyRun, verifyAsk, verifyView, verifyTick, QUEUE_REASON, QUEUE_SINCE } from './retrace-verify.js';
 import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS } from './retrace.js';
 import { nowCols, rowNow, nowCountsStmt, nowCountsRows, nowCounts, availRes } from './retrace-now.js';
@@ -947,6 +947,16 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     return H.json(await verifyView(T, store), 200, false);
   }
   if (req.method !== 'GET') return H.fail(404, 'not found', false);
+
+  // One work order's parts and labels (retrace-wo-parts.js woPartsView): a work order view, so page 'wos' too (the gate checked 'retrace').
+  const wpm = path.match(/^\/retrace\/wo\/(\d{1,6})\/(\d{1,12})$/);
+  if (wpm) {
+    const store = Number(wpm[1]), wo = wpm[2];
+    if (!canSee(store)) return H.fail(403, 'not your store', false);
+    if (!me.owner && !(me.pages || []).includes('wos')) return H.fail(403, 'no access to this page', false);
+    await H.log(env, email, 'retrace:wo', store, Number(wo));
+    return H.json(await woPartsView(T, store, wo), 200, false);
+  }
 
   const qm = path.match(/^\/retrace\/queue\/(\d{1,6})$/);
   if (qm) {
