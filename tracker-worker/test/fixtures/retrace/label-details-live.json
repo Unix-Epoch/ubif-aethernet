@@ -1,0 +1,95 @@
+{
+ "_note": "Captured live at 914, Oct 26, 2026 (dev tools probe). Keys exact; null = a value the capture did not show. The label is the one requested, not in the answer.",
+ "available": {
+  "label": "667497-0000000106",
+  "answer": {
+   "$id": null,
+   "ItemNumber": null,
+   "ProductName": null,
+   "SalesPrice": null,
+   "ItemCategory": null,
+   "ConsignmentStatus": null,
+   "PurchaseOrderNumber": "7897544",
+   "SalesOrderNumber": "",
+   "CountingJournalNumber": null,
+   "PurchasePrice": null,
+   "WasConsignedAtPurchase": null,
+   "OEMSerialNumber": null,
+   "OEMInvoiceNumber": null,
+   "SerialStatus": "Available",
+   "AvailableInInventory": null,
+   "PhysicalInventory": null,
+   "InventQuarantineInfo": {
+    "$id": null,
+    "Reason": null,
+    "ReasonDetails": null,
+    "BrokenBy": null,
+    "InitiatedBy": null
+   },
+   "SalvageInfo": {
+    "$id": null,
+    "SerialNumber": null,
+    "SalesOrderNumber": null,
+    "DistroLabelId": null
+   },
+   "ArrivalId": "",
+   "WorkOrderId": "",
+   "Store": "914",
+   "Vendor": null,
+   "Warehouse": "914",
+   "WarehouseLocationType": "Main",
+   "IMEI": null,
+   "IsGeneric": null,
+   "SpecialOrderMetadata": null,
+   "ErrorMessage": null,
+   "Success": null,
+   "DebugMessage": null
+  }
+ },
+ "reserved": {
+  "label": "721278-0000021178",
+  "answer": {
+   "$id": null,
+   "ItemNumber": null,
+   "ProductName": null,
+   "SalesPrice": null,
+   "ItemCategory": null,
+   "ConsignmentStatus": null,
+   "PurchaseOrderNumber": "UBFPO000169300",
+   "SalesOrderNumber": "FSO000358203",
+   "CountingJournalNumber": null,
+   "PurchasePrice": null,
+   "WasConsignedAtPurchase": null,
+   "OEMSerialNumber": "G9PHU0H0UQT0000MTE",
+   "OEMInvoiceNumber": null,
+   "SerialStatus": "Reserved",
+   "AvailableInInventory": null,
+   "PhysicalInventory": null,
+   "InventQuarantineInfo": {
+    "$id": null,
+    "Reason": null,
+    "ReasonDetails": null,
+    "BrokenBy": null,
+    "InitiatedBy": null
+   },
+   "SalvageInfo": {
+    "$id": null,
+    "SerialNumber": null,
+    "SalesOrderNumber": null,
+    "DistroLabelId": null
+   },
+   "ArrivalId": "500803092",
+   "WorkOrderId": "",
+   "Store": "914",
+   "Vendor": null,
+   "Warehouse": "914",
+   "WarehouseLocationType": "Main",
+   "IMEI": null,
+   "IsGeneric": null,
+   "SpecialOrderMetadata": null,
+   "ErrorMessage": null,
+   "Success": null,
+   "DebugMessage": null
+  }
+ }
+}

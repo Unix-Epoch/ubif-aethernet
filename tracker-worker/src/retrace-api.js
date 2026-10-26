@@ -108,7 +108,7 @@ const NEED_CAP = 200, COUNT_CAP = 300, SHORT_CAP = 300, CLAIM_MIN = 10, WATCH_MA
 // Per-request caps. Most rows become a statement and D1 counts queries per Worker invocation (1000 on paid plans,
 // batched or not), so a pass bigger than this goes up in several sweeps (only new / changed rows are written, so a
 // second pass over the same data is mostly reads).
-const PO_DATA_MAX = 200000, PO_NEED_CAP = 100, NAMES_MAX = 200, UNNAMED_CAP = 50, SO_NEED_CAP = 50, SO_NONE_MAX = 200, SO_NONE_MS = 24 * 3600000;
+const PO_DATA_MAX = 200000, PO_NEED_CAP = 100, NAMES_MAX = 200, UNNAMED_CAP = 50, SO_NEED_CAP = 50, SO_NONE_MAX = 200, SO_NONE_MS = 7 * 24 * 3600000; // a week: both live label-details samples (Oct 26) had WorkOrderId ""
 const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, rows: 500, cursors: 20, pos: 600, names: NAMES_MAX, labelTotals: 800, listed: 150 };
 const LISTED_LABELS_MAX = 4000; // one item's full label list (store-products: 20 pages of 200 at most)
 const MAX = { sweep: 4000000, history: 1000000, watch: 150000 };

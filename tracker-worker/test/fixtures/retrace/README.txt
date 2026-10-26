@@ -15,3 +15,7 @@ payment { amountPaid, subtotal, discount, tax, total }, paymentTypes; lines line
 serialStatus, sku, lineType, isChild, parentLineId, isScanned, program, originalLineId. Part lines carry serial + serialStatus "Sold"; labor / credit
 lines an empty serial; the BB0001 buyback line a B- serial (Available). Every VALUE here is made up, and the value kinds of lineId, productId,
 lineType for a part line, salesDate's format and storeId's type are GUESSES until a raw answer is saved over this file.
+
+label-details.json no longer has a SerialNumber: the real answer names no label (captured Oct 26, 2026). Its values are still made up
+(the WorkOrderId-filled case is synthetic: both live samples had WorkOrderId ""). label-details-live.json and rma-orders-live.json are the
+live captures of Oct 26, 2026 (dev tools probes): keys exact, null where the capture showed no value; nothing else is filled in.

@@ -899,16 +899,59 @@ await t('Retrace probes: RMA list and label details are outlined (keys, arrays, 
   assert.match(r.path, /rma-orders\?startDate=\d{8}&endDate=\d{8}&.*page=1$/);
   assert.deepEqual(plain(r.answer.topLevel), ['weird', 'n']); assert.deepEqual(plain(r.answer.arrays), { weird: 3 });
   assert.equal(r.answer.first2.length, 2); assert.ok(!('customerName' in r.answer.first2[0]) && !('phone' in r.answer.first2[0]), 'scrubbed');
-  assert.match(r.collector, /refused: no list/);
+  assert.match(r.collector, /refused: .*no list in the answer/);
   const l = await env.AE.retrace.probeLabel('176255-0000514371');
   assert.match(l.collector, /^usable: label 176255-0000514371, status /, JSON.stringify(l));
   const env2 = retraceEnv(ok(LABELS), { details: ok({ Success: true, Data: { SerialNumber: '176255-0000514371' } }) }); // SYNTHETIC wrapped answer
   const l2 = await env2.AE.retrace.probeLabel('176255-0000514371');
-  assert.match(l2.collector, /refused: no label field/); assert.deepEqual(plain(l2.answer.topLevel), ['Success', 'Data']); assert.ok(l2.answer.raw.includes('Data'));
+  assert.match(l2.collector, /refused: no status/); assert.deepEqual(plain(l2.answer.topLevel), ['Success', 'Data']); assert.ok(l2.answer.raw.includes('Data'));
   const env3 = retraceEnv(ok(LABELS), { details: { status: 404, body: { message: 'x' } } });
   const l3 = await env3.AE.retrace.probeLabel('176255-0000514371');
   assert.equal(l3.status, 404); assert.ok(l3.error);
   assert.deepEqual(env3.requests(/\/retrace\//), [], 'probes never write to the Worker');
+});
+
+// ---- live captures of Oct 26, 2026: the RMA order list (StatusList[].Headers) and label details (no label field)
+const RMA_LIVE = retraceFx('rma-orders-live').answer, LD_LIVE = retraceFx('label-details-live');
+await t('Retrace RMA list (live shape): rows come from StatusList[].Headers; an empty group is no error; CreatedDate is never turned into a time', async () => {
+  const env = retraceEnv(ok(LABELS), { todo: [], rmaList: ok(RMA_LIVE) });
+  const r = await env.AE.retrace.run();
+  assert.ok(!r.errors.some((e) => /rma orders/.test(e)), JSON.stringify(r.errors));
+  const docs = env.sweeps().flatMap((b) => b.docs || []).filter((d) => d.type === 'rma' && d.id === 'UBFPO000162258');
+  assert.ok(docs.length, 'the Shipped header went up'); assert.equal(docs[0].status, 'Shipped'); assert.equal(docs[0].at, null); assert.equal(docs[0].counterpart, 'Distribution Center');
+  assert.equal(docs[0].data.CreatedDate, '10/19/2026 03:55:02 pm', 'the raw text is kept');
+  assert.equal(env.requests(/rma-order\/UBFPO000162258$/).length, 1, 'the order is read in full');
+  assert.match((await env.AE.retrace.probeRma()).collector, /^read: 1 orders$/);
+});
+await t('Retrace RMA list: a StatusList group without Headers is a bad shape (nothing read)', async () => {
+  const env = retraceEnv(ok(LABELS), { todo: [], rmaList: ok({ ...RMA_LIVE, StatusList: [...RMA_LIVE.StatusList, { Status: 'Received', Count: 2 }] }) }); // SYNTHETIC
+  const r = await env.AE.retrace.run();
+  assert.ok(r.errors.some((e) => /rma orders/.test(e))); assert.equal(env.requests(/rma-order\//).length, 0);
+});
+await t('Retrace label details (live shape): the label comes from the request; ArrivalId is an arrival, never a WO; no WorkOrderId = soNone', async () => {
+  const lab = LD_LIVE.reserved.label, so = LD_LIVE.reserved.answer.SalesOrderNumber;
+  const env = soEnv([{ sales_order: so, label: lab }], ok(LD_LIVE.reserved.answer));
+  const r = await env.AE.retrace.run();
+  const sn = env.sweeps().at(-1).labels.find((l) => l.label === lab);
+  assert.ok(sn, JSON.stringify(r.errors)); assert.equal(sn.status, 'Reserved'); assert.equal(sn.sales_order, 'FSO000358203'); assert.equal(sn.arrival, '500803092');
+  assert.equal(sn.wo, undefined, 'ArrivalId is not a WO'); assert.equal(sn.po, 'UBFPO000169300'); assert.equal(sn.warehouse, '914'); assert.equal(sn.oem_serial, 'G9PHU0H0UQT0000MTE');
+  assert.deepEqual(plain(env.sweeps().at(-1).soNone), [so], 'a real answer with no WorkOrderId');
+  const av = LD_LIVE.available;
+  const env2 = soEnv([{ sales_order: 'FSO000000001', label: av.label }], ok(av.answer));
+  await env2.AE.retrace.run();
+  const s2 = env2.sweeps().at(-1).labels.find((l) => l.label === av.label);
+  assert.equal(s2.status, 'Available'); assert.equal(s2.sales_order, undefined, 'SalesOrderNumber "" is no value'); assert.deepEqual(plain(env2.sweeps().at(-1).soNone), ['FSO000000001']);
+  const p = await env.AE.retrace.probeLabel(lab);
+  assert.match(p.collector, /^usable: label 721278-0000021178, status Reserved, WO -, sales order FSO000358203, arrival 500803092$/);
+});
+await t('Retrace label details: an ItemNumber that is not the label\'s item is a failed read', async () => {
+  const lab = LD_LIVE.reserved.label;
+  const env = soEnv([{ sales_order: 'FSO000358203', label: lab }], ok({ ...LD_LIVE.reserved.answer, ItemNumber: '999999' })); // SYNTHETIC mismatch
+  const r = await env.AE.retrace.run();
+  assert.ok(env.sweeps().every((b) => b.soNone === undefined)); assert.ok(r.errors.some((e) => /sales order FSO000358203/.test(e)));
+  const env2 = soEnv([{ sales_order: 'FSO000358203', label: lab }], ok({ ...LD_LIVE.reserved.answer, ItemNumber: '721278' })); // the matching item passes
+  await env2.AE.retrace.run();
+  assert.ok(env2.sweeps().at(-1).labels.some((l) => l.label === lab));
 });
 
 // ---- C: purchase orders

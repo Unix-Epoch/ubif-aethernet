@@ -1,0 +1,35 @@
+{
+ "_note": "Captured live at 914, Oct 26, 2026: GET boh/rma-buyback/rma-orders?startDate=20260926&endDate=20261026&searchTerm=&orderStatus=&pageSize=50&page=1. Keys exact. StatusList had 5 groups; only Draft and Shipped were shown, the other 3 are left out here. null = a value the capture did not show.",
+ "answer": {
+  "$id": null,
+  "Count": null,
+  "StatusList": [
+   {
+    "$id": null,
+    "Count": 0,
+    "Status": "Draft",
+    "Headers": []
+   },
+   {
+    "$id": null,
+    "Count": 1,
+    "Status": "Shipped",
+    "Headers": [
+     {
+      "$id": null,
+      "PurchId": "UBFPO000162258",
+      "VendorReference": "4030967",
+      "Status": "Shipped",
+      "CreatedDate": "10/19/2026 03:55:02 pm",
+      "SupplierName": "Distribution Center",
+      "PartCount": 13,
+      "ExpectedRefund": 1354.11
+     }
+    ]
+   }
+  ],
+  "ErrorMessage": null,
+  "Success": null,
+  "DebugMessage": null
+ }
+}

@@ -266,6 +266,24 @@ export function labelSnapshot(r) {
   return out;
 }
 
+/*
+  Label details (GET boh/inventory/{label}?includeQuarantineInfo=true&includeSalvageInfo=true, captured live at 914, Oct 26, 2026: a flat object,
+  fixtures/retrace/label-details-live.json) name NO label: the label is the one asked for. → its snapshot, or null when the answer isn't that
+  label's details: not an object, Success false, no SerialStatus, a label field naming another label, or an ItemNumber that isn't the label's
+  item (a buyback label's number is not its item, so it is not checked there). Empty strings (SalesOrderNumber "", WorkOrderId "") are no value.
+  ArrivalId is the arrival (appointment) the label is reserved on, never a WO: it goes to `arrival` only.
+*/
+export function detailsSnapshot(d, label) {
+  const want = labelSnapshot({ label });
+  if (!want || !d || typeof d !== 'object' || Array.isArray(d) || d.Success === false) return null;
+  const own = first(d, ['label', 'SerialNumber', 'serialNumber', 'InventSerialId', 'serial']);
+  if (own != null && cleanLabel(own) !== want.label) return null;
+  const item = str(d.ItemNumber, 40), li = itemOfLabel(want.label);
+  if (item && li && item.toLowerCase() !== li.toLowerCase()) return null;
+  const sn = labelSnapshot(Object.assign({}, d, { label: want.label }));
+  return sn && sn.status ? sn : null;
+}
+
 // ------------------------------------------------------------------ normalizers, one per source
 export const normalize = {
   /*
@@ -540,7 +558,7 @@ export const normalize = {
     if (!id) return null;
     const status = str(r.status != null ? r.status : first(r, ['storeTransferStatus', 'CountStepType', 'rma_order_status', 'PurchaseOrderStatus', 'Status', 'OrderStatus', 'status']), 40);
     const at = isoAt(r.at) || isoAt(first(r, ['receivedDate', 'shippedDate', 'createdDate', 'EndDate', 'StartDate', 'updated_at', 'created_at', 'UpdatedDate', 'CreatedDate', 'OrderDate', 'AccountingDate']));
-    const counterpart = str(r.counterpart != null ? r.counterpart : first(r, ['toInventLocationName', 'fromInventLocationName', 'Vendor', 'vendor', 'vendor_name', 'VanNickName']), 80);
+    const counterpart = str(r.counterpart != null ? r.counterpart : first(r, ['toInventLocationName', 'fromInventLocationName', 'Vendor', 'vendor', 'vendor_name', 'VanNickName', 'SupplierName']), 80); // SupplierName: the RMA order list's Headers (captured Oct 26, 2026)
     // data: the header's own small fields, lines and nested objects left out (they become movements).
     const src = r.data && typeof r.data === 'object' && !Array.isArray(r.data) ? r.data : r, data = {};
     for (const [k, v] of Object.entries(src)) if (v == null || typeof v !== 'object') { if (Object.keys(data).length >= 30) break; data[str(k, 40)] = typeof v === 'string' ? v.slice(0, 200) : v; }

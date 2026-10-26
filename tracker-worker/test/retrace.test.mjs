@@ -52,7 +52,12 @@ assert.equal(R.kindOf({ status: 'Available', prevStatus: 'Received' }), 'status_
 
 // ------------------------------------------------------------------ label snapshots and diffs
 {
-  const d = R.labelSnapshot(fx('label-details'));
+  const d = R.detailsSnapshot(fx('label-details'), '176255-0000514371'); // the answer names no label: it's the one asked for
+  const live = fx('label-details-live'), lr = R.detailsSnapshot(live.reserved.answer, live.reserved.label);
+  assert.deepEqual([lr.label, lr.status, lr.sales_order, lr.wo, lr.arrival, lr.po], ['721278-0000021178', 'Reserved', 'FSO000358203', undefined, '500803092', 'UBFPO000169300'], 'live: ArrivalId is not a WO');
+  assert.equal(R.detailsSnapshot({ ...live.reserved.answer, ItemNumber: '667497' }, live.reserved.label), null, 'ItemNumber of another item');
+  assert.equal(R.detailsSnapshot({ ...live.reserved.answer, SerialStatus: null }, live.reserved.label), null, 'no status');
+  assert.equal(R.detailsSnapshot({ ...live.reserved.answer, Success: false }, live.reserved.label), null);
   assert.equal(d.label, '176255-0000514371'); assert.equal(d.status, 'Sold'); assert.equal(d.consignment, 'No'); assert.equal(d.location, 'Main');
   assert.equal(d.warehouse, '914'); assert.equal(d.wo, '500400001'); assert.equal(d.sales_order, 'FSO000011111'); assert.equal(d.cost, 88.5); assert.equal(d.po, 'UBFPO000099001');
   const sp = fx('store-products').value.map(R.labelSnapshot);
@@ -1502,7 +1507,9 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.ok(!nd(r).includes('FSO2') && nd(r).includes('FSO3'), 'FSO2 rests');
   assert.equal(await count("SELECT COUNT(*) AS n FROM inv_so_need WHERE store = 562 AND none_at IS NOT NULL"), 2, 'junk entries are not recorded as "no WO" (the long one is cut, not an object)');
   await T.prepare("UPDATE inv_so_need SET claimed_until = NULL, none_at = ? WHERE sales_order = 'FSO2'").bind(new Date(Date.now() - 25 * 3600000).toISOString()).run();
-  assert.ok(nd(await sweepS({ soNeed: 50 })).includes('FSO2'), 'after a day it is asked again');
+  assert.ok(!nd(await sweepS({ soNeed: 50 })).includes('FSO2'), 'a day is not enough');
+  await T.prepare("UPDATE inv_so_need SET claimed_until = NULL, none_at = ? WHERE sales_order = 'FSO2'").bind(new Date(Date.now() - 8 * 86400000).toISOString()).run();
+  assert.ok(nd(await sweepS({ soNeed: 50 })).includes('FSO2'), 'after a week it is asked again');
   // linked meanwhile (label details with both SalesOrderNumber and WorkOrderId) -> leaves the list
   await T.prepare('UPDATE inv_so_need SET claimed_until = NULL').run();
   await sweepS({ labels: [{ SerialNumber: '562001-0000000003', ItemNumber: '562001', SalesOrderNumber: 'FSO3', WorkOrderId: '600', Store: '562' }] });

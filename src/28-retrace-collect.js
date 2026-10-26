@@ -333,11 +333,25 @@ AE.retrace = (() => {
     if (!rows.length && !Array.isArray(j) && !(AE.shape.isObj(j) && ENVELOPES.some((k) => Array.isArray(j[k])))) throw AE.shape.bad(what, 'no list in the answer', j);
     return rows;
   }
-  async function pages(path, method, body, size) {
+  /*
+    The RMA order list (captured live at 914, Oct 26, 2026; fixtures/retrace/rma-orders-live.json) has no flat list: { $id, Count, StatusList:
+    [{ $id, Count, Status, Headers: [{ PurchId, VendorReference, Status, CreatedDate "10/19/2026 03:55:02 pm" (no zone), SupplierName, PartCount,
+    ExpectedRefund }] }], ErrorMessage, Success, DebugMessage }. The rows are every group's Headers (a group with Headers [] adds none: an
+    empty list is not an error); a StatusList group without a Headers list is a bad shape. Anything without StatusList goes to listOf as before.
+    CreatedDate is kept as Portal's text in the doc's data (retrace.js isoAt reads no MM/DD/YYYY, so the doc's time is left empty, never guessed).
+  */
+  function rmaRows(j, what) {
+    if (AE.shape.isObj(j) && Array.isArray(j.StatusList)) {
+      if (!j.StatusList.every((g) => AE.shape.isObj(g) && Array.isArray(g.Headers))) throw AE.shape.bad(what, 'a StatusList group without Headers', j);
+      return j.StatusList.flatMap((g) => g.Headers);
+    }
+    return listOf(j, what);
+  }
+  async function pages(path, method, body, size, read = listOf) {
     const all = [];
     for (let page = 1; page <= LIST_PAGES; page++) {
       const j = await portal(method, path.replace('{page}', page), body);
-      const list = listOf(j, path.replace(/\?.*$/, ''));
+      const list = read(j, path.replace(/\?.*$/, ''));
       all.push(...list);
       const total = j && Number(j['@odata.count']);
       if (list.length < size || (total && page * size >= total)) break;
@@ -364,7 +378,7 @@ AE.retrace = (() => {
     });
     await step('rma orders', async () => {
       const q = '?startDate=' + ymd(daysAgo(RMA_DAYS)).replace(/-/g, '') + '&endDate=' + ymd(new Date()).replace(/-/g, '') + '&searchTerm=&orderStatus=&pageSize=50&page={page}';
-      const rows = await pages('/api/boh/rma-buyback/rma-orders' + q, 'GET', undefined, 50);
+      const rows = await pages('/api/boh/rma-buyback/rma-orders' + q, 'GET', undefined, 50, rmaRows);
       const seen = (cursors.rma && cursors.rma.value && cursors.rma.value.seen) || {}, next = {};
       let read = 0;
       for (const r of rows) {
@@ -624,8 +638,8 @@ AE.retrace = (() => {
             result.details++;
             try {
               const d = await portal('GET', '/api/boh/inventory/' + encodeURIComponent(label) + '?includeQuarantineInfo=true&includeSalvageInfo=true');
-              const sn = R.labelSnapshot(d);
-              // The sales order counts as linked only once its label details read is a real label (fixtures/retrace/label-details.json).
+              const sn = R.detailsSnapshot(d, label);
+              // The sales order counts as linked only once its label details read is this label's (retrace.js detailsSnapshot; fixtures/retrace/label-details-live.json).
               if (sn) { snaps.push(sn); sos.add(so); } else note('label details ' + label, AE.shape.bad('label details ' + label, 'no usable label', d));
             } catch (e) { if (fatal(e)) throw e; note('label details ' + label, e); trouble.mark('label details ' + label); }
           } else if (so && !sos.has(so)) result.detailsDeferred++; // over budget: the Worker still lists this sales order in soNeed (no inv_so_wo row), read below / next pass
@@ -658,8 +672,8 @@ AE.retrace = (() => {
         if (trouble.on) { trouble.mark('sales order ' + x.sales_order); break; }
         try {
           const d = await portal('GET', '/api/boh/inventory/' + encodeURIComponent(x.label) + '?includeQuarantineInfo=true&includeSalvageInfo=true');
-          const sn = AE.shape.isObj(d) && d.Success !== false ? R.labelSnapshot(d) : null, want = R.labelSnapshot({ label: x.label });
-          if (!sn || !want || sn.label !== want.label || !sn.status) { note('sales order ' + x.sales_order, AE.shape.bad('label details ' + x.label, 'no usable label', d)); continue; }
+          const sn = R.detailsSnapshot(d, x.label);
+          if (!sn) { note('sales order ' + x.sales_order, AE.shape.bad('label details ' + x.label, 'no usable label', d)); continue; }
           result.soRead++;
           snaps.push(sn);
           if (sn.wo && sn.sales_order === x.sales_order) sos.add(x.sales_order); else soNone.push(x.sales_order);
@@ -821,7 +835,7 @@ AE.retrace = (() => {
       raw: sample.length ? undefined : JSON.stringify(scrubDeep(j)).slice(0, 800) };
   }
   const probeCall = async (path) => {
-    try { return { path, answer: outline(await AE.api('GET', path)) }; }
+    try { const raw = await AE.api('GET', path); return { path, answer: outline(raw), raw }; }
     catch (e) { return { path, error: (e && e.message) || String(e), status: httpOf(e) || null, notJson: !!(e && e.notJson) }; }
   };
 
@@ -830,7 +844,8 @@ AE.retrace = (() => {
     probeRma: async () => {
       const q = '?startDate=' + ymd(daysAgo(RMA_DAYS)).replace(/-/g, '') + '&endDate=' + ymd(new Date()).replace(/-/g, '') + '&searchTerm=&orderStatus=&pageSize=50&page=1';
       const r = await probeCall('/api/boh/rma-buyback/rma-orders' + q);
-      if (r.answer) r.collector = r.answer.rowsTheCollectorSees || r.answer.type === 'array' || Object.keys(r.answer.arrays).some((k) => ENVELOPES.includes(k)) ? 'read as a list' : 'refused: no list in the answer (one of ' + ENVELOPES.join(', ') + ')';
+      if (r.answer) { try { r.collector = 'read: ' + rmaRows(r.raw, 'rma orders').length + ' orders'; } catch (e) { r.collector = 'refused: ' + ((e && e.message) || e); } }
+      delete r.raw;
       return r;
     },
     // Dev tools: label details for one label (the call the sales-order lookups make), its outline, and what the collector makes of it.
@@ -838,10 +853,10 @@ AE.retrace = (() => {
       const path = '/api/boh/inventory/' + encodeURIComponent(label) + '?includeQuarantineInfo=true&includeSalvageInfo=true';
       let j;
       try { j = await AE.api('GET', path); } catch (e) { return { path, error: (e && e.message) || String(e), status: httpOf(e) || null, notJson: !!(e && e.notJson) }; }
-      const sn = AE.shape.isObj(j) ? R.labelSnapshot(j) : null, want = R.labelSnapshot({ label });
-      const collector = !AE.shape.isObj(j) ? 'refused: not an object' : j.Success === false ? 'refused: Success is false' : !sn ? 'refused: no label field it knows (SerialNumber / InventSerialId / label / serial)'
-        : !want || sn.label !== want.label ? 'refused: names another label (' + sn.label + ')' : !sn.status ? 'refused: no status (SerialStatus)'
-        : 'usable: label ' + sn.label + ', status ' + sn.status + ', WO ' + (sn.wo || '-') + ', sales order ' + (sn.sales_order || '-');
+      const sn = R.detailsSnapshot(j, label), want = R.labelSnapshot({ label }), raw = R.labelSnapshot(AE.shape.isObj(j) ? Object.assign({}, j, { label }) : { label });
+      const collector = !want ? 'not a label' : !AE.shape.isObj(j) ? 'refused: not an object' : j.Success === false ? 'refused: Success is false'
+        : sn ? 'usable: label ' + sn.label + ', status ' + sn.status + ', WO ' + (sn.wo || '-') + ', sales order ' + (sn.sales_order || '-') + ', arrival ' + (sn.arrival || '-')
+        : !raw.status ? 'refused: no status (SerialStatus)' : 'refused: names another label or item (ItemNumber ' + (j.ItemNumber == null ? '-' : j.ItemNumber) + ')';
       return { path, answer: outline(j), collector, snapshot: sn ? scrubDeep(sn) : null };
     },
     // Dev tools: the collector's label read for one item, shown raw (see labelsOf): what Portal answers and what each row would do at the Worker.
