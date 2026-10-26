@@ -805,7 +805,43 @@ AE.retrace = (() => {
   });
   if (enabled() || recording()) hook();
 
+  // Dev tools probes: an answer's outline (never interpreted beyond what the collector itself does): top-level keys, the arrays in it and their
+  // lengths, the first 2 rows (scrubbed of anything named like a person's details), and a short raw excerpt when there is no list.
+  const SCRUB = /customer|phone|email|address|first|last|given|family|fullname|^name$|contact/i;
+  const scrubDeep = (v, d = 0) => (Array.isArray(v) ? v.slice(0, 5).map((x) => scrubDeep(x, d + 1)) : v && typeof v === 'object' && d < 4
+    ? Object.fromEntries(Object.entries(v).filter(([k]) => !SCRUB.test(k)).map(([k, x]) => [k, scrubDeep(x, d + 1)])) : v);
+  function outline(j) {
+    const arrays = AE.shape.isObj(j) ? Object.fromEntries(Object.entries(j).filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, v.length])) : {};
+    const rows = R.rowsOf(j), firstArr = AE.shape.isObj(j) ? Object.values(j).find((v) => Array.isArray(v) && v.length) : null;
+    const sample = (Array.isArray(j) ? j : rows.length ? rows : firstArr || []).slice(0, 2);
+    return { type: Array.isArray(j) ? 'array' : j === null ? 'null' : typeof j, topLevel: AE.shape.isObj(j) ? Object.keys(j) : null, length: Array.isArray(j) ? j.length : null,
+      arrays, odataCount: AE.shape.isObj(j) && '@odata.count' in j ? j['@odata.count'] : null, rowsTheCollectorSees: rows.length, first2: scrubDeep(sample),
+      raw: sample.length ? undefined : JSON.stringify(scrubDeep(j)).slice(0, 800) };
+  }
+  const probeCall = async (path) => {
+    try { return { path, answer: outline(await AE.api('GET', path)) }; }
+    catch (e) { return { path, error: (e && e.message) || String(e), status: httpOf(e) || null, notJson: !!(e && e.notJson) }; }
+  };
+
   return {
+    // Dev tools: the RMA order list exactly as the collector asks for it (page 1), its outline, and what the collector's list check says.
+    probeRma: async () => {
+      const q = '?startDate=' + ymd(daysAgo(RMA_DAYS)).replace(/-/g, '') + '&endDate=' + ymd(new Date()).replace(/-/g, '') + '&searchTerm=&orderStatus=&pageSize=50&page=1';
+      const r = await probeCall('/api/boh/rma-buyback/rma-orders' + q);
+      if (r.answer) r.collector = r.answer.rowsTheCollectorSees || r.answer.type === 'array' || Object.keys(r.answer.arrays).some((k) => ENVELOPES.includes(k)) ? 'read as a list' : 'refused: no list in the answer (one of ' + ENVELOPES.join(', ') + ')';
+      return r;
+    },
+    // Dev tools: label details for one label (the call the sales-order lookups make), its outline, and what the collector makes of it.
+    probeLabel: async (label) => {
+      const path = '/api/boh/inventory/' + encodeURIComponent(label) + '?includeQuarantineInfo=true&includeSalvageInfo=true';
+      let j;
+      try { j = await AE.api('GET', path); } catch (e) { return { path, error: (e && e.message) || String(e), status: httpOf(e) || null, notJson: !!(e && e.notJson) }; }
+      const sn = AE.shape.isObj(j) ? R.labelSnapshot(j) : null, want = R.labelSnapshot({ label });
+      const collector = !AE.shape.isObj(j) ? 'refused: not an object' : j.Success === false ? 'refused: Success is false' : !sn ? 'refused: no label field it knows (SerialNumber / InventSerialId / label / serial)'
+        : !want || sn.label !== want.label ? 'refused: names another label (' + sn.label + ')' : !sn.status ? 'refused: no status (SerialStatus)'
+        : 'usable: label ' + sn.label + ', status ' + sn.status + ', WO ' + (sn.wo || '-') + ', sales order ' + (sn.sales_order || '-');
+      return { path, answer: outline(j), collector, snapshot: sn ? scrubDeep(sn) : null };
+    },
     // Dev tools: the collector's label read for one item, shown raw (see labelsOf): what Portal answers and what each row would do at the Worker.
     probeItem: async (item) => {
       const p = await AE.profile(), store = p && p.storeId;

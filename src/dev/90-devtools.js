@@ -361,6 +361,18 @@
           rtOut.replaceChildren(row(btn('Copy', async () => { await navigator.clipboard.writeText(JSON.stringify(r, null, 1)); AE.toast('Copied', 'The probe result is on the clipboard.', 'ok'); })),
             h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace;max-height:320px;overflow:auto' }, JSON.stringify(r, null, 1)));
         } catch (e) { rtOut.replaceChildren(note('Probe failed: ' + (e.message || e))); }
+      }), btn('Retrace: probe the RMA order list', async () => {
+        rtOut.replaceChildren(note('Reading the RMA order list (page 1, as the collector asks)…'));
+        const r = await AE.retrace.probeRma();
+        rtOut.replaceChildren(row(btn('Copy', async () => { await navigator.clipboard.writeText(JSON.stringify(r, null, 1)); AE.toast('Copied', 'The probe result is on the clipboard.', 'ok'); })),
+          h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace;max-height:320px;overflow:auto' }, JSON.stringify(r, null, 1)));
+      }), btn("Retrace: probe a label's details", async () => {
+        const label = (window.prompt('Label to probe (label details, as the sales-order lookups read it):', '667497-0000000106') || '').trim();
+        if (!label) return;
+        rtOut.replaceChildren(note('Reading label details of ' + label + '…'));
+        const r = await AE.retrace.probeLabel(label);
+        rtOut.replaceChildren(row(btn('Copy', async () => { await navigator.clipboard.writeText(JSON.stringify(r, null, 1)); AE.toast('Copied', 'The probe result is on the clipboard.', 'ok'); })),
+          h('pre', { style: 'white-space:pre-wrap;font:11px ui-monospace,Menlo,monospace;max-height:320px;overflow:auto' }, JSON.stringify(r, null, 1)));
       }), btn("Retrace: probe a sold WO's sales order", async () => {
         // The raw answer of GET /api/workorder/{wo}/salesorder/{csuCartId}, to save over tracker-worker/test/fixtures/retrace/wo-salesorder.json
         const wo = (window.prompt('Sold work order number:', '') || '').trim();

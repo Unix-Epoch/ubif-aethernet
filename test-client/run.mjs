@@ -885,6 +885,25 @@ await t('Retrace history 404: a real read clears the count', async () => {
   assert.ok(histPosts(env).every((b) => b.none === undefined && b.rows.length));
 });
 
+// ---- dev tools probes (outline only, never interpreted beyond the collector's own checks)
+await t('Retrace probes: RMA list and label details are outlined (keys, arrays, first 2 rows scrubbed) with the collector\'s verdict', async () => {
+  const env = retraceEnv(ok(LABELS), { rmaList: ok({ weird: [{ id: 1, customerName: 'X', phone: '1' }, { id: 2 }, { id: 3 }], n: 3 }) }); // SYNTHETIC unknown envelope
+  const r = await env.AE.retrace.probeRma();
+  assert.match(r.path, /rma-orders\?startDate=\d{8}&endDate=\d{8}&.*page=1$/);
+  assert.deepEqual(plain(r.answer.topLevel), ['weird', 'n']); assert.deepEqual(plain(r.answer.arrays), { weird: 3 });
+  assert.equal(r.answer.first2.length, 2); assert.ok(!('customerName' in r.answer.first2[0]) && !('phone' in r.answer.first2[0]), 'scrubbed');
+  assert.match(r.collector, /refused: no list/);
+  const l = await env.AE.retrace.probeLabel('176255-0000514371');
+  assert.match(l.collector, /^usable: label 176255-0000514371, status /, JSON.stringify(l));
+  const env2 = retraceEnv(ok(LABELS), { details: ok({ Success: true, Data: { SerialNumber: '176255-0000514371' } }) }); // SYNTHETIC wrapped answer
+  const l2 = await env2.AE.retrace.probeLabel('176255-0000514371');
+  assert.match(l2.collector, /refused: no label field/); assert.deepEqual(plain(l2.answer.topLevel), ['Success', 'Data']); assert.ok(l2.answer.raw.includes('Data'));
+  const env3 = retraceEnv(ok(LABELS), { details: { status: 404, body: { message: 'x' } } });
+  const l3 = await env3.AE.retrace.probeLabel('176255-0000514371');
+  assert.equal(l3.status, 404); assert.ok(l3.error);
+  assert.deepEqual(env3.requests(/\/retrace\//), [], 'probes never write to the Worker');
+});
+
 // ---- C: purchase orders
 const poRun = (poReceive, poHeader) => retraceEnv(ok(LABELS), { todo: [], poReceive, poHeader, sweep: (b) => (b.poNeed > 0 ? { pos: { need: ['UBFPO000099001'], events: 0 } } : {}) });
 await t('Retrace POs: header + receive details go up together (control)', async () => {
