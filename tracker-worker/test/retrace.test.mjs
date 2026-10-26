@@ -8,7 +8,7 @@ import { getPlatformProxy } from 'wrangler';
 import worker, { trackerAdmin } from '../src/index.js';
 import * as R from '../src/retrace.js';
 import * as S from '../src/shape.js';
-import { resetCaches } from '../src/retrace-api.js';
+import { resetCaches, soLink as soLinkRun } from '../src/retrace-api.js';
 
 const fx = (name) => JSON.parse(readFileSync(new URL('./fixtures/retrace/' + name + '.json', import.meta.url), 'utf8'));
 const kinds = (ms) => ms.map((m) => m.kind);
@@ -137,8 +137,9 @@ for (const stmt of readFileSync('schema.sql', 'utf8').replace(/--[^\n]*/g, '').s
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-23-retrace.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-24-retrace-baseline.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-24-retrace-verify.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
+for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-25-retrace-so-need.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 await env.AE.prepare('CREATE TABLE IF NOT EXISTS store_access (store INTEGER PRIMARY KEY, name TEXT, added_by TEXT, added_at TEXT)').run();
-await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (914, 'Newport News'), (326, 'Lynnhaven')").run();
+await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (914, 'Newport News'), (326, 'Lynnhaven'), (562, 'So Test'), (563, 'So Other'), (564, 'So Link')").run();
 const E = Object.assign({}, env, { APP_KEY: 'k', TRACKER_OWNERS: 'owner@x.com', LIMITER: null });
 const T = env.TR;
 const call = async (method, path, body) => {
@@ -1375,6 +1376,145 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   const view = (await admin('owner@x.com', '/retrace/verify/554')).j;
   assert.equal(view.pass, view.checks.filter((x) => x.status === 'pass').length, 'the summary follows the fresh check');
   assert.equal(JSON.parse((await T.prepare('SELECT result FROM inv_verify WHERE store = 554').first()).result).missed.n, 3, 'the stored run is not rewritten by a read');
+}
+
+// ------------------------------------------------------------------ where a label stands now (retrace-now.js): consignment_changed never hides a sale
+{
+  const { serialNow, NOW_KIND, KINDS } = R;
+  const { STATUS_MOVE_KINDS } = await import('../src/retrace-now.js');
+  assert.deepEqual(STATUS_MOVE_KINDS.sort(), Object.keys(NOW_KIND).sort(), 'the SQL kinds are the NOW_KIND keys');
+  assert.deepEqual(KINDS.filter((k) => !NOW_KIND[k]), ['consignment_changed', 'status_changed'], 'the only kinds that say nothing about where a label stands');
+  // the status-bearing kind is what reaches serialNow; a PO "Received" is weak
+  assert.deepEqual(serialNow('Received', null, 'sold'), ['Sold', 'out'], 'Received + a later sale = Sold');
+  assert.deepEqual(serialNow('Received', null, 'reserved'), ['Reserved', 'wo']);
+  assert.deepEqual(serialNow('Received', null, 'used'), ['Used on repair', 'out']);
+  assert.deepEqual(serialNow('Received', null, 'transfer_out'), ['Transferred out', 'out']);
+  assert.deepEqual(serialNow('Received', null, 'defective'), ['Defective', 'q']);
+  assert.deepEqual(serialNow('Received', null, null), ['Available', 'in'], 'received and nothing since: in stock');
+  assert.deepEqual(serialNow('Sold', null, 'sold'), ['Sold', 'out'], 'Portal Sold stays Sold');
+  assert.deepEqual(serialNow('Sold', null, 'unreserved'), ['Sold', 'out'], 'Portal Sold is not undone by an older unreserve');
+  assert.deepEqual(serialNow('Available', null, 'sold'), ['Available', 'in'], 'Portal read it Available after the sale (a return): Portal wins');
+  assert.deepEqual(serialNow('Available', null, 'sold', true), ['Sold', 'out'], '...unless the movement is newer');
+  assert.deepEqual(serialNow('Adjusted', null, 'count_found'), ['Adjusted out', 'out'], 'Portal Adjusted (seen live) is out of stock, not Available off an older count');
+  assert.deepEqual(serialNow('Adjusted', null, null), ['Adjusted out', 'out']);
+  assert.equal(R.STATUS_KINDS.adjusted, 'adjusted_out');
+  // routes: store 561, item 561001: sold then consigned → owned; received only; reserved then consigned; Portal Sold; Portal Available after an old sale
+  const mvI = (label, at, kind, extra = '') => T.prepare('INSERT INTO inv_movements (store, label, item, at, kind, source, key, recorded_at) VALUES (561, ?, \'561001\', ?, ?, \'history\', ?, ?)').bind(label, at, kind, label + at + kind + extra, AT);
+  const lbl = (label, st, seen) => T.prepare("INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen, last_history_at) VALUES (561, ?, '561001', ?, ?, ?, ?)").bind(label, st, seen, seen, seen);
+  const D = (n) => '2026-10-' + String(n).padStart(2, '0') + 'T10:00:00.000Z';
+  await T.batch([
+    lbl('561001-0000000001', 'Received', D(24)), mvI('561001-0000000001', D(1), 'received'), mvI('561001-0000000001', D(2), 'sold'), mvI('561001-0000000001', D(3), 'consignment_changed'),
+    lbl('561001-0000000002', 'Received', D(24)), mvI('561001-0000000002', D(1), 'received'),
+    lbl('561001-0000000003', 'Received', D(24)), mvI('561001-0000000003', D(1), 'received'), mvI('561001-0000000003', D(2), 'reserved'), mvI('561001-0000000003', D(3), 'consignment_changed'),
+    lbl('561001-0000000004', 'Sold', D(24)), mvI('561001-0000000004', D(3), 'consignment_changed'),
+    lbl('561001-0000000005', 'Available', D(24)), mvI('561001-0000000005', D(2), 'sold'), mvI('561001-0000000005', D(3), 'consignment_changed'),
+    lbl('561001-0000000006', 'Received', D(24)), mvI('561001-0000000006', D(2), 'used'), mvI('561001-0000000006', D(3), 'consignment_changed'), mvI('561001-0000000006', D(4), 'status_changed'),
+    // Portal's SerialStatus 'Adjusted' (seen live at 914, 197 labels): adjusted out of stock, whatever an older count said
+    lbl('561001-0000000007', 'Adjusted', D(24)), mvI('561001-0000000007', D(1), 'count_found'),
+    T.prepare("INSERT INTO inv_items (store, item, name, qty, qty_hash, first_seen, last_seen) VALUES (561, '561001', 'Now Test', ?, 'h', ?, ?)").bind(JSON.stringify({ 561: { onHand: 2, available: 1, reserved: 1 } }), AT, AT),
+  ]);
+  const sr = (await admin('owner@x.com', '/retrace/serials/561/561001')).j, nowOf = Object.fromEntries(sr.serials.map((x) => [x.label.slice(-1), x.now]));
+  assert.deepEqual(nowOf, { 1: 'Sold', 2: 'Available', 3: 'Reserved', 4: 'Sold', 5: 'Available', 6: 'Used on repair', 7: 'Adjusted out' }, 'serials: Sold then consigned → owned stays Sold');
+  assert.deepEqual(sr.serials.find((x) => x.label.endsWith('1')).last.kind, 'consignment_changed', 'the last movement shown is still the consignment change');
+  assert.deepEqual(sr.groups, { all: 7, in: 2, wo: 1, out: 4, q: 0, bad: 0 });
+  const it = (await admin('owner@x.com', '/retrace/item/561/561001')).j;
+  const byNow = {}; for (const c of it.counts) byNow[c.now] = (byNow[c.now] || 0) + c.n;
+  assert.deepEqual(byNow, { Sold: 2, Available: 2, Reserved: 1, 'Used on repair': 1, 'Adjusted out': 1 }, 'item counts (the tiles\' fallback) use the derived status');
+  assert.ok(it.counts.every((c) => 'serial_status' in c && c.group), 'counts keep the raw word and carry the group');
+  const lb = (await admin('owner@x.com', '/retrace/label/561/561001-0000000001')).j;
+  assert.deepEqual(lb.now, { status: 'Sold', group: 'out' }, 'the label drawer\'s Status now'); assert.equal(lb.label.serial_status, 'Received', 'the raw word is still there');
+  assert.equal((await admin('owner@x.com', '/retrace/search?store=561&q=561001-0000000001')).j.labels[0].now, 'Sold');
+  // the items list: no lookup quantity -> the available labels, derived
+  await T.prepare("UPDATE inv_items SET qty = NULL WHERE store = 561").run();
+  assert.equal((await admin('owner@x.com', '/retrace/items?store=561')).j.items.find((x) => x.item === '561001').available, 2, 'items list fallback: Available labels by derived status');
+  // Verify check 2: Portal's lookup says 1 available + 1 reserved of 6 labels... only the derived statuses can match 2 available, 1 reserved
+  await T.prepare("UPDATE inv_items SET qty = ? WHERE store = 561").bind(JSON.stringify({ 561: { onHand: 3, available: 2, reserved: 1 } })).run();
+  await T.batch([T.prepare("INSERT INTO inv_item_counts (store, item, labels, counted_at) VALUES (561, '561001', 7, ?)").bind(AT), T.prepare("INSERT INTO inv_baseline (store, expected_items, expected_labels, counted_at, created_at) VALUES (561, 1, 7, ?, ?)").bind(AT, AT)]);
+  const vr = (await adminPost('owner@x.com', '/retrace/verify/561/run')).j, q2 = vr.checks.find((c) => c.key === 'qty');
+  assert.equal(q2.status, 'pass', 'check 2 compares the lookup with the derived statuses: ' + JSON.stringify(q2));
+  const spot = vr.checks.find((c) => c.key === 'spot');
+  assert.ok(spot.rows.every((r) => r.now !== 'Received'), 'the sample shows derived statuses');
+}
+
+// ------------------------------------------------------------------ soLink: the tracker's own sales order → WO links (no Portal call)
+{
+  const sweepL = (body) => call('POST', '/v1/564/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+  const D = (n) => '2026-10-' + String(n).padStart(2, '0') + 'T10:00:00.000Z';
+  const mv = (label, so, at) => T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, ref_type, ref_id, source, key, recorded_at) VALUES (564, ?, '564001', ?, 'sold', 'sales_order', ?, 'history', ?, ?)").bind(label, at, so, label + so + at, AT);
+  const lab = (label) => T.prepare("INSERT INTO inv_labels (store, label, item, serial_status, first_seen, last_seen) VALUES (564, ?, '564001', 'Sold', ?, ?)").bind(label, AT, AT);
+  const L = (n) => '564001-000000000' + n;
+  await T.batch([
+    ...[1, 2, 3, 4, 5, 6].map((n) => lab(L(n))),
+    mv(L(1), 'FSO_A', D(2)), mv(L(2), 'FSO_B', D(2)), mv(L(3), 'FSO_C', D(2)), mv(L(4), 'FSO_D', D(2)), mv(L(5), 'FSO_E', D(2)), mv(L(6), 'FSO_A', D(1)), mv(L(6), 'FSO_E', D(3)),
+    T.prepare("INSERT INTO sales (store, sale_id, wo, sale_day, source) VALUES (564, 'FSO_A', 600001, '2026-10-02', 'portal'), (564, 'FSO_D', 600004, '2026-10-02', 'portal'), (564, 'FSO_Q', NULL, '2026-10-02', 'portal'), (565, 'FSO_E', 777, '2026-10-02', 'portal')"),
+    T.prepare("INSERT INTO workorders (store, wo, plain) VALUES (564, 600002, ?), (564, 600003, ?), (564, 600005, 'not json')").bind(JSON.stringify({ workorder: { workorderId: 600002, csuSalesOrderId: 'FSO_B' } }), JSON.stringify({ workorder: { workorderId: 600003 }, cart: { salesId: 'FSO_C' } })),
+    T.prepare("INSERT INTO inv_so_wo (store, sales_order, wo, source, updated_at) VALUES (564, 'FSO_D', '999', 'label', ?)").bind(AT),
+  ]);
+  const r = await sweepL({ soNeed: 50 });
+  assert.ok(r.status < 300, JSON.stringify(r));
+  const links = Object.fromEntries((await T.prepare('SELECT sales_order, wo, source FROM inv_so_wo WHERE store = 564').all()).results.map((x) => [x.sales_order, x.wo + '/' + x.source]));
+  assert.deepEqual(links, { FSO_A: '600001/tracker', FSO_B: '600002/tracker', FSO_C: '600003/tracker', FSO_D: '999/label' }, 'from sales, csuSalesOrderId, cart.salesId; a label-details link is never overwritten; other stores / no-WO sales stay out');
+  assert.deepEqual(r.j.soNeed, [{ sales_order: 'FSO_E', label: L(5) }], 'soNeed lists only what is still unmapped');
+  const lw = Object.fromEntries((await T.prepare('SELECT label, wo, sales_order FROM inv_labels WHERE store = 564').all()).results.map((x) => [x.label.slice(-1), [x.wo, x.sales_order]]));
+  assert.deepEqual(lw, { 1: ['600001', 'FSO_A'], 2: ['600002', 'FSO_B'], 3: ['600003', 'FSO_C'], 4: ['999', 'FSO_D'], 5: [null, null], 6: [null, null] }, 'labels take the WO of their NEWEST sales order (label 6: unmapped, so none)');
+  // the readers agree
+  const sr = (await admin('owner@x.com', '/retrace/serials/564/564001')).j;
+  assert.deepEqual(Object.fromEntries(sr.serials.map((x) => [x.label.slice(-1), x.wo])), { 1: '600001', 2: '600002', 3: '600003', 4: '999', 5: null, 6: null });
+  assert.equal(sr.serials.find((x) => x.label === L(1)).last.wo, '600001', 'the movement list\'s WO column');
+  assert.deepEqual((await admin('owner@x.com', '/retrace/search?store=564&q=600002')).j.labels.map((x) => x.label), [L(2)], 'search by WO finds the label');
+  assert.equal((await admin('owner@x.com', '/retrace/label/564/' + L(3))).j.label.wo, '600003');
+  // once a day: a new sale is not read until the cursor is due (or forced)
+  await T.prepare("INSERT INTO sales (store, sale_id, wo, sale_day, source) VALUES (564, 'FSO_E', 600006, '2026-10-03', 'portal')").run();
+  await sweepL({ soNeed: 50 });
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_so_wo WHERE store = 564 AND sales_order = 'FSO_E'"), 0, 'once a day');
+  await T.prepare("DELETE FROM inv_cursors WHERE store = 564 AND sweep = 'so_link'").run();
+  const r2 = await sweepL({ soNeed: 50 });
+  assert.deepEqual(r2.j.soNeed, [], 'linked now: nothing left to ask Portal');
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_labels WHERE store = 564 AND wo = '600006'"), 2);
+  const again = await soLinkRun(T, 564, new Date().toISOString(), true);
+  assert.deepEqual(again, { linked: 0, labels: 0 }, 'idempotent');
+}
+
+// ------------------------------------------------------------------ soNeed: sales orders with no WO link
+{
+  const sweepS = (body, store = 562) => call('POST', '/v1/' + store + '/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+  const smv = (store, label, so, at) => T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, ref_type, ref_id, source, key, recorded_at) VALUES (?, ?, '562001', ?, 'reserved', 'sales_order', ?, 'history', ?, ?)").bind(store, label, at, so, label + so + at, AT);
+  const D = (n) => '2026-10-' + String(n).padStart(2, '0') + 'T10:00:00.000Z';
+  await T.batch([
+    smv(562, '562001-0000000001', 'FSO1', D(1)), smv(562, '562001-0000000002', 'FSO2', D(5)), smv(562, '562001-0000000003', 'FSO1', D(1)), smv(562, '562001-0000000003', 'FSO3', D(3)),
+    smv(562, '562001-0000000004', 'FSO4', D(9)), smv(562, '562001-0000000005', 'FSO5', D(2)), smv(563, '562001-0000000009', 'FSO9', D(9)),
+    T.prepare("INSERT INTO inv_so_wo (store, sales_order, wo, source, updated_at) VALUES (562, 'FSO4', '500', 'wo', ?)").bind(AT),
+  ]);
+  const nd = (r) => r.j.soNeed.map((x) => x.sales_order);
+  const r0 = await sweepS({}); assert.ok(r0.status < 300, JSON.stringify(r0)); assert.deepEqual(r0.j.soNeed, [], 'not asked for = none');
+  assert.deepEqual((await sweepS({ soNeed: 'lots' })).j.soNeed, [], 'not an integer = none');
+  let r = await sweepS({ soNeed: 2 });
+  assert.deepEqual(nd(r), ['FSO2', 'FSO3'], 'newest first, linked (FSO4) and other stores\' (FSO9) left out, capped by the ask');
+  assert.deepEqual(r.j.soNeed[1], { sales_order: 'FSO3', label: '562001-0000000003' }, 'one label whose newest sales order it is');
+  assert.deepEqual(nd(await sweepS({ soNeed: 50 })), ['FSO5', 'FSO1'], 'claimed ones are not handed out again');
+  await T.prepare('UPDATE inv_so_need SET claimed_until = NULL').run();
+  assert.equal(nd(await sweepS({ soNeed: 50 })).length, 4, 'a failed read (claim expired) comes back');
+  await T.prepare('UPDATE inv_so_need SET claimed_until = NULL').run();
+  // a real read with no WorkOrderId: not asked again for a day
+  r = await sweepS({ soNeed: 50, soNone: ['FSO2', null, { x: 1 }, '', 'X'.repeat(100)] });
+  assert.ok(!nd(r).includes('FSO2') && nd(r).includes('FSO3'), 'FSO2 rests');
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_so_need WHERE store = 562 AND none_at IS NOT NULL"), 2, 'junk entries are not recorded as "no WO" (the long one is cut, not an object)');
+  await T.prepare("UPDATE inv_so_need SET claimed_until = NULL, none_at = ? WHERE sales_order = 'FSO2'").bind(new Date(Date.now() - 25 * 3600000).toISOString()).run();
+  assert.ok(nd(await sweepS({ soNeed: 50 })).includes('FSO2'), 'after a day it is asked again');
+  // linked meanwhile (label details with both SalesOrderNumber and WorkOrderId) -> leaves the list
+  await T.prepare('UPDATE inv_so_need SET claimed_until = NULL').run();
+  await sweepS({ labels: [{ SerialNumber: '562001-0000000003', ItemNumber: '562001', SalesOrderNumber: 'FSO3', WorkOrderId: '600', Store: '562' }] });
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_so_wo WHERE store = 562 AND sales_order = 'FSO3' AND wo = '600'"), 1);
+  assert.ok(!nd(await sweepS({ soNeed: 50 })).includes('FSO3'));
+  assert.equal(nd(await sweepS({ soNeed: 500 })).length <= 50, true);
+}
+
+// the admin page's source: the drawer reads the derived status, not the raw word; an unlinked sales order is said so
+{
+  const ui = readFileSync('../admin-worker/src/retrace-ui.js', 'utf8');
+  assert.ok(ui.includes("j.now ? j.now.status : l.serial_status"), 'drawer: Status now from the label route\'s now');
+  assert.ok(ui.includes("'not linked yet · sales order '"), 'drawer: an unlinked work order is said, with the sales order');
+  assert.ok(ui.includes("c.now ? norm(c.now) : norm(c.serial_status)"), 'tiles fallback: derived status');
 }
 
 await dispose();

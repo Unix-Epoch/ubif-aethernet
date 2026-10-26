@@ -71,6 +71,7 @@ export const STATUS_KINDS = {
   'broken': 'defective',              // GUESS
   'intransit': 'shipped_to_store',    // InTransit on a PO (seen); on a store transfer it's transfer_out (kindOf, by ref_type)
   'adjusted(deleted)': 'adjusted_out', // GUESS
+  'adjusted': 'adjusted_out',          // seen live at 914 (197 labels, Oct 26): adjusted out of stock (Portal doesn't count them available)
   'nondefectiverma': 'rma',           // GUESS
   'available': null,
   'none': null,
@@ -79,7 +80,7 @@ export const STATUS_KINDS = {
 export const AVAILABLE_AFTER = {
   'reserved': 'unreserved',
   'intransit': 'received',
-  'adjusted(deleted)': 'adjusted_in',
+  'adjusted(deleted)': 'adjusted_in', 'adjusted': 'adjusted_in',
   'lost': 'count_found',
   'defective': 'adjusted_in', 'damaged': 'adjusted_in', 'broken': 'adjusted_in',
   'sold': 'returned',
@@ -103,13 +104,13 @@ export const LOCATION_KINDS = { quarantine: 'quarantined', lost: 'lost', van: 'v
 // out (used, sold, moved), q (defective, returns), bad (lost, missing); null = none of them (only under All).
 // Portal's own status on the label wins (snapshots keep it current), but a label read as Sold, or with no status, takes
 // what its last movement says (used on a repair, transferred out, to a van …), a movement newer than the label's last
-// snapshot (newer = true) wins, and Quarantine is defective whatever else.
+// snapshot (newer = true) wins, and Quarantine is defective whatever else. Sold, then consigned → owned, is still Sold.
 const NOW_STATUS = {
   available: ['Available', 'in'], received: ['Available', 'in'], none: ['Available', 'in'], intransit: ['In transit', 'in'],
-  reserved: ['Reserved', 'wo'], sold: ['Sold', 'out'], 'adjusted(deleted)': ['Adjusted out', 'out'],
+  reserved: ['Reserved', 'wo'], sold: ['Sold', 'out'], 'adjusted(deleted)': ['Adjusted out', 'out'], adjusted: ['Adjusted out', 'out'],
   defective: ['Defective', 'q'], damaged: ['Defective', 'q'], broken: ['Defective', 'q'], nondefectiverma: ['RMA', 'q'], lost: ['Lost', 'bad'],
 };
-const NOW_KIND = {
+export const NOW_KIND = {
   shipped_to_store: ['In transit', 'in'], received: ['Available', 'in'], unreserved: ['Available', 'in'], swapped_out: ['Available', 'in'], count_found: ['Available', 'in'],
   adjusted_in: ['Available', 'in'], returned: ['Available', 'in'], transfer_in: ['Available', 'in'], van_in: ['Available', 'in'],
   reserved: ['Reserved', 'wo'], swapped_in: ['Reserved', 'wo'], used: ['Used on repair', 'out'], sold: ['Sold', 'out'], transfer_out: ['Transferred out', 'out'],
@@ -119,7 +120,10 @@ const NOW_KIND = {
 export function serialNow(status, whType, lastKind, newer = false) {
   const s = String(status || '').toLowerCase().replace(/\s+/g, ''), kind = NOW_KIND[lastKind] || null;
   if (String(whType || '').toLowerCase() === 'quarantine' && s !== 'sold' && s !== 'lost') return ['Quarantined', 'q'];
-  if (kind && (newer || (kind[1] === 'out' && (!s || s === 'sold')))) return kind;
+  // 'Received' is the PO receive-detail snapshot's word, not a store-products SerialStatus (Available / Reserved / Sold ...): it never says where
+  // the label stands today, so any status-bearing movement beats it. lastKind must be the last STATUS-BEARING movement (NOW_KIND keys:
+  // retrace-now.js lastStatusSql); consignment_changed / status_changed say nothing about where a label stands and never reach here.
+  if (kind && (newer || s === 'received' || (kind[1] === 'out' && (!s || s === 'sold')))) return kind;
   return NOW_STATUS[s] || kind || [status ? String(status) : 'Unknown', null];
 }
 // Count line results. GUESSES: Portal's count line shapes not captured yet.

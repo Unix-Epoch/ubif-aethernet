@@ -190,7 +190,7 @@ function refEl(m) {
   if (!m.ref_id) return ui.h('span', { class: 'rsoft' }, '—');
   if (m.ref_type === 'po') return poRef(m.ref_id);
   if (m.ref_type === 'wo') return woRef(m.ref_id);
-  if (m.ref_type === 'sales_order') return m.wo ? woRef(m.wo, m.ref_id) : plain(m.ref_id);
+  if (m.ref_type === 'sales_order') return m.wo ? woRef(m.wo, m.ref_id) : ui.h('span', { class: 'pref', title: 'Work order not linked yet' }, m.ref_id);
   return plain((REF_PREFIX[m.ref_type] || '') + m.ref_id);
 }
 function fromTo(m) {
@@ -617,7 +617,7 @@ function drawResults() {
   if (r.labels.length) {
     out.push(grp('Labels', r.labels.length));
     for (const x of r.labels) out.push(h('button', { class: 'it', type: 'button', onclick: () => openLabel(x.label) },
-      h('b', { class: 'mono', style: 'font-size:13px' }, x.label), h('span', { class: 'n' }, x.serial_status || ''),
+      h('b', { class: 'mono', style: 'font-size:13px' }, x.label), h('span', { class: 'n' }, x.now || x.serial_status || ''),
       h('span', { class: 's' }, x.product || ((S.items || []).find((i) => i.item === x.item) || {}).name || 'Item ' + (x.item || '?')), h('span', { class: 's' }, [x.po ? 'PO ' + x.po : null, x.wo ? 'WO ' + x.wo : null, x.last_seen ? 'seen ' + shortWhen(x.last_seen) : null].filter(Boolean).join(' · '))));
   }
   const docs = [...r.docs.map((d) => ({ type: d.type, id: d.id, sub: [d.status, d.at ? dayOnly(d.at) : null, d.counterpart].filter(Boolean).join(' · ') })),
@@ -668,13 +668,15 @@ async function refilter() {
 // else the labels Retrace knows; defective and consigned from the labels; sold from the movements (90 days).
 function itemCounts(d) {
   const lab = (f) => (d.counts || []).filter(f).reduce((n, c) => n + c.n, 0);
-  const st = (c) => norm(c.serial_status), quar = (c) => norm(c.wh_type) === 'quarantine';
+  // c.now / c.group: where the labels stand now (the tracker's retrace-now.js: latest status-bearing movement, Portal's status when newer);
+  // c.serial_status is only Portal's raw word on the label ('Received' off a PO says nothing). A reply without them falls back to the raw word.
+  const st = (c) => (c.now ? norm(c.now) : norm(c.serial_status)), quar = (c) => norm(c.wh_type) === 'quarantine';
   const qty = d.info && d.info.qty && typeof d.info.qty === 'object' ? d.info.qty : null;
   const wh = qty ? Object.entries(qty) : [];
   const sum = (k, q) => wh.filter(([id]) => (q ? /q$/i.test(id) : !/q$/i.test(id))).reduce((n, [, w]) => n + (w && typeof w[k] === 'number' ? w[k] : 0), 0);
-  const fromLabels = { available: lab((c) => st(c) === 'available' && !quar(c)), reserved: lab((c) => st(c) === 'reserved'), inTransit: lab((c) => st(c) === 'intransit') };
-  const defective = lab((c) => ['defective', 'damaged', 'broken'].includes(st(c)) || (quar(c) && !['sold', 'lost'].includes(st(c))));
-  const consigned = lab((c) => norm(c.consignment) === 'yes' && ['available', 'reserved', 'received', 'intransit'].includes(st(c)));
+  const fromLabels = { available: lab((c) => st(c) === 'available' && !quar(c)), reserved: lab((c) => st(c) === 'reserved'), inTransit: lab((c) => st(c) === 'intransit' || st(c) === 'in transit') };
+  const defective = lab((c) => ['defective', 'damaged', 'broken', 'quarantined'].includes(st(c)) || (quar(c) && !['sold', 'lost'].includes(st(c))));
+  const consigned = lab((c) => norm(c.consignment) === 'yes' && ['available', 'reserved', 'received', 'intransit', 'in transit'].includes(st(c)));
   return [['Available', qty ? sum('available') : fromLabels.available], ['Reserved', qty ? sum('reserved') : fromLabels.reserved], ['In transit', qty ? sum('inTransit') : fromLabels.inTransit],
     ['Defective', defective || (qty ? sum('onHand', true) : 0)], ['Sold, 90 days', d.sold90 || 0], ['Consigned', consigned]];
 }
@@ -765,14 +767,15 @@ async function openLabel(label) {
   const itemName = l.product || ((S.items || []).find((i) => i.item === item) || {}).name || (S.data && S.data.item === item && S.data.info && S.data.info.name) || null;
   const wo = l.wo || ([...mv].reverse().find((m) => m.wo) || {}).wo;
   const po = l.po || ([...mv].reverse().find((m) => m.ref_type === 'po') || {}).ref_id;
+  const soNow = l.sales_order || ([...mv].reverse().find((m) => m.ref_type === 'sales_order' && m.ref_id) || {}).ref_id || null; // history names the sales order, not the WO
   const consWas = mv.some((m) => m.kind === 'consignment_changed');
   const cons = norm(l.consignment) === 'yes' ? 'Consigned' : norm(l.consignment) === 'no' ? (consWas ? 'Owned (consigned at purchase)' : 'Owned') : null;
   const kv = [
     ['Item', item ? h('span', null, h('a', { class: 'ref', href: '#', onclick: (e) => { e.preventDefault(); closeDrawer(); openItem(item); } }, item), itemName ? ' · ' + itemName : '') : null],
-    ['Status now', [l.serial_status, l.wh_type && norm(l.wh_type) !== 'main' ? l.wh_type : null].filter(Boolean).join(' · ') || null],
+    ['Status now', [j.now ? j.now.status : l.serial_status, l.wh_type && norm(l.wh_type) !== 'main' ? l.wh_type : null].filter(Boolean).join(' · ') || null],
     ['Consignment', cons],
     ['Purchase order', po ? h('span', null, poRef(po, po), typeof l.cost === 'number' ? ' · ' + money(l.cost) : '') : null],
-    ['Work order', wo ? woRef(wo, wo + ' ↗') : null],
+    ['Work order', wo ? woRef(wo, wo + ' ↗') : soNow ? h('span', { class: 'rsoft', title: 'Serial history names the sales order only; the Worker links it to a work order from the tracker or the label details' }, 'not linked yet · sales order ' + soNow) : null],
     ['Sales order', l.sales_order || null],
     ['OEM serial', l.oem_serial || null], ['IMEI', l.imei || null],
     ['History read', l.last_history_at ? when(l.last_history_at) : l.need_history ? 'Queued' : null],
@@ -830,7 +833,7 @@ async function openPo(po) {
   let showAll = false;
   const labelRows = () => (showAll ? labels : labels.slice(0, LBL)).map((l) => {
     const now = l.now;
-    const nowText = now ? [now.serial_status || '—', now.wo ? 'WO ' + now.wo : null].filter(Boolean).join(' · ') : '—';
+    const nowText = now ? [now.now || now.serial_status || '—', now.wo ? 'WO ' + now.wo : null].filter(Boolean).join(' · ') : '—';
     return h('tr', { 'data-l': l.label, onclick: () => openLabel(l.label) }, h('td', { class: 'mono' }, l.label),
       h('td', null, h('span', { class: 'kd ' + (/^received$/i.test(l.receive_status || '') ? 'in' : 'out') }, l.receive_status || '—')),
       h('td', null, nowText), h('td', { class: 'qty' }, recvAt.has(l.label) ? when(recvAt.get(l.label)) : '—'));

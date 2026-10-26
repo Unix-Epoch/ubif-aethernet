@@ -34,7 +34,10 @@
        waits a day in this browser before it's tried again.
     6. Serial history for those labels → POST …/retrace/history. A label whose history names a sales order this
        browser hasn't linked yet also gets its label details read (15 a pass), sent as a snapshot, so the Worker
-       learns which WO the sales order belongs to.
+       learns which WO the sales order belongs to. Over the budget, the sales order stays unlinked at the Worker, which lists
+       it in soNeed (asked on the sweep, 50 a pass): up to 25 of those get label details read after the history loop
+       (one label each, its newest sales order), sent as snapshots; a real answer with no WorkOrderId goes back as soNone
+       (not asked again for a day); a malformed answer is a failed read and comes back.
   One pass per browser at a time: a heartbeat lock in GM storage (lockTake below), so a second tab or a restored browser waits.
   The GM queues it keeps (todo, failures, short lockouts, counts, quantity-only, parked) are written back merged (gmSet / gmMap):
   another tab's additions survive, only this pass's own removals are removed.
@@ -85,7 +88,7 @@ AE.retrace = (() => {
   // Portal answering 5xx / timing out ("Endpoint request timed out", HTTP 504): it's in trouble, the rest of the pass doesn't pile on.
   const httpOf = (e) => (e && e.status) || Number((/HTTP (\d{3})/.exec((e && e.message) || '') || [])[1]) || 0;
   const portalDown = (e) => httpOf(e) >= 500 || /timed out|timeout/i.test((e && e.message) || '');
-  const NEED = 60, ITEM_BUDGET = 150, DETAIL_BUDGET = 15, PO_BUDGET = 15, RMA_BUDGET = 20, NAME_ASK = 20, NAME_BUDGET = 10, NAME_RETRY_MS = 86400000;
+  const NEED = 60, ITEM_BUDGET = 150, DETAIL_BUDGET = 15, SO_ASK = 50, SO_BUDGET = 25, PO_BUDGET = 15, RMA_BUDGET = 20, NAME_ASK = 20, NAME_BUDGET = 10, NAME_RETRY_MS = 86400000;
   const LOOKUP_PAGES = 30, LIST_PAGES = 10, PO_BACKFILL_PAGES = 2, PO_DAYS = 14, RMA_DAYS = 30;
   const WATCH_BATCH = 50, QUEUE_MAX = 500, QUEUE_DAYS = 3;
   // The Worker's per-request caps (retrace-api.js LIMIT): bigger lists go up in several sweeps.
@@ -192,7 +195,7 @@ AE.retrace = (() => {
   */
   async function sweep(store, by, body) {
     const n = Math.max(1, ...Object.keys(LIMIT).map((k) => Math.ceil(((body[k] || []).length) / LIMIT[k])));
-    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, named: 0, unnamed: [], countNeed: [], missedItems: [], shortItems: [], pos: { need: [], events: 0, received: 0, written: 0 } };
+    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, named: 0, unnamed: [], countNeed: [], missedItems: [], shortItems: [], soNeed: [], pos: { need: [], events: 0, received: 0, written: 0 } };
     for (let i = 0; i < n; i++) {
       const last = i === n - 1, part = { by };
       for (const k of Object.keys(LIMIT)) { const s = (body[k] || []).slice(i * LIMIT[k], (i + 1) * LIMIT[k]); if (s.length) part[k] = s; }
@@ -203,7 +206,7 @@ AE.retrace = (() => {
       out.missedItems.push(...(j.missedItems || [])); // handed out once, on whichever call
       for (const k of ['added', 'written', 'rejected', 'skipped', 'named']) out[k] += j[k] || 0;
       if (j.pos) for (const k of ['events', 'received', 'written']) out.pos[k] += j.pos[k] || 0;
-      if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; out.unnamed = j.unnamed || []; out.countNeed = j.countNeed || []; out.shortItems = j.shortItems || []; }
+      if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; out.unnamed = j.unnamed || []; out.countNeed = j.countNeed || []; out.shortItems = j.shortItems || []; out.soNeed = Array.isArray(j.soNeed) ? j.soNeed : []; }
     }
     return out;
   }
@@ -438,7 +441,7 @@ AE.retrace = (() => {
     counts = { portal: 0, worker: 0 }; downRun = 0;
     let passStore = null; // set once the store is known: the pass's own counts go to the Worker when it ends
     const result = { at: new Date().toISOString(), seconds: 0, calls: counts, watched: 0, lookup: null, items: 0, changedItems: 0, itemsRead: 0, itemsWaiting: 0, itemsFailed: 0, itemsParked: 0, itemsUnparked: 0, shortQueued: 0, shortSkippedTried: 0, portalTrouble: false, labels: 0, docs: 0,
-      movements: 0, counted: 0, pos: 0, poDetails: 0, histories: 0, historyRows: 0, details: 0, added: 0, names: 0, named: 0, unnamed: 0, namesRead: 0, resting: [], backlogMore: false, errors: [] };
+      movements: 0, counted: 0, pos: 0, poDetails: 0, histories: 0, historyRows: 0, details: 0, detailsDeferred: 0, soNeed: 0, soRead: 0, soNone: 0, added: 0, names: 0, named: 0, unnamed: 0, namesRead: 0, resting: [], backlogMore: false, errors: [] };
     const note = (where, e) => {
       if (result.errors.length < 8) result.errors.push(where + ': ' + ((e && e.message) || e));
       if (!result.firstError) result.firstError = where + ': ' + ((e && e.message) || e);
@@ -538,7 +541,7 @@ AE.retrace = (() => {
       if (trouble.on) result.portalTrouble = true;
       acc.touched = [...new Set(acc.touched.filter(Boolean))];
       Object.assign(result, { labels: acc.labels.length, docs: acc.docs.length, movements: acc.movements.length, pos: acc.pos.length, names: acc.names.length });
-      const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK, countNeed: baseline.frozen ? 0 : COUNT_BUDGET, shortNeed: baseline.frozen ? SHORT_ASK : 0 }));
+      const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK, countNeed: baseline.frozen ? 0 : COUNT_BUDGET, shortNeed: baseline.frozen ? SHORT_ASK : 0, soNeed: SO_ASK }));
       if (baseline.frozen) GM_setValue(COUNT_KEY(store), []);
       else { for (const i of sw.countNeed) if (!count.has(i)) count.add(i); count.save(); }
       // The labels are delivered: the items read leave the todo, and (short list) are locked out for SHORT_RETRY_MS. Only a read that succeeded locks.
@@ -609,10 +612,31 @@ AE.retrace = (() => {
               // The sales order counts as linked only once its label details read is a real label (fixtures/retrace/label-details.json).
               if (sn) { snaps.push(sn); sos.add(so); } else note('label details ' + label, AE.shape.bad('label details ' + label, 'no usable label', d));
             } catch (e) { if (fatal(e)) throw e; note('label details ' + label, e); trouble.mark('label details ' + label); }
-          }
+          } else if (so && !sos.has(so)) result.detailsDeferred++; // over budget: the Worker still lists this sales order in soNeed (no inv_so_wo row), read below / next pass
         } catch (e) { if (fatal(e)) throw e; note('history ' + label, e); trouble.mark('history ' + label); }
       }
-      if (snaps.length) { const r = await sweep(store, by, { labels: snaps }); result.added += r.added; }
+      /*
+        Sales orders the Worker lists as unlinked (soNeed: no inv_so_wo row), each with one label whose newest sales order it is: its label details
+        (fixtures/retrace/label-details.json: SalesOrderNumber + WorkOrderId) are read and posted as a snapshot, which links them. The answer must be a
+        real label (an object naming the label asked for, with a status): anything else is a FAILED read, nothing is recorded, the Worker's claim
+        runs out and it comes back. A real label whose details carry no WorkOrderId for that sales order is the "no WO" case: soNone tells the Worker,
+        which doesn't ask again for a day.
+      */
+      const soNone = [], soAsk = (sw.soNeed || []).filter((x) => x && x.sales_order && x.label);
+      result.soNeed = soAsk.length;
+      for (const x of soAsk.slice(0, SO_BUDGET)) {
+        if (trouble.on) { trouble.mark('sales order ' + x.sales_order); break; }
+        try {
+          const d = await portal('GET', '/api/boh/inventory/' + encodeURIComponent(x.label) + '?includeQuarantineInfo=true&includeSalvageInfo=true');
+          const sn = AE.shape.isObj(d) && d.Success !== false ? R.labelSnapshot(d) : null, want = R.labelSnapshot({ label: x.label });
+          if (!sn || !want || sn.label !== want.label || !sn.status) { note('sales order ' + x.sales_order, AE.shape.bad('label details ' + x.label, 'no usable label', d)); continue; }
+          result.soRead++;
+          snaps.push(sn);
+          if (sn.wo && sn.sales_order === x.sales_order) sos.add(x.sales_order); else soNone.push(x.sales_order);
+        } catch (e) { if (fatal(e)) throw e; note('sales order ' + x.sales_order, e); trouble.mark('sales order ' + x.sales_order); }
+      }
+      result.soNone = soNone.length;
+      if (snaps.length || soNone.length) { const r = await sweep(store, by, Object.assign({ labels: snaps }, soNone.length ? { soNone } : {})); result.added += r.added; }
       GM_setValue(SO_KEY(store), [...sos].slice(-2000));
       return result;
     } catch (e) {

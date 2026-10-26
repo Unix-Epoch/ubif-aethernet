@@ -365,3 +365,10 @@ CREATE TABLE IF NOT EXISTS usage_browsers (
   browser TEXT NOT NULL,               -- a random id each browser makes for itself (no name)
   PRIMARY KEY (day, store, browser)
 );
+-- Oct 25, 2026: sales-order link backfill (migrations/2026-10-25-retrace-so-need.sql).
+CREATE TABLE IF NOT EXISTS inv_so_need (
+  store INTEGER NOT NULL, sales_order TEXT NOT NULL,
+  claimed_until TEXT,                  -- handed to a browser until then (a failed read comes back after it)
+  none_at TEXT,                        -- label details were read for real and carried no WorkOrderId for this sales order
+  PRIMARY KEY (store, sales_order)
+);

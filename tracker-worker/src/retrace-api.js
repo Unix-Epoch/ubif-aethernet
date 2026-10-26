@@ -46,6 +46,10 @@
          is how many lookup items still without a count to hand out (default 0, at most COUNT_CAP; none once frozen);
          missedItems: items the coverage check (src/retrace-verify.js) found referenced at the store with no labels stored, up to 20 a
          sweep, each handed out once: the browser reads their label lists like a changed item's.
+         soNeed (request: how many, default 0, at most SO_NEED_CAP 50) → [{ sales_order, label }]: sales orders the movements name with no inv_so_wo
+         row, newest first, one label each (the label's newest sales order is this one) for the browser to read label details of; claimed CLAIM_MIN
+         minutes. soNone (request): sales orders whose label details were read for real and carried no WorkOrderId: not handed out again for a day
+         (inv_so_need, migrations/2026-10-25-retrace-so-need.sql). A sales order linked meanwhile (label snapshot with SalesOrderNumber + WorkOrderId) leaves the list.
          shortItems: once the baseline is frozen, baseline items with fewer labels stored than Portal's count (shortNeed: how many, default 0,
          at most SHORT_CAP, biggest gap first): the browser reads their label lists (and remembers which it tried, a list can stay short).
          poTotal is the number of purchase orders (in transit + past) Portal lists, taken once. A lookup cursor with rows 0 is not
@@ -94,14 +98,15 @@
 */
 import { passStmts } from './usage.js';
 import { verifyRun, verifyAsk, verifyView, verifyTick, QUEUE_REASON, QUEUE_SINCE } from './retrace-verify.js';
-import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS, serialNow } from './retrace.js';
+import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS } from './retrace.js';
+import { nowCols, rowNow, nowCountsStmt, nowCountsRows, nowCounts, availRes } from './retrace-now.js';
 
 export const NEED_MAX = 60;
 const NEED_CAP = 200, COUNT_CAP = 300, SHORT_CAP = 300, CLAIM_MIN = 10, WATCH_MAX = 50;
 // Per-request caps. Most rows become a statement and D1 counts queries per Worker invocation (1000 on paid plans,
 // batched or not), so a pass bigger than this goes up in several sweeps (only new / changed rows are written, so a
 // second pass over the same data is mostly reads).
-const PO_DATA_MAX = 200000, PO_NEED_CAP = 100, NAMES_MAX = 200, UNNAMED_CAP = 50;
+const PO_DATA_MAX = 200000, PO_NEED_CAP = 100, NAMES_MAX = 200, UNNAMED_CAP = 50, SO_NEED_CAP = 50, SO_NONE_MAX = 200, SO_NONE_MS = 24 * 3600000;
 const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, rows: 500, cursors: 20, pos: 600, names: NAMES_MAX, labelTotals: 800 };
 const MAX = { sweep: 4000000, history: 1000000, watch: 150000 };
 const SWEEP_SOURCES = ['sweep', 'transfer', 'count', 'rma', 'buyback', 'po', 'snapshot'];
@@ -713,9 +718,63 @@ export async function retraceStore(req, env, url, store, path, H) {
     const shortItems = shortWant && frozen ? (await T.prepare(`SELECT c.item FROM inv_item_counts c LEFT JOIN (SELECT item, COUNT(*) AS n FROM inv_labels WHERE store = ?1 GROUP BY item) l ON l.item = c.item
         WHERE c.store = ?1 AND c.labels > COALESCE(l.n, 0) AND lower(c.item) NOT IN (SELECT value FROM json_each(?2)) ORDER BY c.labels - COALESCE(l.n, 0) DESC, c.item LIMIT ?3`)
       .bind(store, JSON.stringify(IGNORED_ITEMS), shortWant).all()).results.map((r) => r.item) : [];
-    return H.json({ need, more, changedItems, added, rejected, skipped, written, prunedLabels, named: nameW.length, unnamed, countNeed, missedItems, shortItems, pos: poOut });
+    // Sales orders with no WO link (inv_so_wo), newest first: the browser reads label details of the one label given (a label whose NEWEST sales
+    // order this is: details name only the label's current one). Claimed CLAIM_MIN minutes; a real read with no WorkOrderId (soNone) rests a day.
+    // Never fails the sweep (before the migration the table is missing).
+    const soWant = Math.min(Math.max(Number.isInteger(b.soNeed) ? b.soNeed : 0, 0), SO_NEED_CAP);
+    let soNeed = [];
+    try { await soLink(T, store, at); } catch (_) {} // first: the tracker already knows most of the links, soNeed lists what is left
+    try { soNeed = await soNeedList(T, store, at, soWant, Array.isArray(b.soNone) ? b.soNone : []); } catch (_) {}
+    return H.json({ need, more, changedItems, added, rejected, skipped, written, prunedLabels, named: nameW.length, unnamed, countNeed, missedItems, shortItems, soNeed, pos: poOut });
   }
   return H.fail(404, 'not found');
+}
+
+/*
+  Sales order → work order links the tracker already has, without asking Portal (Oct 25, 2026): `sales` (sale_id = the FSO, wo) and the plain part of
+  workorders (plain.workorder.csuSalesOrderId, plain.cart.salesId → the row's wo; the sealed card and snapshots are never touched). INSERT OR IGNORE
+  into inv_so_wo, so a link a label-details read or a WO upload wrote stays as it is (sales first, then csuSalesOrderId, then salesId). Then labels
+  with no wo (and/or sales order) take them from their NEWEST sales-order movement, when that sales order is linked. At most once a day per store
+  (inv_cursors 'so_link'; `force` for tests / a manual run). → { linked, labels } | null when it isn't due.
+*/
+export async function soLink(T, store, at, force = false) {
+  const cur = await T.prepare("SELECT updated_at FROM inv_cursors WHERE store = ? AND sweep = 'so_link'").bind(store).first();
+  if (!force && cur && Date.parse(cur.updated_at) > Date.parse(at) - 24 * 3600000) return null;
+  const [ins] = await T.batch([T.prepare(`INSERT OR IGNORE INTO inv_so_wo (store, sales_order, wo, source, updated_at)
+      SELECT ?1, so, wo, 'tracker', ?2 FROM (
+        SELECT sale_id AS so, CAST(wo AS TEXT) AS wo, 1 AS pri FROM sales WHERE store = ?1 AND wo IS NOT NULL
+        UNION ALL SELECT json_extract(plain, '$.workorder.csuSalesOrderId'), CAST(wo AS TEXT), 2 FROM workorders WHERE store = ?1 AND plain IS NOT NULL AND json_valid(plain)
+        UNION ALL SELECT json_extract(plain, '$.cart.salesId'), CAST(wo AS TEXT), 3 FROM workorders WHERE store = ?1 AND plain IS NOT NULL AND json_valid(plain))
+      WHERE typeof(so) = 'text' AND so <> '' ORDER BY pri`).bind(store, at)]);
+  const newest = "(SELECT m.ref_id FROM inv_movements m WHERE m.store = inv_labels.store AND m.label = inv_labels.label AND m.ref_type = 'sales_order' AND m.ref_id IS NOT NULL ORDER BY m.at DESC, m.id DESC LIMIT 1)";
+  const upd = await T.prepare(`UPDATE inv_labels SET
+        wo = COALESCE(wo, (SELECT w.wo FROM inv_so_wo w WHERE w.store = inv_labels.store AND w.sales_order = ${newest})),
+        sales_order = COALESCE(sales_order, ${newest})
+      WHERE store = ?1 AND (wo IS NULL OR sales_order IS NULL)
+        AND EXISTS (SELECT 1 FROM inv_so_wo w WHERE w.store = inv_labels.store AND w.sales_order = ${newest})`).bind(store).run();
+  const out = { linked: (ins.meta && ins.meta.changes) || 0, labels: (upd.meta && upd.meta.changes) || 0 };
+  await T.prepare("INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, 'so_link', ?, ?) ON CONFLICT (store, sweep) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").bind(store, JSON.stringify(out), at).run();
+  return out;
+}
+
+// Sales orders the movements name that have no inv_so_wo row: [{ sales_order, label }], newest first (soNone: sales orders the browser just read
+// for real with no WorkOrderId, recorded first so they aren't handed out again for SO_NONE_MS).
+async function soNeedList(T, store, at, want, none) {
+  const nones = [...new Set(none.map((v) => (v == null || typeof v === 'object' ? '' : String(v).replace(/[\u0000-\u001f]/g, '').trim().slice(0, 40))).filter(Boolean))].slice(0, SO_NONE_MAX);
+  if (nones.length) await T.batch(nones.map((so) => T.prepare(`INSERT INTO inv_so_need (store, sales_order, none_at) VALUES (?, ?, ?)
+      ON CONFLICT (store, sales_order) DO UPDATE SET none_at = excluded.none_at, claimed_until = NULL`).bind(store, so, at)));
+  if (!want) return [];
+  const rows = (await T.prepare(`SELECT ref_id AS sales_order, MIN(label) AS label, MAX(at) AS at FROM (
+        SELECT label, ref_id, MAX(at) AS at FROM inv_movements WHERE store = ?1 AND ref_type = 'sales_order' AND label IS NOT NULL AND ref_id IS NOT NULL GROUP BY label) last
+      WHERE NOT EXISTS (SELECT 1 FROM inv_so_wo w WHERE w.store = ?1 AND w.sales_order = last.ref_id)
+        AND NOT EXISTS (SELECT 1 FROM inv_so_need n WHERE n.store = ?1 AND n.sales_order = last.ref_id AND (n.claimed_until > ?2 OR n.none_at > ?3))
+      GROUP BY ref_id ORDER BY at DESC, ref_id LIMIT ?4`).bind(store, at, new Date(Date.parse(at) - SO_NONE_MS).toISOString(), want).all()).results;
+  if (rows.length) {
+    const until = new Date(Date.parse(at) + CLAIM_MIN * 60000).toISOString();
+    await T.batch(rows.map((r) => T.prepare(`INSERT INTO inv_so_need (store, sales_order, claimed_until) VALUES (?, ?, ?)
+        ON CONFLICT (store, sales_order) DO UPDATE SET claimed_until = excluded.claimed_until`).bind(store, r.sales_order, until)));
+  }
+  return rows.map((r) => ({ sales_order: r.sales_order, label: r.label }));
 }
 
 // ------------------------------------------------------------------ admin side
@@ -724,7 +783,7 @@ export async function retraceStore(req, env, url, store, path, H) {
   Paths below are under /api/tracker. Movements come back as stored, user_name as `user`.
 
   GET /retrace/item/:store/:item?from&to&kinds&user&limit&offset   → { store, item, info: { name, category, qty, last_seen,
-        changed_at } | null, counts: [{ serial_status, wh_type, consignment, n }], labels: [{ label, serial_status, wh_type,
+        changed_at } | null, counts: [{ serial_status, wh_type, consignment, now, group, n }], labels: [{ label, serial_status, wh_type,
         consignment, wo, po, last_seen, last_history_at, need_history }], movements: [...], total,
         by_kind: [{ kind, n }], users: [{ user, n }], first_at, all_total, sold90 }
         from / to: YYYY-MM-DD (UTC days) or ISO; kinds: comma list of KINDS; user: who made the movement; newest first;
@@ -736,14 +795,14 @@ export async function retraceStore(req, env, url, store, path, H) {
         loose: [movements with no label], loose_total }
         the item list's one row per serial (the page's item view): the labels the item's movements name plus the labels stored for it (one with no
         movement yet has last null, moves 0); last = the newest movement, moves = all of the label's movements,
-        now / group = where it stands (retrace.js serialNow: Portal's status on the label, else the last movement, which wins when newer than the label's last snapshot). groups: how many
+        now / group = where it stands (retrace-now.js: Portal's status on the label, else the latest STATUS-BEARING movement, which wins when newer than the label's last snapshot; a consignment change never hides a sale). groups: how many
         serials are in each group (days applied, group not); group: in|wo|out|q|bad; days: only serials whose last movement is that
         recent (1-3650); newest last movement first; limit ≤ 500 (200). loose: the item's movements with no label (days applied), 50 newest.
   GET /retrace/items?store=&limit=&offset=   → { items: [{ item, name, category, qty, on_hand, available, moves, last_at }], total }
         items with movements at the store, most recent movement first; name from inv_items, else a label's product;
         on_hand: inv_items qty summed over the store's warehouses (null when the item lookup hasn't seen it);
         available: the page's Available tile (lookup quantity over non-quarantine warehouses, else the available labels; null with neither); limit ≤ 500 (100).
-  GET /retrace/label/:store/:label   → { label: inv_labels row | null, movements: [...] } oldest first · 404 when neither
+  GET /retrace/label/:store/:label   → { label: inv_labels row | null, now: { status, group } | null (where it stands, retrace-now.js), movements: [...] } oldest first · 404 when neither
   GET /retrace/search?store=&q=      → { labels: [...], items: [...], refs: [{ store, ref_type, ref_id, n, first_at, last_at }],
         docs: [...] } · q (2+ chars): a label (or its start), OEM serial / IMEI, an item number or name, a PO / WO /
         transfer / RMA / buyback / count id. Without store: every store the person can see.
@@ -871,7 +930,7 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
     const [info, counts, labels, moves, total, byKind, users, all] = await T.batch([
       T.prepare('SELECT name, category, qty, last_seen, changed_at FROM inv_items WHERE store = ? AND item = ?').bind(store, item),
-      T.prepare('SELECT serial_status, wh_type, consignment, COUNT(*) AS n FROM inv_labels WHERE store = ? AND item = ? GROUP BY serial_status, wh_type, consignment ORDER BY n DESC').bind(store, item),
+      nowCountsStmt(T, store, [item]),
       T.prepare('SELECT label, serial_status, wh_type, consignment, wo, po, last_seen, last_history_at, need_history FROM inv_labels WHERE store = ? AND item = ? ORDER BY last_seen DESC LIMIT 1000').bind(store, item),
       T.prepare(`SELECT ${MV_COLS} FROM ${MV_FROM} WHERE ${where.join(' AND ')} ORDER BY m.at DESC, m.id DESC LIMIT ? OFFSET ?`).bind(...args, limit, offset),
       T.prepare(`SELECT COUNT(*) AS n FROM inv_movements m WHERE ${where.join(' AND ')}`).bind(...args),
@@ -881,7 +940,10 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     ]);
     const i = info.results[0] || null, a = all.results[0] || {};
     await H.log(env, email, 'retrace:item', store, null, item);
-    return H.json({ store, item, info: i && Object.assign(i, { qty: parse(i.qty) }), counts: counts.results, labels: labels.results, movements: moves.results, total: total.results[0].n,
+    // counts: the labels by Portal's raw status AND by where they stand now (retrace-now.js); the page's tiles use now / group
+    const cmap = new Map();
+    for (const c of nowCountsRows(counts.results)) { const k = [c.serial_status, c.wh_type, c.consignment, c.now].join('\u0001'); const x = cmap.get(k); if (x) x.n += c.n; else cmap.set(k, { serial_status: c.serial_status, wh_type: c.wh_type, consignment: c.consignment, now: c.now, group: c.group, n: c.n }); }
+    return H.json({ store, item, info: i && Object.assign(i, { qty: parse(i.qty) }), counts: [...cmap.values()].sort((a, b) => b.n - a.n), labels: labels.results, movements: moves.results, total: total.results[0].n,
       by_kind: byKind.results, users: users.results, first_at: a.first_at || null, all_total: a.n || 0, sold90: a.sold90 || 0 }, 200, false);
   }
 
@@ -899,7 +961,7 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     // One row per serial: the labels the item's movements name plus the labels stored for it (a label with no movements yet is a serial too, `last` null),
     // each with its newest movement of this item.
     const [last, loose, looseN] = await T.batch([
-      T.prepare(`SELECT k.label AS klabel, r.*, l.serial_status, l.wh_type, l.wo AS label_wo, l.po AS label_po, l.last_seen AS label_seen FROM (
+      T.prepare(`SELECT k.label AS klabel, r.*, l.serial_status, l.wh_type, l.wo AS label_wo, l.po AS label_po, l.last_seen, ${nowCols('l')} FROM (
           SELECT label FROM inv_movements WHERE store = ?1 AND item = ?2 AND label IS NOT NULL UNION SELECT label FROM inv_labels WHERE store = ?1 AND item = ?2) k
         LEFT JOIN (SELECT * FROM (SELECT ${MV_COLS}, ROW_NUMBER() OVER (PARTITION BY m.label ORDER BY m.at DESC, m.id DESC) AS rn, COUNT(*) OVER (PARTITION BY m.label) AS moves
           FROM ${MV_FROM} WHERE m.store = ?1 AND m.item = ?2 AND m.label IS NOT NULL) WHERE rn = 1) r ON r.label = k.label
@@ -909,7 +971,7 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     ]);
     const groups = { all: 0, in: 0, wo: 0, out: 0, q: 0, bad: 0 };
     const rows = last.results.map((r) => {
-      const [now, g] = serialNow(r.serial_status, r.wh_type, r.kind, !!r.label_seen && !!r.at && r.at > r.label_seen);
+      const [now, g] = rowNow(r); // from the latest status-bearing movement, which may be older than the `last` shown (a consignment change)
       groups.all++; if (g) groups[g]++;
       return { label: r.klabel, now, group: g, serial_status: r.serial_status || null, wh_type: r.wh_type || null, wo: r.label_wo || null, po: r.label_po || null, moves: r.moves || 0,
         last: r.id == null ? null : { at: r.at, kind: r.kind, user: r.user, source: r.source, ref_type: r.ref_type, ref_id: r.ref_id, wo: r.wo, from_wh: r.from_wh, to_wh: r.to_wh, detail: r.detail } };
@@ -925,12 +987,15 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     if (!canSee(store)) return H.fail(403, 'not your store', false);
     if (!label) return H.fail(400, 'not a label', false);
     const [row, moves] = await T.batch([
-      T.prepare('SELECT * FROM inv_labels WHERE store = ? AND label = ?').bind(store, label),
+      T.prepare(`SELECT l.*, ${nowCols('l')} FROM inv_labels l WHERE l.store = ? AND l.label = ?`).bind(store, label),
       T.prepare(`SELECT ${MV_COLS} FROM ${MV_FROM} WHERE m.store = ? AND m.label = ? ORDER BY m.at, m.id LIMIT 2000`).bind(store, label),
     ]);
     if (!row.results.length && !moves.results.length) return H.fail(404, 'label not seen at this store', false);
     await H.log(env, email, 'retrace:label', store, null, label);
-    return H.json({ label: row.results[0] || null, movements: moves.results }, 200, false);
+    const lr = row.results[0] || null;
+    let now = null;
+    if (lr) { const [text, group] = rowNow(lr); now = { status: text, group }; delete lr.now_kind; delete lr.now_at; }
+    return H.json({ label: lr, now, movements: moves.results }, 200, false);
   }
 
   // Store filter for the cross-store routes: ?store= (gated already), else the person's stores.
@@ -947,20 +1012,27 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     if (!canSee(store)) return H.fail(403, 'not your store', false);
     const limit = Math.min(H.int(q.get('limit')) || 100, 500), offset = H.int(q.get('offset')) || 0;
     const [rows, total] = await T.batch([
-      T.prepare(`SELECT m.item, m.moves, m.last_at, i.name, i.category, i.qty, lb.n AS label_n, lb.av AS label_av,
+      T.prepare(`SELECT m.item, m.moves, m.last_at, i.name, i.category, i.qty, lb.n AS label_n,
           (SELECT l.product FROM inv_labels l WHERE l.store = ?1 AND l.item = m.item AND l.product IS NOT NULL LIMIT 1) AS product
           FROM (SELECT item, COUNT(*) AS moves, MAX(at) AS last_at FROM inv_movements WHERE store = ?1 AND item IS NOT NULL GROUP BY item) m
           LEFT JOIN inv_items i ON i.store = ?1 AND i.item = m.item
-          LEFT JOIN (SELECT item, COUNT(*) AS n, SUM(lower(COALESCE(serial_status, '')) = 'available' AND lower(COALESCE(wh_type, '')) <> 'quarantine') AS av FROM inv_labels WHERE store = ?1 GROUP BY item) lb ON lb.item = m.item
+          LEFT JOIN (SELECT item, COUNT(*) AS n FROM inv_labels WHERE store = ?1 GROUP BY item) lb ON lb.item = m.item
           ORDER BY m.last_at DESC, m.item LIMIT ?2 OFFSET ?3`).bind(store, limit, offset),
       T.prepare('SELECT COUNT(DISTINCT item) AS n FROM inv_movements WHERE store = ? AND item IS NOT NULL').bind(store),
     ]);
+    // the available labels (the fallback when there is no lookup quantity) from where each label stands now, for this page's items
+    const labelAv = new Map();
+    if (rows.results.length) {
+      const by = new Map();
+      for (const c of await nowCounts(T, store, rows.results.map((r) => r.item))) { const l = by.get(c.item); if (l) l.push(c); else by.set(c.item, [c]); }
+      for (const [it, l] of by) labelAv.set(it, availRes(l).av);
+    }
     const items = rows.results.map((r) => {
       const qty = parse(r.qty);
       const onHand = qty && typeof qty === 'object' ? Object.values(qty).reduce((n, w) => n + (w && typeof w.onHand === 'number' ? w.onHand : 0), 0) : null;
       // available: what the item page's Available tile shows: Portal's stock-lookup quantity (non-quarantine warehouses), else the available labels; null with neither
       const whs = qty && typeof qty === 'object' ? Object.entries(qty).filter(([, w]) => w && typeof w === 'object') : [];
-      const available = whs.length ? whs.filter(([id]) => !/q$/i.test(id)).reduce((n, [, w]) => n + (typeof w.available === 'number' ? w.available : 0), 0) : r.label_n ? r.label_av || 0 : null;
+      const available = whs.length ? whs.filter(([id]) => !/q$/i.test(id)).reduce((n, [, w]) => n + (typeof w.available === 'number' ? w.available : 0), 0) : r.label_n ? labelAv.get(r.item) || 0 : null;
       return { item: r.item, name: r.name || r.product || null, category: r.category || null, qty, on_hand: onHand, available, moves: r.moves, last_at: r.last_at };
     });
     return H.json({ items, total: total.results[0].n }, 200, false);
@@ -972,7 +1044,7 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     if (!term || term.length < 2) return H.fail(400, 'q (2 characters or more) required', false);
     const like = likeEsc(term) + '%', label = cleanLabel(term) || term;
     const [labels, items, refs, docs] = await T.batch([
-      T.prepare(`SELECT store, label, item, product, serial_status, wh_type, consignment, wo, po, last_seen FROM inv_labels
+      T.prepare(`SELECT store, label, item, product, serial_status, wh_type, consignment, wo, po, last_seen, ${nowCols('inv_labels')} FROM inv_labels
           WHERE ${s.sql} AND (label = ? OR label LIKE ? ESCAPE '\\' OR oem_serial = ? OR imei = ? OR po = ? OR wo = ?) ORDER BY label = ? DESC, last_seen DESC LIMIT 50`).bind(...s.args, label, like, term, term, term, term, label),
       T.prepare(`SELECT store, item, name, category, last_seen FROM inv_items WHERE ${s.sql} AND (item = ? OR name LIKE ? ESCAPE '\\') ORDER BY item = ? DESC, name LIMIT 30`).bind(...s.args, term, '%' + likeEsc(term) + '%', term),
       // A WO number also finds its sales orders' rows (history names only the FSO).
@@ -982,6 +1054,7 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
       T.prepare(`SELECT store, type, id, status, at, counterpart FROM inv_docs WHERE ${s.sql} AND id = ? LIMIT 30`).bind(...s.args, term),
     ]);
     await H.log(env, email, 'retrace:search', q.get('store') ? H.int(q.get('store')) : null, null, term);
+    for (const x of labels.results) { x.now = rowNow(x)[0]; delete x.now_kind; delete x.now_at; }
     return H.json({ labels: labels.results, items: items.results, refs: refs.results, docs: docs.results }, 200, false);
   }
 
@@ -1004,9 +1077,9 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
       : num(l.ordered) != null ? Math.max(0, num(l.ordered) - (num(l.received) || 0) - (num(l.cancelled) || 0)) : null }));
     const list = rawLabels || [], now = new Map();
     for (let i = 0; i < list.length; i += 500) {
-      const r = await T.prepare('SELECT label, serial_status, wh_type, consignment, wo, sales_order, last_seen, last_history_at FROM inv_labels WHERE store = ? AND label IN (SELECT value FROM json_each(?))')
+      const r = await T.prepare(`SELECT label, serial_status, wh_type, consignment, wo, sales_order, last_seen, last_history_at, ${nowCols('inv_labels')} FROM inv_labels WHERE store = ? AND label IN (SELECT value FROM json_each(?))`)
         .bind(store, JSON.stringify(list.slice(i, i + 500).map((l) => l.label))).all();
-      for (const x of r.results) now.set(x.label, x);
+      for (const x of r.results) { x.now = rowNow(x)[0]; delete x.now_kind; delete x.now_at; now.set(x.label, x); } // now: where it stands (serial_status is Portal's raw word)
     }
     const labels = list.map((l) => Object.assign({}, l, { receive_status: l.status, now: now.get(l.label) || null }));
     await H.log(env, email, 'retrace:po', store, null, po);

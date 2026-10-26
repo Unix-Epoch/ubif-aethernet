@@ -730,6 +730,56 @@ await t('Retrace label details: the sales order is marked linked only after a re
   assert.ok(r.errors.some((e) => /label details/.test(e)));
 });
 
+// ---- B2: sales orders the Worker lists as unlinked (soNeed)
+const soEnv = (list, details, extra = {}) => retraceEnv(ok(LABELS), Object.assign({ todo: [], details, sweep: (b) => (b.soNeed > 0 ? { soNeed: list } : {}) }, extra)); // the Worker answers soNeed only when asked
+const DETAIL_URL = /\/api\/boh\/inventory\/[^/?]+\?/;
+const SO1 = { sales_order: 'FSO000011111', label: '176255-0000514371' };
+await t('Retrace soNeed: asked on the last sweep (50); the label details of each are read and sent as snapshots', async () => {
+  const env = soEnv([SO1], ok(LABEL_DETAILS));
+  const r = await env.AE.retrace.run();
+  assert.equal(env.sweeps().at(-2).soNeed, 50, JSON.stringify(env.sweeps().map((b) => Object.keys(b))));
+  const calls = env.requests(DETAIL_URL); assert.equal(calls.length, 1); assert.match(calls[0].url, /176255-0000514371\?includeQuarantineInfo=true&includeSalvageInfo=true$/);
+  assert.ok(env.sweeps().at(-1).labels.some((l) => l.label === '176255-0000514371' && l.wo === '500400001' && l.sales_order === 'FSO000011111'), 'the snapshot (with WorkOrderId) went up');
+  assert.equal(env.sweeps().at(-1).soNone, undefined, 'linked: not a "no WO" answer'); assert.equal(r.soRead, 1);
+});
+await t('Retrace soNeed: a real answer without a WorkOrderId goes back as soNone', async () => {
+  const env = soEnv([SO1], ok({ ...LABEL_DETAILS, WorkOrderId: '' })); // SYNTHETIC: the captured label with the WO blanked
+  await env.AE.retrace.run();
+  assert.deepEqual(plain(env.sweeps().at(-1).soNone), ['FSO000011111']);
+  const env2 = soEnv([SO1], ok({ ...LABEL_DETAILS, SalesOrderNumber: 'FSO000099999' })); // the label has moved on to another sales order
+  await env2.AE.retrace.run();
+  assert.deepEqual(plain(env2.sweeps().at(-1).soNone), ['FSO000011111']);
+});
+for (const [name, answer] of [['{}', ok({})], ['null', ok(null)], ['a string', ok('nope')], ['Success:false', ok({ ...LABEL_DETAILS, Success: false })], ['another label', ok({ ...LABEL_DETAILS, SerialNumber: '176255-0000000001' })], ['no status', ok({ SerialNumber: '176255-0000514371' })]]) {
+  await t('Retrace soNeed: ' + name + ' is a failed read, never recorded as "no WO"', async () => { // SYNTHETIC bad answers
+    const env = soEnv([SO1], answer);
+    const r = await env.AE.retrace.run();
+    assert.ok(env.sweeps().every((b) => b.soNone === undefined), 'no soNone: ' + JSON.stringify(env.sweeps().map((b) => b.soNone)));
+    assert.ok(env.sweeps().every((b) => !(b.labels || []).some((l) => l.label === '176255-0000514371')), 'no snapshot either');
+    assert.ok(r.errors.some((e) => /sales order FSO000011111/.test(e)), JSON.stringify(r.errors)); assert.equal(r.soRead, 0);
+  });
+}
+await t('Retrace soNeed: at most 25 reads a pass', async () => {
+  const many = Array.from({ length: 40 }, (_, i) => ({ sales_order: 'FSO' + (1000 + i), label: '176255-00005' + String(10000 + i) }));
+  const env = soEnv(many, ok(LABEL_DETAILS));
+  const r = await env.AE.retrace.run();
+  assert.equal(env.requests(DETAIL_URL).length, 25); assert.equal(r.soNeed, 40);
+});
+await t('Retrace soNeed: Portal trouble stops the reads (two 5xx in a row), nothing recorded', async () => {
+  const many = Array.from({ length: 5 }, (_, i) => ({ sales_order: 'FSO' + (1000 + i), label: '176255-00005' + String(10000 + i) }));
+  const env = soEnv(many, { status: 504, body: 'Endpoint request timed out' });
+  const r = await env.AE.retrace.run();
+  assert.equal(env.requests(DETAIL_URL).length, 2, 'the breaker is on after the second'); assert.equal(r.portalTrouble, true);
+  assert.ok(env.sweeps().every((b) => b.soNone === undefined));
+});
+await t('Retrace soNeed: over the history loop\'s detail budget the sales order is left for the Worker, not dropped', async () => {
+  const need = Array.from({ length: 20 }, (_, i) => '176255-00005' + String(20000 + i));
+  const history = (_b, path) => { const n = path.replace(/^.*serial-history\//, ''); return ok({ value: SERIAL.sold.value.map((r) => (r.RefTable && /^sales orders?$/i.test(r.RefTable) ? { ...r, SourceKey: 'FSO' + n.slice(-5) } : r)) }); }; // a different sales order per label
+  const env = retraceEnv(ok(LABELS), { todo: [], sweep: (b) => (b.need > 0 ? { need } : {}), history });
+  const r = await env.AE.retrace.run();
+  assert.equal(r.details, 15, JSON.stringify(r)); assert.equal(r.detailsDeferred, 5, 'counted, and still unlinked at the Worker (its soNeed lists them)');
+});
+
 // ---- C: purchase orders
 const poRun = (poReceive, poHeader) => retraceEnv(ok(LABELS), { todo: [], poReceive, poHeader, sweep: (b) => (b.poNeed > 0 ? { pos: { need: ['UBFPO000099001'], events: 0 } } : {}) });
 await t('Retrace POs: header + receive details go up together (control)', async () => {

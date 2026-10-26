@@ -23,7 +23,8 @@
   queued turns to empty once 30 minutes have passed since it was asked for, so the panel follows the collector without pressing Run.
   Passing all five is strong evidence, not proof: Portal stays the only source of truth.
 */
-import { IGNORED_ITEMS, NON_STOCK, serialNow } from './retrace.js';
+import { IGNORED_ITEMS, NON_STOCK, NOW_KIND } from './retrace.js';
+import { nowCols, rowNow, nowCounts, availRes, lastStatusSql, isQuar } from './retrace-now.js';
 
 export const SPOT = 10;
 const ROWS = 50, STALE_SHOW = 5, ASK_MAX = 20, EMPTY_AFTER_MS = 30 * 60000, RESULT_MAX = 60000, SEEN_MAX = 3;
@@ -34,12 +35,14 @@ const QUAR = "(lower(COALESCE(wh_type, '')) = 'quarantine' OR upper(COALESCE(wh_
 
 // ------------------------------------------------------------------ checks 1 and 2: one read of the baseline items
 async function perItem(T, store) {
-  return (await T.prepare(`SELECT c.item, c.labels AS portal, i.name, i.qty, COALESCE(l.n, 0) AS n, COALESCE(l.unread, 0) AS unread, COALESCE(l.av, 0) AS av, COALESCE(l.rs, 0) AS rs
+  const rows = (await T.prepare(`SELECT c.item, c.labels AS portal, i.name, i.qty, COALESCE(l.n, 0) AS n, COALESCE(l.unread, 0) AS unread
       FROM inv_item_counts c LEFT JOIN inv_items i ON i.store = c.store AND i.item = c.item
-      LEFT JOIN (SELECT item, COUNT(*) AS n, SUM(last_history_at IS NULL) AS unread,
-          SUM(lower(COALESCE(serial_status, '')) = 'available' AND NOT ${QUAR}) AS av, SUM(lower(COALESCE(serial_status, '')) = 'reserved' AND NOT ${QUAR}) AS rs
-        FROM inv_labels WHERE store = ?1 GROUP BY item) l ON l.item = c.item
+      LEFT JOIN (SELECT item, COUNT(*) AS n, SUM(last_history_at IS NULL) AS unread FROM inv_labels WHERE store = ?1 GROUP BY item) l ON l.item = c.item
       WHERE c.store = ?1 ORDER BY c.item`).bind(store).all()).results;
+  // available / reserved from where each label stands NOW (retrace-now.js), not from the raw serial_status ('Received' off a PO says nothing)
+  const by = new Map();
+  for (const r of await nowCounts(T, store, null)) { const l = by.get(r.item); if (l) l.push(r); else by.set(r.item, [r]); }
+  return rows.map((r) => Object.assign(r, availRes(by.get(r.item) || [])));
 }
 
 // Quantity-only items: stock with no individual labels (Portal's generic SKUs, e.g. 900348 "Generic - Liquid Glass (Individual)", there so staff can check the
@@ -101,13 +104,13 @@ export const QUEUE_REASON = `CASE WHEN last_history_at IS NULL THEN 'never' WHEN
 export const QUEUE_SINCE = `CASE WHEN last_history_at IS NULL THEN first_seen WHEN ${CHANGED_AFTER} OR need_history >= 3 THEN COALESCE(last_change_at, serial_modified, last_seen) ELSE last_seen END`;
 async function staleCheck(T, store) {
   const [rows, n] = await T.batch([
-    T.prepare(`SELECT label, item, serial_status, wh_type, last_change_at, serial_modified, last_seen, last_history_at FROM inv_labels WHERE ${STALE_WHERE}
+    T.prepare(`SELECT label, item, serial_status, wh_type, last_change_at, serial_modified, last_seen, last_history_at, ${nowCols('inv_labels')} FROM inv_labels WHERE ${STALE_WHERE}
         ORDER BY COALESCE(last_change_at, serial_modified, last_seen) DESC, label LIMIT ${STALE_SHOW}`).bind(store),
     T.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(last_history_at IS NULL), 0) AS unread FROM inv_labels WHERE ${STALE_WHERE}`).bind(store),
   ]);
   const t = n.results[0];
   return { status: t.n ? 'fail' : 'pass', n: t.n, unread: t.unread,
-    rows: rows.results.map((r) => ({ label: r.label, item: r.item, now: [r.serial_status, r.wh_type && /^quarantine$/i.test(r.wh_type) ? 'Quarantine' : null].filter(Boolean).join(' · ') || null,
+    rows: rows.results.map((r) => ({ label: r.label, item: r.item, now: [rowNow(r)[0], r.wh_type && /^quarantine$/i.test(r.wh_type) ? 'Quarantine' : null].filter(Boolean).join(' · ') || null,
       changed_at: r.last_change_at || r.serial_modified || r.last_seen || null, read_at: r.last_history_at || null })),
     result: t.n ? plural(t.n, 'label') + (t.unread ? ' (' + t.unread + ' never read)' : '') + ', queued for the next pass' : 'none' };
 }
@@ -158,15 +161,24 @@ async function missedCheck(T, store, prev, at) {
 // Strata first (sold, quarantined, oldest, available, reserved), then anything else; labels with a history read (a timeline to compare) first.
 async function sample(T, store) {
   const picked = [];
-  const pick = async (n, cond, hist) => {
-    const r = await T.prepare(`SELECT label FROM inv_labels WHERE store = ?1 AND ${hist ? 'last_history_at IS NOT NULL AND ' : ''}label NOT IN (SELECT value FROM json_each(?2)) AND ${cond} ORDER BY random() LIMIT ${n}`)
+  // pred: the exact test on where the label stands NOW (rowNow); cond only narrows the pool it is applied to
+  const pick = async (n, cond, hist, pred) => {
+    const r = await T.prepare(`SELECT label, serial_status, wh_type, wh_id, last_seen, ${nowCols('inv_labels')} FROM inv_labels WHERE store = ?1 AND ${hist ? 'last_history_at IS NOT NULL AND ' : ''}label NOT IN (SELECT value FROM json_each(?2)) AND ${cond} ORDER BY random() LIMIT ${pred ? n * 10 : n}`)
       .bind(store, JSON.stringify(picked)).all();
-    picked.push(...r.results.map((x) => x.label));
+    picked.push(...r.results.filter((x) => !pred || pred(x, rowNow(x))).slice(0, n).map((x) => x.label));
   };
   const st = "lower(COALESCE(serial_status, ''))";
   // "old": first seen in the oldest quarter of the labels read
   const old = 'first_seen <= COALESCE((SELECT first_seen FROM inv_labels WHERE store = ?1 AND last_history_at IS NOT NULL ORDER BY first_seen LIMIT 1 OFFSET (SELECT COUNT(*) / 4 FROM inv_labels WHERE store = ?1 AND last_history_at IS NOT NULL)), first_seen)';
-  for (const [n, cond] of [[2, st + " = 'sold'"], [2, QUAR + ' AND ' + st + " <> 'sold'"], [2, old], [2, st + " = 'available' AND NOT " + QUAR], [1, st + " = 'reserved'"]]) await pick(n, cond, true);
+  const kinds = (g) => "('" + Object.entries(NOW_KIND).filter(([, v]) => v[1] === g).map(([k]) => k).join("', '") + "')";
+  const lk = lastStatusSql('kind', 'inv_labels'), isQ = (x) => isQuar(x);
+  for (const [n, cond, pred] of [
+    [2, `(${st} = 'sold' OR ${lk} IN ${kinds('out')})`, (x, [now]) => now === 'Sold' || now === 'Used on repair'],
+    [2, QUAR + ' AND ' + st + " <> 'sold'", (x, [now]) => now !== 'Sold'],
+    [2, old, null],
+    [2, `(${st} IN ('available', 'received') OR ${lk} IN ${kinds('in')}) AND NOT ${QUAR}`, (x, [now]) => now === 'Available' && !isQ(x)],
+    [1, `(${st} = 'reserved' OR ${lk} IN ${kinds('wo')})`, (x, [now, g]) => g === 'wo'],
+  ]) await pick(n, cond, true, pred);
   if (picked.length < SPOT) await pick(SPOT - picked.length, '1 = 1', true);
   if (picked.length < SPOT) await pick(SPOT - picked.length, '1 = 1', false);
   return picked.slice(0, SPOT);
@@ -228,16 +240,15 @@ export async function verifyView(T, store) {
   res.missed = await freshMissed(T, store, res.missed, Date.now());
   const labels = Array.isArray(res.spot) ? res.spot : [], json = JSON.stringify(labels);
   const [rows, ticks] = labels.length ? await T.batch([
-    T.prepare(`SELECT l.label, l.item, l.serial_status, l.wh_type, l.last_seen, i.name,
-        (SELECT COUNT(*) FROM inv_movements m WHERE m.store = l.store AND m.label = l.label) AS moves,
-        (SELECT m.kind FROM inv_movements m WHERE m.store = l.store AND m.label = l.label ORDER BY m.at DESC, m.id DESC LIMIT 1) AS last_kind
+    T.prepare(`SELECT l.label, l.item, l.serial_status, l.wh_type, l.last_seen, ${nowCols()}, i.name,
+        (SELECT COUNT(*) FROM inv_movements m WHERE m.store = l.store AND m.label = l.label) AS moves
         FROM inv_labels l LEFT JOIN inv_items i ON i.store = l.store AND i.item = l.item WHERE l.store = ? AND l.label IN (SELECT value FROM json_each(?))`).bind(store, json),
     T.prepare('SELECT label, checked_by, checked_at, matches FROM inv_verify_ticks WHERE store = ? AND label IN (SELECT value FROM json_each(?))').bind(store, json),
   ]) : [{ results: [] }, { results: [] }];
   const byLabel = new Map(rows.results.map((r) => [r.label, r])), tick = new Map(ticks.results.map((t) => [t.label, t]));
   const spotRows = labels.filter((l) => byLabel.has(l)).map((l) => {
     const r = byLabel.get(l), t = tick.get(l);
-    return { label: l, item: r.item, name: r.name || null, now: serialNow(r.serial_status, r.wh_type, r.last_kind)[0], moves: r.moves, last_seen: r.last_seen,
+    return { label: l, item: r.item, name: r.name || null, now: rowNow(r)[0], moves: r.moves, last_seen: r.last_seen,
       checked: t && t.matches ? { by: t.checked_by, at: t.checked_at } : null };
   });
   const done = spotRows.filter((r) => r.checked), last = done.reduce((m, r) => (r.checked.at > m ? r.checked.at : m), '');

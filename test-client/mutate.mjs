@@ -71,6 +71,12 @@ const M = [
   ['retrace: RMA marked seen before its read', '28-retrace-collect.js', "if (read >= RMA_BUDGET || trouble.on) continue; // over budget: next pass (not marked seen)\n        read++;", "if (read >= RMA_BUDGET || trouble.on) continue; // over budget: next pass (not marked seen)\n        read++; next[d.id] = status;"],
   ['retrace: stray failure counts kept', '28-retrace-collect.js', 'fails.save((k) => todo.has(k));', 'fails.save();'],
   ['retrace: Worker 403 test ignores the tag', '28-retrace-collect.js', 'if (e.worker && e.status === 403) { result.note', 'if (e.status === 403) { result.note'],
+  ['retrace: soNeed dropped from the sweep', '28-retrace-collect.js', ", shortNeed: baseline.frozen ? SHORT_ASK : 0, soNeed: SO_ASK }));", ", shortNeed: baseline.frozen ? SHORT_ASK : 0 }));"],
+  ['retrace: soNeed reads ignore the breaker', '28-retrace-collect.js', "if (trouble.on) { trouble.mark('sales order ' + x.sales_order); break; }", ''],
+  ['retrace: soNeed budget removed', '28-retrace-collect.js', 'for (const x of soAsk.slice(0, SO_BUDGET)) {', 'for (const x of soAsk) {'],
+  ['retrace: soNeed shape check dropped', '28-retrace-collect.js', "if (!sn || !want || sn.label !== want.label || !sn.status) {", "if (!sn) {"],
+  ['retrace: soNeed malformed answer recorded as no WO', '28-retrace-collect.js', "note('sales order ' + x.sales_order, AE.shape.bad('label details ' + x.label, 'no usable label', d)); continue; }", "soNone.push(x.sales_order); continue; }"],
+  ['retrace: soNeed ignores a moved-on sales order', '28-retrace-collect.js', 'if (sn.wo && sn.sales_order === x.sales_order) sos.add', 'if (sn.wo) sos.add'],
   ['retrace: bad shapes trip the pass breaker', '28-retrace-collect.js', 'catch (e) { if (portalDown(e)) downRun++; else if (httpOf(e)) downRun = 0; throw e; }', 'catch (e) { downRun++; throw e; }'],
   ['retrace: watcher clones the Request after the call', '28-retrace-collect.js', "      '    var p = of.apply(this, arguments);',\n      '    if (w) {',", "      '    var p = of.apply(this, arguments);',\n      '    if (w) { try { if (input && typeof input.clone === \"function\" && !(init && init.body != null)) w.bodyP = input.clone().text(); } catch (_) { return p; }',"], // the old order: clone after the call (throws, the write goes unseen),
 ];
