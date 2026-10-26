@@ -172,17 +172,20 @@ const PRUNE_BUYBACK = `DELETE FROM inv_labels WHERE store = ?1 AND label >= 'B-'
     AND NOT EXISTS (SELECT 1 FROM inv_movements m WHERE m.store = inv_labels.store AND m.label = inv_labels.label)`;
 
 /*
-  listed (sweep request): [{ item, total, labels: [label] }], one per item whose label list (store-products/{item}/inventory, warehouseType=All) the
-  browser read IN FULL this pass: total = the list's @odata.count, labels = every label it returned. Stored per item (inv_item_listed):
-  total, and storable = the listed labels Retrace can hold (cleanLabel, not in inv_ignored_labels). Latest listing wins.
+  listed (sweep request): [{ item, total, labels: [label | { label, store }] }], one per item whose label list (store-products/{item}/inventory, warehouseType=All) the
+  browser read IN FULL this pass: total = the list's @odata.count, labels = every label it returned (with the row's Store). Stored per item (inv_item_listed):
+  total, and storable = the listed labels Retrace can hold (cleanLabel, this store's or no store named, not in inv_ignored_labels). Latest listing wins.
 */
 export async function listedWrite(T, store, listed, at) {
   const rows = [];
   for (const x of Array.isArray(listed) ? listed : []) {
     const item = H_clean(x && x.item != null ? String(x.item) : '', 40), total = nInt(x && x.total);
     if (!item || total == null || ignoredItem(item) || !Array.isArray(x.labels) || x.labels.length > LISTED_LABELS_MAX) continue;
-    const labels = [...new Set(x.labels.map(cleanLabel).filter(Boolean))];
-    if (labels.length > total) continue; // more rows than Portal's own count: not a coherent listing
+    // An entry is a label, or { label, store } (store = the row's Store text, as sent): a row naming another store is never stored here
+    // (the label snapshot write skips it the same way: its leading number), so it can't count toward what the item can reach.
+    const all = x.labels.map((e) => (e && typeof e === 'object' ? { label: cleanLabel(e.label), own: storeNo(e.store) } : { label: cleanLabel(e), own: null })).filter((e) => e.label);
+    if (new Set(all.map((e) => e.label)).size > total) continue; // more rows than Portal's own count: not a coherent listing
+    const labels = [...new Set(all.filter((e) => e.own == null || e.own === store).map((e) => e.label))];
     rows.push({ item, total, labels });
   }
   if (!rows.length) return 0;

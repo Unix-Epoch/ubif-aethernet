@@ -533,7 +533,9 @@ AE.retrace = (() => {
         try {
           const got = await labelsOf(store, item);
           acc.labels.push(...got); readOk.add(item); result.itemsRead++;
-          if (got.complete && got.length <= got.total) acc.listed.push({ item: String(item), total: got.total, labels: got.map((x) => x.label) });
+          // every listed label with its row's Store (the Worker leaves out another store's, which it never stores); here too, belt and braces
+          const own = (x) => { const m = /^\s*(\d{1,6})\b/.exec(x.store == null ? '' : String(x.store)); return !m || Number(m[1]) === Number(store); };
+          if (got.complete && got.length <= got.total) acc.listed.push({ item: String(item), total: got.total, labels: got.filter(own).map((x) => (x.store != null ? { label: x.label, store: String(x.store) } : x.label)) });
         }
         catch (e) {
           if (fatal(e)) throw e;

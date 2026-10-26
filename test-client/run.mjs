@@ -674,7 +674,14 @@ await t('Retrace labels: a full read sends the listing (listed: item, @odata.cou
   const env = retraceEnv(ok(LABELS));
   await env.AE.retrace.run();
   const last = env.sweeps().at(-1);
-  assert.deepEqual(plain(last.listed), [{ item: '180001', total: 3, labels: LABELS.value.map((r) => r.SerialNumber) }]);
+  assert.deepEqual(plain(last.listed), [{ item: '180001', total: 3, labels: LABELS.value.map((r) => ({ label: r.SerialNumber, store: r.Store })) }]);
+});
+await t('Retrace labels: a listed row naming another store (Store "326" at 914) is left out of the listing', async () => {
+  const other = { ...LABELS, value: [...LABELS.value.slice(0, 2), { ...LABELS.value[2], Store: '326' }] }; // the captured rows, one moved to another store (as seen live for 721277)
+  const env = retraceEnv(ok(other));
+  await env.AE.retrace.run();
+  const l = env.sweeps().at(-1).listed[0];
+  assert.equal(l.total, 3); assert.deepEqual(plain(l.labels.map((x) => x.label)), LABELS.value.slice(0, 2).map((r) => r.SerialNumber));
 });
 await t('Retrace labels: a list cut at 20 pages is not a full listing (no listed)', async () => {
   const page = { ...LABELS, '@odata.count': 5000, value: Array.from({ length: 200 }, (_, i) => ({ ...LABELS.value[0], SerialNumber: '180001-00006' + String(10000 + i) })) }; // SYNTHETIC: 200 rows a page, 5000 counted

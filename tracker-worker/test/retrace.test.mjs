@@ -1534,6 +1534,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.equal(await count('SELECT COUNT(*) AS n FROM inv_item_listed WHERE store = 566'), 0);
   assert.equal((await sw({ listed: 'nope' })).status, 400, 'not a list');
   // the re-read's full listing: Portal lists 3, one of them tombstoned -> 2 storable: the item's target drops to 2, the strip finishes
+  let r2;
   const r = await sw({ listed: [{ item: '566001', total: 3, labels: [L(1), L(2), 'B-566001-0000000009'] }], labels: [{ SerialNumber: L(1), ItemNumber: '566001', SerialStatus: 'Available', WarehouseId: '566' }], shortNeed: 10 });
   assert.ok(r.status < 300, JSON.stringify(r));
   assert.deepEqual(r.j.shortItems, [], 'not short any more: no endless re-reads');
@@ -1544,6 +1545,15 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.ok(g.done_at, 'the done signal fires');
   const v = (await adminPost('owner@x.com', '/retrace/verify/566/run')).j.checks.find((c) => c.key === 'counts');
   assert.equal(v.status, 'pass', JSON.stringify(v)); assert.equal(v.gone, 1); assert.match(v.result, /1 label Portal no longer lists/);
+  // the live 721277 case: Portal lists a row whose Store is another store; Retrace never stores it, so it can't count. A wrong earlier row
+  // (storable 3, written before this rule) is replaced by the next listing.
+  await T.prepare("UPDATE inv_item_listed SET storable = 3, listed_at = ? WHERE store = 566").bind(new Date().toISOString()).run();
+  assert.deepEqual((await pr()).steps.labels, { x: 2, y: 3 }, 'the wrong row holds it short');
+  r2 = await sw({ listed: [{ item: '566001', total: 3, labels: [{ label: L(1), store: '566' }, { label: L(2), store: '566 - Listed Test' }, { label: '566001-0000000007', store: '326' }] }], shortNeed: 10 });
+  assert.deepEqual(r2.j.shortItems, []);
+  assert.equal((await T.prepare("SELECT storable FROM inv_item_listed WHERE store = 566 AND item = '566001'").first()).storable, 2, 'another store\'s row left out');
+  assert.deepEqual((await pr()).steps.labels, { x: 2, y: 2 });
+  assert.equal((await adminPost('owner@x.com', '/retrace/verify/566/run')).j.checks.find((c) => c.key === 'counts').status, 'pass');
   // a listing never raises the target, and one older than the freeze doesn't count
   await T.prepare("UPDATE inv_item_listed SET storable = 9 WHERE store = 566").run();
   assert.deepEqual((await pr()).steps.labels, { x: 2, y: 3 }, 'storable above the count: the frozen count');
