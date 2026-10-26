@@ -24,6 +24,7 @@
   Passing all five is strong evidence, not proof: Portal stays the only source of truth.
 */
 import { IGNORED_ITEMS, NON_STOCK, NOW_KIND } from './retrace.js';
+import { TARGET_LISTED, LISTED_JOIN_SQL } from './retrace-listed.js';
 import { nowCols, rowNow, nowCounts, availRes, lastStatusSql, isQuar } from './retrace-now.js';
 
 export const SPOT = 10;
@@ -35,10 +36,12 @@ const QUAR = "(lower(COALESCE(wh_type, '')) = 'quarantine' OR upper(COALESCE(wh_
 
 // ------------------------------------------------------------------ checks 1 and 2: one read of the baseline items
 async function perItem(T, store) {
-  const rows = (await T.prepare(`SELECT c.item, c.labels AS portal, i.name, i.qty, COALESCE(l.n, 0) AS n, COALESCE(l.unread, 0) AS unread
-      FROM inv_item_counts c LEFT JOIN inv_items i ON i.store = c.store AND i.item = c.item
+  // reach: what the item can still have (retrace-api.js TARGET_LISTED: Portal's frozen count, lowered by a full listing since the freeze)
+  const read = (tgt, join) => T.prepare(`SELECT c.item, c.labels AS portal, ${tgt} AS reach, i.name, i.qty, COALESCE(l.n, 0) AS n, COALESCE(l.unread, 0) AS unread
+      FROM inv_item_counts c LEFT JOIN inv_items i ON i.store = c.store AND i.item = c.item ${join}
       LEFT JOIN (SELECT item, COUNT(*) AS n, SUM(last_history_at IS NULL) AS unread FROM inv_labels WHERE store = ?1 GROUP BY item) l ON l.item = c.item
-      WHERE c.store = ?1 ORDER BY c.item`).bind(store).all()).results;
+      WHERE c.store = ?1 ORDER BY c.item`).bind(store).all();
+  const rows = (await read(TARGET_LISTED, LISTED_JOIN_SQL).catch((e) => { if (!/inv_item_listed/.test(String(e && e.message))) throw e; return read('c.labels', ''); })).results;
   // available / reserved from where each label stands NOW (retrace-now.js), not from the raw serial_status ('Received' off a PO says nothing)
   const by = new Map();
   for (const r of await nowCounts(T, store, null)) { const l = by.get(r.item); if (l) l.push(r); else by.set(r.item, [r]); }
@@ -52,17 +55,20 @@ const qoNote = (n) => n ? ' · ' + plural(n, 'quantity-only item') + ' skipped (
 
 function countsCheck(all) {
   const short = [], rows = all.filter((r) => !qtyOnly(r)), qo = all.length - rows.length;
-  let extra = 0;
+  let extra = 0, gone = 0;
   for (const r of rows) {
-    if (r.n < r.portal) {
+    const reach = r.reach == null ? r.portal : r.reach;
+    gone += r.portal - reach;
+    if (r.n < reach) {
       short.push({ item: r.item, name: r.name || null, portal: r.portal, have: r.n,
-        cause: r.n === 0 ? 'none of its labels read yet' : plural(r.portal - r.n, 'label') + ' not found yet' + (r.unread ? ' · ' + plural(r.unread, 'stored label') + ' without a history' : '') });
+        cause: r.n === 0 ? 'none of its labels read yet' : plural(reach - r.n, 'label') + ' not found yet' + (r.unread ? ' · ' + plural(r.unread, 'stored label') + ' without a history' : '') });
     } else if (r.n > r.portal) extra += r.n - r.portal;
   }
+  const goneNote = gone ? ' · ' + plural(gone, 'label') + ' Portal no longer lists (or Retrace drops: BB0001)' : '';
   short.sort((a, b) => (b.portal - b.have) - (a.portal - a.have) || (a.item < b.item ? -1 : 1));
   const ok = rows.length - short.length;
-  return { status: !rows.length ? 'todo' : short.length ? 'fail' : 'pass', total: rows.length, ok, n: short.length, extra, quantity_only: qo, rows: short.slice(0, ROWS),
-    result: (!rows.length ? (qo ? 'no items with labels' : 'no baseline items') : ok + ' of ' + rows.length + ' items match' + (!short.length && extra ? ' · ' + plural(extra, 'label') + ' newer than the baseline' : '')) + qoNote(qo) };
+  return { status: !rows.length ? 'todo' : short.length ? 'fail' : 'pass', total: rows.length, ok, n: short.length, extra, gone, quantity_only: qo, rows: short.slice(0, ROWS),
+    result: (!rows.length ? (qo ? 'no items with labels' : 'no baseline items') : ok + ' of ' + rows.length + ' items match' + (!short.length && extra ? ' · ' + plural(extra, 'label') + ' newer than the baseline' : '') + goneNote) + qoNote(qo) };
 }
 
 // Portal's quantities by warehouse (inv_items.qty): available and reserved, quarantine warehouses (914Q) left out. null = no quantity yet.

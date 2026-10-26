@@ -137,6 +137,7 @@ for (const stmt of readFileSync('schema.sql', 'utf8').replace(/--[^\n]*/g, '').s
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-23-retrace.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-24-retrace-baseline.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-24-retrace-verify.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
+for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-26-retrace-listed.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 for (let i = 0; i < 2; i++) for (const stmt of readFileSync('migrations/2026-10-25-retrace-so-need.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean)) await env.TR.prepare(stmt).run();
 await env.AE.prepare('CREATE TABLE IF NOT EXISTS store_access (store INTEGER PRIMARY KEY, name TEXT, added_by TEXT, added_at TEXT)').run();
 await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (914, 'Newport News'), (326, 'Lynnhaven'), (562, 'So Test'), (563, 'So Other'), (564, 'So Link')").run();
@@ -1507,6 +1508,46 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.equal(await count("SELECT COUNT(*) AS n FROM inv_so_wo WHERE store = 562 AND sales_order = 'FSO3' AND wo = '600'"), 1);
   assert.ok(!nd(await sweepS({ soNeed: 50 })).includes('FSO3'));
   assert.equal(nd(await sweepS({ soNeed: 500 })).length <= 50, true);
+}
+
+// ------------------------------------------------------------------ listed: labels Portal no longer lists / Retrace drops (the 99% strip)
+{
+  await env.AE.prepare("INSERT OR IGNORE INTO store_access (store, name) VALUES (566, 'Listed Test')").run();
+  const sw = (body) => call('POST', '/v1/566/tracker/retrace/sweep', Object.assign({ need: 0 }, body));
+  const pr = async () => (await admin('owner@x.com', '/retrace/coverage')).j.stores.find((x) => x.store === 566).progress;
+  const L = (n) => '566001-000000000' + n, FROZE = '2026-10-24T18:00:00.000Z';
+  // the live 914 case (Oct 26): baseline item counted 3 labels, 2 stored and read; the third is a B- buyback Retrace tombstoned (history named BB0001)
+  await T.batch([
+    T.prepare("INSERT INTO inv_items (store, item, name, qty, qty_hash, first_seen, last_seen) VALUES (566, '566001', 'Listed Part', ?, 'h', ?, ?)").bind(JSON.stringify({ 566: { onHand: 2, available: 2, reserved: 0 } }), AT, AT),
+    T.prepare("INSERT INTO inv_item_counts (store, item, labels, counted_at) VALUES (566, '566001', 3, ?)").bind(FROZE),
+    T.prepare("INSERT INTO inv_baseline (store, expected_items, expected_labels, expected_pos, pos_counted_at, counted_at, created_at) VALUES (566, 1, 3, 0, ?, ?, ?)").bind(FROZE, FROZE, FROZE),
+    T.prepare("INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (566, 'po_backfill', '{\"done\":true}', ?), (566, 'lookup', '{}', ?)").bind(AT, AT),
+    ...[1, 2].map((n) => T.prepare("INSERT INTO inv_labels (store, label, item, serial_status, wh_id, first_seen, last_seen, last_history_at) VALUES (566, ?, '566001', 'Available', '566', ?, ?, ?)").bind(L(n), AT, AT, AT)),
+    T.prepare("INSERT INTO inv_ignored_labels (store, label, reason, at) VALUES (566, 'B-566001-0000000009', 'item BB0001', ?)").bind(AT),
+  ]);
+  let g = await pr();
+  assert.deepEqual([g.state, g.pct < 100, g.steps.labels, g.steps.histories, g.gone_labels], ['gathering', true, { x: 2, y: 3 }, { x: 2, y: 3 }, 0], 'stuck short of 100 without a listing: ' + JSON.stringify(g));
+  assert.deepEqual((await sw({ shortNeed: 10 })).j.shortItems, ['566001'], 'short: re-read');
+  // junk listings are refused: labels not a list, more labels than the count, a bad count, an ignored item
+  await sw({ listed: [{ item: '566001', total: 3, labels: 'x' }, { item: '566001', total: 1, labels: [L(1), L(2)] }, { item: '566001', total: -1, labels: [] }, { item: 'BB0001', total: 1, labels: [] }] });
+  assert.equal(await count('SELECT COUNT(*) AS n FROM inv_item_listed WHERE store = 566'), 0);
+  assert.equal((await sw({ listed: 'nope' })).status, 400, 'not a list');
+  // the re-read's full listing: Portal lists 3, one of them tombstoned -> 2 storable: the item's target drops to 2, the strip finishes
+  const r = await sw({ listed: [{ item: '566001', total: 3, labels: [L(1), L(2), 'B-566001-0000000009'] }], labels: [{ SerialNumber: L(1), ItemNumber: '566001', SerialStatus: 'Available', WarehouseId: '566' }], shortNeed: 10 });
+  assert.ok(r.status < 300, JSON.stringify(r));
+  assert.deepEqual(r.j.shortItems, [], 'not short any more: no endless re-reads');
+  const row = await T.prepare("SELECT total, storable FROM inv_item_listed WHERE store = 566 AND item = '566001'").first();
+  assert.deepEqual([row.total, row.storable], [3, 2]);
+  g = await pr();
+  assert.deepEqual([g.state, g.pct, g.steps.labels, g.gone_labels], ['done', 100, { x: 2, y: 2 }, 1], JSON.stringify(g));
+  assert.ok(g.done_at, 'the done signal fires');
+  const v = (await adminPost('owner@x.com', '/retrace/verify/566/run')).j.checks.find((c) => c.key === 'counts');
+  assert.equal(v.status, 'pass', JSON.stringify(v)); assert.equal(v.gone, 1); assert.match(v.result, /1 label Portal no longer lists/);
+  // a listing never raises the target, and one older than the freeze doesn't count
+  await T.prepare("UPDATE inv_item_listed SET storable = 9 WHERE store = 566").run();
+  assert.deepEqual((await pr()).steps.labels, { x: 2, y: 3 }, 'storable above the count: the frozen count');
+  await T.prepare("UPDATE inv_item_listed SET storable = 2, listed_at = '2026-10-24T17:00:00.000Z' WHERE store = 566").run();
+  assert.deepEqual((await pr()).steps.labels, { x: 2, y: 3 }, 'before the freeze: not used');
 }
 
 // the admin page's source: the drawer reads the derived status, not the raw word; an unlinked sales order is said so

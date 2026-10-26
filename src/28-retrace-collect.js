@@ -92,7 +92,7 @@ AE.retrace = (() => {
   const LOOKUP_PAGES = 30, LIST_PAGES = 10, PO_BACKFILL_PAGES = 2, PO_DAYS = 14, RMA_DAYS = 30;
   const WATCH_BATCH = 50, QUEUE_MAX = 500, QUEUE_DAYS = 3;
   // The Worker's per-request caps (retrace-api.js LIMIT): bigger lists go up in several sweeps.
-  const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, pos: 600, names: 200, labelTotals: 800 };
+  const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, pos: 600, names: 200, labelTotals: 800, listed: 150 };
   const enabled = () => AE_SANDBOX || AE.tracker.configured();
   const stopped = () => !!AE.storeChanged() || AE.status.paused('retrace');
   class Stop extends Error {}
@@ -278,14 +278,19 @@ AE.retrace = (() => {
     if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) throw AE.shape.bad(what, '@odata.count is not a whole number', count);
     return { list, count };
   }
+  // The snapshots, plus out.total (the list's @odata.count) and out.complete (every page read: not cut at 20 pages), so the sweep can send the
+  // listing (`listed`: what Portal lists for the item now; the Worker lowers the item's frozen target to what it can hold, retrace-listed.js).
   async function labelsOf(store, item) {
     const out = [];
+    let total = null, complete = false;
     for (let page = 1; page <= 20; page++) {
       const j = await portal('GET', '/api/boh/store-products/' + encodeURIComponent(item) + '/inventory?pageSize=200&page=' + page + '&searchTerm=&warehouseType=All&warehouseId=' + store);
       const { list, count } = labelPage(j, 'labels of item ' + item);
+      total = count;
       for (const r of list) { const s = R.labelSnapshot(r); if (s) out.push(s); }
-      if (list.length < 200 || (count && page * 200 >= count)) break;
+      if (list.length < 200 || (count && page * 200 >= count)) { complete = true; break; }
     }
+    out.total = total; out.complete = complete;
     return out;
   }
 
@@ -460,7 +465,7 @@ AE.retrace = (() => {
       passStore = store; result.store = store;
       try { result.watched = await flush(store); } catch (e) { if (e.storeChanged || e instanceof Stop) throw e; note('watch queue', e); }
       const cur = await worker(store, 'GET', '/cursor'), cursors = cur.cursors || {}, baseline = cur.baseline || {};
-      const acc = { items: [], labels: [], docs: [], movements: [], touched: [], pos: [], names: [], cursors: {}, labelTotals: [] };
+      const acc = { items: [], labels: [], docs: [], movements: [], touched: [], pos: [], names: [], cursors: {}, labelTotals: [], listed: [] };
       const nowMs = Date.now();
       // This pass's view of the GM queues (merged back on every save: see gmSet / gmMap).
       const todo = gmSet(TODO_KEY(store)), fails = gmMap(FAIL_KEY(store)), park = gmMap(PARK_KEY(store)), rfail = gmMap(RFAIL_KEY(store));
@@ -522,7 +527,11 @@ AE.retrace = (() => {
       const readOk = new Set();
       for (const item of todo.list().slice(0, ITEM_BUDGET)) {
         if (trouble.on) { trouble.mark('labels ' + item); break; }
-        try { acc.labels.push(...(await labelsOf(store, item))); readOk.add(item); result.itemsRead++; }
+        try {
+          const got = await labelsOf(store, item);
+          acc.labels.push(...got); readOk.add(item); result.itemsRead++;
+          if (got.complete && got.length <= got.total) acc.listed.push({ item: String(item), total: got.total, labels: got.map((x) => x.label) });
+        }
         catch (e) {
           if (fatal(e)) throw e;
           note('labels ' + item, e); result.itemsFailed++;

@@ -613,6 +613,24 @@ await t('Retrace labels: the captured answer reads its rows (control) and locks 
   assert.deepEqual(env.todo(), []);
   assert.ok(env.gm.get('ae_retrace_short2_' + STORE)['180001'], 'locked out after a successful read');
 });
+await t('Retrace labels: a full read sends the listing (listed: item, @odata.count, every label) with the labels', async () => {
+  const env = retraceEnv(ok(LABELS));
+  await env.AE.retrace.run();
+  const last = env.sweeps().at(-1);
+  assert.deepEqual(plain(last.listed), [{ item: '180001', total: 3, labels: LABELS.value.map((r) => r.SerialNumber) }]);
+});
+await t('Retrace labels: a list cut at 20 pages is not a full listing (no listed)', async () => {
+  const page = { ...LABELS, '@odata.count': 5000, value: Array.from({ length: 200 }, (_, i) => ({ ...LABELS.value[0], SerialNumber: '180001-00006' + String(10000 + i) })) }; // SYNTHETIC: 200 rows a page, 5000 counted
+  const env = retraceEnv(ok(page));
+  await env.AE.retrace.run();
+  assert.equal(env.requests(/store-products\/\d+\/inventory\?pageSize=200/).length, 20);
+  assert.ok(env.sweeps().every((b) => !(b.listed || []).length), JSON.stringify(env.sweeps().map((b) => b.listed)));
+});
+await t('Retrace labels: a failed read sends no listing', async () => {
+  const env = retraceEnv(ok({}));
+  await env.AE.retrace.run();
+  assert.ok(env.sweeps().every((b) => !(b.listed || []).length));
+});
 await t('Retrace labels: a real zero (count 0, no rows) is a successful read of zero labels', async () => {
   const env = retraceEnv(ok(ZERO_LABELS));
   const r = await env.AE.retrace.run();

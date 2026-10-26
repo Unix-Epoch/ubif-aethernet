@@ -71,6 +71,8 @@ const M = [
   ['retrace: RMA marked seen before its read', '28-retrace-collect.js', "if (read >= RMA_BUDGET || trouble.on) continue; // over budget: next pass (not marked seen)\n        read++;", "if (read >= RMA_BUDGET || trouble.on) continue; // over budget: next pass (not marked seen)\n        read++; next[d.id] = status;"],
   ['retrace: stray failure counts kept', '28-retrace-collect.js', 'fails.save((k) => todo.has(k));', 'fails.save();'],
   ['retrace: Worker 403 test ignores the tag', '28-retrace-collect.js', 'if (e.worker && e.status === 403) { result.note', 'if (e.status === 403) { result.note'],
+  ['retrace: a cut-short list sent as a full listing', '28-retrace-collect.js', "if (list.length < 200 || (count && page * 200 >= count)) { complete = true; break; }\n    }", "if (list.length < 200 || (count && page * 200 >= count)) { complete = true; break; }\n    }\n    complete = true;"],
+  ['retrace: listing not sent', '28-retrace-collect.js', "if (got.complete && got.length <= got.total) acc.listed.push(", "if (false) acc.listed.push("],
   ['retrace: soNeed dropped from the sweep', '28-retrace-collect.js', ", shortNeed: baseline.frozen ? SHORT_ASK : 0, soNeed: SO_ASK }));", ", shortNeed: baseline.frozen ? SHORT_ASK : 0 }));"],
   ['retrace: soNeed reads ignore the breaker', '28-retrace-collect.js', "if (trouble.on) { trouble.mark('sales order ' + x.sales_order); break; }", ''],
   ['retrace: soNeed budget removed', '28-retrace-collect.js', 'for (const x of soAsk.slice(0, SO_BUDGET)) {', 'for (const x of soAsk) {'],

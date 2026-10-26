@@ -372,3 +372,11 @@ CREATE TABLE IF NOT EXISTS inv_so_need (
   none_at TEXT,                        -- label details were read for real and carried no WorkOrderId for this sales order
   PRIMARY KEY (store, sales_order)
 );
+-- Oct 26, 2026: latest full label listing per item (migrations/2026-10-26-retrace-listed.sql, src/retrace-listed.js).
+CREATE TABLE IF NOT EXISTS inv_item_listed (
+  store INTEGER NOT NULL, item TEXT NOT NULL,
+  total INTEGER NOT NULL,              -- the listing's @odata.count (sold included)
+  storable INTEGER NOT NULL,           -- labels in that listing Retrace can hold (not in inv_ignored_labels)
+  listed_at TEXT NOT NULL,             -- when the listing was delivered (the sweep's time)
+  PRIMARY KEY (store, item)
+);

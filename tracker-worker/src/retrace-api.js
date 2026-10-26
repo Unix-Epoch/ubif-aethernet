@@ -97,6 +97,7 @@
   Admin side: retraceAdmin() below, mounted by trackerRoutes at /api/tracker/retrace/… (page 'retrace'; route list there).
 */
 import { passStmts } from './usage.js';
+import { TARGET_LISTED, LISTED_JOIN_SQL } from './retrace-listed.js';
 import { verifyRun, verifyAsk, verifyView, verifyTick, QUEUE_REASON, QUEUE_SINCE } from './retrace-verify.js';
 import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS } from './retrace.js';
 import { nowCols, rowNow, nowCountsStmt, nowCountsRows, nowCounts, availRes } from './retrace-now.js';
@@ -107,7 +108,8 @@ const NEED_CAP = 200, COUNT_CAP = 300, SHORT_CAP = 300, CLAIM_MIN = 10, WATCH_MA
 // batched or not), so a pass bigger than this goes up in several sweeps (only new / changed rows are written, so a
 // second pass over the same data is mostly reads).
 const PO_DATA_MAX = 200000, PO_NEED_CAP = 100, NAMES_MAX = 200, UNNAMED_CAP = 50, SO_NEED_CAP = 50, SO_NONE_MAX = 200, SO_NONE_MS = 24 * 3600000;
-const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, rows: 500, cursors: 20, pos: 600, names: NAMES_MAX, labelTotals: 800 };
+const LIMIT = { items: 2400, labels: 800, docs: 200, movements: 500, touched: 500, rows: 500, cursors: 20, pos: 600, names: NAMES_MAX, labelTotals: 800, listed: 150 };
+const LISTED_LABELS_MAX = 4000; // one item's full label list (store-products: 20 pages of 200 at most)
 const MAX = { sweep: 4000000, history: 1000000, watch: 150000 };
 const SWEEP_SOURCES = ['sweep', 'transfer', 'count', 'rma', 'buyback', 'po', 'snapshot'];
 const CURSOR_RE = /^[a-z][a-z0-9_-]{0,30}$/, LAST_SWEEP = 'last_sweep';
@@ -165,6 +167,32 @@ const PRUNE_BUYBACK = `DELETE FROM inv_labels WHERE store = ?1 AND label >= 'B-'
     AND serial_status IS NULL AND product IS NULL AND wh_type IS NULL AND po IS NULL AND wo IS NULL AND sales_order IS NULL AND last_history_at IS NULL AND last_change_at IS NULL
     AND NOT EXISTS (SELECT 1 FROM inv_movements m WHERE m.store = inv_labels.store AND m.label = inv_labels.label)`;
 
+/*
+  listed (sweep request): [{ item, total, labels: [label] }], one per item whose label list (store-products/{item}/inventory, warehouseType=All) the
+  browser read IN FULL this pass: total = the list's @odata.count, labels = every label it returned. Stored per item (inv_item_listed):
+  total, and storable = the listed labels Retrace can hold (cleanLabel, not in inv_ignored_labels). Latest listing wins.
+*/
+export async function listedWrite(T, store, listed, at) {
+  const rows = [];
+  for (const x of Array.isArray(listed) ? listed : []) {
+    const item = H_clean(x && x.item != null ? String(x.item) : '', 40), total = nInt(x && x.total);
+    if (!item || total == null || ignoredItem(item) || !Array.isArray(x.labels) || x.labels.length > LISTED_LABELS_MAX) continue;
+    const labels = [...new Set(x.labels.map(cleanLabel).filter(Boolean))];
+    if (labels.length > total) continue; // more rows than Portal's own count: not a coherent listing
+    rows.push({ item, total, labels });
+  }
+  if (!rows.length) return 0;
+  const dead = await tombs(T, store, rows.flatMap((r) => r.labels));
+  await chunks(T, rows.map((r) => T.prepare(`INSERT INTO inv_item_listed (store, item, total, storable, listed_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (store, item) DO UPDATE SET total = excluded.total, storable = excluded.storable, listed_at = excluded.listed_at`)
+    .bind(store, r.item, r.total, r.labels.filter((l) => !dead.has(l)).length, at)));
+  return rows.length;
+}
+const H_clean = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, '').trim().slice(0, max) : '');
+// Per baseline item, the labels it can still reach: Portal's frozen count, lowered to what the latest full listing since the freeze can be
+// stored as (a label Portal stopped listing, or one Retrace drops: a BB0001 buyback). Never raised (labels newer than the baseline aren't owed).
+// (TARGET_LISTED / LISTED_JOIN_SQL: retrace-listed.js; before its migration the table is missing and progress reads the frozen counts as they are)
+
 // ------------------------------------------------------------------ progress (the baseline and the done signal)
 // What a unit of each step costs (about Portal calls: a history is one, a PO two, a name one, a label's listing a small share of a page),
 // so the one bar moves with the time left, not with the biggest count. And what the collector gets through in a pass of 10 minutes
@@ -187,19 +215,28 @@ const nInt = (v) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v
     complete  frozen and every step has reached its total and the PO list has been read through: settle() records done
 */
 export async function progress(T, store) {
-  const [bq, itq, lbq, poq, curq] = await T.batch([
+  try { return await progressRead(T, store, true); } catch (e) {
+    if (!/inv_item_listed/.test(String(e && e.message))) throw e;
+    return progressRead(T, store, false); // no table yet: the frozen counts as they are
+  }
+}
+async function progressRead(T, store, withListed) {
+  const TARGET_SQL = withListed ? TARGET_LISTED : 'c.labels', LISTED_JOIN = withListed ? LISTED_JOIN_SQL : '';
+  const [bq, itq, lbq, goneq, poq, curq] = await T.batch([
     T.prepare('SELECT * FROM inv_baseline WHERE store = ?').bind(store),
     T.prepare(`SELECT COUNT(*) AS lookup, COALESCE(SUM(c.item IS NOT NULL), 0) AS counted, COALESCE(SUM(c.item IS NOT NULL AND i.name IS NOT NULL), 0) AS named, COALESCE(SUM(c.labels), 0) AS labels
         FROM inv_items i LEFT JOIN inv_item_counts c ON c.store = i.store AND c.item = i.item WHERE i.store = ? AND i.qty_hash IS NOT NULL`).bind(store),
     // One pass over the store's labels (grouped per item), the baseline's counts joined on. Per baseline item, at most its count: a label stored
     // for an item beyond what Portal said it has is "new since", not found. every / queued: all the store's labels, baseline item or not.
-    T.prepare(`SELECT COALESCE(SUM(MIN(c.labels, l.n)), 0) AS found, COALESCE(SUM(MIN(c.labels, l.h)), 0) AS read, COALESCE(SUM(l.n), 0) AS every, COALESCE(SUM(l.q), 0) AS queued
+    T.prepare(`SELECT COALESCE(SUM(MIN(${TARGET_SQL}, l.n)), 0) AS found, COALESCE(SUM(MIN(${TARGET_SQL}, l.h)), 0) AS read, COALESCE(SUM(l.n), 0) AS every, COALESCE(SUM(l.q), 0) AS queued
         FROM (SELECT item, COUNT(*) AS n, SUM(last_history_at IS NOT NULL) AS h, SUM(need_history > 0) AS q FROM inv_labels WHERE store = ?1 GROUP BY item) l
-        LEFT JOIN inv_item_counts c ON c.store = ?1 AND c.item = l.item`).bind(store),
+        LEFT JOIN inv_item_counts c ON c.store = ?1 AND c.item = l.item ${LISTED_JOIN}`).bind(store),
+    // labels the frozen total counted that the latest full listings say can't be reached (TARGET_SQL)
+    T.prepare(`SELECT COALESCE(SUM(c.labels - ${TARGET_SQL}), 0) AS gone FROM inv_item_counts c ${LISTED_JOIN} WHERE c.store = ?1`).bind(store),
     T.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(json_extract(data, '$.detailAt') IS NOT NULL), 0) AS read FROM inv_docs WHERE store = ? AND type = 'po' AND lower(COALESCE(status, '')) <> 'draft'`).bind(store),
     T.prepare("SELECT sweep, value, updated_at FROM inv_cursors WHERE store = ? AND sweep IN ('lookup', 'po_backfill', ?)").bind(store, LAST_SWEEP),
   ]);
-  const b = bq.results[0] || null, it = itq.results[0], lb = lbq.results[0], po = poq.results[0];
+  const b = bq.results[0] || null, it = itq.results[0], lb = lbq.results[0], po = poq.results[0], gone = (goneq.results[0] || {}).gone || 0;
   const cur = Object.fromEntries(curq.results.map((r) => [r.sweep, r]));
   const listed = !!(cur.po_backfill && (parse(cur.po_backfill.value) || {}).done === true);
   const bogus = !!(b && b.counted_at && !b.expected_items), frozen = !!(b && b.counted_at) && !bogus;
@@ -210,7 +247,9 @@ export async function progress(T, store) {
     eta_min: null, steps: null, counting: { items_done: it.counted, items_total: it.lookup, pos_known: posKnown }, new_labels: null, last_sweep_at: (cur[LAST_SWEEP] && cur[LAST_SWEEP].updated_at) || null };
   let complete = false;
   if (frozen) {
-    const eI = b.expected_items || 0, eL = b.expected_labels || 0, eP = b.expected_pos || 0;
+    const eI = b.expected_items || 0, eP = b.expected_pos || 0;
+    // expected_labels stays as frozen; the steps owe it less the labels Portal no longer lists / Retrace drops (gone_labels)
+    const eL = Math.max(0, (b.expected_labels || 0) - gone);
     const steps = { stock: { x: Math.min(it.counted, eI), y: eI }, labels: { x: Math.min(lb.found, eL), y: eL }, histories: { x: Math.min(lb.read, eL), y: eL },
       pos: { x: Math.min(po.read, eP), y: eP }, names: { x: Math.min(it.named, eI), y: eI } };
     const w = (k) => PROGRESS_WEIGHT[k], done = Object.values(steps).every((v) => v.x >= v.y);
@@ -220,6 +259,7 @@ export async function progress(T, store) {
     out.pct = complete || (done && !den) ? 100 : Math.min(99, Math.floor(den ? (num / den) * 100 : 100));
     out.eta_min = complete ? 0 : Math.max(1, ...Object.keys(PER_PASS).map((k) => Math.ceil((steps[k].y - steps[k].x) / PER_PASS[k])), steps.labels.x < steps.labels.y ? 1 : 0) * PASS_MIN;
     out.new_labels = Math.max(0, lb.every - steps.labels.x);
+    out.gone_labels = gone;
   }
   return { out, b, ready, complete, bogus, items: it, pos: po };
 }
@@ -466,7 +506,7 @@ export async function retraceStore(req, env, url, store, path, H) {
 
   if (path === '/retrace/sweep' && req.method === 'POST') {
     const b = await H.readJson(req, MAX.sweep);
-    for (const k of ['items', 'labels', 'docs', 'movements', 'touched', 'pos', 'names', 'labelTotals']) if (b[k] != null && (!Array.isArray(b[k]) || b[k].length > LIMIT[k])) return H.fail(400, k + ': a list of at most ' + LIMIT[k]);
+    for (const k of ['items', 'labels', 'docs', 'movements', 'touched', 'pos', 'names', 'labelTotals', 'listed']) if (b[k] != null && (!Array.isArray(b[k]) || b[k].length > LIMIT[k])) return H.fail(400, k + ': a list of at most ' + LIMIT[k]);
     if (b.cursors != null && (typeof b.cursors !== 'object' || Array.isArray(b.cursors) || Object.keys(b.cursors).length > LIMIT.cursors)) return H.fail(400, 'cursors: { sweep: value }');
     const at = H.now(), by = H.clean(b.by, 60) || null, stmts = [], book = nameBook();
     let written = 0, skipped = 0;
@@ -682,6 +722,10 @@ export async function retraceStore(req, env, url, store, path, H) {
     stmts.push(T.prepare('INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, sweep) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at')
       .bind(store, LAST_SWEEP, JSON.stringify({ by, items: items.size, labels: snaps.size, movements: added, changedItems: changedItems.length, named: nameW.length }), at));
     await chunks(T, stmts);
+    // Full label lists read this pass (listed): what Portal lists for the item now and how many of those Retrace can hold (not tombstoned).
+    // Lets progress and Verify take labels Portal stopped listing, or that Retrace drops on purpose (BB0001 buybacks), off the frozen totals.
+    // Its own statements, never failing the sweep (before migrations/2026-10-26-retrace-listed.sql the table is missing).
+    try { await listedWrite(T, store, b.listed, at); } catch (_) {}
     // Buyback junk from before their number stopped counting as an item (PRUNE_BUYBACK): only labels Portal never said anything about.
     const prunedLabels = ((await T.prepare(PRUNE_BUYBACK).bind(store).run()).meta || {}).changes || 0;
     const prog = await settle(T, store, at);
@@ -715,9 +759,14 @@ export async function retraceStore(req, env, url, store, path, H) {
     // Baseline items whose stored labels fall short of Portal's count (the item's label list was never read, or its read was lost with the
     // browser's queue): the browser reads them (shortNeed: how many, default none; biggest gap first). The browser remembers which it tried.
     const shortWant = Math.min(Math.max(Number.isInteger(b.shortNeed) ? b.shortNeed : 0, 0), SHORT_CAP);
-    const shortItems = shortWant && frozen ? (await T.prepare(`SELECT c.item FROM inv_item_counts c LEFT JOIN (SELECT item, COUNT(*) AS n FROM inv_labels WHERE store = ?1 GROUP BY item) l ON l.item = c.item
-        WHERE c.store = ?1 AND c.labels > COALESCE(l.n, 0) AND lower(c.item) NOT IN (SELECT value FROM json_each(?2)) ORDER BY c.labels - COALESCE(l.n, 0) DESC, c.item LIMIT ?3`)
-      .bind(store, JSON.stringify(IGNORED_ITEMS), shortWant).all()).results.map((r) => r.item) : [];
+    // short = below what the item can still reach (TARGET_LISTED: a full listing since the freeze that can't reach Portal's count ends it)
+    const shortSql = (tgt, join) => `SELECT c.item FROM inv_item_counts c LEFT JOIN (SELECT item, COUNT(*) AS n FROM inv_labels WHERE store = ?1 GROUP BY item) l ON l.item = c.item ${join}
+        WHERE c.store = ?1 AND ${tgt} > COALESCE(l.n, 0) AND lower(c.item) NOT IN (SELECT value FROM json_each(?2)) ORDER BY ${tgt} - COALESCE(l.n, 0) DESC, c.item LIMIT ?3`;
+    const shortRead = (tgt, join) => T.prepare(shortSql(tgt, join)).bind(store, JSON.stringify(IGNORED_ITEMS), shortWant).all();
+    const shortItems = shortWant && frozen ? (await shortRead(TARGET_LISTED, LISTED_JOIN_SQL).catch((e) => {
+      if (!/inv_item_listed/.test(String(e && e.message))) throw e;
+      return shortRead('c.labels', ''); // before the migration
+    })).results.map((r) => r.item) : [];
     // Sales orders with no WO link (inv_so_wo), newest first: the browser reads label details of the one label given (a label whose NEWEST sales
     // order this is: details name only the label's current one). Claimed CLAIM_MIN minutes; a real read with no WorkOrderId (soNone) rests a day.
     // Never fails the sweep (before the migration the table is missing).
