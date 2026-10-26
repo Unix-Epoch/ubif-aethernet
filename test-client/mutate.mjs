@@ -47,7 +47,7 @@ const M = [
   ['provoke: shape-checks the failed read again', '24-provoke.js', "catch (_) { j = undefined; } // a failed call", "catch (_) { j = null; } // a failed call"],
   ['provoke: no backoff after a failed read', '24-provoke.js', "statusMiss.set(woId, { n: m.n + 1, next: Date.now() + Math.min(STATUS_RETRY_MS * 2 ** m.n, STATUS_RETRY_MAX) });", "statusMiss.set(woId, { n: m.n + 1, next: Date.now() });"],
   // ---- Retrace
-  ['retrace: shortNeed dropped from the sweep', '28-retrace-collect.js', ", shortNeed: baseline.frozen ? SHORT_ASK : 0 }));", ' }));'],
+  ['retrace: shortNeed dropped from the sweep', '28-retrace-collect.js', ", shortNeed: baseline.frozen ? SHORT_ASK : 0, soNeed: SO_ASK }));", ', soNeed: SO_ASK }));'],
   ['retrace: sweep forwards a fixed list again', '28-retrace-collect.js', "if (last) for (const [k, v] of Object.entries(body)) if (!(k in LIMIT) && k !== 'by' && v != null) part[k] = v;", "if (last) for (const k of ['need', 'poNeed', 'nameNeed', 'cursors', 'countNeed', 'poTotal']) if (body[k] != null) part[k] = body[k];"],
   ['retrace: request fields on every part', '28-retrace-collect.js', "if (last) for (const [k, v] of Object.entries(body))", 'for (const [k, v] of Object.entries(body))'],
   ['retrace: sweep timeout back to 30 s', '28-retrace-collect.js', "const j = await worker(store, 'POST', '/sweep', part, { timeoutMs: SWEEP_TIMEOUT_MS });", "const j = await worker(store, 'POST', '/sweep', part);"],
