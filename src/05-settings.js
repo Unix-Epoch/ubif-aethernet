@@ -24,7 +24,7 @@
     ]),
     ...(AE_DEMO ? [] : [
     ['galaxy', 'Macrocosmos', 'Auto-fills your Galaxy Diagnostics exception forms. Click its button on any work order with a GSPN number.'],
-    ['timeSheet', 'Tactician', 'Filters the Store time sheet by store, with weekly hours, overtime and sales per labor hour. Find it on the Store time sheet and Reports pages.'],
+    ['timeSheet', 'Tactician', 'Adds a weekly breakdown to the Store time sheet (hours per day, overtime across every store a person worked, hours left before overtime) and sales per labor hour to Reports. Find it on the Store time sheet and Reports pages.'],
     ['reassemble', 'Reassemble', 'The price calculator you\'re used to, and it checks the price sheet for you. Find it in the avatar menu, on the Estimates page, or during check-in.'],
     ['decipher', 'Decipher', 'Type or scan an IMEI to see the model, colors, Apple serial and Find My, or Samsung warranty. Find it in the avatar menu or during check-in.'],
     ['assize', 'Assize', 'Audits your store\'s open work orders live and lists what needs fixing, by tech. Click the Assize icon at the top or a work order\'s findings chip.'],

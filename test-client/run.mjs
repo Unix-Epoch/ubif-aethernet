@@ -1351,6 +1351,126 @@ await t('Tactician: the stale reload waits while Portal is down', async () => {
   assert.equal(run(true), 0); assert.equal(run(false), 1);
 });
 
+
+// Tactician: period + store window + breakdown (pure helpers of AE.tactician, the rewritten Store time sheet page)
+const TAC = load(['00-core.js', '62-tactician.js']).AE.tactician;
+const tacRow = (o) => Object.assign({ timeclockId: 1, storeId: 11, storeName: 'Store A', userId: 7, username: 'Pat', clockTypeId: 1, timeIn: null, timeOut: null, storeTimeZone: 'America/New_York', payPeriodStartDay: 1 }, o); // SYNTHETIC values, real field set
+await t('Tactician: period text → dates (month, month-crossing, Dec→Jan, 14 days, year from today)', () => {
+  assert.deepEqual({ ...TAC.periodFromText('Mon Oct 12 – Sun Oct 18', '2026-10-15') }, { start: '2026-10-12', end: '2026-10-18', span: 7 });
+  assert.deepEqual({ ...TAC.periodFromText('Oct 12 – Oct 18', '2026-11-11') }, { start: '2026-10-12', end: '2026-10-18', span: 7 });
+  assert.deepEqual({ ...TAC.periodFromText('Mon Sep 28 – Sun Oct 4', '2026-10-01') }, { start: '2026-09-28', end: '2026-10-04', span: 7 });
+  assert.deepEqual({ ...TAC.periodFromText('Mon Dec 28 – Sun Jan 3', '2027-01-02') }, { start: '2026-12-28', end: '2027-01-03', span: 7 });
+  assert.equal(TAC.periodFromText('Mon Dec 28 – Sun Dec 28', '2026-12-29'), null); // span 1
+  assert.deepEqual({ ...TAC.periodFromText('Mon Oct 5 – Sun Oct 18', '2026-10-15') }, { start: '2026-10-05', end: '2026-10-18', span: 14 });
+  assert.deepEqual({ ...TAC.periodFromText('Mon Jan 4 – Sun Jan 10', '2027-01-04') }, { start: '2027-01-04', end: '2027-01-10', span: 7 });
+  assert.equal(TAC.periodFromText('Mon Jan 4 – Sun Jan 10', '2026-12-30') && TAC.periodFromText('Mon Jan 4 – Sun Jan 10', '2026-12-30').start, '2026-01-04'); // start not after today: the latest such year
+  assert.equal(TAC.periodFromText('Oct 12 – Oct 20', '2026-11-11'), null); // span 9
+  assert.equal(TAC.periodFromText('Week of nothing', '2026-11-11'), null);
+});
+await t('Tactician: the request range gives Sunday and span; period() prefers the card text', () => {
+  assert.deepEqual({ ...TAC.periodFromRequest('2026-10-11', '2026-10-24') }, { sunday: '2026-10-11', span: 7 });
+  assert.deepEqual({ ...TAC.periodFromRequest('2026-10-11', '2026-10-31') }, { sunday: '2026-10-11', span: 14 });
+  assert.equal(TAC.periodFromRequest('2026-10-11', '2026-10-20'), null);
+  assert.deepEqual({ ...TAC.period({ fromDate: '2026-10-11', toDate: '2026-10-24', payPeriodStartDay: 1 }) }, { start: '2026-10-12', end: '2026-10-18', span: 7, sunday: '2026-10-11', source: 'request' });
+  assert.deepEqual({ ...TAC.period({ text: 'Wed Oct 14 – Tue Oct 20', fromDate: '2026-10-11', toDate: '2026-10-24', today: '2026-10-16' }) }, { start: '2026-10-14', end: '2026-10-20', span: 7, sunday: '2026-10-11', source: 'text' });
+  assert.equal(TAC.period({}), null);
+});
+await t('Tactician: a store window from a Sunday, payPeriodStartDay 0/1/3 and span', () => {
+  assert.deepEqual({ ...TAC.storeWindow('2026-10-11', 0, 7) }, { start: '2026-10-11', end: '2026-10-17', span: 7, payPeriodStartDay: 0 });
+  assert.deepEqual({ ...TAC.storeWindow('2026-10-11', 1, 7) }, { start: '2026-10-12', end: '2026-10-18', span: 7, payPeriodStartDay: 1 });
+  assert.deepEqual({ ...TAC.storeWindow('2026-10-11', 3, 14) }, { start: '2026-10-14', end: '2026-10-27', span: 14, payPeriodStartDay: 3 });
+  assert.equal(TAC.storeWindow('2026-10-11', undefined, 7).start, '2026-10-12'); // missing: the assumed default (Monday)
+  assert.deepEqual({ ...TAC.requestRange('2026-10-14', 3, 14) }, { fromDate: '2026-10-11', toDate: '2026-10-30' });
+});
+await t('Tactician: days are the store\'s calendar days (time zone), with a fallback for a missing or bad zone', () => {
+  const iso = '2026-10-14T03:30:00Z';
+  assert.equal(TAC.dayIn(iso, 'America/New_York'), '2026-10-13');
+  assert.equal(TAC.dayIn(iso, 'Asia/Tokyo'), '2026-10-14');
+  const local = (() => { const d = new Date(iso); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); })();
+  for (const z of [undefined, null, '', 'Not/AZone', 5]) assert.equal(TAC.dayIn(iso, z), local, String(z));
+  const rows = [tacRow({ timeIn: iso, timeOut: '2026-10-14T11:30:00Z' })]; // 23:30 → 07:30 Eastern on the 13th/14th
+  const b = TAC.breakdown(rows, { store: 11, start: '2026-10-12', span: 7, now: Date.parse('2026-10-18T12:00:00Z') });
+  assert.equal(b[0].day[1], 8); assert.equal(b[0].day[2], 0); // Tue the 13th, not Wed the 14th
+  assert.equal(TAC.breakdown([tacRow({ timeIn: '2026-10-11T23:00:00-04:00', timeOut: '2026-10-12T02:00:00-04:00' })], { store: 11, start: '2026-10-12', span: 7, now: 0 }).length, 0); // Sunday evening is before a Monday window
+});
+await t('Tactician: overtime counts every store worked; floaters, left before OT, breaks out, open punch to now', () => {
+  const at = (day, h1, h2, o) => tacRow(Object.assign({ timeIn: '2026-10-' + day + 'T' + h1 + ':00Z', timeOut: '2026-10-' + day + 'T' + h2 + ':00Z' }, o));
+  const rows = [at('12', '14:00', '22:00'), at('13', '14:00', '22:00'), at('14', '14:00', '22:00'), at('15', '14:00', '22:00'), // 32 h at A
+    at('16', '14:00', '22:00', { storeId: 12, storeName: 'Store B' }), at('17', '14:00', '19:00', { storeId: 12, storeName: 'Store B' }), // 13 h at B → 45 h
+    at('12', '18:00', '18:30', { clockTypeId: 2 }), // a break: not hours
+    at('12', '14:00', '22:00', { userId: 8, username: 'Sam' })]; // 8 h only
+  const b = TAC.breakdown(rows, { store: 11, start: '2026-10-12', span: 7, now: Date.parse('2026-10-18T12:00:00Z') });
+  const pat = b.find((u) => u.name === 'Pat'), sam = b.find((u) => u.name === 'Sam');
+  assert.equal(pat.here, 32); assert.equal(pat.all, 45); assert.equal(pat.ot, 5); assert.equal(pat.left, 0); assert.equal(pat.breaks, 0.5);
+  assert.deepEqual([...pat.elsewhere], [['Store B', 13]]); assert.deepEqual(pat.day, [8, 8, 8, 8, 0, 0, 0]);
+  assert.equal(sam.ot, 0); assert.equal(sam.left, 32);
+  const atB = TAC.breakdown(rows, { store: 12, start: '2026-10-12', span: 7, now: Date.parse('2026-10-18T12:00:00Z') });
+  assert.equal(atB.length, 1); assert.equal(atB[0].here, 13); assert.equal(atB[0].ot, 5); // still 45 h in the week
+  const open = TAC.breakdown([tacRow({ timeIn: '2026-10-14T12:00:00Z', timeOut: null })], { store: 11, start: '2026-10-12', span: 7, now: Date.parse('2026-10-14T17:30:00Z') });
+  assert.equal(open[0].here, 5.5);
+});
+await t('Tactician: a 14-day window has two weeks and overtime per 7-day week', () => {
+  const rows = []; for (const d of ['05', '06', '07', '08', '09', '10']) rows.push(tacRow({ timeIn: '2026-10-' + d + 'T12:00:00Z', timeOut: '2026-10-' + d + 'T19:00:00Z' })); // 42 h week 1
+  for (const d of ['12', '13', '14', '15']) rows.push(tacRow({ timeIn: '2026-10-' + d + 'T12:00:00Z', timeOut: '2026-10-' + d + 'T19:00:00Z' })); // 28 h week 2
+  const b = TAC.breakdown(rows, { store: 11, start: '2026-10-05', span: 14, now: Date.parse('2026-10-16T12:00:00Z') });
+  assert.equal(b[0].day.length, 14); assert.equal(b[0].weeks.length, 2);
+  assert.deepEqual(b[0].weeks.map((w) => [w.all, w.ot, w.left]), [[42, 2, 0], [28, 0, 12]]);
+  assert.equal(b[0].all, 70); assert.equal(b[0].ot, 2); assert.equal(b[0].left, 12); // not 30 h over: 40 per week
+});
+
+await t('Tactician: the store follows Portal\'s menu; "All stores", no menu or junk show the signed-in store', () => {
+  assert.deepEqual({ ...TAC.pickStore('326', 999999) }, { store: 326, fromMenu: true });
+  assert.deepEqual({ ...TAC.pickStore('all', 999999) }, { store: 999999, fromMenu: false });
+  assert.deepEqual({ ...TAC.pickStore(null, '999999') }, { store: 999999, fromMenu: false }); // no menu (one store); the profile id may be a string
+  for (const junk of ['', '0', '-5', '12abc', undefined, 326]) assert.equal(TAC.pickStore(junk, 11).store, 11, String(junk));
+  assert.equal(TAC.pickStore('all', null), null); assert.equal(TAC.pickStore(undefined, 0), null);
+});
+await t('Tactician: the window comes from the store card, else the period button (only for a picked store or no menu), else null', () => {
+  const today = '2026-11-11', W = (o) => { const w = TAC.pageWindow({ today, ...o }); return w && { ...w }; };
+  assert.deepEqual(W({ card: ['Sandbox Store #999999', 'Mon Nov 9 – Sun Nov 15', '4 employees'], label: 'This Work Week', value: 'all' }), { start: '2026-11-09', end: '2026-11-15', span: 7, source: 'card' });
+  assert.deepEqual(W({ card: ['Lynnhaven #326', 'Mon Oct 26 – Sun Nov 8'], label: 'Last 2 Wks', value: 'all' }), { start: '2026-10-26', end: '2026-11-08', span: 14, source: 'card' });
+  assert.equal(W({ card: ['x', 'Mon Nov 9 – Sun Nov 15'], label: 'Nov 2 – Nov 8', value: '326' }).start, '2026-11-09'); // the card wins over the button
+  assert.deepEqual(W({ card: [], label: 'Nov 2 – Nov 8', value: '999999' }), { start: '2026-11-02', end: '2026-11-08', span: 7, source: 'label' }); // a store with no punches draws no card
+  assert.equal(W({ card: [], label: 'Nov 2 – Nov 8', value: null }).source, 'label'); // one store: no menu
+  assert.equal(W({ card: [], label: 'Nov 2 – Nov 8', value: 'all' }), null); // with All stores the button isn't one store's window
+  assert.equal(W({ card: [], label: 'Last Work Week', value: 'all' }), null);
+  assert.equal(W({ card: [], label: 'Week of Oct 18', value: '999999' }), null);
+  assert.equal(W({ card: 'Mon Nov 9 – Sun Nov 15', label: '', value: null }).source, 'card'); // a single string works too
+  assert.equal(W({}), null);
+});
+await t('Tactician: store name and pay-period start day come from the answer\'s stores, else its rows', () => {
+  assert.deepEqual({ ...TAC.storeInfo({ stores: [{ storeId: 11, storeName: 'A', payPeriodStartDay: 3 }], rows: [] }, 11) }, { name: 'A', payPeriodStartDay: 3 });
+  assert.deepEqual({ ...TAC.storeInfo({ rows: [tacRow({ storeId: 11, storeName: 'A', payPeriodStartDay: 0 })] }, 11) }, { name: 'A', payPeriodStartDay: 0 }); // Sunday is 0, not missing
+  assert.deepEqual({ ...TAC.storeInfo({ stores: [{ storeId: 12, storeName: 'B', payPeriodStartDay: 1 }] }, 11) }, { name: null, payPeriodStartDay: null });
+  assert.deepEqual({ ...TAC.storeInfo({ stores: [{ storeId: 11, storeName: 'A', payPeriodStartDay: '1' }] }, 11) }, { name: 'A', payPeriodStartDay: null }); // not a number: assumed default later
+  assert.deepEqual({ ...TAC.storeInfo(null, 11) }, { name: null, payPeriodStartDay: null });
+});
+await t('Tactician: totals add the day columns of a 14-day window and count the people over', () => {
+  const rows = []; for (const d of ['05', '06', '07', '08', '09', '10']) rows.push(tacRow({ timeIn: '2026-10-' + d + 'T12:00:00Z', timeOut: '2026-10-' + d + 'T19:00:00Z' })); // Pat 42 h in week 1
+  for (const d of ['12', '18']) rows.push(tacRow({ userId: 8, username: 'Sam', timeIn: '2026-10-' + d + 'T12:00:00Z', timeOut: '2026-10-' + d + 'T20:00:00Z' })); // Sam 8 h in each week
+  const tot = TAC.totals(TAC.breakdown(rows, { store: 11, start: '2026-10-05', span: 14, now: Date.parse('2026-10-25T12:00:00Z') }), 14);
+  assert.equal(tot.day.length, 14); assert.deepEqual([...tot.day].slice(0, 7), [7, 7, 7, 7, 7, 7, 0]); assert.equal(tot.day[7], 8); assert.equal(tot.day[13], 8); // Mon Oct 12 and Sun Oct 18, the window's last day
+  assert.equal(tot.here, 58); assert.equal(tot.ot, 2); assert.equal(tot.otPeople, 1); assert.equal(tot.breaks, 0);
+});
+await t('Tactician: per-week breaks, floater notes and week totals; only people who worked that week; finished weeks', () => {
+  const rows = [];
+  for (const d of ['05', '06', '07', '08', '09', '10']) rows.push(tacRow({ timeIn: '2026-10-' + d + 'T12:00:00Z', timeOut: '2026-10-' + d + 'T19:00:00Z' })); // Pat 42 h wk 1
+  rows.push(tacRow({ clockTypeId: 2, timeIn: '2026-10-05T15:00:00Z', timeOut: '2026-10-05T15:30:00Z' }), tacRow({ clockTypeId: 2, timeIn: '2026-10-13T15:00:00Z', timeOut: '2026-10-13T16:00:00Z' })); // breaks 0.5 / 1
+  rows.push(tacRow({ timeIn: '2026-10-13T12:00:00Z', timeOut: '2026-10-13T20:00:00Z' })); // Pat 8 h wk 2
+  rows.push(tacRow({ userId: 8, username: 'Sam', timeIn: '2026-10-14T12:00:00Z', timeOut: '2026-10-14T20:00:00Z' })); // Sam only wk 2
+  rows.push(tacRow({ storeId: 12, storeName: 'Store B', timeIn: '2026-10-07T12:00:00Z', timeOut: '2026-10-07T15:00:00Z' }), tacRow({ storeId: 12, storeName: 'Store B', timeIn: '2026-10-15T12:00:00Z', timeOut: '2026-10-15T14:00:00Z' })); // Pat floats 3 h wk 1, 2 h wk 2
+  const b = TAC.breakdown(rows, { store: 11, start: '2026-10-05', span: 14, now: Date.parse('2026-10-16T12:00:00Z') }), pat = b.find((u) => u.name !== 'Sam');
+  assert.deepEqual(pat.weeks.map((w) => w.breaks), [0.5, 1]); assert.equal(pat.breaks, 1.5);
+  assert.deepEqual(pat.weeks.map((w) => [...w.elsewhere]), [[['Store B', 3]], [['Store B', 2]]]);
+  const w1 = TAC.weekView(b, 0), w2 = TAC.weekView(b, 1);
+  assert.equal(w1.people.length, 1); assert.equal(w2.people.length, 2); // Sam did not work week 1
+  assert.equal(w1.here, 42); assert.equal(w2.here, 16); assert.equal(w1.here + w2.here, 58);
+  assert.equal(w1.breaks, 0.5); assert.equal(w2.breaks, 1); assert.equal(w1.day.length, 7); assert.equal(w2.day[1], 8 + 0); // Tue Oct 13
+  assert.equal(w1.ot, 5); assert.equal(w1.otPeople, 1); assert.equal(w2.ot, 0); assert.equal(w2.otPeople, 0); // 42 + 3 elsewhere = 45 h
+  assert.equal(TAC.weekOver('2026-10-05', 0, '2026-10-12'), true); assert.equal(TAC.weekOver('2026-10-05', 0, '2026-10-11'), false); // Sunday Oct 11 is its last day
+  assert.equal(TAC.weekOver('2026-10-05', 1, '2026-10-19'), true); assert.equal(TAC.weekOver('2026-10-05', 1, '2026-10-18'), false);
+});
+
 // ================================================================== summary
 const failed = results.filter(([, p]) => !p);
 console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');

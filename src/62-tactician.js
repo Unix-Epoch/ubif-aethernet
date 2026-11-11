@@ -1,23 +1,24 @@
 /*
-  Tactician — Portal's Store time sheet (/admin/my-store/store-time-sheet), one store at a time.
+  Tactician — a weekly breakdown on Portal's Store time sheet (/admin/my-store/store-time-sheet), plus sales per labor hour on Reports.
 
-  Portal's page lists every store's punches together: Punch Detail has a Store column, and
-  Weekly Summary merges a person's hours across stores with no store at all. Tactician adds,
-  above Portal's tabs:
-    · Store chips (each store with its headcount, plus All stores; starts on the store you're
-      signed into). Portal's own tables are filtered to that store: Punch Detail by its Store
-      column, Weekly Summary to the people who worked there (its Totals row is hidden while
-      filtered, since Portal adds up every store).
-    · Weekly breakdown (collapsed to the chip row's summary unless opened; remembered per browser):
-      each person's hours per day Mon–Sun, worked here, breaks,
-      overtime and hours left before overtime. Overtime = hours over 40 in the week, counting
-      every store the person worked at (Garrett, Oct 12, 2026: weekly only; managers only need
-      overtime flagged). Floaters show their hours at the other stores.
-  Portal's main area clips overflow (its table box is sized to the window), so while Tactician is on the
-  page the main area scrolls (class ae-ts-scroll); Portal's table keeps its own scrolling.
-  Same data and rules as Portal's page: GET /api/store-time-sheet?fromDate&toDate (the week on
-  screen, Monday to Sunday) → rows of punches { userId, username, storeId, storeName,
-  clockTypeId (2 = break), timeIn, timeOut }; a punch still open counts up to now. Read only.
+  Portal's Store time sheet page (rewritten Nov 2026) has its own store menu (only with 2+ stores), period buttons and one card
+  per store with each person's hours. Tactician adds one slim bar under Portal's controls, above the first store card:
+    · the Tactician icon and name, the store it is showing, "N worked · N overtime (N people)" and Show/Hide weekly breakdown;
+    · the breakdown box (collapsed by default; open/closed remembered per browser, key ae_ts_open): per person the hours on each
+      day of the window, worked here, breaks, overtime and hours left before overtime, "+ Nh at <store>" for floaters, and the store's
+      total. Read only. Portal's own cards are never filtered or changed.
+  Overtime = hours over 40 in a 7-day week counting every store the person worked at (weekly only; managers only need overtime
+  flagged). This differs on purpose from Portal's OT tag, which counts one store at a time: only floaters show a different figure.
+  Which store: Portal's store menu; with "All stores" (or no menu, one store) the store you're signed into, named in the bar.
+  Which period: read back from what Portal shows (it keeps the period in React state only): the store's card line ("Mon Nov 9 –
+  Sun Nov 15"), else the period button when a store is picked or there is no menu ("Nov 9 – Nov 15"). A 14-day period ("Last 2 Wks")
+  shows both weeks, overtime per 7-day week. If neither can be read (Portal draws no card for a store without punches, and with
+  "All stores" the button only says "This Work Week"), the bar says so and shows no numbers: it never shows a guessed week.
+  Data: GET /api/store-time-sheet?fromDate&toDate, the range Portal itself asks for (a Sunday S through S + 6 + days - 1; a store's
+  window starts at S + its payPeriodStartDay) → { stores, rows } of punches { userId, username, storeId, storeName, storeTimeZone,
+  clockTypeId (2 = break), timeIn, timeOut }; days are the store's calendar days; a punch still open counts up to now.
+  Portal's page container scrolls by itself (measured at 1440x900), so nothing is needed to keep the added box in view.
+  After a successful load the daily labor numbers are uploaded for the admin Metrics page (AE.tactician.uploadDaily).
 */
 /*
   Tactician's store-wide parts, outside the shard so Settings can use them:
@@ -139,7 +140,145 @@ AE.tactician = (() => {
     })());
   }
 
-  return { ymd, monday, canManage, loadSettings, gmIds, saveGm, punches, people, gmEditor, summary, uploadDaily };
+  /*
+    Period and store-window helpers for the rewritten Store time sheet page (Nov 2026). Pure: dates are YYYY-MM-DD strings,
+    "today" and "now" are passed in. Portal keeps its period in React state only, so the period is read back from what the
+    page shows (a store card's "Mon Oct 12 – Sun Oct 18" or the period button's "Oct 12 – Oct 18", no year) and/or from
+    the page's own request (fromDate = a Sunday S, toDate = S + 6 + span - 1, span 7 or 14).
+    Unverified: the resolver's default when payPeriodStartDay is missing (DEFAULT_PPSD is a guess); that storeTimeZone is IANA.
+  */
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], DEFAULT_PPSD = 1;
+  const utc = (s) => Date.parse(s + 'T00:00:00Z');
+  const addDays = (s, n) => new Date(utc(s) + n * 86400000).toISOString().slice(0, 10);
+  const daysBetween = (a, b) => Math.round((utc(b) - utc(a)) / 86400000);
+  const isYmd = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(utc(s)) && addDays(s, 0) === s;
+  const pad2 = (n) => String(n).padStart(2, '0');
+  // "Mon Oct 12 – Sun Oct 18" or "Oct 12 – Oct 18" → { start, end, span } (span 7 or 14), else null. The year isn't shown:
+  // the start's year is the latest one for which the start is not after today (Dec 28 – Jan 10 seen in January → starts last year).
+  function periodFromText(text, today) {
+    const m = String(text || '').match(/(?:\b[A-Z][a-z]{2}\s+)?\b([A-Z][a-z]{2})\s+(\d{1,2})\s*[–-]\s*(?:[A-Z][a-z]{2}\s+)?([A-Z][a-z]{2})\s+(\d{1,2})\b/);
+    if (!m || !isYmd(today)) return null;
+    const sm = MON.indexOf(m[1]), em = MON.indexOf(m[3]), sd = Number(m[2]), ed = Number(m[4]);
+    if (sm < 0 || em < 0) return null;
+    let y = Number(today.slice(0, 4));
+    if (y + '-' + pad2(sm + 1) + '-' + pad2(sd) > today) y--;
+    const start = y + '-' + pad2(sm + 1) + '-' + pad2(sd), ey = em < sm || (em === sm && ed < sd) ? y + 1 : y;
+    const end = ey + '-' + pad2(em + 1) + '-' + pad2(ed);
+    if (!isYmd(start) || !isYmd(end)) return null;
+    const span = daysBetween(start, end) + 1;
+    return span === 7 || span === 14 ? { start, end, span } : null;
+  }
+  // The page's own request: fromDate = Sunday S, toDate = S + 6 + span - 1 → { sunday, span }, else null.
+  function periodFromRequest(fromDate, toDate) {
+    if (!isYmd(fromDate) || !isYmd(toDate)) return null;
+    const span = daysBetween(fromDate, toDate) + 1 - 7;
+    return span === 7 || span === 14 ? { sunday: fromDate, span } : null;
+  }
+  // Portal's arithmetic for one store: start = S + payPeriodStartDay (0 = Sunday, 1 = Monday…), end = start + span - 1.
+  function storeWindow(sunday, payPeriodStartDay, span) {
+    const d = Number.isInteger(payPeriodStartDay) && payPeriodStartDay >= 0 && payPeriodStartDay <= 6 ? payPeriodStartDay : DEFAULT_PPSD;
+    const start = addDays(sunday, d);
+    return { start, end: addDays(start, span - 1), span, payPeriodStartDay: d };
+  }
+  // What to request so that a window is covered: Portal's own range (Sunday S through S + 6 + span - 1).
+  function requestRange(start, payPeriodStartDay, span) {
+    const d = Number.isInteger(payPeriodStartDay) && payPeriodStartDay >= 0 && payPeriodStartDay <= 6 ? payPeriodStartDay : DEFAULT_PPSD, sunday = addDays(start, -d);
+    return { fromDate: sunday, toDate: addDays(sunday, 6 + span - 1) };
+  }
+  // The visible period → { start, end, span, sunday, source }. The card text wins (it is the store's own window); else the request + payPeriodStartDay.
+  function period({ text, fromDate, toDate, today, payPeriodStartDay } = {}) {
+    const t = periodFromText(text, today), r = periodFromRequest(fromDate, toDate);
+    if (t) return { start: t.start, end: t.end, span: t.span, sunday: r ? r.sunday : requestRange(t.start, payPeriodStartDay, t.span).fromDate, source: 'text' };
+    if (r) { const w = storeWindow(r.sunday, payPeriodStartDay, r.span); return { start: w.start, end: w.end, span: w.span, sunday: r.sunday, source: 'request' }; }
+    return null;
+  }
+  // The calendar day (YYYY-MM-DD) of an instant in a time zone; a missing or rejected zone falls back to the browser's.
+  const dayFmts = new Map();
+  function dayIn(iso, zone) {
+    const t = Date.parse(iso);
+    if (isNaN(t)) return null;
+    if (typeof zone === 'string' && zone) {
+      if (!dayFmts.has(zone)) { try { dayFmts.set(zone, new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' })); } catch (_) { dayFmts.set(zone, null); } }
+      const f = dayFmts.get(zone);
+      if (f) { const p = {}; for (const x of f.formatToParts(new Date(t))) p[x.type] = x.value; return p.year + '-' + p.month + '-' + p.day; }
+    }
+    return ymd(new Date(t));
+  }
+  /*
+    Per person over a store's pay-period window. rows = GET /api/store-time-sheet rows; o = { store (id, or null for all stores), start (window start,
+    YYYY-MM-DD), span (7 or 14), now (ms) }. Days are bucketed by each punch's own store time zone (row.storeTimeZone); a punch outside the window is
+    left out; an open punch counts to now; breaks (clockTypeId 2) are only summed. Overtime = hours over 40 per 7-day week counting every store worked
+    (Tactician's rule; Portal's own figure is per store). Returns [{ name, day[span], here, all, breaks, elsewhere: Map(store name → h), worked,
+    weeks: [{ here, all, breaks (at this store), elsewhere: Map(store name → h), ot, left }], ot (sum of the weeks), left (hours left before OT in the week containing now, else the last week) }].
+    Same as before for 7 days, except: day[] starts at the window start (not always Monday), and weeks/left are new for 14.
+  */
+  function breakdown(rows, o) {
+    const { store = null, start, span = 7, now = Date.now() } = o || {}, weeks = Math.floor(span / 7), people = new Map();
+    if (!isYmd(start)) return [];
+    for (const p of rows || []) {
+      if (!p.timeIn) continue;
+      const off = daysBetween(start, dayIn(p.timeIn, p.storeTimeZone)), wk = Math.floor(off / 7);
+      if (!(off >= 0 && off < span)) continue;
+      const u = people.get(p.userId) || people.set(p.userId, { name: p.username || 'User ' + p.userId, day: Array(span).fill(0), here: 0, all: 0, breaks: 0, elsewhere: new Map(), worked: false, weeks: Array.from({ length: weeks }, () => ({ here: 0, all: 0, breaks: 0, elsewhere: new Map() })) }).get(p.userId);
+      const hrs = Math.max(0, ((p.timeOut ? Date.parse(p.timeOut) : now) - Date.parse(p.timeIn)) / 3600000), here = store == null || p.storeId === store;
+      if (p.clockTypeId === 2) { if (here) { u.breaks += hrs; u.weeks[wk].breaks += hrs; } continue; }
+      u.all += hrs; u.weeks[wk].all += hrs;
+      if (here) { u.here += hrs; u.weeks[wk].here += hrs; u.worked = true; u.day[off] += hrs; }
+      else { const n = p.storeName || 'Store ' + p.storeId, we = u.weeks[wk].elsewhere; u.elsewhere.set(n, (u.elsewhere.get(n) || 0) + hrs); we.set(n, (we.get(n) || 0) + hrs); }
+    }
+    const nowOff = daysBetween(start, ymd(new Date(now))), cur = Math.min(weeks - 1, Math.max(0, Math.floor(nowOff / 7)));
+    return [...people.values()].filter((u) => u.worked).sort((a, b) => (a.name > b.name ? 1 : -1)).map((u) => {
+      for (const w of u.weeks) { w.ot = Math.max(0, w.all - 40); w.left = Math.max(0, 40 - w.all); }
+      return Object.assign(u, { ot: u.weeks.reduce((n, w) => n + w.ot, 0), left: u.weeks[cur].left });
+    });
+  }
+
+  /*
+    Which store and which window the page is showing (the Store time sheet page, Nov 2026).
+    pickStore: Portal's store menu value ("all" or a store id; the menu only exists with 2+ stores) → the store to break down. A store id picks
+    that store; "all", a missing menu or anything else shows the store you're signed into (home). → { store, fromMenu } or null without a home.
+    pageWindow: the window Portal shows for that store, from the store card's text lines (e.g. "Mon Nov 9 – Sun Nov 15"), else the period button's text
+    ("Nov 9 – Nov 15"), which is only that store's window when a store is picked or there is no menu (with "All stores" it reads "This Work Week"…).
+    → { start, end, span, source: 'card' | 'label' } or null (the caller says so; it never guesses a week).
+  */
+  function pickStore(value, home) {
+    if (typeof value === 'string' && /^[1-9]\d*$/.test(value)) return { store: Number(value), fromMenu: true };
+    const h = Number(home);
+    return h > 0 ? { store: h, fromMenu: false } : null;
+  }
+  function pageWindow({ card, label, value, today } = {}) {
+    for (const t of Array.isArray(card) ? card : [card]) { const c = periodFromText(t, today); if (c) return Object.assign(c, { source: 'card' }); }
+    if (value !== 'all') { const l = periodFromText(label, today); if (l) return Object.assign(l, { source: 'label' }); }
+    return null;
+  }
+  // The store's name and pay-period start day from a /api/store-time-sheet answer ({ stores: [{ storeId, storeName, payPeriodStartDay }], rows }); the rows are the fallback.
+  function storeInfo(j, store) {
+    const s = ((j && j.stores) || []).find((x) => x.storeId === store) || ((j && j.rows) || []).find((x) => x.storeId === store) || {};
+    return { name: s.storeName || null, payPeriodStartDay: Number.isInteger(s.payPeriodStartDay) ? s.payPeriodStartDay : null };
+  }
+  // Column totals over breakdown() people for a window of `span` days.
+  function totals(people, span) {
+    const tot = { day: Array(span).fill(0), here: 0, breaks: 0, ot: 0, otPeople: 0 };
+    for (const u of people) { u.day.forEach((x, i) => { tot.day[i] += x; }); tot.here += u.here; tot.breaks += u.breaks; tot.ot += u.ot; if (u.ot > 0) tot.otPeople++; }
+    return tot;
+  }
+
+  // One 7-day week (wk = 0 or 1) of breakdown() people: only those who worked here that week, and that week's column totals.
+  // → { people: [{ u, w: u.weeks[wk], day[7] }], day[7], here, breaks, ot, otPeople }
+  function weekView(people, wk) {
+    const rows = [], tot = { people: rows, day: Array(7).fill(0), here: 0, breaks: 0, ot: 0, otPeople: 0 };
+    for (const u of people) {
+      const w = u.weeks[wk], day = u.day.slice(wk * 7, wk * 7 + 7);
+      if (!w || !(w.here > 0 || day.some((x) => x > 0))) continue;
+      rows.push({ u, w, day });
+      day.forEach((x, i) => { tot.day[i] += x; }); tot.here += w.here; tot.breaks += w.breaks; tot.ot += w.ot; if (w.ot > 0) tot.otPeople++;
+    }
+    return tot;
+  }
+  // Is week wk (0-based, 7 days from start) over before today (YYYY-MM-DD)? "Left before OT" means nothing for a finished week.
+  function weekOver(start, wk, today) { return addDays(start, wk * 7 + 6) < today; }
+
+  return { weekView, weekOver, ymd, monday, periodFromText, periodFromRequest, storeWindow, requestRange, period, dayIn, breakdown, addDays, pickStore, pageWindow, storeInfo, totals, canManage, loadSettings, gmIds, saveGm, punches, people, gmEditor, summary, uploadDaily };
 })();
 
 AE.shard({
@@ -148,8 +287,10 @@ AE.shard({
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h } = AE;
-    const PATH = /^\/admin\/my-store\/store-time-sheet\/?$/, ROW = 'ae-ts-row', BOX = 'ae-ts-box', HIDE = 'data-ae-ts-hide', OPEN_KEY = 'ae_ts_open';
-    const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const PATH = /^\/admin\/my-store\/store-time-sheet\/?$/, ROW = 'ae-ts-row', BOX = 'ae-ts-box', OPEN_KEY = 'ae_ts_open';
+    // Portal's own elements, all seen in the page's DOM (sandbox render of Portal's bundle, Nov 2026)
+    const SEL = { menu: '[data-testid="store-time-sheet-store-filter"]', label: '[data-testid="store-time-sheet-period-label"]', exportBtn: '[data-testid="store-time-sheet-export-csv"]',
+      card: (id) => '[data-testid="store-time-sheet-card-' + id + '"]' };
     document.head.append(h('style', null, `
       .${ROW} { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0 14px; }
       .${ROW} .lbl { font-size:14px; color:var(--aui-on-surface-soft, #5d5e61); margin-right:4px; }
@@ -163,9 +304,13 @@ AE.shard({
       .${BOX} { border:1px solid var(--aui-outline-soft, #e4e2e8); border-radius:12px; margin:0 0 16px; background:var(--aui-surface, #fff); }
       .${BOX}[hidden] { display:none; }
       .${BOX} .hd { padding:12px 18px; font-size:15px; }
-      /* Portal's main area clips overflow (its table box is sized to the window): let the page scroll while Tactician adds to it */
-      main.ae-ts-scroll { overflow-y:auto !important; }
+      .${BOX} { max-width:100%; box-sizing:border-box; overflow-x:auto; }
       .${BOX} .wrap { overflow-x:auto; }
+      .${BOX}.two th, .${BOX}.two td { padding-left:7px; padding-right:7px; }
+      .${BOX}.two td:first-child { white-space:normal; min-width:150px; }
+      .${BOX}.two td:first-child, .${BOX}.two th:first-child { padding-left:18px; }
+      .${BOX} .wkhd { padding:10px 18px 6px; font-size:14px; border-top:1px solid var(--aui-outline-soft, #eee); }
+      .${BOX} .both { padding:10px 18px; font-size:14px; border-top:1px solid var(--aui-outline-soft, #eee); background:var(--aui-neutral-soft, #faf9fb); }
       .${BOX} table { width:100%; border-collapse:collapse; font-size:13.5px; }
       .${BOX} th { font-weight:400; color:var(--aui-on-surface-soft, #5d5e61); text-align:right; padding:8px 10px; border-top:1px solid var(--aui-outline-soft, #eee); white-space:nowrap; }
       .${BOX} td { text-align:right; padding:9px 10px; border-top:1px solid var(--aui-outline-soft, #eee); white-space:nowrap; }
@@ -175,126 +320,132 @@ AE.shard({
       .${BOX} .else { color:var(--aui-on-surface-soft, #5d5e61); font-size:12px; }
       .${BOX} tr.tot td { font-weight:700; background:var(--aui-neutral-soft, #faf9fb); }
       .${BOX} .note { font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); padding:10px 18px 14px; }
-      tr[${HIDE}] { display:none !important; }
     `));
 
     const fmt = (x) => { if (!x) return '—'; let hh = Math.floor(x), mm = Math.round((x - hh) * 60); if (mm === 60) { hh++; mm = 0; } return hh + 'h ' + String(mm).padStart(2, '0') + 'm'; };
-    const hoursOf = (p) => Math.max(0, ((p.timeOut ? Date.parse(p.timeOut) : Date.now()) - Date.parse(p.timeIn)) / 3600000); // Portal's own rule (open punch → now)
-    const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const dayHead = (start, i, span) => { const d = AE.tactician.addDays(start, i); return new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }) + (span > 7 ? ' ' + Number(d.slice(8)) : ''); };
+    const rangeText = (start, end) => { const a = MONTHS[Number(start.slice(5, 7)) - 1], b = MONTHS[Number(end.slice(5, 7)) - 1]; return a + ' ' + Number(start.slice(8)) + '–' + (b !== a ? b + ' ' : '') + Number(end.slice(8)); };
 
-    // The week Portal shows: "Week of Oct 12-18, 2026" or "Week of Sep 28 - Oct 4, 2026" → its Monday.
-    function weekShown() {
-      const walker = document.createTreeWalker(document.querySelector('main') || document.body, NodeFilter.SHOW_TEXT);
-      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-        const m = (n.nodeValue || '').match(/Week of ([A-Z][a-z]{2})[a-z]*\.? (\d{1,2})\s*[–-]\s*(?:([A-Z][a-z]{2})[a-z]*\.? )?(\d{1,2}), (\d{4})/);
-        if (!m) continue;
-        const sm = MONTHS.indexOf(m[1]), em = m[3] ? MONTHS.indexOf(m[3]) : sm;
-        if (sm < 0 || em < 0) continue;
-        const year = Number(m[5]) - (em < sm ? 1 : 0); // Dec 29 - Jan 4, 2027 → starts in 2026
-        const start = new Date(year, sm, Number(m[2]));
-        return isNaN(start) ? null : start;
-      }
-      return null;
+    /*
+      One store, one window. Which store: Portal's store menu (a store id), else the store you're signed into. Which window: read back from what Portal
+      shows (T.pageWindow); Portal keeps its period in React state only. view = { store, fromMenu, hasMenu, win, status: 'loading' | 'ok' | 'failed' | 'unreadable', rows, info, ... }.
+    */
+    const T = AE.tactician, STALE = 60000;
+    let home = null, homeName = '', view = null, viewKey = '', drawnSig = '', seq = 0;
+    const views = new Map(); // store|start|span → view, so Portal redrawing the same week (its cards vanish while it loads) doesn't ask again within a minute
+    const GRACE = 2500; // Portal's cards are missing while it loads: an unreadable week is only reported after this long
+    const ppsdOf = new Map(); // store → payPeriodStartDay, learned from the answers (the first request for a store assumes the default and is repeated if that was wrong)
+
+    function readPage() {
+      const menu = document.querySelector(SEL.menu), value = menu ? menu.value : null, pick = T.pickStore(value, home);
+      if (!pick) return null;
+      const cardEl = document.querySelector(SEL.card(pick.store)), lab = document.querySelector(SEL.label);
+      const card = cardEl ? [...cardEl.querySelectorAll('[data-aui="text"]')].map((x) => x.textContent) : [], label = lab ? lab.textContent.trim() : '';
+      return { pick, value, hasMenu: !!menu, card, label, win: T.pageWindow({ card, label, value, today: T.ymd(new Date()) }) };
     }
-    const tabStrip = () => { const t = [...document.querySelectorAll('[role="tablist"]')].find((x) => /Punch Detail/i.test(x.textContent) && /Weekly Summary/i.test(x.textContent)); return t || null; };
-
-    let store = null, home = null, weekKey = '', rows = null, loading = null, failed = null;
-    function load(start) {
-      const key = ymd(start);
-      if (key === weekKey && (rows || loading)) return;
-      weekKey = key; rows = null; failed = null;
-      const end = new Date(start); end.setDate(end.getDate() + 6);
-      const mine = loading = AE.api('GET', '/api/store-time-sheet?fromDate=' + key + '&toDate=' + ymd(end))
-        .then((j) => { if (loading === mine) { rows = (j && j.rows) || []; draw(); setTimeout(() => AE.tactician.uploadDaily(), 3000); } })
-        .catch((e) => { if (loading === mine) { failed = e.message || String(e); draw(); } })
-        .finally(() => { if (loading === mine) loading = null; });
+    async function load(v) {
+      const mine = ++seq; v.busy = true;
+      try {
+        let rng = T.requestRange(v.win.start, ppsdOf.get(v.store), v.win.span), j = null;
+        for (let i = 0; i < 2; i++) {
+          j = await AE.api('GET', '/api/store-time-sheet?fromDate=' + rng.fromDate + '&toDate=' + rng.toDate);
+          const info = T.storeInfo(j, v.store); if (info.payPeriodStartDay != null) ppsdOf.set(v.store, info.payPeriodStartDay);
+          const want = T.requestRange(v.win.start, ppsdOf.get(v.store), v.win.span);
+          if (want.fromDate === rng.fromDate) break;
+          rng = want; // the store's work week starts on another day than assumed: ask for its real range
+        }
+        if (mine !== seq) return;
+        Object.assign(v, { rows: (j && j.rows) || [], info: T.storeInfo(j, v.store), status: 'ok', at: Date.now(), failed: null });
+        setTimeout(() => AE.tactician.uploadDaily(), 3000);
+      } catch (e) { if (mine === seq) Object.assign(v, { status: 'failed', failed: e.message || String(e), failedAt: Date.now() }); }
+      finally { if (mine === seq) { v.busy = false; draw(); } }
     }
-
-    function stores() {
-      const m = new Map();
-      for (const p of rows || []) {
-        if (!m.has(p.storeId)) m.set(p.storeId, { id: p.storeId, name: p.storeName || 'Store ' + p.storeId, people: new Set() });
-        m.get(p.storeId).people.add(p.userId);
-      }
-      return [...m.values()].sort((a, b) => (b.id === home) - (a.id === home) || a.id - b.id); // the store you're signed into first
-    }
-
-    function breakdown() {
-      const people = new Map();
-      for (const p of rows || []) {
-        if (!p.timeIn) continue;
-        const u = people.get(p.userId) || people.set(p.userId, { name: p.username || 'User ' + p.userId, day: Array(7).fill(0), here: 0, all: 0, breaks: 0, elsewhere: new Map(), worked: false }).get(p.userId);
-        const hrs = hoursOf(p), here = store == null || p.storeId === store;
-        if (p.clockTypeId === 2) { if (here) u.breaks += hrs; continue; }
-        u.all += hrs;
-        if (here) { u.here += hrs; u.worked = true; u.day[(new Date(p.timeIn).getDay() + 6) % 7] += hrs; }
-        else u.elsewhere.set(p.storeName || 'Store ' + p.storeId, (u.elsewhere.get(p.storeName || 'Store ' + p.storeId) || 0) + hrs);
-      }
-      return [...people.values()].filter((u) => u.worked).sort((a, b) => (a.name > b.name ? 1 : -1))
-        .map((u) => Object.assign(u, { ot: Math.max(0, u.all - 40), left: Math.max(0, 40 - u.all) }));
+    function sync() {
+      if (!home || !document.querySelector(SEL.exportBtn)) return; // wait for the profile and for Portal's controls
+      const pg = readPage();
+      if (!pg) return;
+      const key = pg.pick.store + '|' + (pg.win ? pg.win.start + '|' + pg.win.span : 'none');
+      if (key !== viewKey) {
+        viewKey = key; seq++;
+        const old = pg.win && views.get(key);
+        if (old && !old.busy && old.status === 'ok' && Date.now() - old.at < STALE) view = Object.assign(old, { fromMenu: pg.pick.fromMenu, hasMenu: pg.hasMenu });
+        else {
+          view = { store: pg.pick.store, fromMenu: pg.pick.fromMenu, hasMenu: pg.hasMenu, win: pg.win, status: pg.win ? 'loading' : 'unreadable', since: Date.now(), menuAll: pg.value === 'all', label: pg.label, card: pg.card };
+          if (pg.win) { views.set(key, view); if (views.size > 20) views.delete(views.keys().next().value); load(view); }
+        }
+      } else if (view.win && !view.busy && ((view.status === 'ok' && Date.now() - view.at > STALE) || (view.status === 'failed' && Date.now() - view.failedAt > 30000))) load(view); // punches fixed meanwhile / try again
+      draw();
     }
 
     function draw() {
-      const strip = tabStrip();
-      if (!strip) return;
+      const anchor = document.querySelector(SEL.exportBtn), v = view;
+      if (!anchor || !v) return;
+      const bar = anchor.parentElement; // Portal's controls row; Tactician goes right under it, above the first store card
       let row = document.getElementById(ROW), box = document.getElementById(BOX);
-      if (!row) { row = h('div', { id: ROW, class: ROW }); }
+      if (!row) row = h('div', { id: ROW, class: ROW });
       if (!box) box = h('div', { id: BOX, class: BOX });
-      const open = !!GM_getValue(OPEN_KEY, false); // collapsed unless you opened it (keeps room for Portal's table)
-      box.hidden = !open;
-      const main = strip.closest('main'); if (main && !main.classList.contains('ae-ts-scroll')) main.classList.add('ae-ts-scroll');
-      if (row.nextElementSibling !== box || box.nextElementSibling !== strip) { strip.before(row); strip.before(box); }
-
-      if (failed) { row.replaceChildren(h('span', { class: 'lbl' }, "Tactician couldn't load this week's punches. If you keep seeing this, ", AE.bugLinkEl('report a bug', { where: 'Tactician', error: 'Loading punches for the week of ' + weekKey + ': ' + failed }), '!')); box.replaceChildren(); filter(); return; }
-      if (!rows) { row.replaceChildren(h('span', { class: 'lbl' }, 'Loading stores…')); box.replaceChildren(); return; }
-      const list = stores();
-      if (store != null && !list.some((s) => s.id === store)) store = list.length === 1 ? list[0].id : store;
-      const label = (s) => s.name + ' (#' + s.id + ')';
-      const chip = (id, text, n) => h('button', { type: 'button', 'aria-pressed': String(store === id), onclick: () => { store = id; AE.track('timeSheet:store'); draw(); } }, text, n != null ? h('small', null, n + (n === 1 ? ' person' : ' people')) : null);
-      const people = breakdown(), cur = list.find((s) => s.id === store);
-      const where = cur ? label(cur) : 'All stores', tot = { day: Array(7).fill(0), here: 0, breaks: 0, ot: 0 };
-      for (const u of people) { u.day.forEach((x, i) => { tot.day[i] += x; }); tot.here += u.here; tot.breaks += u.breaks; tot.ot += u.ot; }
-      const start = new Date(weekKey + 'T00:00:00'), end = new Date(start); end.setDate(end.getDate() + 6);
-      const span = MONTHS[start.getMonth()] + ' ' + start.getDate() + '–' + (end.getMonth() !== start.getMonth() ? MONTHS[end.getMonth()] + ' ' : '') + end.getDate();
-      const otPeople = people.filter((u) => u.ot > 0).length;
+      const open = !!GM_getValue(OPEN_KEY, false); // collapsed unless you opened it (keeps room for Portal's cards)
+      const mounted = row.previousElementSibling === bar && box.previousElementSibling === row;
+      const waiting = v.status === 'unreadable' && Date.now() - v.since < GRACE;
+      if (waiting) setTimeout(() => { if (view === v) draw(); }, GRACE - (Date.now() - v.since) + 50);
+      const sig = [viewKey, v.status, waiting, v.at || 0, v.failedAt || 0, open, v.fromMenu, v.info ? v.info.name : ''].join('|');
+      if (mounted && sig === drawnSig) return;
+      if (!mounted) bar.after(row, box);
+      drawnSig = sig;
+      box.hidden = !open || v.status !== 'ok';
+      const name = ((v.info && v.info.name) || (v.store === home && homeName) || 'Store') + ' #' + v.store;
+      const lead = [h('span', { style: 'line-height:0', title: 'Tactician (Aethernet)', html: AE.actionIcon('timeSheet', 20) }), h('span', { class: 'lbl' }, h('b', null, 'Tactician'), ' · ' + name + (!v.fromMenu && v.hasMenu ? ' (the store you\'re signed into)' : ''))];
+      if (v.status === 'unreadable' && !waiting) {
+        row.replaceChildren(...lead, h('span', { class: 'lbl' }, v.menuAll
+          ? "Portal shows no card for this store in this period, so Tactician can't tell which week it is. Pick the store in Portal's store menu to see its breakdown."
+          : ["Tactician couldn't read the week Portal is showing. If you keep seeing this, ", AE.bugLinkEl('report a bug', { where: 'Tactician', error: 'Reading the week Portal shows: period "' + v.label + '", card "' + (v.card || []).join(' | ') + '"' }), '!']));
+        box.replaceChildren(); return;
+      }
+      if (v.status === 'failed') {
+        row.replaceChildren(...lead, h('span', { class: 'lbl' }, "Tactician couldn't load this week's punches. If you keep seeing this, ", AE.bugLinkEl('report a bug', { where: 'Tactician', error: 'Loading punches for ' + v.win.start + ' to ' + v.win.end + ': ' + v.failed }), '!'));
+        box.replaceChildren(); return;
+      }
+      if (v.status !== 'ok') { row.replaceChildren(...lead, h('span', { class: 'lbl' }, 'Loading…')); box.replaceChildren(); return; }
+      const { start, end, span } = v.win, people = T.breakdown(v.rows, { store: v.store, start, span, now: Date.now() }), tot = T.totals(people, span);
       const toggle = h('button', { type: 'button', class: 'tog', 'aria-expanded': String(open), 'aria-controls': BOX,
         onclick: () => { GM_setValue(OPEN_KEY, !open); AE.track('timeSheet:' + (open ? 'hide' : 'show')); draw(); } },
         open ? 'Hide weekly breakdown' : 'Show weekly breakdown', h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', html: '<path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/>' }));
-      row.replaceChildren(h('span', { style: 'line-height:0', title: 'Tactician (Aethernet)', html: AE.actionIcon('timeSheet', 20) }), h('span', { class: 'lbl' }, 'Store'),
-        ...list.map((s) => chip(s.id, label(s), s.people.size)), list.length > 1 ? chip(null, 'All stores') : null,
-        h('span', { class: 'sum' }, fmt(tot.here) + ' worked · ' + (tot.ot ? fmt(tot.ot) + ' overtime (' + otPeople + (otPeople === 1 ? ' person' : ' people') + ')' : 'no overtime')), toggle);
-      box.replaceChildren(
-        h('div', { class: 'hd' }, h('b', null, 'Weekly breakdown'), ' · ' + where + ' · week of ' + span),
-        people.length ? h('div', { class: 'wrap' }, h('table', null,
-          h('tr', null, h('th', null, 'Employee'), ...DAYS.map((d) => h('th', null, d)), h('th', null, store == null ? 'Worked' : 'Worked here'), h('th', null, 'Breaks'), h('th', null, 'Overtime'), h('th', null, 'Left before OT')),
+      row.replaceChildren(...lead, h('span', { class: 'sum' }, !people.length ? 'Nobody clocked in' : fmt(tot.here) + ' worked · ' + (tot.ot ? fmt(tot.ot) + ' overtime (' + tot.otPeople + (tot.otPeople === 1 ? ' person' : ' people') + ')' : 'no overtime')), toggle);
+      const head = (days, st) => h('tr', null, h('th', null, 'Employee'), ...days.map((i) => h('th', null, dayHead(st, i, span))), h('th', null, 'Worked here'), h('th', null, 'Breaks'), h('th', null, 'Overtime'), h('th', null, 'Left before OT'));
+      const elseNote = (m) => m.size ? h('div', { class: 'else' }, [...m].map(([n, x]) => '+ ' + fmt(x) + ' at ' + n).join(' · ')) : null;
+      const note = h('div', { class: 'note' }, 'Overtime = hours over 40 in a 7-day week, counting every store the person worked at (Portal\'s OT tag counts one store at a time). Same punches as Portal\'s cards above; nothing is changed.');
+      box.classList.toggle('two', span > 7);
+      const hd = h('div', { class: 'hd' }, h('b', null, 'Weekly breakdown'), ' · ' + name + ' · ' + rangeText(start, end));
+      if (!people.length) { box.replaceChildren(hd, h('div', { class: 'note' }, 'Nobody clocked in at ' + name + ' in this period.'), note); return; }
+      if (span <= 7) { // one week: unchanged
+        box.replaceChildren(hd, h('div', { class: 'wrap' }, h('table', null,
+          head(Array.from({ length: span }, (_, i) => i), start),
           ...people.map((u) => h('tr', null,
-            h('td', null, h('b', null, u.name), store != null && u.elsewhere.size ? h('div', { class: 'else' }, [...u.elsewhere].map(([n, x]) => '+ ' + fmt(x) + ' at ' + n).join(' · ')) : null),
+            h('td', null, h('b', null, u.name), elseNote(u.elsewhere)),
             ...u.day.map((x) => h('td', { class: x ? null : 'none' }, fmt(x))),
             h('td', null, h('b', null, fmt(u.here))), h('td', null, fmt(u.breaks)),
             h('td', null, u.ot ? h('span', { class: 'ot' }, fmt(u.ot)) : '—'), h('td', null, u.ot ? '—' : fmt(u.left)))),
-          h('tr', { class: 'tot' }, h('td', null, (cur ? cur.name : 'All stores') + ' total'), ...tot.day.map((x) => h('td', null, fmt(x))), h('td', null, fmt(tot.here)), h('td', null, fmt(tot.breaks)), h('td', null, tot.ot ? fmt(tot.ot) : '—'), h('td', null))))
-          : h('div', { class: 'note' }, 'Nobody clocked in at ' + where + ' this week.'),
-        h('div', { class: 'note' }, 'Overtime = hours over 40 in the week, counting every store the person worked at. Same punches as Portal\'s tabs below; nothing is changed.'));
-      filter();
-    }
-
-    // Portal's tables, filtered to the chosen store (attribute + stylesheet; Portal's rows are never removed).
-    function filter() {
-      const want = store == null ? null : '(#' + store + ')';
-      const here = new Set(store == null ? [] : (rows || []).filter((p) => p.storeId === store).map((p) => String(p.username || 'User ' + p.userId)));
-      for (const tr of document.querySelectorAll('main tr, [role="tabpanel"] tr, table tr')) {
-        if (tr.closest('#' + BOX)) continue;
-        const cells = tr.cells; if (!cells || !cells.length || tr.querySelector('th')) continue;
-        const first = (cells[0].textContent || '').trim();
-        let hide = false;
-        if (want) {
-          if (/\(#\d+\)\s*$/.test(first)) hide = !first.endsWith(want); // Punch Detail: Store column
-          else if (/^Totals?$/i.test(first)) hide = true; // Weekly Summary's totals add up every store
-          else if (rows && first) hide = !here.has(first); // Weekly Summary: people who worked here
-        }
-        if (hide !== tr.hasAttribute(HIDE)) { if (hide) tr.setAttribute(HIDE, ''); else tr.removeAttribute(HIDE); }
+          h('tr', { class: 'tot' }, h('td', null, name + ' total'), ...tot.day.map((x) => h('td', null, fmt(x))), h('td', null, fmt(tot.here)), h('td', null, fmt(tot.breaks)), h('td', null, tot.ot ? fmt(tot.ot) : '—'), h('td', null)))), note);
+        return;
       }
+      // 14 days: the two weeks stacked, each its own 7-day table, then one line for both
+      const today = T.ymd(new Date(Date.now())), secs = [];
+      for (let wk = 0; wk < Math.floor(span / 7); wk++) {
+        const ws = T.addDays(start, wk * 7), we = T.addDays(ws, 6), wv = T.weekView(people, wk), over = T.weekOver(start, wk, today);
+        secs.push(h('div', { class: 'wkhd' }, h('b', null, 'Week ' + (wk + 1)), ' · ' + rangeText(ws, we) + (over ? ' · finished' : '')));
+        secs.push(wv.people.length ? h('div', { class: 'wrap' }, h('table', null,
+          head([0, 1, 2, 3, 4, 5, 6], ws),
+          ...wv.people.map(({ u, w, day }) => h('tr', null,
+            h('td', null, h('b', null, u.name), elseNote(w.elsewhere)),
+            ...day.map((x) => h('td', { class: x ? null : 'none' }, fmt(x))),
+            h('td', null, h('b', null, fmt(w.here))), h('td', null, fmt(w.breaks)),
+            h('td', null, w.ot ? h('span', { class: 'ot' }, fmt(w.ot)) : '—'), h('td', null, over || w.ot ? '—' : fmt(w.left)))),
+          h('tr', { class: 'tot' }, h('td', null, name + ' total'), ...wv.day.map((x) => h('td', null, fmt(x))), h('td', null, fmt(wv.here)), h('td', null, fmt(wv.breaks)), h('td', null, wv.ot ? fmt(wv.ot) : '—'), h('td', null))))
+          : h('div', { class: 'note' }, 'Nobody clocked in at ' + name + ' this week.'));
+      }
+      secs.push(h('div', { class: 'both' }, h('b', null, 'Both weeks'), ' · ' + fmt(tot.here) + ' worked · ' + fmt(tot.breaks) + ' breaks · ' + (tot.ot ? fmt(tot.ot) + ' overtime' : 'no overtime') + ' · ' + tot.otPeople + (tot.otPeople === 1 ? ' person' : ' people') + ' over'));
+      box.replaceChildren(hd, ...secs, note);
     }
 
     /*
@@ -461,7 +612,6 @@ AE.shard({
           .finally(() => { busy = null; if (document.getElementById(RP)) showSplh(); }); // (a range picked meanwhile loads next)
       }
     }
-    const T = AE.tactician;
     AE.on('tactician-gm', () => { dataFor = null; if (document.getElementById(RP)) showSplh(); });
     T.canManage().then((a) => {
       if (!a.ok || !AE.tracker || !AE.tracker.configured()) return; // managers only (time sheet access), and needs the tracker
@@ -479,16 +629,15 @@ AE.shard({
     });
 
     let lastPath = '';
+    // Portal's store menu, period buttons and week arrows change the page without necessarily adding or removing a node: look again shortly after.
+    for (const ev of ['change', 'click']) document.addEventListener(ev, () => { if (PATH.test(location.pathname)) setTimeout(sync, 400); }, true);
     AE.onDom(() => {
       if (!PATH.test(location.pathname)) {
-        if (lastPath) { document.getElementById(ROW)?.remove(); document.getElementById(BOX)?.remove(); document.querySelectorAll('main.ae-ts-scroll').forEach((m) => m.classList.remove('ae-ts-scroll')); document.querySelectorAll('tr[' + HIDE + ']').forEach((t) => t.removeAttribute(HIDE)); lastPath = ''; }
+        if (lastPath) { document.getElementById(ROW)?.remove(); document.getElementById(BOX)?.remove(); view = null; viewKey = ''; drawnSig = ''; seq++; lastPath = ''; }
         return;
       }
-      if (!tabStrip()) return;
-      if (!lastPath) { lastPath = location.pathname; AE.profile().then((p) => { if (p && p.storeId) { home = Number(p.storeId); if (store == null) store = home; draw(); } }).catch(() => {}); }
-      const start = weekShown();
-      if (start) load(start);
-      if (!document.getElementById(ROW) || tabStrip().previousElementSibling?.id !== BOX) draw(); else filter();
+      if (!lastPath) { lastPath = location.pathname; AE.profile().then((p) => { if (p && p.storeId) { home = Number(p.storeId); homeName = p.storeName || ''; sync(); } }).catch(() => {}); }
+      sync();
     });
   },
 });

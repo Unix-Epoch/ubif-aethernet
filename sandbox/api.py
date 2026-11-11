@@ -267,27 +267,40 @@ def tac_route(method, tac, body):
 
 
 # ------------------------------------------------------------------ routes
+TS_STORES = [(STORE_ID, 'Sandbox Store'), (326, 'Lynnhaven')]
+TS_TZ = 'America/New_York'  # UNVERIFIED: the real storeTimeZone string was scrubbed from the capture; an IANA name is the working assumption
+TS_PEOPLE = [(33254, 'avery.tech', STORE_ID), (33255, 'blake.lead', STORE_ID), (33256, 'casey.mgr', STORE_ID), (33257, 'drew.tech', 326), (33258, 'emery.tech', 326), (33259, 'finley.float', None)]
+
+
 def fake_punches(frm, to):
-    """A week of made-up punches (no real people): the sandbox store and 326, one worker at both, a long day, a missing clock-out."""
-    import datetime as dt
-    start = dt.date.fromisoformat((frm or '2026-10-05')[:10])
-    people = [(33254, 'avery.tech', STORE_ID), (33255, 'blake.lead', STORE_ID), (33256, 'casey.mgr', STORE_ID), (33257, 'drew.tech', 326), (33258, 'emery.tech', 326), (33259, 'finley.float', None)]
-    rows, n = [], 900000
-    def iso(d, h, m=0):
-        return (dt.datetime.combine(d, dt.time(0)) + dt.timedelta(hours=h, minutes=m) + dt.timedelta(hours=4)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
-    for day in range(7):
-        d = start + dt.timedelta(days=day)
-        if d.weekday() == 3:  # closed Thursdays
-            continue
-        for uid, name, store in people:
-            if (uid + day) % 5 == 0:
-                continue
-            st = store or (STORE_ID if day % 2 else 326)
-            sname = {STORE_ID: 'Sandbox Store', 326: 'Lynnhaven'}[st]
-            h_in, h_out = 9.75 + (uid % 3) * 0.25, 18.5 + (uid % 2) * 0.75 + (1.5 if name == 'blake.lead' else 0)
-            n += 1; rows.append({'timeclockId': n, 'userId': uid, 'username': name, 'storeId': st, 'storeName': sname, 'clockTypeId': 1,
-                                 'timeIn': iso(d, int(h_in), int(h_in % 1 * 60)), 'timeOut': None if (name == 'drew.tech' and day == 6) else iso(d, int(h_out), int(h_out % 1 * 60))})
-            n += 1; rows.append({'timeclockId': n, 'userId': uid, 'username': name, 'storeId': st, 'storeName': sname, 'clockTypeId': 2, 'timeIn': iso(d, 13), 'timeOut': iso(d, 13, 30)})
+    """Made-up punches (no real people) for every day in frm..to: the sandbox store and 326, one floater at both, a long day, a missing clock-out.
+    Each day's punches depend only on that date, so any range (Portal's Sunday-based, Tactician's Monday-based) sees the same punches for a day."""
+    import datetime as dt, zoneinfo
+    tz = zoneinfo.ZoneInfo(TS_TZ)
+    a = dt.date.fromisoformat((frm or '2026-10-05')[:10])
+    z = dt.date.fromisoformat((to or frm or '2026-10-11')[:10])
+    rows = []
+    def iso(d, h, m=0):  # local wall time in the store's zone -> UTC ISO string
+        loc = dt.datetime.combine(d, dt.time(0), tzinfo=tz).replace(hour=int(h), minute=int(m))
+        return loc.astimezone(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    d = a
+    while d <= z:
+        o = d.toordinal()
+        if d.weekday() != 3:  # closed Thursdays
+            k = 0
+            for uid, name, store in TS_PEOPLE:
+                if (uid + o) % 5 == 0:
+                    continue
+                st = store or (STORE_ID if o % 2 else 326)
+                sname = dict(TS_STORES)[st]
+                h_in, h_out = 9.75 + (uid % 3) * 0.25, 18.5 + (uid % 2) * 0.75 + (1.5 if name == 'blake.lead' else 0)
+                base = 900000 + (o % 10000) * 100
+                open_punch = name == 'drew.tech' and d.weekday() == 6
+                for ct, tin, tout in ((1, iso(d, int(h_in), int(h_in % 1 * 60)), None if open_punch else iso(d, int(h_out), int(h_out % 1 * 60))), (2, iso(d, 13), iso(d, 13, 30))):
+                    k += 1
+                    rows.append({'timeclockId': base + k, 'storeId': st, 'storeName': sname, 'storeTimeZone': TS_TZ, 'userId': uid, 'username': name, 'clockTypeId': ct,
+                                 'timeIn': tin, 'timeOut': tout, 'payPeriodStartDay': 1})
+        d += dt.timedelta(days=1)
     return rows
 
 
@@ -336,7 +349,9 @@ def route(method, path, body):
     if p == 'notification/get-partner-downtime':
         return 200, fixture('partner-downtime', [])
     if p == 'store-time-sheet/access':
-        return 200, dict(fixture('timesheet-access', {}), allowed=True)
+        # real shape captured from live Portal Nov 11 2026 (keys/types; storeTimeZone value format unverified)
+        return 200, {'allowed': True, 'canViewOwn': True, 'canDelete': True, 'storeIds': [sid for sid, _ in TS_STORES],
+                     'stores': [{'storeId': sid, 'storeName': n, 'storeTimeZone': TS_TZ} for sid, n in TS_STORES]}
     if p == 'reporting/metrics':  # Reports page: Portal's Power BI embed config (made up; only needs to exist for the page to draw)
         return 200, {'url': 'https://example.invalid/reports', 'ctid': 'sandbox', 'reports': [], 'reportsFranchise': [], 'viewAllReports': 'https://example.invalid/reports'}
     if p == 'reporting/sales-history':  # fake Sales tab: a few made-up sales on each day asked for
@@ -355,7 +370,15 @@ def route(method, path, body):
                  'customerId': 770003, 'customerName': 'Riley Park', 'completedBy': 'Sandbox Lead'}]
         return 200, {'results': rows, 'count': len(rows), 'next': None}
     if p == 'store-time-sheet' and method == 'GET':  # fake punches: two stores, one worker at both (Store time sheet page)
-        return 200, {'rows': fake_punches(q.get('fromDate'), q.get('toDate'))}
+        # real shape captured from live Portal Nov 11 2026 (keys/types only)
+        return 200, {'fromDate': q.get('fromDate'), 'toDate': q.get('toDate'), 'storeIds': [sid for sid, _ in TS_STORES],
+                     'stores': [{'storeId': sid, 'storeName': n, 'storeTimeZone': TS_TZ, 'payPeriodStartDay': 1} for sid, n in TS_STORES],
+                     'rows': fake_punches(q.get('fromDate'), q.get('toDate'))}
+    m = re.fullmatch(r'store-time-sheet/stores/(\d+)/employees', p)
+    if m and method == 'GET':  # shape read from Portal's bundle, NOT captured live
+        return 200, {'employees': [{'userId': uid, 'displayName': name} for uid, name, st in TS_PEOPLE if st in (int(m.group(1)), None)]}
+    if re.fullmatch(r'store-time-sheet/punch(/\d+)?', p) and method in ('PATCH', 'DELETE', 'POST'):  # in-memory success only; nothing is kept (shape not captured)
+        return 200, {'ok': True}
     if p == 'admin/stores/roletypes':
         return 200, fixture('roletypes', [])
     m = re.fullmatch(r'program-attributes/(\d+)', p)
