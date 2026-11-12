@@ -36,6 +36,9 @@ AE.shard({
     };
     const slug = (t) => t.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
+    // Spread's cards borrow a status's colour from here (null for a status with none).
+    AE.rowColors = { edge: (statusName) => COLORS[slug(String(statusName || ''))] || null };
+
     document.head.append(AE.h('style', { id: 'ae-row-colors' }, Object.entries(COLORS).map(([s, c]) =>
       `tr.status-${s} td, [role="row"].status-${s} > [role="cell"], [role="row"].status-${s} > [role="gridcell"] { background: ${c} !important; }`).join('\n')));
 

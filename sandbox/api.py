@@ -21,7 +21,7 @@ PROGRAMS = {6494: 'Samsung In Warranty Repair', 8849: 'Asurion Home+ Repairs', 5
             9901: 'AT&T Device Diagnostic', 10303: 'AT&T Performance Check', 20001: 'Out Of Warranty'}
 CLEANINGS = [11759, 9470, 11009, 9901, 10303]
 STATUS = {1: 'Initial check-in', 2: 'Need to order', 3: 'Awaiting item', 4: 'Awaiting device', 7: 'Awaiting callback', 8: 'Ready for work', 9: 'Diagnostics',
-          10: 'Work in progress', 11: 'Quality check', 12: 'Repair summary', 13: 'Ready for pickup', 14: 'Sale complete', 25: 'Cancelled'}
+          10: 'Work in progress', 11: 'Quality check', 12: 'Repair summary', 13: 'Ready for pickup', 14: 'Sale complete', 24: 'Ready for Diag', 25: 'Cancelled'}
 CLOSED = {14, 15, 25}
 FIRST = ['Jordan', 'Sam', 'Riley', 'Casey', 'Alex', 'Morgan', 'Taylor', 'Quinn', 'Avery', 'Drew']
 LAST = ['Reyes', 'Patel', 'Brooks', 'Lin', 'Moore', 'Hayes', 'Diaz', 'Nguyen', 'Price', 'Cole']
@@ -160,11 +160,12 @@ def cart_view(cart_id):
 
 def wo_row(w):
     d = load()['devices'].get(str(w['customerDeviceId']), {})
-    return {'workorderId': w['workorderId'], 'workorderStatusId': w['workorderStatusId'], 'workorderStatusName': STATUS.get(w['workorderStatusId'], 'Ready for work'),
+    return {'workorderId': w['workorderId'], 'workorderStatusId': w['workorderStatusId'], 'workorderStatusName': w.get('statusName') or STATUS.get(w['workorderStatusId'], 'Ready for work'),
             'programId': w['programId'], 'programName': w.get('programName') or PROGRAMS.get(w['programId'], 'Program'), 'createdAt': w['createdAt'], 'updatedAt': w['updatedAt'],
             'nextUpdate': w['nextUpdate'], 'customer': cust_view(w['customerId']), 'customerDevice': dev_view(w['customerDeviceId']),
             'customerDeviceId': w['customerDeviceId'], 'deviceCatalog': {'name': d.get('deviceName')}, 'deviceIssues': w.get('issues') or (['Cleaning'] if w['programId'] in CLEANINGS else ['Screen']),
             'serviceOutcome': w.get('serviceOutcome', ''), 'workorderTotal': cart_view(w['csuCartId'])['payment']['total'], 'claimNumber': None, 'clientId': 1,
+            'attentionState': w.get('attention', ''), 'attentionReasons': w.get('attentionReasons') or [],
             'matchedRules': [], 'itemswithdevice': '', 'locationBin': w.get('binLocation', ''), 'rfpWorkorderStatusDate': w.get('rfpAt'),
             'createdBy': {'givenName': (w.get('by') or USER)['givenName'], 'familyName': (w.get('by') or USER)['familyName']}}
 
@@ -453,9 +454,11 @@ def route(method, path, body):
         key = {'woId': 'workorderId', 'createdDate': 'createdAt', 'createdAt': 'createdAt', 'nextUpdate': 'nextUpdate', 'lastUpdate': 'updatedAt'}.get(col, 'createdAt')
         rows.sort(key=lambda w: w[key], reverse=direction != 'ASC')
         page, size = int(body.get('page') or 1), int(body.get('pageSize') or 10)
+        # Portal's tab counts: the sandbox groups statuses by its own guess (not captured from Portal), only so the tabs aren't all 0.
+        n = lambda ids: sum(1 for w in s['wos'].values() if w['workorderStatusId'] in ids)
         return 200, {'workOrders': [wo_row(w) for w in rows[(page - 1) * size: page * size]], 'rowCount': len(rows),
-                     'repairNotStartedCount': 0, 'repairStartedCount': 0, 'repairWaitingCount': 0, 'readyForPickupCount': 0, 'needToOrderCount': 0,
-                     'allWorkordersCount': len(rows), 'repairNeedToOrderCount': 0}
+                     'repairNotStartedCount': n({8, 24}), 'repairStartedCount': n({9, 10, 11, 12}), 'repairWaitingCount': n({3, 4, 7}), 'readyForPickupCount': n({13}), 'needToOrderCount': n({2}),
+                     'allWorkordersCount': len(rows), 'repairNeedToOrderCount': n({2})}
     if p == 'recent-workorders':
         return 200, [wo_row(w) for w in sorted(s['wos'].values(), key=lambda w: w['updatedAt'], reverse=True)[:5]]
     m = re.fullmatch(r'workorder/(\d+)', p)

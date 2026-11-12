@@ -285,6 +285,9 @@ def action_icons(root: Path) -> str:
     return json.dumps(icons)
 
 
+DEV_ONLY_FILES = {"59-spread.js"}  # Spread: dev channel only until released (drop it from here, and the AE_DEV guards, to ship it)
+
+
 def build(root: Path, version: str = VERSION) -> Path:
     dev, demo = CHANNEL == "dev", CHANNEL == "demo"
     raw = channel_raw()
@@ -319,6 +322,8 @@ def build(root: Path, version: str = VERSION) -> Path:
     parts = [head, "(function aethernet() {\n'use strict';\n"]
     # src/dev/*.js (dev tools) only go into dev builds; everything sorts by file name.
     files = list((root / "src").glob("*.js")) + (list((root / "src" / "dev").glob("*.js")) if dev else [])
+    if not dev:  # shards that exist only in the dev channel until they are released (their Settings text is behind AE_DEV too)
+        files = [f for f in files if f.name not in DEV_ONLY_FILES]
     if demo:  # only its shards; no store check (01-access.js), so it boots straight away
         files = [f for f in files if f.name in DEMO["files"]]
     # Core + the store-access gate load first; everything else sits in AE.boot,

@@ -35,7 +35,7 @@ const AE = (() => {
   const DEFAULTS = {
     // Stored key stays `crystals` (the old name for shards): renaming it would drop saved on/off switches.
     crystals: AE_DEMO ? { cleaningRate: true, autoClose: true, glamour: true }
-      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, checkinDrafts: true, leadReplies: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, timeSheet: true, reassemble: true, decipher: true, assize: true, fixes: true },
+      : { cleaningRate: true, woCleanings: true, textNotes: true, autoClose: true, checkinDrafts: true, leadReplies: true, galaxy: true, printLabels: true, buybacks: true, glamour: true, waymark: true, countCheck: true, rowColors: true, timeSheet: true, reassemble: true, decipher: true, assize: true, fixes: true, ...(AE_DEV ? { spread: true } : {}) },
     // Swiftcast: offer Dualcast (all of a device's cleanings at once); refreshLabor: null = follow
     // AE.REFRESH_LABOR_DEFAULT (only a user's own choice is stored, so the default can change in a release).
     autoClose: { dualcast: true, refreshLabor: null },
@@ -674,8 +674,11 @@ const AE = (() => {
   // Each shard's FFXIV action icon, plus a few FFXIV UI pieces under "ui/<name>"
   // (embedded by build.py from assets/icons/ and assets/ui/).
   const ACTION_ICONS = __ACTION_ICONS__;
-  const actionIcon = (id, size = 24, extra = '') => ACTION_ICONS[id]
-    ? '<img class="sg-aicon" src="' + ACTION_ICONS[id] + '" width="' + size + '" height="' + size + '" alt="" draggable="false"' + (extra ? ' ' + extra : '') + '>'
+  // Spread has no icon of its own yet (assets/icons/spread.jpg): it borrows the Settings one until that file exists.
+  const ICON_FALLBACK = { spread: 'settings' };
+  const iconOf = (id) => ACTION_ICONS[id] || ACTION_ICONS[ICON_FALLBACK[id]];
+  const actionIcon = (id, size = 24, extra = '') => iconOf(id)
+    ? '<img class="sg-aicon" src="' + iconOf(id) + '" width="' + size + '" height="' + size + '" alt="" draggable="false"' + (extra ? ' ' + extra : '') + '>'
     : '';
 
   function h(tag, attrs, ...kids) {
@@ -939,7 +942,8 @@ const AE = (() => {
         workOrderStatusIds: primaryFilter === 'Active' ? OPEN_STATUS_IDS : [],
         order: primaryFilter === 'Active' ? 'nextUpdate,DESC' : 'createdAt,DESC',
       });
-      const rows = (j && j.workOrders) || [];
+      // A reply with no list is a BadShape, never "no open work orders" (a wrong shape must not read as an empty store).
+      const rows = shape.list(j, 'workOrders', 'work order list');
       rows.count = j && Number.isInteger(j.rowCount) ? j.rowCount : null; // Portal's total for this filter
       return rows;
     }

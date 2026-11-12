@@ -655,6 +655,15 @@ AE.shard({
       }
     }
 
+    // Spread's cards borrow the findings mark for a work order: the same icon, count and colour as in the list (null when there are none).
+    // It is a <span>, not a button: the card around it is the link that opens the work order.
+    AE.assize = { mark(woId) {
+      const list = ((result && result.byWo.get(String(woId))) || []).filter((x) => x.kind !== 'remind');
+      if (!list.length) return null;
+      const label = 'Assize: ' + list.length + (list.length === 1 ? ' finding' : ' findings');
+      return h('span', { class: MK + ' ae-as ae-chip mini has-icon ' + worstOf(list), title: label, 'aria-label': label, html: AE.actionIcon('assize', 14) + list.length });
+    } };
+
     // ------------------------------------------------------------ wiring
     function render() {
       if (!/^\/login/.test(location.pathname)) renderIcon();

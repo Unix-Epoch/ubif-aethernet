@@ -52,7 +52,7 @@ const CSS = `
 const TZ = 'America/New_York';
 const STORE_ORDER = [914, 326, 536, 1276]; // fixed color order (blue, orange, aqua, yellow); color follows the store everywhere
 const SHARDS = { cleaningRate: 'Divination', woCleanings: 'Esuna', textNotes: 'Recitation', autoClose: 'Swiftcast', checkinDrafts: 'Return', leadReplies: 'Provoke', galaxy: 'Macrocosmos', glamour: 'Glamour',
-  buybacks: 'Bountiful Yield', countCheck: 'Lay of the Land', waymark: 'Waymark', fixes: "Master's Mend", timeSheet: 'Tactician', assize: 'Assize', decipher: 'Decipher', printLabels: 'Quick Synthesis', rowColors: 'Rainbow Drip', reassemble: 'Reassemble' };
+  buybacks: 'Bountiful Yield', countCheck: 'Lay of the Land', waymark: 'Waymark', fixes: "Master's Mend", timeSheet: 'Tactician', assize: 'Assize', decipher: 'Decipher', printLabels: 'Quick Synthesis', rowColors: 'Rainbow Drip', reassemble: 'Reassemble', spread: 'Spread' };
 const PRESETS = [['today', 'Today'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['month', 'This month'], ['lastmonth', 'Last month'], ['year', 'Year to date']];
 
 // ------------------------------------------------------------------ formatting
