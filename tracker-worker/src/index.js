@@ -48,8 +48,9 @@
 
   Retention (daily cron): snapshots and changes older than KEEP_DAYS (183) are archived to R2
   (binding ARCHIVE) as gzipped JSON lines per store and month, then deleted. A WO's latest
-  snapshot is always kept. Without ARCHIVE nothing is trimmed (nothing is lost before cold
-  storage is set up) unless TRIM_WITHOUT_ARCHIVE is set.
+  snapshot is always kept. Without ARCHIVE no snapshot or change is trimmed (nothing is lost before cold
+  storage is set up) unless TRIM_WITHOUT_ARCHIVE is set. The log tables (scans, access_log, write budget counters) are
+  pruned on every run, archive or not: they hold no customer data and need no cold copy.
 */
 import { daily } from './daily.js';
 
@@ -58,6 +59,7 @@ import { metricsApi, statusPeriodStmts, closeStatusPeriod } from './metrics.js';
 import { assizeStore, assizeAdmin } from './assize.js';
 import { retraceStore, retraceAdmin, woRetraceStmts } from './retrace-api.js';
 import { meter, usageLoad, pruneUsage } from './usage.js';
+import { over, charge, spend, pruneBudget, PER_WO_HOUR } from './budget.js';
 
 const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
@@ -371,6 +373,11 @@ async function storeApi(req, env, url, store) {
             last_list_seen_at = excluded.last_list_seen_at, missing_since = NULL, gone_seen_at = NULL`)
         .bind(store, r.wo, storeName, r.statusId, r.status, r.programId, r.program, r.device, r.outcome, r.createdAt, r.updatedAt, at, at));
     }
+    // Per-store write budget (src/budget.js): scans, and work orders this store has never listed. Nothing is written before this.
+    const budget = [['scan', 1], ['fresh', fresh]];
+    const tooMany = await over(T, store, budget);
+    if (tooMany) return fail(429, tooMany);
+    await charge(T, store, budget);
     // Open WOs missing from the list: fetched in full to see whether they really closed. A short or
     // failed list (Waymark saw one report 14 WOs closed at once) is ignored rather than trusted.
     const open = [...known.values()].filter((k) => k.is_open);
@@ -417,6 +424,11 @@ async function storeApi(req, env, url, store) {
   if (path === '/sales' && req.method === 'POST') {
     const b = await readJson(req, 600000), day = clean(b.day, 10);
     if (!DAY_RE.test(day) || !Array.isArray(b.rows) || b.rows.length > 1000) return fail(400, 'day and rows required');
+    // Aethernet sends today and the six days before it; a day further back than the GET routes read (400 days) or ahead of tomorrow is not a real day.
+    const nowMs = Date.now();
+    if (isNaN(Date.parse(day)) || Date.parse(day) < nowMs - 400 * 86400000 || Date.parse(day) > nowMs + 2 * 86400000) return fail(400, 'day out of range');
+    const budgetMsg = await spend(T, store, [['sales', 1]]);
+    if (budgetMsg) return fail(429, budgetMsg);
     const at = now(), tz = env.STORE_TZ || 'America/New_York';
     const rows = [];
     for (const r of b.rows) {
@@ -550,11 +562,14 @@ async function storeApi(req, env, url, store) {
     if (b.card != null && !isSealed(b.card, MAX.card)) return fail(400, 'bad card');
     const own = int(plain.workorder.storeId);
     if (own != null && own !== store) return fail(409, 'work order ' + wo + ' belongs to store ' + own); // a browser switched stores mid-scan
+    // Only a work order this store's own scan has listed (the workorders row /scan writes, or an import wrote) takes a detail: the client only
+    // uploads what the scan's "need" list named, so a legitimate upload always has its row. Anything else is refused before it is stored.
+    const prev = await T.prepare('SELECT last_hash, plain FROM workorders WHERE store = ? AND wo = ?').bind(store, wo).first();
+    if (!prev) return fail(404, 'work order ' + wo + ' is not on store ' + store + "'s scan list (a scan lists it first)");
     const plainText = JSON.stringify(plain);
     if (plainText.length > MAX.plain) return fail(413, 'plain part too large');
     if (!(await T.prepare('SELECT 1 FROM store_keys WHERE store = ?').bind(store).first())) return fail(409, 'no store key yet');
-    const prev = await T.prepare('SELECT last_hash, plain FROM workorders WHERE store = ? AND wo = ?').bind(store, wo).first();
-    if (prev && prev.last_hash === hash) {
+    if (prev.last_hash === hash) {
       await T.prepare('UPDATE workorders SET last_detail_at = ?, claimed_until = NULL WHERE store = ? AND wo = ?').bind(at, store, wo).run();
       return json({ ok: true, same: true });
     }
@@ -562,10 +577,18 @@ async function storeApi(req, env, url, store) {
     // Portal empties a WO's cart at Sale complete: keep the last non-empty one (sales items, estimates).
     const hasItems = !!(plain.cart && plain.cart.items && plain.cart.items.length), soldAt = soldAtOf(plain);
     const statusId = int(w.statusId), closed = CLOSED_IDS.has(statusId);
+    const prevPlain = prev.plain ? JSON.parse(prev.plain) : null;
+    const changes = prevPlain ? diff(prevPlain, plain) : [];
+    // Write budgets (src/budget.js): one work order's snapshots an hour, then the store's snapshots, bytes and change rows. Over → 429, nothing stored.
+    const recent = await T.prepare('SELECT COUNT(*) AS n FROM (SELECT fetched_at FROM snapshots WHERE store = ? AND wo = ? ORDER BY id DESC LIMIT ?) WHERE fetched_at > ?')
+      .bind(store, wo, PER_WO_HOUR + 1, new Date(Date.now() - 3600000).toISOString()).first();
+    if (recent && recent.n >= PER_WO_HOUR) return fail(429, 'too many uploads of work order ' + wo + ' this hour (limit ' + PER_WO_HOUR + '); try again later');
+    const items = [['snap', 1, plainText.length + b.sealed.length + (b.card ? b.card.length : 0)], ['chg', Math.min(changes.length, 1000)]];
+    const tooMuch = await over(T, store, items);
+    if (tooMuch) return fail(429, tooMuch);
+    await charge(T, store, items);
     const snap = await T.prepare('INSERT INTO snapshots (store, wo, fetched_at, trigger, by_name, hash, plain, sealed) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id')
       .bind(store, wo, at, clean(b.trigger, 20) || null, by, hash, plainText, b.sealed).first();
-    const prevPlain = prev && prev.plain ? JSON.parse(prev.plain) : null;
-    const changes = prevPlain ? diff(prevPlain, plain) : [];
     const stmts = changes.slice(0, 1000).map(([field, o, n]) => T.prepare('INSERT INTO changes (store, wo, changed_at, field, old, new, snapshot_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind(store, wo, at, field.slice(0, 300), o == null ? null : String(o).slice(0, 4000), n == null ? null : String(n).slice(0, 4000), snap.id));
     stmts.push(T.prepare(`INSERT INTO workorders (store, wo, status_id, status_name, program_id, program_name, device, created_at, api_updated_at, is_open, first_seen_at,
@@ -912,6 +935,17 @@ export { dayEnd };
 export async function trim(env, { keepDays = KEEP_DAYS, chunk = 500, rounds = 20 } = {}) {
   const T = env.TR, cutoff = new Date(Date.now() - keepDays * 86400000).toISOString(), run = now().replace(/[:.]/g, '');
   const out = { snapshots: 0, changes: 0, archived: !!env.ARCHIVE };
+  // Housekeeping first, always: pure logs (no customer data, nothing worth archiving) are pruned whether or not cold storage is bound.
+  // scans: KEEP_DAYS (183); access_log: LOG_DAYS (400); write_budget counters: 3 days (src/budget.js). Each on its own, so one failing doesn't skip the rest.
+  const changed = (r) => (r && r.meta && r.meta.changes) || 0;
+  for (const [name, go] of [
+    ['scans', () => T.prepare('DELETE FROM scans WHERE at < ?').bind(cutoff).run()],
+    ['access_log', () => T.prepare('DELETE FROM access_log WHERE at < ?').bind(new Date(Date.now() - LOG_DAYS * 86400000).toISOString()).run()],
+    ['write_budget', () => pruneBudget(T)],
+  ]) {
+    try { out[name] = changed(await go()); } catch (e) { console.error('housekeeping ' + name + ' failed:', e); out[name] = 0; }
+  }
+  // Snapshots and changes wait for cold storage (nothing is lost before it is set up).
   if (!env.ARCHIVE && !env.TRIM_WITHOUT_ARCHIVE) return Object.assign(out, { skipped: 'no cold storage bound' });
   for (const [table, col, extra] of [['snapshots', 'fetched_at', 'AND id NOT IN (SELECT MAX(id) FROM snapshots GROUP BY store, wo)'], ['changes', 'changed_at', '']]) {
     for (let i = 0; i < rounds; i++) {
@@ -927,8 +961,6 @@ export async function trim(env, { keepDays = KEEP_DAYS, chunk = 500, rounds = 20
       out[table] += ids.length;
     }
   }
-  await T.prepare('DELETE FROM scans WHERE at < ?').bind(cutoff).run();
-  await T.prepare('DELETE FROM access_log WHERE at < ?').bind(new Date(Date.now() - LOG_DAYS * 86400000).toISOString()).run();
   return out;
 }
 
@@ -967,10 +999,21 @@ export default {
     try { return await handle(req, m.env); } finally { await m.done(ctx); }
   },
   async scheduled(_ev, env, ctx) {
-    ctx.waitUntil(trim(env));
+    ctx.waitUntil(trim(env).catch((e) => console.error('trim failed:', e)));
     ctx.waitUntil(pruneUsage(env).catch(() => {}));
   },
 };
+
+// Deliberate 4xx answers (thrown with a status below 500: bad JSON, an oversized body) keep their message. Anything else is a 500 with a
+// generic body and a short id; the real error goes to the Worker's log under that id, never to the caller.
+export function serverError(e, req) {
+  if (e && e.status >= 400 && e.status < 500) return fail(e.status, e.message);
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(4)), (x) => x.toString(16).padStart(2, '0')).join('');
+  let where = '';
+  try { where = ' ' + req.method + ' ' + new URL(req.url).pathname; } catch (_) {}
+  console.error('server error ' + id + where + ':', e);
+  return fail(500, 'server error (id ' + id + ')');
+}
 
 async function handle(req, env) {
   const url = new URL(req.url);
@@ -992,6 +1035,6 @@ async function handle(req, env) {
     if (m[2] === 'assize') return await assizeStore(req, env, url, store, { json, fail });
     return await storeApi(req, env, url, store);
   } catch (e) {
-    return fail(e.status || 500, e.status ? e.message : 'server error: ' + (e.message || e));
+    return serverError(e, req);
   }
 }

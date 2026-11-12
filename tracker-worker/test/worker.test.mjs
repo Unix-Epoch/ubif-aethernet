@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, rmSync } from 'node:fs';
 import { getPlatformProxy } from 'wrangler';
 import worker, { trackerAdmin, trim } from '../src/index.js';
+import { BUDGET, PER_WO_HOUR } from '../src/budget.js';
 import * as C from '../src/crypto.js';
 
 rmSync('.wrangler-test', { recursive: true, force: true });
@@ -426,13 +427,175 @@ ok(await call('POST', '/v1/914/tracker/scan', { rows, storeName: 'Newport News',
   assert.equal((await env.TR.prepare('SELECT COUNT(*) AS n FROM daily_metrics').first()).n, before, 'rejected uploads wrote nothing');
 }
 
-// --- retention: nothing trimmed without cold storage; with TRIM_WITHOUT_ARCHIVE the latest snapshot per WO stays
+// --- retention: without cold storage the logs are still pruned, snapshots are not; with TRIM_WITHOUT_ARCHIVE the latest snapshot per WO stays
 await env.TR.prepare("UPDATE snapshots SET fetched_at = '2026-01-01T00:00:00Z'").run();
 await env.TR.prepare("UPDATE changes SET changed_at = '2026-01-01T00:00:00Z'").run();
-assert.equal((await trim(E)).skipped, 'no cold storage bound');
+const q1 = async (sql) => (await env.TR.prepare(sql).first()).n;
+const snapsBefore = await q1('SELECT COUNT(*) AS n FROM snapshots'), changesBefore = await q1('SELECT COUNT(*) AS n FROM changes');
+await env.TR.prepare("INSERT INTO scans (store, at, open_count) VALUES (914, '2026-01-01T00:00:00Z', 1), (914, '2026-01-02T00:00:00Z', 1)").run();
+await env.TR.prepare("INSERT INTO access_log (email, action, at) VALUES ('old@x.com', 'list', '2025-01-01T00:00:00Z')").run();
+await env.TR.prepare("INSERT INTO write_budget (store, kind, bucket, n) VALUES (914, 'snap', '2026-01-01T05', 3), (914, 'snap', '2026-01-01', 3)").run();
+const scansNew = await q1("SELECT COUNT(*) AS n FROM scans WHERE at >= '2026-06-01'"), logNew = await q1("SELECT COUNT(*) AS n FROM access_log WHERE at >= '2026-01-01'");
+const t0 = await trim(E);   // no ARCHIVE binding
+assert.equal(t0.skipped, 'no cold storage bound');
+assert.equal(t0.scans, 2, 'old scans deleted without the archive'); assert.equal(t0.access_log, 1, 'old access_log rows deleted without the archive'); assert.ok(t0.write_budget >= 2, 'old budget counters pruned');
+assert.equal(await q1("SELECT COUNT(*) AS n FROM scans WHERE at < '2026-06-01'"), 0);
+assert.equal(await q1("SELECT COUNT(*) AS n FROM scans WHERE at >= '2026-06-01'"), scansNew, 'recent scans kept');
+assert.equal(await q1("SELECT COUNT(*) AS n FROM access_log WHERE at >= '2026-01-01'"), logNew, 'recent access_log kept');
+assert.equal(await q1('SELECT COUNT(*) AS n FROM snapshots'), snapsBefore, 'snapshots untouched without the archive');
+assert.equal(await q1('SELECT COUNT(*) AS n FROM changes'), changesBefore, 'changes untouched without the archive');
+assert.equal(t0.snapshots + t0.changes, 0);
 const t = await trim(Object.assign({}, E, { TRIM_WITHOUT_ARCHIVE: '1' }));
 assert.equal((await env.TR.prepare('SELECT COUNT(*) AS n FROM snapshots').first()).n, 3, 'latest snapshot of each WO kept');
 assert.ok(t.snapshots >= 1 && t.changes >= 2);
+assert.equal(t.scans, 0, 'housekeeping already done: nothing left to delete');
+
+// --- abuse limits (Nov 11, 2026): the Worker only takes a detail for a work order the store's scan listed, and per-store budgets cap the rest
+const bucketH = () => new Date().toISOString().slice(0, 13), bucketD = () => new Date().toISOString().slice(0, 10);
+const seed = (store, kind, bucket, n, bytes = 0) => env.TR.prepare('INSERT INTO write_budget (store, kind, bucket, n, bytes) VALUES (?, ?, ?, ?, ?) ON CONFLICT (store, kind, bucket) DO UPDATE SET n = excluded.n, bytes = excluded.bytes').bind(store, kind, bucket, n, bytes).run();
+const clearBudget = () => env.TR.prepare('DELETE FROM write_budget').run();
+const snapCount = (wo) => q1('SELECT COUNT(*) AS n FROM snapshots WHERE wo = ' + wo);
+const FAKE = 'v1.' + 'A'.repeat(300);
+const raw = (store, wo, hash, statusId = 2, extra = {}) => call('POST', '/v1/' + store + '/tracker/wo/' + wo, { hash, trigger: 'new', by: 'Tech A', sealed: FAKE,
+  plain: { workorder: { workorderId: wo, storeId: store, statusId, status: 's' + statusId, updatedAt: '2026-11-11T10:00:00Z' }, auditTrail: [], cart: { items: [], payment: { total: 0 } }, ...extra } });
+await clearBudget();
+
+// unlisted refused, nothing stored; listed accepted right after its first scan
+let r = await raw(914, 880001, 'u1');
+assert.equal(r.status, 404); assert.match(r.j.error, /scan list/);
+assert.equal(await snapCount(880001), 0); assert.equal(await q1('SELECT COUNT(*) AS n FROM workorders WHERE wo = 880001'), 0, 'no workorders row either');
+ok(await call('POST', '/v1/914/tracker/scan', { rows: [{ wo: 880001, statusId: 2, status: 'Work in progress', updatedAt: '2026-11-11T10:00:00Z' }] }), 'scan 880001');
+ok(await raw(914, 880001, 'u1'), 'first detail right after the first scan');
+assert.equal(await snapCount(880001), 1);
+// another store's scan does not list it for this store
+assert.equal((await raw(326, 880001, 'u1')).status, 404, "store 326 never listed 880001");
+
+// closed work orders: the final upload (missing from the list, Sale complete), and a closed one the list brings back (reopened)
+ok(await call('POST', '/v1/914/tracker/scan', { rows: [{ wo: 880002, statusId: 2, status: 'Work in progress' }, { wo: 880003, statusId: 2, status: 'Work in progress' }] }), 'scan two more');
+ok(await raw(914, 880002, 'c1'), '880002 first'); ok(await raw(914, 880003, 'c1'), '880003 first');
+await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
+s = await call('POST', '/v1/914/tracker/scan', { rows: [{ wo: 880001, statusId: 2, status: 'Work in progress', updatedAt: '2026-11-11T10:00:00Z' }, { wo: 880003, statusId: 2, status: 'Work in progress' }, { wo: 880004, statusId: 2, status: 'Work in progress' }, { wo: 880005, statusId: 2, status: 'Work in progress' }, { wo: 880006, statusId: 2, status: 'Work in progress' }, { wo: 880007, statusId: 2, status: 'Work in progress' }, { wo: 880008, statusId: 2, status: 'Work in progress' }, { wo: 880009, statusId: 2, status: 'Work in progress' }, { wo: 880010, statusId: 2, status: 'Work in progress' }, { wo: 880011, statusId: 2, status: 'Work in progress' }, { wo: 880012, statusId: 2, status: 'Work in progress' }, { wo: 880013, statusId: 2, status: 'Work in progress' }] });
+assert.ok(s.j.need.some((n) => n.wo === 880002 && n.why === 'missing'), '880002 left the list');
+ok(await raw(914, 880002, 'c2', 14), 'final upload of a closed work order that left the list');
+assert.equal((await env.TR.prepare('SELECT is_open FROM workorders WHERE wo = 880002').first()).is_open, 0);
+ok(await call('POST', '/v1/914/tracker/scan', { rows: [{ wo: 880002, statusId: 14, status: 'Sale complete' }] }), 'a closed one comes back in the list');
+s = (await env.TR.prepare('SELECT is_open FROM workorders WHERE wo = 880002').first());
+ok(await raw(914, 880002, 'c3', 2), 'reopened work order takes its detail');
+assert.equal((await env.TR.prepare('SELECT is_open FROM workorders WHERE wo = 880002').first()).is_open, 1);
+// "gone" and "moved" never needed a snapshot: still answered for listed work orders, ignored for unknown ones
+assert.equal((await call('POST', '/v1/914/tracker/wo/880999/gone', { by: 'x' })).j.ignored, 'not open');
+// an import (or any earlier writer) that left a workorders row: its next detail is accepted without a scan
+await env.TR.prepare('INSERT INTO workorders (store, wo, is_open, first_seen_at) VALUES (914, 880100, 1, ?)').bind('2026-10-12T00:00:00Z').run();
+ok(await raw(914, 880100, 'i1'), 'WO row from an import takes a detail');
+
+// per work order: PER_WO_HOUR snapshots an hour, then 429 and nothing stored
+const have = await snapCount(880001);
+for (let i = 0; i < PER_WO_HOUR - have; i++) ok(await raw(914, 880001, 'h' + i), 'burst ' + i);
+const nBefore = await snapCount(880001);
+assert.equal(nBefore, PER_WO_HOUR);
+r = await raw(914, 880001, 'hover');
+assert.equal(r.status, 429); assert.match(r.j.error, /work order 880001/);
+assert.equal(await snapCount(880001), nBefore, 'over the per-WO budget: nothing stored');
+
+// per store: snapshot rows, bytes and change rows
+await clearBudget();
+await seed(914, 'snap', bucketH(), BUDGET.snap.hour - 1);
+ok(await raw(914, 880003, 's1'), 'last snapshot of the hour');
+const n3 = await snapCount(880003);
+r = await raw(914, 880003, 's2'); assert.equal(r.status, 429); assert.match(r.j.error, /this hour/); assert.equal(await snapCount(880003), n3, 'nothing stored');
+await clearBudget(); await seed(914, 'snap', bucketD(), BUDGET.snap.day);
+r = await raw(914, 880003, 's3'); assert.equal(r.status, 429); assert.match(r.j.error, /today/);
+await clearBudget(); await seed(914, 'snap', bucketH(), 1, BUDGET.snap.hourBytes - 100);
+r = await raw(914, 880003, 's4'); assert.equal(r.status, 429); assert.match(r.j.error, /too much data/);
+assert.equal(await snapCount(880003), n3);
+await clearBudget(); await seed(914, 'chg', bucketH(), BUDGET.chg.hour);
+r = await raw(914, 880003, 's5', 14); assert.equal(r.status, 429, 'a snapshot with changes over the change-row budget'); assert.equal(await snapCount(880003), n3);
+const okc = await raw(914, 880003, 's5', 2); // no field changes vs 's1' (same plain) → no change rows → fits
+assert.equal(okc.status, 200, JSON.stringify(okc.j));
+await clearBudget();
+// the other store's budget is its own
+await seed(914, 'snap', bucketH(), BUDGET.snap.hour);
+ok(await call('POST', '/v1/914/tracker/scan', { rows: [] }), 'scans are a different budget');
+
+// a realistic busy store: 60 open work orders, several passes, every one uploaded a few times (new hash each), scans every 10 minutes: no budget trips
+await clearBudget();
+const mp2 = (await call('GET', '/v1/tracker/master')).j.publicJwk;
+ok(await call('POST', '/v1/326/tracker/key', await C.newStoreKey(326, mp2)), 'key 326');
+const busy = Array.from({ length: 60 }, (_, i) => ({ wo: 770000 + i, statusId: 2, status: 'Work in progress', updatedAt: '2026-11-11T10:00:00Z', createdAt: '2026-11-10T10:00:00Z' }));
+let sent = 0;
+for (let pass = 0; pass < 4; pass++) {
+  const list = busy.map((x) => Object.assign({}, x, { updatedAt: '2026-11-11T1' + pass + ':00:00Z' }));
+  await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
+  let more = true, guard = 0;
+  while (more && guard++ < 10) {
+    const sc = await call('POST', '/v1/326/tracker/scan', { rows: list, storeName: 'Lynnhaven', by: 'Tech B' });
+    ok(sc, 'busy scan'); more = sc.j.more;
+    for (const nd of sc.j.need) { ok(await raw(326, nd.wo, 'b' + pass + '-' + nd.wo, 2, { cart: { items: [{ name: 'Part' + pass, sku: 'P' + pass, price: 10 * pass, quantity: 1 }], payment: { total: 10 * pass } } }), 'busy upload'); sent++; }
+    if (!sc.j.need.length) break;
+  }
+}
+assert.ok(sent >= 100, 'scan-driven uploads: ' + sent);
+// ...and every one of the 60 uploaded a few more times (new hash each, as when notes and carts keep changing)
+for (let k = 0; k < 4; k++) for (const x of busy) { r = await raw(326, x.wo, 'more' + k + '-' + x.wo, 2, { cart: { items: [{ name: 'Line' + k, sku: 'L' + k, price: 5 * k, quantity: 1 }], payment: { total: 5 * k } } }); assert.equal(r.status, 200, 'busy store, upload ' + k + ' of ' + x.wo + ': ' + JSON.stringify(r.j)); sent++; }
+assert.ok(sent >= 340);
+for (const k of ['snap', 'chg', 'scan', 'fresh']) { const row = await env.TR.prepare("SELECT n FROM write_budget WHERE store = 326 AND kind = ? AND bucket = ?").bind(k, bucketH()).first(); assert.ok(row && row.n < BUDGET[k].hour * 0.7, k + ' stays under its hourly limit even in this deliberately busy hour: ' + (row && row.n)); }
+
+// scan budget: too many never-listed work orders in an hour → 429, nothing written; a scan of known ones is unaffected
+await clearBudget(); await seed(326, 'fresh', bucketH(), BUDGET.fresh.hour - 5);
+const wcount = await q1('SELECT COUNT(*) AS n FROM workorders'), scount = await q1('SELECT COUNT(*) AS n FROM scans');
+r = await call('POST', '/v1/326/tracker/scan', { rows: Array.from({ length: 10 }, (_, i) => ({ wo: 660000 + i, statusId: 2, status: 'x' })) });
+assert.equal(r.status, 429); assert.match(r.j.error, /new work orders/);
+assert.equal(await q1('SELECT COUNT(*) AS n FROM workorders'), wcount); assert.equal(await q1('SELECT COUNT(*) AS n FROM scans'), scount, 'nothing written');
+ok(await call('POST', '/v1/326/tracker/scan', { rows: busy.slice(0, 5) }), 'known work orders still fit');
+await clearBudget(); await seed(326, 'scan', bucketH(), BUDGET.scan.hour);
+assert.equal((await call('POST', '/v1/326/tracker/scan', { rows: busy.slice(0, 5) })).status, 429, 'scan count');
+
+// sales: a day outside the real window is refused; request budget
+await clearBudget();
+assert.equal((await call('POST', '/v1/914/tracker/sales', { day: '2019-01-01', rows: [] })).status, 400);
+assert.equal((await call('POST', '/v1/914/tracker/sales', { day: '2099-01-01', rows: [] })).status, 400);
+ok(await call('POST', '/v1/914/tracker/sales', { day: bucketD(), rows: [] }), 'today');
+await seed(914, 'sales', bucketH(), BUDGET.sales.hour);
+const sdays = await q1('SELECT COUNT(*) AS n FROM sales_days');
+r = await call('POST', '/v1/914/tracker/sales', { day: bucketD(), rows: [{ saleId: 'zz', total: 5 }] }); assert.equal(r.status, 429);
+assert.equal(await q1('SELECT COUNT(*) AS n FROM sales_days'), sdays); assert.equal(await q1("SELECT COUNT(*) AS n FROM sales WHERE sale_id = 'zz'"), 0);
+
+// Retrace write routes: request budgets per store
+await clearBudget();
+for (const [kind, path, body] of [['rt_history', 'history', { label: '180001-0000600002', rows: [] }], ['rt_sweep', 'sweep', { items: [] }], ['rt_watch', 'watch', { movements: [] }]]) {
+  await seed(914, kind, bucketH(), BUDGET[kind].hour);
+  r = await call('POST', '/v1/914/tracker/retrace/' + path, body); assert.equal(r.status, 429, path + ' ' + JSON.stringify(r.j));
+}
+await clearBudget();
+assert.notEqual((await call('POST', '/v1/914/tracker/retrace/history', { label: '180001-0000600002', rows: [] })).status, 429, 'under the limit it is answered normally');
+
+// a missing budget table never blocks a request (migration applied after the deploy)
+await env.TR.prepare('ALTER TABLE write_budget RENAME TO write_budget_off').run();
+const errs = []; const ce = console.error; console.error = (...a) => errs.push(a.join(' '));
+try { ok(await raw(914, 880003, 'nb1', 2, { cart: { items: [{ name: 'x', sku: 'x', price: 1, quantity: 1 }], payment: { total: 1 } } }), 'no budget table: allowed'); } finally { console.error = ce; }
+assert.ok(errs.some((e) => /write budget/.test(e)));
+await env.TR.prepare('ALTER TABLE write_budget_off RENAME TO write_budget').run();
+
+// --- errors: a 500 never carries the real error; a short id ties it to the log
+{
+  const logged = []; const ce2 = console.error; console.error = (...a) => logged.push(a.map(String).join(' '));
+  let res;
+  try {
+    const bad = Object.assign({}, E, { TR: { prepare() { throw new Error('D1_ERROR: no such table: secret_table_xyz at /internal/path'); }, batch: async () => [] } });
+    const rr = await worker.fetch(new Request('https://t.test/v1/914/tracker/key', { method: 'GET', headers: { 'x-aethernet-key': 'k' } }), bad, {});
+    res = { status: rr.status, j: await rr.json() };
+  } finally { console.error = ce2; }
+  assert.equal(res.status, 500);
+  assert.match(res.j.error, /^server error \(id [0-9a-f]{8}\)$/);
+  assert.ok(!/secret_table|D1_ERROR|internal/.test(JSON.stringify(res.j)), 'no raw error text');
+  const id = /id ([0-9a-f]{8})/.exec(res.j.error)[1];
+  assert.ok(logged.some((l) => l.includes(id) && l.includes('server error')), 'the id is logged next to the real error');
+  assert.ok(logged.some((l) => l.includes(id) && l.includes('secret_table_xyz')) || logged.length >= 1);
+  assert.equal((await call('POST', '/v1/914/tracker/key', null)).status < 500, true);
+  // deliberate 4xx answers keep their message
+  const big = await worker.fetch(new Request('https://t.test/v1/914/tracker/daily', { method: 'POST', headers: { 'x-aethernet-key': 'k' }, body: 'x'.repeat(5000) }), E, {});
+  assert.equal(big.status, 413); assert.equal((await big.json()).error, 'too large');
+}
 
 await dispose();
 rmSync('.wrangler-test', { recursive: true, force: true });

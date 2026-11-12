@@ -56,7 +56,7 @@ await person('rep@x.com', 'stores', [326], ['reports', 'usage'], 0);
 
 const call = async (as, method, path, body) => {
   const u = new URL('http://localhost' + path); u.searchParams.set('as', as);
-  const r = await site.fetch(new Request(u, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined }), E);
+  const r = await site.fetch(new Request(u, { method, headers: { 'sec-fetch-site': 'same-origin', ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined }), E);
   const text = await r.text(); let j = null; try { j = JSON.parse(text); } catch (_) {}
   return { status: r.status, j, text };
 };

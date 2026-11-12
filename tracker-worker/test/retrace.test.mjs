@@ -245,9 +245,10 @@ await T.prepare("INSERT INTO store_keys (store, public_jwk, wrapped_private, cre
 const SEALED = 'v1.' + 'A'.repeat(200);
 const EV = S.partEvents(fx('wo-events').events);
 let n = 0;
-const sendWo = (wo, statusId, items, partEvents, store = 914) => call('POST', '/v1/' + store + '/tracker/wo/' + wo, { hash: 'h' + (++n), plain: Object.assign({
+// The Worker only takes a detail for a work order the store's scan has listed: list it first, the way /scan does.
+const sendWo = async (wo, statusId, items, partEvents, store = 914) => { await T.prepare('INSERT OR IGNORE INTO workorders (store, wo, is_open, first_seen_at) VALUES (?, ?, 1, ?)').bind(store, wo, '2026-10-20T09:00:00Z').run(); return call('POST', '/v1/' + store + '/tracker/wo/' + wo, { hash: 'h' + (++n), plain: Object.assign({
   workorder: { workorderId: wo, storeId: store, statusId, status: 's' + statusId, updatedAt: '2026-10-20T10:00:00Z', csuSalesOrderId: 'FSO000033333' },
-  auditTrail: [], cart: { items, payment: { total: 0 }, salesId: 'FSO000033333' } }, partEvents ? { partEvents } : {}), sealed: SEALED });
+  auditTrail: [], cart: { items, payment: { total: 0 }, salesId: 'FSO000033333' } }, partEvents ? { partEvents } : {}), sealed: SEALED }); };
 const wl = (lineId, serial, partStatus = 'Reserved') => ({ lineId, name: 'Battery', sku: '180001', price: 89, quantity: 1, serial, partStatus, serialStatus: partStatus, warehouseId: '914', itemId: 9180001 });
 const woMoves = async (wo) => (await T.prepare("SELECT label, kind, user_name, at, source FROM inv_movements WHERE store = 914 AND ref_type = 'wo' AND ref_id = ? ORDER BY id").bind(String(wo)).all()).results;
 

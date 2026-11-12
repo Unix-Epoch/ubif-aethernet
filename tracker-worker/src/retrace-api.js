@@ -96,6 +96,7 @@
 
   Admin side: retraceAdmin() below, mounted by trackerRoutes at /api/tracker/retrace/… (page 'retrace'; route list there).
 */
+import { spend } from './budget.js';
 import { passStmts } from './usage.js';
 import { TARGET_LISTED, LISTED_JOIN_SQL } from './retrace-listed.js';
 import { woSoldRoute, woPartsView } from './retrace-wo-parts.js';
@@ -464,6 +465,8 @@ export async function retraceStore(req, env, url, store, path, H) {
   }
 
   if (path === '/retrace/watch' && req.method === 'POST') {
+    const over = await spend(T, store, [['rt_watch', 1]]); // per-store request budget (src/budget.js)
+    if (over) return H.fail(429, over);
     const b = await H.readJson(req, MAX.watch);
     if (!Array.isArray(b.movements) || !b.movements.length || b.movements.length > WATCH_MAX) return H.fail(400, 'movements required (1 to ' + WATCH_MAX + ')');
     const at = H.now(), moves = b.movements.map((m) => normalize.watch(m, { sources: ['watch'] })).filter(Boolean);
@@ -475,6 +478,8 @@ export async function retraceStore(req, env, url, store, path, H) {
   }
 
   if (path === '/retrace/history' && req.method === 'POST') {
+    const over = await spend(T, store, [['rt_history', 1]]); // per-store request budget (src/budget.js)
+    if (over) return H.fail(429, over);
     const b = await H.readJson(req, MAX.history), label = cleanLabel(b.label);
     const all = Array.isArray(b.rows) ? b.rows : b.rows && Array.isArray(b.rows.value) ? b.rows.value : null;
     if (!label || !all || all.length > LIMIT.rows) return H.fail(400, 'label and rows required');
@@ -517,6 +522,8 @@ export async function retraceStore(req, env, url, store, path, H) {
   }
 
   if (path === '/retrace/sweep' && req.method === 'POST') {
+    const over = await spend(T, store, [['rt_sweep', 1]]); // per-store request budget (src/budget.js)
+    if (over) return H.fail(429, over);
     const b = await H.readJson(req, MAX.sweep);
     for (const k of ['items', 'labels', 'docs', 'movements', 'touched', 'pos', 'names', 'labelTotals', 'listed']) if (b[k] != null && (!Array.isArray(b[k]) || b[k].length > LIMIT[k])) return H.fail(400, k + ': a list of at most ' + LIMIT[k]);
     if (b.cursors != null && (typeof b.cursors !== 'object' || Array.isArray(b.cursors) || Object.keys(b.cursors).length > LIMIT.cursors)) return H.fail(400, 'cursors: { sweep: value }');
