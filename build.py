@@ -9,18 +9,27 @@ settings, then shards), then:
                               update checks), aethernet.readable.js (unminified)
   python3 build.py --release  build, then publish to the Gist so every
                               install auto-updates (also updates status.json's
-                              "latest", which drives the in-Portal update pill)
+                              "latest", which drives the in-Portal update pill).
+                              Refuses (no override) unless: the branch is `main`
+                              or `release-*`, the working tree is clean,
+                              `node test-client/run.mjs` passes, WAYMARK_API /
+                              TRACKER_API aren't set, the built bundle holds no
+                              code from DEV_ONLY_FILES, and every channel's live
+                              status.json matches the local one (see below).
   python3 build.py --dev      build the DEV channel (dist-dev/) and publish it to
                               the dev Gist: "Aethernet (dev)", its own install,
                               storage and Worker, plus the dev tools in src/dev/.
                               Every dev publish gets a new build number:
-                              DEV_BASE.N (e.g. 2.16.0.3).
+                              DEV_BASE.N (e.g. 2.16.0.3), N = max(dev-build.txt,
+                              the live dev Gist's N) + 1.
   python3 build.py --demo     build the DEMO channel (dist-demo/) and publish it
                               to the demo Gist: a cut-down "Aethernet" with only
                               the shards in DEMO["shards"], no patch notes,
                               a minimal About, and no Worker traffic (no store
                               check, feedback, usage or Waymark). Built from the
-                              `demo` git branch; bump DEMO["version"] first.
+                              `demo` git branch (and, like --release, only with
+                              a clean tree, passing tests and no env overrides);
+                              bump DEMO["version"] first.
 
 Workflow (Garrett, Sep 30, 2026): new work goes to the `dev` git branch and
 `--dev` straight away; a session is later bundled into one public release
@@ -41,7 +50,16 @@ Notices (status.json on the same Gist, read live by every install within
   python3 build.py --status-update "New message"   same notice, new text (re-shows if dismissed)
   python3 build.py --status-fixed 2.10.1           installs at/after 2.10.1 stop showing it
   python3 build.py --status-clear                  remove the notice
-  python3 build.py --status-show                   print what's live
+  python3 build.py --status-show                   print local vs live, per channel (read-only)
+
+Status base check: every command that publishes a status file (--release,
+--dev, --demo, --status*, --bulletin*) first reads that channel's LIVE
+status.json (GitHub API) and compares it with the local file, ignoring only
+"latest". If they differ, or the live copy can't be read, it stops and prints
+the difference; choose with --status-base live (adopt the live copy as the
+base, written to the local file) or --status-base local (publish the local
+copy over live; also the way past an unreadable live copy). --status-show
+prints both for every channel and whether they match, and publishes nothing.
 
 Severity is info, warning or error. --pause is the kill switch: those
 shards stop acting everywhere until the notice is cleared or fixed.
@@ -181,10 +199,22 @@ def gist_raw(gist_id: str) -> str:
     return f"https://gist.githubusercontent.com/Unix-Epoch/{gist_id}/raw"
 
 
-def dev_version(root: Path, bump: bool) -> str:
+def dev_version(root: Path, bump: bool, live: str | None = None) -> str:
+    """DEV_BASE.N. A publish (bump=True) takes N = max(local counter, live dev Gist's N) + 1, so a
+    machine with a stale dev-build.txt can't publish a lower version than what's already out.
+    `live` is the dev Gist's current @version. A different DEV_BASE there leaves the local counter alone."""
     f = root / DEV["counter"]
     n = int(f.read_text().strip()) if f.exists() else 0
     if bump:
+        if live:
+            prefix = DEV_BASE + "."
+            if live.startswith(prefix) and live[len(prefix):].isdigit():
+                lv = int(live[len(prefix):])
+                if lv > n:
+                    print(f"Note: the live dev Gist is at {live}, ahead of this machine's {DEV['counter']} ({n}); numbering from {lv}.")
+                n = max(n, lv)
+            else:
+                print(f"Note: the live dev Gist is at {live}, a different base than {DEV_BASE}; numbering from the local counter ({n}).")
         n += 1
         f.write_text(f"{n}\n")
     return f"{DEV_BASE}.{max(n, 1)}"
@@ -383,16 +413,20 @@ def as_tuple(v: str) -> tuple:  # "2.16.0.3" works too
     return tuple(int(x) for x in v.split("."))
 
 
-def published_version() -> str | None:
+def gist_version(gist_id: str) -> str | None:
     # Read through the GitHub API, not the raw URL: raw gist URLs sit behind
     # a CDN that served a stale copy right after publishing (seen on the
     # first release), which would let a same-version release slip through.
     content = subprocess.run(
-        ["gh", "api", f"gists/{GIST_ID}", "--jq", f'.files["{FILENAME}"].content'],
+        ["gh", "api", f"gists/{gist_id}", "--jq", f'.files["{FILENAME}"].content // ""'],
         check=True, capture_output=True, text=True,
     ).stdout
     m = re.search(r"^// @version\s+(\S+)", content, re.M)
     return m.group(1) if m else None
+
+
+def published_version() -> str | None:
+    return gist_version(GIST_ID)
 
 
 STATUS_FILE = "status.json"
@@ -475,6 +509,9 @@ def bulletins_command(root: Path, args) -> None:
     if args.bulletins_show:
         print(json.dumps(b, indent=2, ensure_ascii=False))
         return
+    preflight_status(root, ("public", "dev", "demo"), args.status_base)  # publish_status also rewrites the dev and demo files
+    status = load_status(root)
+    b = status.get("bulletins") or {}
     if args.bulletins_reset:
         status["bulletins"] = None
     else:
@@ -514,15 +551,16 @@ def apply_notice_extras(inc: dict, args) -> None:
 
 
 def status_command(root: Path, args) -> None:
-    status = load_status(root)
-    inc = status.get("incident")
     known = shard_ids(root)
     for cid in (args.shard or []) + (args.pause or []) + (args.mention or []) + [c for c, _ in (args.chip or [])]:
         if cid not in known:
             sys.exit(f"Unknown shard id {cid!r}. Known: {', '.join(sorted(known))}")
     if args.status_show:
-        print(json.dumps(status, indent=2, ensure_ascii=False))
+        status_show(root)
         return
+    preflight_status(root, ("public", "dev", "demo"), args.status_base)  # publish_status also rewrites the dev and demo files
+    status = load_status(root)
+    inc = status.get("incident")
     if args.status:
         severity, title, *rest = args.status
         if severity not in SEVERITIES:
@@ -553,6 +591,226 @@ def status_command(root: Path, args) -> None:
         status["incident"] = None
     mirror_legacy_shards(status.get("incident"))
     publish_status(root, status)
+
+
+# ---------------------------------------------------------------------------
+# Safety guards for everything that publishes.
+#
+# 1. Release gate: --release and --demo refuse unless the checkout is the right
+#    branch, clean, passing its tests, free of env overrides, and the built
+#    bundle holds no dev-channel code. There is no bypass flag.
+# 2. Status base check: a channel's status file is only published after it was
+#    compared with the LIVE copy (ignoring "latest"); a difference stops the run
+#    until --status-base live|local says which one wins.
+# ---------------------------------------------------------------------------
+
+ENV_OVERRIDES = ("WAYMARK_API", "TRACKER_API")  # the env vars build() honours; they redirect a bundle to another Worker
+RELEASE_BRANCH_RE = re.compile(r"main|release-.+")
+DEMO_BRANCH = "demo"
+TEST_CMD = ["node", "test-client/run.mjs"]
+SHARD_RE = r"AE\.shard\(\{\s*id:\s*'(\w+)'"
+
+
+def git_out(root: Path, *args: str) -> str:
+    res = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+    if res.returncode:
+        sys.exit(f"Refusing to publish: `git {' '.join(args)}` failed: {res.stderr.strip() or res.stdout.strip()}")
+    return res.stdout
+
+
+def release_gate(root: Path, channel: str) -> None:
+    """Refuse (sys.exit) before anything is built or published unless every condition holds.
+    channel is "public" (--release) or "demo" (--demo).
+
+    Dev-only shards (Return, Provoke, Tactician, ...) are NOT in DEV_ONLY_FILES: they are in
+    every non-dev bundle built from `dev` and default to on. The branch check below is what keeps
+    them out of public releases; which shards go public is the owner's call, so they are not added
+    to DEV_ONLY_FILES here."""
+    flag = "--release" if channel == "public" else "--demo"
+    branch = git_out(root, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    if channel == "public":
+        if not RELEASE_BRANCH_RE.fullmatch(branch):
+            sys.exit(f"Refusing {flag}: the checked-out branch is {branch!r}, but public releases are only cut from `main` or `release-*`. "
+                     "Anything on `dev` (Return, Provoke, Tactician and other dev-only shards) would ship to every store.")
+    elif branch != DEMO_BRANCH:
+        sys.exit(f"Refusing {flag}: the checked-out branch is {branch!r}; the demo is only published from the `{DEMO_BRANCH}` branch.")
+    dirty = git_out(root, "status", "--porcelain").strip()
+    if dirty:
+        shown = "\n".join("  " + l for l in dirty.splitlines()[:15])
+        sys.exit(f"Refusing {flag}: the working tree isn't clean ({len(dirty.splitlines())} modified/untracked path(s); git-ignored files don't count). "
+                 f"Commit or stash first:\n{shown}")
+    set_vars = [v for v in ENV_OVERRIDES if v in os.environ]
+    if set_vars:
+        sys.exit(f"Refusing {flag}: environment override(s) set: {', '.join(set_vars)}. They would point the published bundle at another Worker. Unset them.")
+    res = subprocess.run(TEST_CMD, cwd=root, capture_output=True, text=True)
+    lines = [l for l in (res.stdout + res.stderr).strip().splitlines() if l.strip()]
+    last = lines[-1] if lines else "(no output)"
+    if res.returncode:
+        sys.exit(f"Refusing {flag}: `{' '.join(TEST_CMD)}` exited {res.returncode}. Last line: {last}")
+    print(f"Tests passed ({' '.join(TEST_CMD)}): {last}")
+
+
+def dev_only_markers(root: Path) -> dict:
+    """label -> regex for code that exists only in DEV_ONLY_FILES, derived from the files themselves:
+    the file's banner comment, each shard id it registers, and each AE.<name> it defines."""
+    markers = {}
+    for name in sorted(DEV_ONLY_FILES):
+        f = root / "src" / name
+        if not f.exists():
+            continue
+        text = f.read_text()
+        markers[f"{name} banner"] = re.escape(f"// ===== {name} =====")
+        for sid in re.findall(SHARD_RE, text):
+            markers[f"{name} shard id '{sid}'"] = r"""\bid\s*:\s*['"]""" + re.escape(sid) + r"""['"]"""
+        for g in sorted(set(re.findall(r"^\s*AE\.(\w+)\s*=[^=]", text, re.M))):
+            markers[f"{name} AE.{g}"] = r"\bAE\." + re.escape(g) + r"\s*=[^=]"
+    return markers
+
+
+def scan_for_dev_code(root: Path, dist: Path) -> None:
+    """Fail if a non-dev build (all three published-style files in `dist`) contains dev-only code."""
+    markers = dev_only_markers(root)
+    hits = []
+    for name in (FILENAME, META_FILENAME, READABLE_FILENAME):
+        f = dist / name
+        if not f.exists():
+            continue
+        text = f.read_text()
+        hits += [f"{name}: {label}" for label, rx in markers.items() if re.search(rx, text)]
+    if hits:
+        sys.exit("Refusing to publish: the build contains dev-channel code:\n  " + "\n  ".join(hits))
+    print(f"Dev-code scan clean ({len(markers)} markers from {', '.join(sorted(DEV_ONLY_FILES)) or 'no files'}).")
+
+
+class LiveStatusError(Exception):
+    pass
+
+
+STATUS_CHANNELS = {  # name -> (local file, Gist id); every Gist holds the file as status.json
+    "public": (STATUS_FILE, GIST_ID),
+    "dev": (DEV["status_file"], DEV["gist_id"]),
+    "demo": (DEMO["status_file"], DEMO["gist_id"]),
+}
+# The Gist API marks every file "truncated" once the Gist is large (the bundle is ~900 KB), even a 1 KB status.json. Its
+# raw_url is pinned to the file's blob, so unlike the plain raw URL it can't serve a stale copy: read that instead.
+_STATUS_RAW = "RAW:"
+_STATUS_JQ = ('if .files["status.json"] == null then "" elif .files["status.json"].truncated then "' + _STATUS_RAW + '" + .files["status.json"].raw_url '
+              'else .files["status.json"].content end')
+
+
+def fetch_live_status(gist_id: str) -> dict:
+    """The channel's live status.json, read through the GitHub API (same route as gist_version):
+    the raw URL can serve a stale copy right after a publish. A Gist with no status.json gives {}."""
+    res = subprocess.run(["gh", "api", f"gists/{gist_id}", "--jq", _STATUS_JQ], capture_output=True, text=True)
+    if res.returncode:
+        raise LiveStatusError((res.stderr or res.stdout).strip() or f"gh exited {res.returncode}")
+    if not res.stdout.strip():
+        return {}
+    text = res.stdout
+    if text.startswith(_STATUS_RAW):
+        url = text[len(_STATUS_RAW):].strip()
+        if not re.match(r"^https://gist\.githubusercontent\.com/[^/]+/" + re.escape(gist_id) + r"/raw/[0-9a-f]{40}/status\.json$", url):
+            raise LiveStatusError("unexpected raw_url for status.json")
+        try:
+            with urllib.request.urlopen(url, timeout=20) as r:
+                text = r.read().decode("utf-8")
+        except Exception as e:  # noqa: BLE001 - any failure means "can't read live"
+            raise LiveStatusError(f"couldn't read the pinned status.json ({e})")
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        raise LiveStatusError(f"live status.json isn't valid JSON ({e})")
+    if not isinstance(data, dict):
+        raise LiveStatusError("live status.json isn't a JSON object")
+    return data
+
+
+def without_latest(status: dict) -> dict:
+    return {k: v for k, v in status.items() if k != "latest"}
+
+
+def read_status_file(root: Path, name: str) -> dict:
+    f = root / name
+    return json.loads(f.read_text()) if f.exists() else {"latest": None, "incident": None}
+
+
+def write_status_file(root: Path, name: str, status: dict) -> None:
+    (root / name).write_text(json.dumps(status, indent=2, ensure_ascii=False) + "\n")
+
+
+def status_summary(status: dict) -> list:
+    inc, out = status.get("incident"), []
+    if inc:
+        out.append(f"incident {inc.get('id')!r}: {inc.get('severity')} \"{inc.get('title')}\" updated {inc.get('updated')}")
+        out.append(f"  pauses: {', '.join(inc.get('pause') or []) or 'none'}; shards: {', '.join(inc.get('shards') or []) or 'none'}; fixedIn: {inc.get('fixedIn')}")
+    else:
+        out.append("incident: none")
+    b = status.get("bulletins")
+    out.append("bulletins: " + (json.dumps(b, ensure_ascii=False) if b else "none"))
+    other = sorted(set(status) - {"latest", "incident", "bulletins"})
+    if other:
+        out.append("other keys: " + ", ".join(other))
+    return out
+
+
+def status_diff(live: dict, local: dict) -> str:
+    import difflib
+    dump = lambda d: json.dumps(without_latest(d), indent=2, ensure_ascii=False, sort_keys=True).splitlines()
+    lines = ["  LIVE:"] + ["    " + l for l in status_summary(live)] + ["  LOCAL:"] + ["    " + l for l in status_summary(local)]
+    lines += ["  diff (- live, + local; \"latest\" ignored):"]
+    lines += ["    " + l for l in difflib.unified_diff(dump(live), dump(local), "live", "local", lineterm="", n=2)]
+    return "\n".join(lines)
+
+
+def preflight_status(root: Path, names, mode: str | None) -> None:
+    """Compare each channel's LIVE status with the local file (ignoring "latest") BEFORE anything is
+    modified or published. Equal: carry on (the local file takes the live "latest"). Different, or live
+    unreadable: stop, unless `mode` says which copy is the base:
+      "live"  adopt the live copy (written to the local file), then apply the change
+      "local" publish the local copy over live (also the only way past an unreadable live copy)"""
+    fetched, problems = {}, []
+    for name in names:
+        fname, gid = STATUS_CHANNELS[name]
+        local = read_status_file(root, fname)
+        try:
+            fetched[name] = (fname, local, fetch_live_status(gid))
+        except LiveStatusError as e:
+            if mode == "local":
+                print(f"[{name}] can't read the live status ({e}); publishing the local {fname} because --status-base local was given.")
+            else:
+                problems.append(f"[{name}] can't read the live {fname} from Gist {gid[:8]}…: {e}\n  Not publishing blind. Retry, or pass --status-base local to publish the local copy anyway.")
+    for name, (fname, local, live) in fetched.items():
+        if without_latest(live) != without_latest(local) and mode is None:
+            problems.append(f"[{name}] live status differs from local {fname}:\n{status_diff(live, local)}")
+    if problems:
+        sys.exit("Refusing to publish: the status base check failed.\n" + "\n".join(problems) +
+                 "\n\nChoose explicitly: --status-base live (adopt the live copy as the base) or --status-base local (publish the local copy, overwriting live).")
+    for name, (fname, local, live) in fetched.items():
+        if without_latest(live) != without_latest(local):
+            if mode == "live":
+                write_status_file(root, fname, live)
+                print(f"[{name}] --status-base live: {fname} replaced by the live copy.")
+                continue
+            print(f"[{name}] --status-base local: the local {fname} will overwrite the live status.\n{status_diff(live, local)}")
+        if live.get("latest") != local.get("latest"):  # "latest" is only ever set by a release/dev/demo publish, so keep the live one
+            write_status_file(root, fname, {**local, "latest": live.get("latest")})
+
+
+def status_show(root: Path) -> None:
+    """Print local and live status for every channel and whether they match. Read-only."""
+    for name, (fname, gid) in STATUS_CHANNELS.items():
+        local = read_status_file(root, fname)
+        print(f"== {name}: {fname} (Gist {gid[:8]}…)\nLOCAL: {json.dumps(local, ensure_ascii=False)}")
+        try:
+            live = fetch_live_status(gid)
+        except LiveStatusError as e:
+            print(f"LIVE: can't read ({e})\nMATCH: unknown\n")
+            continue
+        print(f"LIVE:  {json.dumps(live, ensure_ascii=False)}")
+        if without_latest(live) == without_latest(local):
+            print("MATCH (ignoring latest): yes\n" + ("" if live.get("latest") == local.get("latest") else f"  (latest differs: live {live.get('latest')}, local {local.get('latest')})\n"))
+        else:
+            print("MATCH (ignoring latest): NO\n" + status_diff(live, local) + "\n")
 
 
 def check_releasable() -> str | None:
@@ -586,6 +844,7 @@ def release(root: Path, out: Path, live: str | None) -> None:
     for name in (FILENAME, META_FILENAME, READABLE_FILENAME):
         gist_put(out.parent / name, files)
     print(f"Published v{VERSION} (was {live or 'nothing'}). Install/update URL:\n  {RAW_URL}")
+    # (the status base check already ran in do_release, before anything was published)
     # Tell running installs there's an update (they check status.json every 10 minutes).
     entry = next((n for n in load_notes(root) if n["version"] == VERSION), None)  # none for a quiet patch
     status = load_status(root)
@@ -593,12 +852,18 @@ def release(root: Path, out: Path, live: str | None) -> None:
     publish_status(root, status)
 
 
-def dev_release(root: Path) -> None:
+def dev_release(root: Path, status_base: str | None = None) -> None:
     global CHANNEL
     if not DEV["gist_id"]:
         sys.exit("No dev Gist yet: set DEV['gist_id'] in build.py.")
     CHANNEL = "dev"
-    version = dev_version(root, bump=True)
+    # dev's status takes its notice from the public file, so both are checked against live first
+    preflight_status(root, ("dev", "public"), status_base)
+    try:
+        live_dev = gist_version(DEV["gist_id"])
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"Refusing to publish: can't read the live dev version ({(e.stderr or '').strip() or e}); not numbering a build blind.")
+    version = dev_version(root, bump=True, live=live_dev)
     pull_reports(root, DEV_BASE, DEV["waymark_api"])
     out = build(root, version)
     files = gist_files(DEV["gist_id"])
@@ -611,10 +876,12 @@ def dev_release(root: Path) -> None:
     publish_dev_status(root, status)
 
 
-def demo_release(root: Path) -> None:
+def demo_release(root: Path, status_base: str | None = None) -> None:
     global CHANNEL
     if not DEMO["gist_id"]:
         sys.exit("No demo Gist yet: set DEMO['gist_id'] in build.py.")
+    release_gate(root, "demo")
+    preflight_status(root, ("demo", "public"), status_base)  # the demo takes its notice from the public file
     content = subprocess.run(["gh", "api", f"gists/{DEMO['gist_id']}", "--jq", f'.files["{FILENAME}"].content // ""'],
                              check=True, capture_output=True, text=True).stdout
     m = re.search(r"^// @version\s+(\S+)", content, re.M)
@@ -622,6 +889,7 @@ def demo_release(root: Path) -> None:
         sys.exit(f"Refusing to publish: DEMO version {DEMO['version']} isn't higher than the published {m.group(1)}.")
     CHANNEL = "demo"
     out = build(root, DEMO["version"])
+    scan_for_dev_code(root, out.parent)
     # Nothing that gives it away: the word "demo", or any left-out shard / feature.
     leaks = sorted(set(re.findall(r"(?i)\bdemo\b|patch notes|waymark|macrocosmos|esuna|recitation|bountiful|quick synthesis|lay of the land|"
                                   r"send feedback|workers\.dev|ae_usage", out.read_text())))
@@ -635,6 +903,17 @@ def demo_release(root: Path) -> None:
     status["latest"] = {"version": DEMO["version"], "date": now_utc()}
     status["incident"] = demo_incident(load_status(root).get("incident"))
     publish_channel_status(root, DEMO["status_file"], DEMO["gist_id"], status)
+
+
+def do_release(root: Path, status_base: str | None = None) -> None:
+    release_gate(root, "public")                                       # branch, clean tree, tests, env: before anything else
+    live = check_releasable()                                          # read-only: VERSION must beat the live one
+    preflight_status(root, ("public", "dev", "demo"), status_base)     # release() rewrites all three status files
+    pull_reports(root, VERSION, WAYMARK_API)  # bug reports quoted as fixed in this version
+    stamp_release_date(root)  # before building, so the published file carries it
+    out = build(root)
+    scan_for_dev_code(root, out.parent)                                # the non-dev bundle must hold no dev-only code
+    release(root, out, live)
 
 
 if __name__ == "__main__":
@@ -665,6 +944,8 @@ if __name__ == "__main__":
     ap.add_argument("--mention", action="append", metavar="ID", help="shard named in the notice: icon + link, no badge (2.22.0+)")
     ap.add_argument("--chip", action="append", nargs=2, metavar=("ID", "TEXT"), help="badge on a shard's Settings row, only on installs older than --chip-below (2.22.0+)")
     ap.add_argument("--chip-below", metavar="VERSION", help="chips show on installs older than this (default: VERSION, the version being pushed)")
+    ap.add_argument("--status-base", choices=("live", "local"), help="when a channel's live status.json differs from the local file (or can't be read): "
+                    "'live' adopts the live copy as the base, 'local' publishes the local copy over it. Never chosen for you.")
     ap.add_argument("--tag", metavar="TEXT", help='badge text on the shards\' Settings rows (default "Known issue")')
     args = ap.parse_args()
     root = Path(__file__).resolve().parent
@@ -681,23 +962,20 @@ if __name__ == "__main__":
         status_command(root, args)
         sys.exit(0)
     if args.dev:
-        dev_release(root)
+        dev_release(root, args.status_base)
         sys.exit(0)
     if args.dev_build:
         CHANNEL = "dev"
         build(root, dev_version(root, bump=False))
         sys.exit(0)
     if args.demo:
-        demo_release(root)
+        demo_release(root, args.status_base)
         sys.exit(0)
     if args.demo_build:
         CHANNEL = "demo"
         build(root, DEMO["version"])
         sys.exit(0)
     if args.release:
-        live = check_releasable()
-        pull_reports(root, VERSION, WAYMARK_API)  # bug reports quoted as fixed in this version
-        stamp_release_date(root)  # before building, so the published file carries it
-    out = build(root)
-    if args.release:
-        release(root, out, live)
+        do_release(root, args.status_base)
+        sys.exit(0)
+    build(root)

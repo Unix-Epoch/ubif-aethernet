@@ -429,6 +429,8 @@ Two channels, two installs:
 | Worker | aethernet-waymark | aethernet-waymark-dev (`wrangler deploy --env dev`), same D1 database, no cron |
 | Version | `VERSION` (2.15.0) | `DEV_BASE.N` (2.16.0.1, 2.16.0.2 …; `dev-build.txt`) |
 | Build | `build.py` / `--release` | `build.py --dev-build` / `--dev` (publish) |
+| Publish guards | `--release` only from `main` / `release-*`, clean tree, passing `test-client`, no `WAYMARK_API`/`TRACKER_API`, no dev-only code in the bundle | none on the branch; `--dev` numbers builds `max(dev-build.txt, live)+1` |
+| Status files | every publish first compares the live `status.json` with the local one; a difference stops it until `--status-base live` or `--status-base local` | same |
 
 **Workflow (Garrett, Sep 30, 2026):** every feature is committed to `dev` and
 published with `build.py --dev` straight away. When Garrett asks to bundle the
