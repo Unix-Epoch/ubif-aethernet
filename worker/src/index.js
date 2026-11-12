@@ -251,6 +251,15 @@ async function allowed(env, store) {
 async function route(req, env) {
   const url = new URL(req.url);
   if (url.pathname.startsWith('/v1/admin/')) return admin(req, env, url);
+  // CHECKINS OFF (Nov 11, 2026). Return's saved check-ins held the customer's details and the device passcode in plain
+  // text, behind nothing but the app key that ships in every install plus a store number, so anyone with the script could
+  // read a store's drafts. Every checkins route (any method, any path under it) answers 410 here, before the access
+  // check or any database call. checkins() below and the checkin_drafts table are kept, but nothing reaches them.
+  // Do not delete this gate until ALL of these are true:
+  //   1. the data is sealed with the store's key (or kept only on the device), never readable from the Worker as plain text;
+  //   2. the device passcode is never stored at all;
+  //   3. a per-store credential gates these routes (the shared app key + store number is not enough).
+  if (/^\/v1\/\d{1,6}\/checkins(?:\/|$)/.test(url.pathname)) return fail(410, 'saved check-ins are turned off');
   // Bug reports quoted as fixed in a version (public: the same text goes in the patch notes).
   if (req.method === 'GET' && url.pathname === '/v1/fixed') {
     const v = url.searchParams.get('version') || '';
@@ -529,7 +538,8 @@ async function cleanup(env) {
     // List-change history: keep 90 days.
     env.DB.prepare('DELETE FROM history WHERE wo IS NULL AND at < ?').bind(new Date(Date.now() - 90 * 86400000).toISOString()),
     env.DB.prepare('DELETE FROM cleaning_links WHERE day < ?').bind(new Date(Date.now() - LINK_DAYS * 86400000).toISOString().slice(0, 10)),
-    env.DB.prepare('DELETE FROM checkin_drafts WHERE at < ?').bind(new Date(Date.now() - CHECKIN_DAYS * 86400000).toISOString()),
+    // Saved check-ins are off (see CHECKINS OFF in route()): nothing should be here, so anything that is gets deleted.
+    env.DB.prepare('DELETE FROM checkin_drafts'),
   ]);
 }
 
