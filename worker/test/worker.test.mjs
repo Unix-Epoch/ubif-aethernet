@@ -118,4 +118,47 @@ assert.equal((await call('GET', '/v1/914/checkinsx')).status, 404, 'only the che
 const sqls = [];
 await worker.scheduled({}, { DB: { prepare(sql) { sqls.push(sql); const q = { bind() { return q; } }; return q; }, async batch() { return []; } } });
 assert.ok(sqls.includes('DELETE FROM checkin_drafts'), 'cleanup empties checkin_drafts');
+
+// ---- access call: names travel in headers (x-aethernet-store-name / x-aethernet-user, encodeURIComponent), old ?name=&user= still read
+const seenRows = [];
+const accDb = { prepare(sql) { let a = []; const q = { bind(...x) { a = x; return q; }, async run() { if (/INSERT INTO store_seen/.test(sql)) seenRows.push({ store: a[0], name: a[1], user: a[4] }); return {}; }, async first() { return /FROM store_access/.test(sql) ? { 1: 1 } : null; }, async all() { return { results: [] }; } }; return q; }, batch() { throw new Error('DB touched'); } };
+const acc = async (path, headers = {}) => { const r = await worker.fetch(new Request('https://t.test' + path, { headers: { 'x-aethernet-key': 'k', ...headers } }), { APP_KEY: 'k', DB: accDb, LIMITER: null }); return { status: r.status, j: await r.json() }; };
+let r1 = await acc('/v1/914/access', { 'x-aethernet-store-name': encodeURIComponent('Newport News é'), 'x-aethernet-user': encodeURIComponent('Erin O’Baker') });
+assert.equal(r1.status, 200); assert.equal(r1.j.allowed, true);
+assert.deepEqual(seenRows.at(-1), { store: 914, name: 'Newport News é', user: 'Erin O’Baker' }, 'headers decoded');
+await acc('/v1/914/access?name=Old%20Store&user=Old%20User');
+assert.deepEqual(seenRows.at(-1), { store: 914, name: 'Old Store', user: 'Old User' }, 'query fallback when headers are absent');
+await acc('/v1/914/access?name=Query%20Store&user=Query%20User', { 'x-aethernet-store-name': 'Header%20Store', 'x-aethernet-user': 'Header%20User' });
+assert.deepEqual(seenRows.at(-1), { store: 914, name: 'Header Store', user: 'Header User' }, 'header wins over query');
+await acc('/v1/914/access?name=Fallback&user=Fallback%20User', { 'x-aethernet-store-name': '%E0%A4%A', 'x-aethernet-user': '%' });
+assert.deepEqual(seenRows.at(-1), { store: 914, name: 'Fallback', user: 'Fallback User' }, 'bad encoding is treated as absent');
+await acc('/v1/914/access', { 'x-aethernet-store-name': '%E0%A4%A', 'x-aethernet-user': '%' });
+assert.deepEqual(seenRows.at(-1), { store: 914, name: null, user: null }, 'bad encoding and no query: nothing recorded');
+await acc('/v1/914/access', { 'x-aethernet-store-name': encodeURIComponent('  A\n  b ' + 'x'.repeat(200)), 'x-aethernet-user': encodeURIComponent('u'.repeat(100)) });
+assert.equal(seenRows.at(-1).name.length, 80); assert.ok(seenRows.at(-1).name.startsWith('A b x'), 'whitespace collapsed, length capped'); assert.equal(seenRows.at(-1).user.length, 60);
+// the sandbox guard reads the header names too
+for (const h of [{ 'x-aethernet-store-name': encodeURIComponent('Sandbox Store') }, { 'x-aethernet-user': encodeURIComponent('Sandbox Tech') }]) {
+  const g = await acc('/v1/914/access', h); assert.equal(g.status, 403); assert.equal(g.j.error, 'sandbox data');
+}
+// CORS preflight lists the new headers (the userscript calls from portal.ubreakifix.net)
+const pre = await worker.fetch(new Request('https://t.test/v1/914/access', { method: 'OPTIONS', headers: { origin: 'https://portal.ubreakifix.net', 'access-control-request-headers': 'x-aethernet-key, x-aethernet-store-name, x-aethernet-user' } }), E);
+assert.equal(pre.status, 204);
+const allow = pre.headers.get('access-control-allow-headers').split(',').map((x) => x.trim().toLowerCase());
+for (const h of ['content-type', 'x-aethernet-key', 'x-aethernet-admin', 'x-aethernet-store-name', 'x-aethernet-user']) assert.ok(allow.includes(h), h + ' allowed');
+
+// ---- an unexpected failure: generic body with an id, the real error (SQL text) only in the log
+const SECRET = 'SQLITE_ERROR: no such column: secret_col in SELECT secret_col FROM store_access';
+const boom = { prepare() { throw new Error(SECRET); }, batch() { throw new Error(SECRET); } };
+const logged = []; const origErr = console.error; console.error = (...a) => logged.push(a.join(' '));
+let b500;
+try { const r = await worker.fetch(new Request('https://t.test/v1/914/access', { headers: { 'x-aethernet-key': 'k' } }), { APP_KEY: 'k', DB: boom, LIMITER: null }); b500 = { status: r.status, text: await r.text() }; } finally { console.error = origErr; }
+assert.equal(b500.status, 500);
+assert.ok(!/sqlite|secret_col|SELECT|no such/i.test(b500.text), 'no SQL text in the body: ' + b500.text);
+const j500 = JSON.parse(b500.text);
+assert.equal(j500.error, 'internal error'); assert.match(j500.id, /^[0-9a-f]{8}$/, 'short random id');
+assert.ok(logged.some((l) => l.includes('[' + j500.id + ']') && l.includes(SECRET)), 'id and real error logged');
+// deliberate 4xx messages are kept
+assert.equal((await call('GET', '/v1/fixed?version=bad')).j.error, 'version=X.Y.Z required');
+const bj = await worker.fetch(new Request('https://t.test/v1/914/usage', { method: 'POST', headers: { 'x-aethernet-key': 'k' }, body: '{bad' }), E2);
+assert.equal(bj.status, 400); assert.equal((await bj.json()).error, 'bad JSON');
 console.log('waymark worker: all passed');

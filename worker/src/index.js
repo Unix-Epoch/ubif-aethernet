@@ -50,7 +50,8 @@
     POST /v1/admin/config               { cleaningTarget?, reassemble?, by }   change them (installs pick them up on their next page load)
     GET  /v1/admin/auto-rules                                    Auto-Waymark rules' states
     POST /v1/admin/auto-rules           { rule, state }          off | staged (new WOs only) | live (backfill too)
-  Store access: GET /v1/:store/access?name=&user= answers { allowed, config } (and
+  Store access: GET /v1/:store/access answers { allowed, config } (store name + employee name come in headers
+  x-aethernet-store-name / x-aethernet-user, encodeURIComponent-encoded; the old ?name=&user= query is still read when a header is absent) (and
   records the store as seen). Every other /v1/:store/… call is refused (403)
   for stores without access.
   Daily cron: drop tags + history + Assize dismissals for WOs closed more than 7 days ago; Assize dismissals
@@ -112,16 +113,26 @@ const VERSION_RE = /^\d+\.\d+\.\d+$/;
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
-  'access-control-allow-headers': 'content-type, x-aethernet-key, x-aethernet-admin',
+  'access-control-allow-headers': 'content-type, x-aethernet-key, x-aethernet-admin, x-aethernet-store-name, x-aethernet-user',
   'access-control-max-age': '86400',
 };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...CORS } });
 const fail = (status, error) => json({ error }, status);
 const now = () => new Date().toISOString();
 
+// An unexpected failure: the caller gets a generic message and a short id; the real error (which can hold SQL text) goes to the Workers log under that id.
+export function errorId(e, where) {
+  const id = [...crypto.getRandomValues(new Uint8Array(4))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  console.error('[' + id + '] ' + (where || 'error') + ':', e && e.stack ? e.stack : e);
+  return id;
+}
+const serverError = (e, where) => json({ error: 'internal error', id: errorId(e, where) }, 500);
+
 // Plain text only: trim, collapse whitespace, drop control characters, cap length.
 const clean = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, max) : '');
 const tagName = (v) => clean(v, 32);
+// A header carrying text (Aethernet sends names encodeURIComponent-encoded so they stay out of URLs): decoded, or null when absent or badly encoded.
+const headerText = (req, name) => { const v = req.headers.get(name); if (v == null) return null; try { return decodeURIComponent(v); } catch (_) { return null; } };
 const who = (b) => ({ name: clean(b.by, 60) || 'Someone', id: Number.isInteger(b.byId) ? b.byId : null });
 
 async function body(req, max = 16000) {
@@ -317,7 +328,9 @@ async function route(req, env) {
   const what = m[2] || m[4] || 'all';
 
   if (req.method === 'GET' && what === 'access') {
-    const name = clean(url.searchParams.get('name'), 80) || null, user = clean(url.searchParams.get('user'), 60) || null, t = now();
+    // The store's name and the employee's name arrive in headers (x-aethernet-store-name, x-aethernet-user; encodeURIComponent-encoded) so no
+    // person's name sits in a request URL. Older installs still send ?name=&user=; those are used only when the header is absent or undecodable.
+    const name = clean(headerText(req, 'x-aethernet-store-name') ?? url.searchParams.get('name'), 80) || null, user = clean(headerText(req, 'x-aethernet-user') ?? url.searchParams.get('user'), 60) || null, t = now();
     await env.DB.prepare('INSERT INTO store_seen (store, name, first_at, last_at, loads, last_user) VALUES (?, ?, ?, ?, 1, ?) ' +
       'ON CONFLICT (store) DO UPDATE SET name = COALESCE(excluded.name, name), last_at = excluded.last_at, loads = loads + 1, last_user = COALESCE(excluded.last_user, last_user)')
       .bind(store, name, t, t, user).run();
@@ -651,6 +664,10 @@ async function sandboxGuard(req, url) {
     || (/^(storeName|store_name|name)$/.test(k) && sb(v, 'sandbox store'))
     || (/email/i.test(k) && typeof v === 'string' && v.trim().toLowerCase().endsWith('@example.invalid'));
   for (const [k, v] of url.searchParams) if (bad(k, v)) return hit();
+  for (const [h, k] of [['x-aethernet-store-name', 'name'], ['x-aethernet-user', 'user']]) { // the access call's names travel in headers now
+    const raw = req.headers.get(h); let v = raw; try { v = raw == null ? raw : decodeURIComponent(raw); } catch (_) { /* judged as sent */ }
+    if (v != null && bad(k, v)) return hit();
+  }
   if (req.method === 'GET') return null;
   let b = null;
   try { b = JSON.parse(await req.clone().text()); } catch (_) { return null; }
@@ -675,7 +692,9 @@ export default {
       if (sg) return sg;
       return await route(req, env);
     } catch (e) {
-      return fail(e instanceof SyntaxError || e.message === 'too large' ? 400 : 500, e instanceof SyntaxError ? 'bad JSON' : e.message);
+      if (e instanceof SyntaxError) return fail(400, 'bad JSON');
+      if (e && e.message === 'too large') return fail(400, 'too large');
+      return serverError(e, req.method + ' ' + new URL(req.url).pathname);
     }
   },
   async scheduled(_event, env) {

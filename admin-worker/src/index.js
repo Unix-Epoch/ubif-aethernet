@@ -25,9 +25,10 @@
     GET  /retrace-ui.js  the Retrace page (page 'retrace'; loaded by page.js on first use; data from /api/tracker/retrace/…)
   Every request here is counted by area with its D1 rows (tracker-worker/src/usage.js; the top of the Usage page); the counter's reads
   (GET /api/tracker/usage-load) aren't.
+  Every non-GET/HEAD request must be same-origin (Sec-Fetch-Site, or Origin when that header is absent) with a JSON body: sameSiteCheck below.
   Local testing only: `wrangler dev --var LOCAL_TEST:1` lets requests to localhost in.
 */
-import { adminApi } from '../../worker/src/index.js';
+import { adminApi, errorId } from '../../worker/src/index.js';
 import { trackerAdmin } from '../../tracker-worker/src/index.js';
 import { accessOf, check } from '../../tracker-worker/src/access.js';
 import { meter } from '../../tracker-worker/src/usage.js';
@@ -72,17 +73,42 @@ async function verify(req, env) {
 
 const deny = (why) => new Response(why, { status: 403, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
 
+// Cross-site request protection. The site's only credential is the Access cookie/header, which a browser attaches to any request to this
+// host, so every state-changing request must provably come from this site's own page: Sec-Fetch-Site same-origin (browsers set it and
+// pages can't forge it); or, from a client that doesn't send it, an Origin equal to this site's origin. Neither header = refused (the
+// page's own fetches always send Origin on non-GET). Anything with a body must be application/json, which a cross-site form can't send
+// without a CORS preflight this site never grants. GET/HEAD are untouched (they change nothing).
+const jsonError = (status, error) => new Response(JSON.stringify({ error }), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+export function sameSiteCheck(req) {
+  if (req.method === 'GET' || req.method === 'HEAD') return null;
+  const sfs = req.headers.get('sec-fetch-site'), origin = req.headers.get('origin');
+  const own = new URL(req.url).origin;
+  const ok = sfs != null ? sfs === 'same-origin' : origin != null && origin === own;
+  if (!ok) return jsonError(403, 'cross-site request refused');
+  const len = req.headers.get('content-length');
+  if (req.body !== null && len !== '0') {
+    const type = (req.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (type !== 'application/json') return jsonError(403, 'request body must be application/json');
+  }
+  return null;
+}
+
 export default {
   // Counted by area with its D1 rows, into the tracker's usage tables (tracker-worker/src/usage.js); a counter problem never reaches the request.
   async fetch(req, env, ctx) {
     const m = meter(env, req);
-    try { return await handle(req, m.env); } finally { await m.done(ctx); }
+    try { return await handle(req, m.env); } catch (e) { return apiError(e, req, new URL(req.url)); } finally { await m.done(ctx); }
   },
 };
 
+// verify() throws only these on purpose; anything else (a malformed token's parse error, a failed certs fetch) gets a generic answer.
+const AUTH_MESSAGES = new Set(["Cloudflare Access isn't set up for this site yet.", 'Sign in through Cloudflare Access.', 'Unexpected token.', 'Unknown signing key.', 'Not signed in.']);
+
 async function handle(req, env) {
+  const xsite = sameSiteCheck(req);
+  if (xsite) return xsite;
   let who;
-  try { who = await verify(req, env); } catch (e) { return deny(e.message); }
+  try { who = await verify(req, env); } catch (e) { return deny(AUTH_MESSAGES.has(e && e.message) ? e.message : 'Not signed in.'); }
   const url = new URL(req.url);
   if (url.pathname === '/' || url.pathname === '/index.html') {
     // The page's one inline <script> carries a per-response nonce, so script-src needs no 'unsafe-inline': a script that gets into the
@@ -119,16 +145,24 @@ async function handle(req, env) {
   }
   if (url.pathname.startsWith('/api/tracker/')) {
     try { return await trackerAdmin(req, env, url, url.pathname.replace(/^\/api\/tracker/, ''), who.email, me); }
-    catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: e.status || 500, headers: { 'content-type': 'application/json' } }); }
+    catch (e) { return apiError(e, req, url); }
   }
   if (url.pathname.startsWith('/api/')) {
     try {
       const res = await adminApi(req, env, url, url.pathname.replace(/^\/api/, ''), me);
       const h = new Headers(res.headers); h.set('cache-control', 'no-store'); h.delete('access-control-allow-origin');
       return new Response(res.body, { status: res.status, headers: h });
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'content-type': 'application/json' } });
-    }
+    } catch (e) { return apiError(e, req, url); }
   }
   return new Response('Not found', { status: 404 });
+}
+
+// Deliberate 4xx answers (a thrown error carrying a status below 500, bad JSON, an oversized body) keep their message; anything else
+// is a generic message with a short id, and the real error goes to the Workers log under that id.
+function apiError(e, req, url) {
+  const h = { 'content-type': 'application/json', 'cache-control': 'no-store' };
+  if (e && e.status >= 400 && e.status < 500) return new Response(JSON.stringify({ error: e.message }), { status: e.status, headers: h });
+  if (e instanceof SyntaxError) return new Response(JSON.stringify({ error: 'bad JSON' }), { status: 400, headers: h });
+  if (e && e.message === 'too large') return new Response(JSON.stringify({ error: 'too large' }), { status: 400, headers: h });
+  return new Response(JSON.stringify({ error: 'internal error', id: errorId(e, req.method + ' ' + url.pathname) }), { status: 500, headers: h });
 }
