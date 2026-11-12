@@ -153,6 +153,10 @@ const M = [
   ['spread: list with no workOrders reads as empty (core)', '00-core.js', "const rows = shape.list(j, 'workOrders', 'work order list');", "const rows = (j && j.workOrders) || [];"],
   ['spread: list paging stops after one page (core)', '00-core.js', '(rows.count != null ? byId.size >= rows.count : rows.length < PAGE_SIZE)', 'true'],
   ['spread: open list asks for every status (core)', '00-core.js', "workOrderStatusIds: primaryFilter === 'Active' ? OPEN_STATUS_IDS : [],", "workOrderStatusIds: [],"],
+  // ---- Return (paused while saved check-ins are off)
+  ['return: saving switched back on', '22-checkin-drafts.js', 'const SAVING_OFF = true;', 'const SAVING_OFF = false;'],
+  ['return: pause guard removed', '22-checkin-drafts.js', 'if (SAVING_OFF) return;', ''],
+  ['return: Settings no longer says paused', '05-settings.js', "'Paused: saved check-ins are off while their storage is being made private. Return will save", "'Return will save"],
 ];
 
 const only = process.argv.slice(2);

@@ -19,7 +19,7 @@
     ]),
     ['autoClose', 'Swiftcast', 'Your new favorite tool: auto-close cleanings in one click, even multiple at once. Click Swiftcast on a cleaning arrival or work order.'],
     ...(AE_DEMO ? [] : [
-    ['checkinDrafts', 'Return', 'Saves an incomplete check-in so you can create cleanings once the device works. Goodbye, paper slips! Click Save as incomplete during check-in.'],
+    ['checkinDrafts', 'Return', 'Paused: saved check-ins are off while their storage is being made private. Return will save an incomplete check-in so you can create cleanings once the device works.'],
     ['leadReplies', 'Provoke', 'Pre-loads your replies to leads, then texts them and marks them contacted in one click. Find it on Arrivals and in a work order\'s customer chat.'],
     ]),
     ...(AE_DEMO ? [] : [

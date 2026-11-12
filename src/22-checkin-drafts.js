@@ -37,6 +37,13 @@ AE.shard({
   name: 'Return',
   sites: ['portal.ubreakifix.net'],
   run() {
+    // PAUSED (Nov 11, 2026). Saved check-ins held the customer's details and passcode in plain text on the Worker, so the
+    // Worker now answers 410 to every /checkins route (see CHECKINS OFF in worker/src/index.js). While this is true Return
+    // draws nothing, makes no request and starts no timers; AE.checkinDrafts stays undefined, so a scanned old label
+    // is told "Return is off" by Master's Mend. Turning it back on is two deliberate changes: this constant AND the Worker
+    // gate, only once the Worker note's three conditions hold. Settings lists Return as paused (src/05-settings.js).
+    const SAVING_OFF = true;
+    if (SAVING_OFF) return;
     const { h } = AE;
     const STEPS = ['Customer', 'Device', 'Diagnosis', 'Parts and services'];
     const SLICE = 'checkInSlice';

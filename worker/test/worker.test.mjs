@@ -104,4 +104,18 @@ assert.equal((await aa('/store/326', person('GET /api/store/326'))).status, 403,
 const sl = (await aa('/stores', person('GET /api/stores'))).j;
 assert.deepEqual(sl.allowed.map((x) => x.store), [914]); assert.deepEqual(sl.waiting, [], 'no Stores page: only their stores, nothing waiting');
 assert.equal((await aa('/stores', person('GET /api/stores', ['stores']))).j.waiting.length, 1);
+
+// ---- saved check-ins are off: every checkins route answers 410 and never touches the database (DB throws if used)
+for (const [method, path, body] of [
+  ['GET', '/v1/914/checkins?arrival=123'], ['GET', '/v1/914/checkins/ABC234'], ['POST', '/v1/914/checkins', { step: 0, label: 'x', data: {} }],
+  ['POST', '/v1/914/checkins/ABC234/remove', {}], ['PUT', '/v1/914/checkins'], ['DELETE', '/v1/914/checkins/ABC234'], ['GET', '/v1/914/checkins/'], ['GET', '/v1/914/checkins/bad!'],
+]) {
+  const r = await call(method, path, body);
+  assert.equal(r.status, 410, method + ' ' + path); assert.equal(r.j.error, 'saved check-ins are turned off');
+}
+assert.equal((await call('GET', '/v1/914/checkinsx')).status, 404, 'only the checkins routes are gated');
+// the daily cleanup deletes every saved check-in
+const sqls = [];
+await worker.scheduled({}, { DB: { prepare(sql) { sqls.push(sql); const q = { bind() { return q; } }; return q; }, async batch() { return []; } } });
+assert.ok(sqls.includes('DELETE FROM checkin_drafts'), 'cleanup empties checkin_drafts');
 console.log('waymark worker: all passed');

@@ -12,7 +12,9 @@
 // no capture covers yet. Nothing here is evidence of a Portal shape beyond what the fixture it is copied from proves.
 // Exit code 0 = all passed. Needs Node 18+ and nothing from npm. No Portal, no Worker, no browser is touched.
 import assert from 'node:assert/strict';
-import { load, retraceFx, fixture, extractFn } from './harness.mjs';
+import { load, retraceFx, fixture, extractFn, ROOT } from './harness.mjs';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import vm from 'node:vm';
 
 const results = [];
@@ -394,6 +396,40 @@ await t('Return: a real work order past Initial check-in removes the draft', asy
   assert.deepEqual(r.removed, ['POST /draft-1/remove']); assert.equal(r.kept, false);
   const r2 = await returnCheckDone(ok(withStatus(9)));
   assert.deepEqual(r2.removed, ['POST /draft-1/remove']);
+});
+
+// ================================================================== Return: paused while saved check-ins are off
+async function returnPaused(path) {
+  const env = load(['00-core.js', '22-checkin-drafts.js'], { timers: 'fake', fetch: router([]) });
+  const { AE } = env;
+  let every = 0, onDom = 0, appended = 0;
+  const e0 = AE.every, d0 = AE.onDom;
+  AE.every = (...a) => { every++; return e0.apply(AE, a); }; AE.onDom = (...a) => { onDom++; return d0.apply(AE, a); };
+  const head = env.ctx.document.head, ap = head.append; try { head.append = (...a) => { appended++; return ap.apply(head, a); }; } catch (_) {}
+  const def = AE.shards.find((x) => x.id === 'checkinDrafts');
+  await def.run();
+  await env.advance(10000);
+  return { env, AE, every, onDom, appended };
+}
+await t('Return: while saving is off it makes no request, draws nothing and starts nothing', async () => {
+  const r = await returnPaused();
+  assert.equal(r.env.requests(/checkins/).length, 0, 'no call to any /checkins route');
+  assert.equal(r.env.requests(/./).length, 0, 'no call at all');
+  assert.equal(r.every, 0, 'no timer loop'); assert.equal(r.onDom, 0, 'no DOM watcher'); assert.equal(r.appended, 0, 'no styles added');
+  assert.equal(r.env.toasts.length, 0, 'no toast');
+});
+await t('Return: while saving is off AE.checkinDrafts stays undefined (a scanned label is told Return is off)', async () => {
+  const r = await returnPaused();
+  assert.equal(r.AE.checkinDrafts, undefined);
+});
+await t('Return: Settings says plainly that it is paused', () => {
+  const src = readFileSync(path.join(ROOT, 'src/05-settings.js'), 'utf8');
+  assert.match(src, /\['checkinDrafts', 'Return', 'Paused: saved check-ins are off while their storage is being made private\./);
+});
+await t('Return: the paused switch is a single constant set to true', () => {
+  const src = readFileSync(path.join(ROOT, 'src/22-checkin-drafts.js'), 'utf8');
+  assert.equal((src.match(/const SAVING_OFF = true;/g) || []).length, 1);
+  assert.equal((src.match(/if \(SAVING_OFF\) return;/g) || []).length, 1);
 });
 
 // ================================================================== Waymark
