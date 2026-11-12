@@ -731,6 +731,58 @@ function checkSetting(f, v) {
   return null;
 }
 
+// ------------------------------------------------------------------ what reaches the editor's markup
+// The admin editor draws every node at its x / y and every macro pin by its type, so those must be plain numbers (within
+// the canvas) and known type names, wherever they sit in the graph (macros that nothing uses included). Layout is
+// never read by compile / run; this only keeps a saved graph from being able to carry anything but numbers there.
+export const COORD_LIMIT = 100000; // the editor lays nodes out around 0–5000; this is the sanity bound
+// A coordinate left out is fine (the editor draws it at 0); one that is there must be a finite number in range.
+const goodCoord = (v) => v === undefined || (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= COORD_LIMIT);
+export function coordErrors(graph) {
+  const errs = [];
+  if (!graph || typeof graph !== 'object') return errs;
+  const nodesOf = (g, at) => {
+    if (!Array.isArray(g.nodes)) return;
+    g.nodes.forEach((n, i) => {
+      if (!n || typeof n !== 'object') return;
+      const who = at + (typeof n.id === 'string' && n.id.length <= 60 ? n.id : 'node ' + (i + 1));
+      if (!goodCoord(n.x) || !goodCoord(n.y)) errs.push(who + ': x and y must be numbers (or left out) between -' + COORD_LIMIT + ' and ' + COORD_LIMIT);
+      if (n.id != null && typeof n.id !== 'string') errs.push(who + ': id must be text');
+    });
+  };
+  nodesOf(graph, '');
+  if (graph.macros && typeof graph.macros === 'object' && !Array.isArray(graph.macros)) {
+    for (const [name, m] of Object.entries(graph.macros)) {
+      if (!m || typeof m !== 'object') continue;
+      nodesOf(m, 'Macro ' + name + ': ');
+      for (const side of ['inputs', 'outputs']) for (const x of Array.isArray(m[side]) ? m[side] : []) {
+        if (!x || typeof x.name !== 'string' || !TYPES.includes(x.type)) errs.push('Macro ' + name + ': each ' + side.slice(0, -1) + ' needs a name and a known type');
+      }
+    }
+  }
+  return errs;
+}
+// The graph (a copy) with every x / y that isn't a finite in-range number forced to one (a numeric string becomes its number,
+// anything else 0); good values and graphs without bad ones are left exactly as they are. For graphs stored before the check existed.
+export function normalizeCoords(graph) {
+  if (!graph || typeof graph !== 'object' || Array.isArray(graph)) return graph;
+  const fix = (v) => { const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN; return Number.isFinite(n) ? Math.max(-COORD_LIMIT, Math.min(COORD_LIMIT, Math.round(n))) : 0; };
+  const one = (n) => {
+    if (!n || typeof n !== 'object') return n;
+    let o = n;
+    for (const k of ['x', 'y']) if (k in n && !goodCoord(n[k])) o = Object.assign({}, o, { [k]: fix(n[k]) });
+    return o;
+  };
+  const nodes = (list) => (Array.isArray(list) ? list.map(one) : list);
+  const out = Object.assign({}, graph);
+  if (Array.isArray(graph.nodes)) out.nodes = nodes(graph.nodes);
+  if (graph.macros && typeof graph.macros === 'object' && !Array.isArray(graph.macros)) {
+    out.macros = {};
+    for (const [k, m] of Object.entries(graph.macros)) out.macros[k] = m && typeof m === 'object' && Array.isArray(m.nodes) ? Object.assign({}, m, { nodes: nodes(m.nodes) }) : m;
+  }
+  return out;
+}
+
 /*
   validate(graph, library) → readable errors ([] = fine): unknown node types or macros, bad wires (unknown
   node / pin, incompatible types, two wires into one input, two exec wires out of one exec pin), missing required
@@ -742,6 +794,7 @@ export function validate(graph, library) {
   if (!graph || typeof graph !== 'object') return ['The graph is not an object'];
   if (graph.v !== FORMAT) errs.push('Format v' + graph.v + ' is not v' + FORMAT);
   body(graph, lib, null, '', errs);
+  errs.push(...coordErrors(graph));
   // Macros: each body on its own, and none may use itself (directly or through another).
   const uses = (m) => (m.nodes || []).filter((n) => n.type === 'macro').map((n) => (n.settings || {}).macro);
   const seen = new Set(), todo = [...new Set(uses(graph))];

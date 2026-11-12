@@ -85,9 +85,13 @@ async function handle(req, env) {
   try { who = await verify(req, env); } catch (e) { return deny(e.message); }
   const url = new URL(req.url);
   if (url.pathname === '/' || url.pathname === '/index.html') {
-    return new Response(PAGE.replace('__EMAIL__', String(who.email || '').replace(/[<>&"]/g, '')), {
+    // The page's one inline <script> carries a per-response nonce, so script-src needs no 'unsafe-inline': a script that gets into the
+    // markup through a stored value has no nonce and doesn't run. Everything else loads from this site ('self'); the page has no inline handlers.
+    const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+    const html = PAGE.replace('__EMAIL__', () => String(who.email || '').replace(/[<>&"]/g, '')).replace('<script>', () => '<script nonce="' + nonce + '">');
+    return new Response(html, {
       headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY',
-        'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://assets.asurion-ui.my.asurion53.com; img-src 'self' data:; connect-src 'self'" } });
+        'content-security-policy': "default-src 'self'; script-src 'self' 'nonce-" + nonce + "'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://assets.asurion-ui.my.asurion53.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" } });
   }
   // The tracker's encryption, as a module for the page (unlocking happens in the browser).
   if (url.pathname === '/crypto.js') return new Response(CRYPTO_SRC, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });

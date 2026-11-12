@@ -329,6 +329,62 @@ await person('rulesall@x.com', 'all', [], ['rules'], 1);
 assert.equal((await admin('rulesall@x.com', 'GET', '/store-keys')).status, 200, 'rules page reaches store-keys');
 assert.equal((await admin('st@x.com', 'GET', '/store-keys')).status, 403, 'still all stores + details only');
 
+// ------------------------------------------------------------------ node positions are numbers (stored script injection fix)
+// The editor draws x / y straight into markup, so a draft carrying anything else is refused, and anything already stored
+// that isn't a number is turned into one when it is served.
+{
+  const XSS = '1px;" onmouseover="alert(1)" x="';
+  const withXY = (g, x, y) => { const c = clone(g); c.nodes[0].x = x; c.nodes[0].y = y; return c; };
+  const base = clone(GRAPHS['no-date']);
+  // unit: coordErrors / normalizeCoords / validate
+  assert.deepEqual(RG.coordErrors(base), [], 'built-in graphs have numeric positions');
+  for (const bad of [XSS, '12', NaN, Infinity, -Infinity, null, {}, [], true, 100001, -100001]) assert.equal(RG.coordErrors(withXY(base, bad, 5)).length, 1, 'bad x ' + String(bad));
+  assert.equal(RG.coordErrors(withXY(base, 5, XSS)).length, 1, 'bad y');
+  assert.deepEqual(RG.coordErrors(withXY(base, 0, -100000)), [], 'the bounds are allowed');
+  assert.deepEqual(RG.coordErrors(withXY(base, 10.5, 3)), [], 'fractions are numbers');
+  { const c = clone(base); delete c.nodes[0].x; assert.deepEqual(RG.coordErrors(c), [], 'a left-out position is not injectable'); }
+  { const c = clone(base); c.macros = { m1: { inputs: [{ name: 'a', type: 'x"><img src=x>' }], outputs: [], nodes: [{ id: 'n', type: 'macroIn', x: XSS, y: 0 }] } };
+    assert.equal(RG.coordErrors(c).length, 2, 'a macro (used or not): its node positions and pin types'); assert.ok(RG.validate(c).some((e) => /Macro m1/.test(e))); }
+  assert.ok(RG.validate(withXY(base, XSS, 0)).some((e) => /x and y must be numbers/.test(e)), 'validate (so publish) refuses it too');
+  assert.deepEqual(RG.validate(base), [], 'a valid graph still validates');
+  { const norm = RG.normalizeCoords(base); assert.deepEqual(norm, base, 'good positions untouched'); assert.notEqual(norm, base, 'a copy'); }
+  { const f = RG.normalizeCoords(withXY(base, XSS, '40')); assert.deepEqual([f.nodes[0].x, f.nodes[0].y], [0, 40]); assert.equal(base.nodes[0].x === XSS, false, 'input not changed'); }
+  { const f = RG.normalizeCoords(withXY(base, Infinity, { a: 1 })); assert.deepEqual([f.nodes[0].x, f.nodes[0].y], [0, 0]); }
+  { const c = clone(base); c.macros = { m1: { nodes: [{ id: 'n', x: XSS, y: 1.5 }] } }; const f = RG.normalizeCoords(c); assert.deepEqual([f.macros.m1.nodes[0].x, f.macros.m1.nodes[0].y], [0, 1.5]); }
+  assert.equal(RG.normalizeCoords(null), null); assert.deepEqual(RG.normalizeCoords([1]), [1]);
+
+  // route: a draft with bad positions is refused (400, plain message), nothing stored; an ordinary invalid draft still saves
+  const rule = 'no-date', put = (graph, scope = 'all') => admin('all@x.com', 'PUT', '/assize/rules/' + rule + '/draft', { scope, graph });
+  for (const bad of [XSS, NaN, Infinity, { toString: 1 }, null, [1]]) {
+    const r = await put(withXY(base, bad, 0));
+    assert.equal(r.status, 400, 'refused: ' + JSON.stringify(bad)); assert.match(r.j.error, /^node positions must be numbers: /);
+    assert.equal((await T.prepare('SELECT 1 FROM assize_rules WHERE rule = ?').bind(rule).first()), null, 'nothing stored');
+  }
+  assert.equal((await put(withXY(base, 0, 'abc'))).status, 400, 'y too');
+  { const c = clone(base); c.nodes.push({ id: 'zz', type: 'frobnicate', x: 1, y: 2 }); const r = await put(c); ok(r, 'other errors still save with their list'); assert.match(r.j.errors.join(), /frobnicate/); }
+  ok(await put(base), 'a valid graph saves');
+  assert.deepEqual((await admin('all@x.com', 'GET', '/assize/rules/' + rule)).j.scopes[0].draft, base, 'a valid graph comes back unchanged');
+  const tooBig = await put(withXY(base, 1e300, 0)); assert.equal(tooBig.status, 400, 'out of range');
+
+  // stored before the check existed: served as numbers (rule read, history, the store side), and revert copies numbers in
+  const dirty = JSON.stringify(withXY(withXY(base, XSS, '40'), XSS, '40'));
+  await T.prepare('UPDATE assize_rules SET draft = ?, published = ?, published_version = 7 WHERE rule = ? AND scope = ?').bind(dirty, dirty, rule, 'all').run();
+  await T.prepare("INSERT INTO assize_rule_history (rule, scope, version, graph, by_email, at, action) VALUES (?, 'all', 7, ?, 'x@x.com', '2026-10-21T00:00:00Z', 'publish')").bind(rule, dirty).run();
+  const hid = (await T.prepare('SELECT id FROM assize_rule_history WHERE rule = ? AND version = 7').bind(rule).first()).id;
+  const got = (await admin('all@x.com', 'GET', '/assize/rules/' + rule)).j.scopes[0];
+  for (const g of [got.draft, got.published]) assert.deepEqual([g.nodes[0].x, g.nodes[0].y], [0, 40], 'rule read');
+  const hist = (await admin('all@x.com', 'GET', '/assize/rules/' + rule + '/history/' + hid)).j.graph; assert.deepEqual([hist.nodes[0].x, hist.nodes[0].y], [0, 40], 'history read');
+  const forStore = (await store(914)).j.rules[rule]; assert.deepEqual([forStore.graph.nodes[0].x, forStore.graph.nodes[0].y], [0, 40], 'store side');
+  assert.ok(!JSON.stringify([got, hist, forStore]).includes('onmouseover'), 'the payload is gone from every answer');
+  { const r = await admin('all@x.com', 'POST', '/assize/rules/' + rule + '/publish', { scope: 'all' }); assert.equal(r.status, 400, 'a stored bad draft cannot be published'); }
+  ok(await admin('all@x.com', 'POST', '/assize/rules/' + rule + '/revert', { scope: 'all', id: hid }), 'revert from an old version with bad positions');
+  assert.ok(!(await T.prepare('SELECT draft FROM assize_rules WHERE rule = ?').bind(rule).first()).draft.includes('onmouseover'), 'revert stores numbers');
+  // evaluation does not depend on positions
+  const o0 = ORDERS[0], plain = R.withGraphs(o0.row, o0.detail, opts, R.published({ rules: { [rule]: { graph: base, enabled: true } } }), codeOf(o0));
+  const moved = R.withGraphs(o0.row, o0.detail, opts, R.published({ rules: { [rule]: { graph: RG.normalizeCoords(withXY(base, XSS, XSS)), enabled: true } } }), codeOf(o0));
+  assert.deepEqual(moved.findings, plain.findings, 'positions do not change findings');
+}
+
 await dispose();
 rmSync('.wrangler-test-assize', { recursive: true, force: true });
 console.log('assize rules: engine and routes all passed');

@@ -26,6 +26,8 @@ export const R = makeRules({ RG, graphs: GRAPHS });
 const CHECK_KEYS = R.CHECKS.map(([k]) => k);
 const MAX_BODY = R.MAX_GRAPH_BYTES + 20000;
 const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
+// A stored graph as it leaves the Worker: node positions that aren't numbers (saved before they were checked) forced to numbers.
+const parseGraph = (t) => RG.normalizeCoords(parse(t));
 const sha = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].slice(0, 12).map((x) => x.toString(16).padStart(2, '0')).join('');
 // A scope from a request: 'all' or a store number (1–6 digits) as text; null = not a scope.
 const scopeOf = (v) => (v === 'all' ? 'all' : (typeof v === 'number' && Number.isInteger(v)) || (typeof v === 'string' && /^\d{1,6}$/.test(v)) ? String(Number(v)) : null);
@@ -53,7 +55,7 @@ export async function assizeStore(req, env, url, store, H) {
   const graphs = new Map();
   if (want.length) {
     const r = await T.prepare("SELECT rule, scope, published FROM assize_rules WHERE published IS NOT NULL AND scope IN ('all', ?)").bind(mine).all();
-    for (const x of r.results) graphs.set(x.rule + '|' + x.scope, parse(x.published));
+    for (const x of r.results) graphs.set(x.rule + '|' + x.scope, parseGraph(x.published));
   }
   const rules = {};
   for (const x of pick) rules[x.rule] = { graph: x.scope ? graphs.get(x.rule + '|' + x.scope) || null : null, version: x.version, scope: x.scope, enabled: x.enabled };
@@ -169,15 +171,15 @@ export async function assizeAdmin(req, env, url, path, me, email, H) {
     const hist = (await T.prepare('SELECT id, scope, version, action, by_email, at, note, graph IS NOT NULL AS has_graph FROM assize_rule_history WHERE rule = ? ORDER BY id DESC LIMIT 500').bind(rule).all()).results;
     return H.json(Object.assign(describe(rule, rows), {
       builtInGraph: GRAPHS[rule] || null,
-      scopes: rows.filter((r) => visible(r.scope)).map((r) => ({ scope: r.scope, draft: parse(r.draft), draftErrors: parse(r.draft_errors) || [], draftBy: r.draft_by, draftAt: r.draft_at,
-        published: parse(r.published), version: r.published_version, publishedBy: r.published_by, publishedAt: r.published_at, enabled: r.enabled, note: r.note })),
+      scopes: rows.filter((r) => visible(r.scope)).map((r) => ({ scope: r.scope, draft: parseGraph(r.draft), draftErrors: parse(r.draft_errors) || [], draftBy: r.draft_by, draftAt: r.draft_at,
+        published: parseGraph(r.published), version: r.published_version, publishedBy: r.published_by, publishedAt: r.published_at, enabled: r.enabled, note: r.note })),
       history: hist.filter((h) => visible(h.scope)).map((h) => ({ id: h.id, scope: h.scope, version: h.version, action: h.action, by: h.by_email, at: h.at, note: h.note, hasGraph: !!h.has_graph })),
     }), 200, false);
   }
   if (action === 'history' && req.method === 'GET') {
     const h = await T.prepare('SELECT * FROM assize_rule_history WHERE id = ? AND rule = ?').bind(Number(m[3]), rule).first();
     if (!h || !visible(h.scope)) return H.fail(404, 'no such version', false);
-    return H.json({ id: h.id, rule, scope: h.scope, version: h.version, action: h.action, by: h.by_email, at: h.at, note: h.note, graph: parse(h.graph) }, 200, false);
+    return H.json({ id: h.id, rule, scope: h.scope, version: h.version, action: h.action, by: h.by_email, at: h.at, note: h.note, graph: parseGraph(h.graph) }, 200, false);
   }
   if (req.method !== (action === 'draft' ? 'PUT' : 'POST')) return H.fail(405, 'method not allowed', false);
   const b = await body(), scope = scopeOf(b.scope);
@@ -197,9 +199,12 @@ export async function assizeAdmin(req, env, url, path, me, email, H) {
     if (action === 'revert') {
       from = await T.prepare("SELECT * FROM assize_rule_history WHERE id = ? AND rule = ? AND action = 'publish' AND graph IS NOT NULL").bind(H.int(b.id), rule).first();
       if (!from || !visible(from.scope)) return H.fail(404, 'no such published version', false);
-      graph = parse(from.graph);
+      graph = parseGraph(from.graph); // an old version with bad positions is copied in with numbers
     }
     if (!graph || typeof graph !== 'object' || Array.isArray(graph)) return H.fail(400, 'graph required', false);
+    // Node positions are drawn straight into the editor's markup: refuse anything that isn't a number (other mistakes still save, with the error list).
+    const badPos = RG.coordErrors(graph);
+    if (badPos.length) return H.fail(400, 'node positions must be numbers: ' + badPos.slice(0, 3).join('; ') + (badPos.length > 3 ? ' (+' + (badPos.length - 3) + ' more)' : ''), false);
     const text = JSON.stringify(graph);
     if (text.length > R.MAX_GRAPH_BYTES) return H.fail(413, 'the graph is over ' + R.MAX_GRAPH_BYTES / 1024 + ' KB', false);
     const errors = R.checkGraph(graph, rule);

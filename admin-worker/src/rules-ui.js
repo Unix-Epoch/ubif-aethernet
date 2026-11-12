@@ -167,6 +167,27 @@ const MISSING = { notes: 'notes', nickname: 'the device nickname', deviceType: '
 const put = (node, ...kids) => node.replaceChildren(...kids.flat(9).filter((k) => k != null && k !== false && k !== ''));
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clone = (x) => JSON.parse(JSON.stringify(x));
+// Everything that reaches markup or CSS from a graph is forced to a known shape first: coordinates to whole numbers (a graph
+// from the server may carry anything a store editor saved), pin types and finding kinds to the lists the editor knows.
+const COORD_MAX = 100000;
+const coord = (v) => { const n = typeof v === 'number' || typeof v === 'string' ? Number(v) : NaN; return Number.isFinite(n) ? Math.max(-COORD_MAX, Math.min(COORD_MAX, Math.round(n))) : 0; };
+const fixNodes = (nodes) => { if (Array.isArray(nodes)) for (const n of nodes) if (n && typeof n === 'object') { n.x = coord(n.x); n.y = coord(n.y); } };
+// Coerce every node's x / y (the top level and inside each macro) in place; returns the graph.
+function tidyGraph(g) {
+  if (!g || typeof g !== 'object') return g;
+  fixNodes(g.nodes);
+  if (g.macros && typeof g.macros === 'object') for (const m of Object.values(g.macros)) if (m && typeof m === 'object') fixNodes(m.nodes);
+  return g;
+}
+// A rule as the server sent it: the built-in graph and every scope's draft and published graph.
+function tidyRule(r) {
+  if (!r || typeof r !== 'object') return r;
+  tidyGraph(r.builtInGraph);
+  if (Array.isArray(r.scopes)) for (const sc of r.scopes) if (sc) { tidyGraph(sc.draft); tidyGraph(sc.published); }
+  return r;
+}
+const PIN_TYPES = new Set(['bool', 'num', 'text', 'lines', 'notes', 'textList', 'person', 'any']);
+const ptype = (t) => (PIN_TYPES.has(t) ? t : 'any');
 const who = (email) => String(email || '').split('@')[0] || 'someone';
 const plural = (n, w, ws) => n + ' ' + (n === 1 ? w : ws || w + 's');
 const REDUCED = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -301,7 +322,7 @@ function newRuleForm() {
 async function openRule(ruleId, keep) {
   if (!ruleId) return;
   await flushSave();
-  try { S.rule = await ui.api('GET', '/tracker/assize/rules/' + ruleId); S.loadErr = null; }
+  try { S.rule = tidyRule(await ui.api('GET', '/tracker/assize/rules/' + ruleId)); S.loadErr = null; }
   catch (e) { S.loadErr = e.message; S.rule = null; }
   if (S.ruleId !== ruleId) { S.scope = S.scope !== 'all' && canEdit(S.scope) ? S.scope : 'all'; S.fitted = ''; }
   S.ruleId = ruleId; S.hist = null; S.confirm = null; S.conflict = false;
@@ -332,7 +353,7 @@ function readOnlyWhy() {
   return '';
 }
 async function reloadRule(msg) {
-  S.rule = await ui.api('GET', '/tracker/assize/rules/' + S.ruleId);
+  S.rule = tidyRule(await ui.api('GET', '/tracker/assize/rules/' + S.ruleId));
   S.list = await ui.api('GET', '/tracker/assize/rules');
   loadScope(); renderList(); renderAll();
   if (msg) ui.toast(msg);
@@ -834,7 +855,7 @@ function renderCanvas() {
   let html = '';
   for (const n of g.nodes) {
     const def = RG.NODE_TYPES[n.type];
-    if (!def) { html += '<div class="rx-node bad" data-node="' + esc(n.id) + '" style="left:' + n.x + 'px;top:' + n.y + 'px"><div class="nh"><b>Unknown node “' + esc(n.type) + '”</b></div></div>'; continue; }
+    if (!def) { html += '<div class="rx-node bad" data-node="' + esc(n.id) + '" style="left:' + coord(n.x) + 'px;top:' + coord(n.y) + 'px"><div class="nh"><b>Unknown node “' + esc(n.type) + '”</b></div></div>'; continue; }
     const pins = RG.pinsOf(n, L, lv.inside) || { inputs: [], outputs: [], exec: null };
     const key = lv.prefix + n.id, x = d && d.nodes ? d.nodes[key] : null;
     const st = stateOf(key, !!def.exec, n.id);
@@ -856,7 +877,7 @@ function renderCanvas() {
     for (const p of pins.inputs) {
       const ref = n.id + '.' + p.name, w = (g.wires || []).find((x) => x.to === ref);
       const v = S.showVals && w ? show(valOf(w.from), p.type) : null;
-      rows += '<div class="rw i"><span class="pin d' + (w ? ' on' : '') + '" data-pin="' + esc(ref) + '" data-dir="in" data-type="' + p.type + '" style="--pc:var(--t-' + p.type + ')" title="' + esc(TYPE_NAME[p.type] || p.type) + (p.req ? ' · required' : '') + '"></span><span class="lab">' + esc(pinLabel(p.name)) + (p.req && !w ? ' *' : '') + '</span>' + (v ? '<span class="val ' + (v.c || '') + '">' + esc(v.t) + '</span>' : '') + '</div>';
+      rows += '<div class="rw i"><span class="pin d' + (w ? ' on' : '') + '" data-pin="' + esc(ref) + '" data-dir="in" data-type="' + ptype(p.type) + '" style="--pc:var(--t-' + ptype(p.type) + ')" title="' + esc(TYPE_NAME[ptype(p.type)]) + (p.req ? ' · required' : '') + '"></span><span class="lab">' + esc(pinLabel(p.name)) + (p.req && !w ? ' *' : '') + '</span>' + (v ? '<span class="val ' + (v.c || '') + '">' + esc(v.t) + '</span>' : '') + '</div>';
     }
     rows += summary(n, def, lv);
     let outs = pins.outputs;
@@ -864,14 +885,14 @@ function renderCanvas() {
     if (many && !open && anyWired) outs = outs.filter((p) => wired.has(n.id + '.' + p.name));
     for (const p of outs) {
       const ref = n.id + '.' + p.name, v = S.showVals ? show(valOf(ref), p.type) : null;
-      rows += '<div class="rw o">' + (v ? '<span class="val ' + (v.c || '') + '">' + esc(v.t) + '</span>' : '') + '<span class="lab">' + esc(pinLabel(p.name)) + '</span><span class="pin d' + (wired.has(ref) ? ' on' : '') + '" data-pin="' + esc(ref) + '" data-dir="out" data-type="' + p.type + '" style="--pc:var(--t-' + p.type + ')" title="' + esc(TYPE_NAME[p.type] || p.type) + '"></span></div>';
+      rows += '<div class="rw o">' + (v ? '<span class="val ' + (v.c || '') + '">' + esc(v.t) + '</span>' : '') + '<span class="lab">' + esc(pinLabel(p.name)) + '</span><span class="pin d' + (wired.has(ref) ? ' on' : '') + '" data-pin="' + esc(ref) + '" data-dir="out" data-type="' + ptype(p.type) + '" style="--pc:var(--t-' + ptype(p.type) + ')" title="' + esc(TYPE_NAME[ptype(p.type)]) + '"></span></div>';
     }
     if (many && anyWired) rows += '<button class="more" data-more="' + esc(key) + '">' + (open ? 'Hide unwired pins' : 'Show all ' + pins.outputs.length + ' pins') + '</button>';
     if (n.type === 'macro') rows += '<button class="exp" data-expand="' + esc(n.id) + '">Expand ›</button>';
     if ((n.type === 'finding' || n.type === 'reminder') && d && d.results) rows += resultHtml(d.results[n.id], st);
     if (x && x.needsNotes && (Array.isArray(x.needsNotes) ? x.needsNotes.some((k) => wired.has(n.id + '.' + k)) : ['ran', 'used'].includes(x.state))) rows += '<span class="nn" title="Reads notes this order doesn’t have here">needs notes</span>';
     if (x && x.error) rows += '<div class="er">⚠ ' + esc(x.error) + '</div>';
-    html += '<div class="' + cls + '" data-node="' + esc(n.id) + '" style="left:' + n.x + 'px;top:' + n.y + 'px"' + (x && x.error ? ' title="' + esc(x.error) + '"' : '') + '><div class="nh"><i class="c" style="background:var(--c-' + def.cat + ')"></i>' + title + '<small>' + esc(CAT[def.cat] ? CAT[def.cat][1] : catName) + '</small></div><div class="nb">' + rows + '</div></div>';
+    html += '<div class="' + cls + '" data-node="' + esc(n.id) + '" style="left:' + coord(n.x) + 'px;top:' + coord(n.y) + 'px"' + (x && x.error ? ' title="' + esc(x.error) + '"' : '') + '><div class="nh"><i class="c" style="background:var(--c-' + def.cat + ')"></i>' + title + '<small>' + esc(CAT[def.cat] ? CAT[def.cat][1] : catName) + '</small></div><div class="nb">' + rows + '</div></div>';
   }
   el.nodes.innerHTML = html;
   measure(); drawWires();
@@ -942,7 +963,7 @@ function summary(n, def, lv) {
       return box(esc(bits.join(' · ') || 'Every line'));
     }
     case 'finding': case 'reminder': {
-      const kind = n.type === 'reminder' ? 'remind' : s.kind || 'note';
+      const kind = n.type === 'reminder' ? 'remind' : KIND_NAME[s.kind] ? s.kind : 'note';
       return box('<span class="pill ' + kind + '">' + KIND_NAME[kind] + '</span> <b>' + esc(s.title || g.title || '') + '</b><br><span class="mut">' + esc(CHECK_NAME[s.check || (n.type === 'reminder' ? 'remind' : g.check)] || s.check || g.check || 'No section') + (unwired('evidence') && s.evidence ? ' · “' + esc(s.evidence) + '”' : '') + '</span>');
     }
     case 'above': case 'below': return unwired('limit') ? box((n.type === 'above' ? '> ' : '< ') + esc(s.limit ?? 0)) : '';
@@ -978,7 +999,7 @@ function measure() {
   }
 }
 function pinAt(ref, g) { const r = pinRel.get(ref); if (!r) return null; const n = nodeById(g, r.id); return n ? { x: n.x + r.dx, y: n.y + r.dy } : null; }
-const curve = (a, b) => { const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5); return 'M' + a.x + ' ' + a.y + ' C' + (a.x + dx) + ' ' + a.y + ',' + (b.x - dx) + ' ' + b.y + ',' + b.x + ' ' + b.y; };
+const curve = (a, b) => { a = { x: Number(a.x) || 0, y: Number(a.y) || 0 }; b = { x: Number(b.x) || 0, y: Number(b.y) || 0 }; const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5); return 'M' + a.x + ' ' + a.y + ' C' + (a.x + dx) + ' ' + a.y + ',' + (b.x - dx) + ' ' + b.y + ',' + b.x + ' ' + b.y; };
 function drawWires(tmp) {
   const lv = level(), g = lv.g, d = S.dbg, L = lib();
   if (!g) return;
@@ -989,7 +1010,7 @@ function drawWires(tmp) {
     const a = pinAt(w.from, g), b = pinAt(w.to, g);
     if (!a || !b) return;
     const [nid, pn] = split(w.from), n = nodeById(g, nid), pins = n && RG.pinsOf(n, L, lv.inside), o = pins && pins.outputs.find((x) => x.name === pn);
-    const type = o ? o.type : 'any';
+    const type = o ? ptype(o.type) : 'any';
     const src = d && d.nodes ? stateOf(lv.prefix + nid, false, nid) : null;
     const dim = d && (src === 'idle' || src === 'notReached' || src === 'pending' || !src);
     const path = curve(a, b), sel = S.wire && S.wire.kind === 'd' && S.wire.i === i;
@@ -1270,6 +1291,7 @@ function renderHistory() {
 async function viewVersion(x) {
   try {
     const v = await ui.api('GET', '/tracker/assize/rules/' + S.ruleId + '/history/' + x.id);
+    if (v && v.graph) tidyGraph(v.graph);
     S.hist = v; S.path = []; S.sel = new Set(); S.wire = null; S.fitted = '';
     renderAll();
   } catch (e) { ui.toast("Couldn't open that version: " + e.message); }

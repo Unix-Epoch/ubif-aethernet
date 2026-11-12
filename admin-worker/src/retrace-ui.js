@@ -316,7 +316,7 @@ function drawHealth() {
     sub = paused ? 'needs an open Portal tab at store ' + S.store + ' to continue' : tabLeft + ' left';
   }
   if (paused) note = (c.last_sweep_at ? 'Nothing has been collected since ' + when(c.last_sweep_at) : 'Nothing has been collected yet') + '. Collection only runs while someone at the store has Portal open with Aethernet on' + (tabLeft ? '; ' + tabLeft + ' of that remains' : '') + '.';
-  const bar = h('div', { class: 'track' }, h('i', { style: counting ? '' : 'width:' + p.pct + '%' }));
+  const bar = h('div', { class: 'track' }, h('i', { style: counting ? '' : 'width:' + (Number(p.pct) || 0) + '%' }));
   const steps = counting ? [stepEl('Stock lookup', p.counting.items_total ? { x: p.counting.items_total, y: p.counting.items_total } : null), stepEl('Labels found', null), stepEl('Histories read', null), stepEl('Purchase orders', null), stepEl('Item names', null)]
     : [stepEl('Stock lookup', stp.stock), stepEl('Labels found', stp.labels), stepEl('Histories read', stp.histories), stepEl('Purchase orders', stp.pos), stepEl('Item names', stp.names)];
   el.health.className = 'rcard pg' + (done ? ' done' : counting ? ' count' : '');
