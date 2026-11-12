@@ -27,8 +27,8 @@ AE.gate = (() => {
   }
 
   async function check(p) {
-    const q = '?name=' + encodeURIComponent(p.storeName || '') + '&user=' + encodeURIComponent(p.name || '');
-    const j = await AE.workerCall('GET', API + '/v1/' + p.storeId + '/access' + q, { headers: { 'x-aethernet-key': KEY }, credentials: 'omit', cache: 'no-store' });
+    // The store's name and the employee's name travel as headers, not in the URL (URLs end up in logs).
+    const j = await AE.workerCall('GET', API + '/v1/' + p.storeId + '/access', { headers: { 'x-aethernet-key': KEY, 'x-aethernet-store-name': encodeURIComponent(p.storeName || ''), 'x-aethernet-user': encodeURIComponent(p.name || '') }, credentials: 'omit', cache: 'no-store' });
     if (j.config && typeof j.config === 'object') GM_setValue(AE.CONFIG_KEY, j.config); // Aethernet-wide settings (admin panel)
     return !!j.allowed;
   }
@@ -63,13 +63,13 @@ AE.gate = (() => {
 
   return async function gate() {
     if (!AE_ON_PORTAL || AE_SANDBOX) return boot(); // the sandbox has no real store to check (and never calls the Worker)
-    // Fast start (2.23): this browser's last answer was "allowed", so start now instead of after
-    // /api/auth/user; the check below still runs and a store without access stops on the next load.
-    const last = GM_getValue(CACHE_KEY, null);
-    if (last && last.allowed && !(AE_DEV && GM_getValue(PREVIEW_KEY, false))) boot();
+    // Fast start: when this browser's last answer for THIS store was "allowed", Aethernet starts before the check
+    // below returns. Which store Portal is signed into is only known once /api/auth/user answers (nothing
+    // synchronous is proven to hold it), so the cached store is compared after AE.profile(), never before: a PC
+    // that switched stores or users never starts on another store's cached "allowed".
     let p;
     try { p = await AE.profile(); } catch (_) { p = null; }
-    if (!p || !p.storeId) { setTimeout(gate, 30000); return; } // signed out (login page): check again later
+    if (!p || !p.storeId) { if (p) AE.signedOut(); setTimeout(gate, 30000); return; } // signed out (login page): check again later (Portal answered with no store: wipe the local caches; a 401 already did)
     if (AE_DEV && GM_getValue(PREVIEW_KEY, false)) { notice(p, 'denied', { force: true, preview: true }); return; } // dev preview: act locked out
     const cached = GM_getValue(CACHE_KEY, null);
     const known = cached && cached.store === p.storeId ? cached : null;
@@ -79,7 +79,10 @@ AE.gate = (() => {
       GM_setValue(CACHE_KEY, { store: p.storeId, allowed: ok, at: Date.now() });
       if (ok) { document.getElementById('sg-access-notice')?.remove(); boot(); }
       else if (!booted) notice(p, 'denied');
-      else console.warn('[' + AE_NAME + '] this store no longer has access; ' + AE_NAME + ' stops on the next page load');
+      else { // started from a cached "allowed" and the store has lost access: stop timers, observers and Portal reads on this page
+        AE.halt('this store no longer has access');
+        notice(p, 'denied');
+      }
     } catch (e) {
       console.warn('[' + AE_NAME + '] access check failed:', e.message || e);
       if (known && !known.allowed) notice(p, 'denied');

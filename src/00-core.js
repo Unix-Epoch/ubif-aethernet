@@ -162,7 +162,7 @@ const AE = (() => {
       throw e;
     }
     const base = { status: res.status, path, method, body: text.slice(0, 200) };
-    if (res.status === 401 || res.status === 403) { health.release(probe); throw new ApiError('Your Portal session expired. Log in again.', Object.assign(base, { sessionExpired: res.status === 401 })); }
+    if (res.status === 401 || res.status === 403) { health.release(probe); if (res.status === 401) signedOut(); throw new ApiError('Your Portal session expired. Log in again.', Object.assign(base, { sessionExpired: res.status === 401 })); }
     if (!res.ok) {
       const e = new ApiError(method + ' ' + path + ' → HTTP ' + res.status + ': ' + text.slice(0, 200), base);
       if (res.status >= 500 || res.status === 429) health.fail('http', e, probe); else health.release(probe);
@@ -184,6 +184,30 @@ const AE = (() => {
     health.ok(probe);
     return j;
   }
+
+  /*
+    Local caches that hold work order details (notes included) in this browser's Tampermonkey storage: the tracker's and Assize's
+    per-store blobs. They are listed here as they are written so they can be wiped without knowing the store ids (there is no way
+    to list stored keys). Wiped when Portal answers 401 (signed out, which includes the login page's first check), when the access
+    gate finds no store signed in, and when sameStore() sees Portal switched stores. The next person on a shared PC finds nothing.
+      AE.localCache.note(gmKey)   remember a key that holds such data
+      AE.localCache.clear(extra)  delete every remembered key (plus any in `extra`)
+  */
+  const localCache = (() => {
+    const INDEX = 'ae_local_caches', seen = new Set();
+    const index = () => { const a = GM_getValue(INDEX, []); return Array.isArray(a) ? a.filter((k) => typeof k === 'string') : []; };
+    return {
+      note(k) { if (seen.has(k)) return; seen.add(k); const all = new Set(index()); if (!all.has(k)) { all.add(k); GM_setValue(INDEX, [...all].slice(-80)); } },
+      clear(extra) { const all = new Set([...index(), ...seen, ...(extra || [])]); for (const k of all) { try { GM_deleteValue(k); } catch (_) {} } seen.clear(); if (index().length) GM_setValue(INDEX, []); },
+    };
+  })();
+  let signedOutAt = 0;
+  function signedOut() { // Portal answered 401: wipe the local caches (at most once a minute; a signed-out page asks again and again)
+    if (Date.now() - signedOutAt < 60000) return;
+    signedOutAt = Date.now();
+    try { localCache.clear(); } catch (_) {}
+  }
+
   const offline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
   const unwrap = (j) => (j && j.data && !Array.isArray(j.data) ? j.data : j);
 
@@ -505,6 +529,18 @@ const AE = (() => {
     Aethernet's background work stops in this tab until it's reloaded.
   */
   let storeChanged = null, storeCheck = null, storeCheckAt = 0;
+  // AE.halt(reason): Aethernet stops acting on this page for good (the access gate calls it when a store that started from a cached
+  // "allowed" turns out to be denied). AE.every's timers and the DOM watcher stop, and sameStore() answers false so every list read
+  // and write that asks it stops, the way the store-change pause does. Reload to start again.
+  let halted = null;
+  const haltTimers = [];
+  function halt(reason) {
+    if (halted) return;
+    halted = { reason: reason || 'halted' };
+    for (const id of haltTimers.splice(0)) clearInterval(id);
+    try { if (domObs) domObs.disconnect(); } catch (_) {}
+    console.warn('[' + AE_NAME + '] stopped on this page: ' + halted.reason);
+  }
   function sessionStore(fresh) {
     if (fresh || !storeCheck || Date.now() - storeCheckAt > 5000) {
       storeCheckAt = Date.now();
@@ -513,12 +549,13 @@ const AE = (() => {
     return storeCheck;
   }
   async function sameStore(fresh) {
-    if (storeChanged) return false;
+    if (storeChanged || halted) return false;
     if (!AE_ON_PORTAL) return true;
     const [p, cur] = await Promise.all([profile(), sessionStore(fresh)]);
     if (!p || p.storeId == null || cur.storeId == null || Number(cur.storeId) === Number(p.storeId)) return true;
     storeChanged = { from: p.storeName || String(p.storeId), to: cur.storeName || String(cur.storeId) };
     toast('Aethernet paused on this page', 'Portal switched to ' + storeChanged.to + ', in this tab or another one. Reload this page to keep using Aethernet.', 'err', 60000);
+    try { localCache.clear(); } catch (_) {} // the cached work order details belong to the store this page started on
     emit('store-changed', storeChanged);
     return false;
   }
@@ -1046,6 +1083,23 @@ const AE = (() => {
   const now = () => Date.now() + (AE_DEV ? Number(GM_getValue('ae_dev_clock_offset', 0)) || 0 : 0);
   const nowDate = () => new Date(now());
 
+  // Scrubbers for text that leaves this browser (Retrace's recorded calls, bug reports). scrubFree: plain text, emails and long
+  // numbers (phones, IMEIs) replaced. scrubText: JSON is walked and personal-looking keys removed; anything else goes through scrubFree.
+  const PERSONAL = /customer|phone|email|address|street|city|zip|postal|passcode|password|token|auth|cookie|givenName|familyName|fullName|firstName|lastName|imei|signature|card|dob|birth/i;
+  const scrubFree = (t) => String(t == null ? '' : t).replace(/[^\s@"]+@[^\s@"]+\.[a-z]{2,}/gi, '[email]').replace(/\+?\d[\d\s().-]{8,}\d/g, '[number]').slice(0, 8000);
+  function scrubText(t) {
+    let v;
+    try { v = JSON.parse(t); } catch (_) { return scrubFree(t); }
+    const walk = (x, d) => {
+      if (d > 8 || x == null) return x;
+      if (Array.isArray(x)) return x.slice(0, 50).map((y) => walk(y, d + 1));
+      if (typeof x === 'object') return Object.fromEntries(Object.entries(x).map(([k, y]) => [k, PERSONAL.test(k) ? '[removed]' : walk(y, d + 1)]));
+      if (typeof x === 'string') return x.replace(/[^\s@]+@[^\s@]+\.[a-z]{2,}/gi, '[email]').replace(/^\+?1?[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/, '[phone]').slice(0, 300);
+      return x;
+    };
+    return JSON.stringify(walk(v, 0)).slice(0, 8000);
+  }
+
   // --------------------------------------------------- errors + usage
   // The last few Aethernet errors, attached to bug reports ("Send feedback").
   const recentErrors = [];
@@ -1145,7 +1199,7 @@ const AE = (() => {
   const domStats = { runs: 0, ms: 0, worstFrame: 0, frame: 0, byFn: {}, since: performance.now(), reset() { Object.assign(this, { runs: 0, ms: 0, worstFrame: 0, frame: 0, byFn: {}, since: performance.now() }); } };
   if (AE_DEV) try { window.__aeDomStats = domStats; } catch (_) {} // dev builds: readable by the sandbox tests
   function runDom() {
-    if (domBusy) return;
+    if (domBusy || halted) return;
     if (++domRuns > 8) { if (!domFrame) domFrame = requestAnimationFrame(() => { domFrame = 0; domRuns = 0; runDom(); }); return; }
     if (!domFrame) domFrame = requestAnimationFrame(() => { domFrame = 0; domRuns = 0; domStats.frame = 0; });
     domBusy = true;
@@ -1163,7 +1217,7 @@ const AE = (() => {
     if (!domObs) domObs = new MutationObserver(runDom);
     if (root && !(root.__aeWatched)) { root.__aeWatched = true; domObs.observe(root, { childList: true, subtree: true }); }
   }
-  function onDom(fn) { domFns.push(fn); watchDom(document); try { fn(); } catch (e) { noteError('dom', e); } }
+  function onDom(fn) { if (halted) return; domFns.push(fn); watchDom(document); try { fn(); } catch (e) { noteError('dom', e); } }
 
   /*
     Resolves once Portal's first load has settled: the page's load event, then
@@ -1542,8 +1596,8 @@ const AE = (() => {
   // change without a load and Portal re-renders often.
   function every(ms, fn) {
     // Promise.resolve so async callbacks' rejections are caught too.
-    const safe = () => Promise.resolve().then(fn).catch((e) => { noteError('timer', e); console.error('[' + AE_NAME + ']', e); });
-    setInterval(safe, ms);
+    const safe = () => (halted ? undefined : Promise.resolve().then(fn).catch((e) => { noteError('timer', e); console.error('[' + AE_NAME + ']', e); }));
+    haltTimers.push(setInterval(safe, ms));
     safe();
   }
 
@@ -1551,9 +1605,9 @@ const AE = (() => {
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, woHeadingRow, woChip, textEl, findButton,
     api, unwrap, Stopped, ApiError, BadShape, shape, health, workerCall, timedFetch, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every,
-    api, unwrap, Stopped, portal, sameStore, assertSameStore, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, portal, sameStore, assertSameStore, halt, halted: () => !!halted, localCache, signedOut, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
-    confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, USAGE_KEY, localDay,
+    confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, scrubText, scrubFree, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,
     autoClose: null, // set by the auto-close shard when it's enabled
     // Bug report links (06-feedback.js replaces these; without it, e.g. the demo build, just the words).

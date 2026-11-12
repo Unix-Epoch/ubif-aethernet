@@ -24,7 +24,11 @@ AE.feedback = (() => {
   const { h, icon } = AE;
   const API = '__WAYMARK_API__';
   const KEY = '__WAYMARK_KEY__';
+  // The admin key is held in memory only, for this page session (Portal is a single-page app, so it survives moving between pages
+  // but not a reload or a new tab). Nothing is saved: the next person on this PC can't read it. A key an older version saved is deleted.
   const ADMIN_KEY_GM = 'ae_admin_key';
+  let adminKeyHeld = '';
+  try { GM_deleteValue(ADMIN_KEY_GM); } catch (_) {}
   // In the sandbox only a local Worker (wrangler dev): fake data never reaches the real one.
   const configured = () => (AE_SANDBOX ? /^http:\/\/localhost[:/]/.test(API) : /^(https:\/\/|http:\/\/localhost[:/])/.test(API));
 
@@ -157,12 +161,14 @@ AE.feedback = (() => {
   }
 
   // ------------------------------------------------------------ Send feedback
+  // Free text attached to a report (Aethernet's and Portal's error messages, a bug link's error): emails and long numbers (phones, IMEIs) removed, then cut to n.
+  const clean = (v, n) => AE.scrubFree(v).slice(0, n);
   function diagnostics() {
     return {
       // `crystals`: key kept, it's what saved bug reports store (legacy name for shards)
       crystals: Object.entries(AE.settings.crystals).filter(([, on]) => on).map(([id]) => id),
-      errors: AE.recentErrors.slice(-5),
-      pageErrors: AE.pageErrors.slice(-5), // Portal's own script errors
+      errors: AE.recentErrors.slice(-5).map((e) => ({ ...e, where: clean(e.where, 160), message: clean(e.message, 300) })),
+      pageErrors: AE.pageErrors.slice(-5).map((e) => ({ ...e, where: clean(e.where, 160), message: clean(e.message, 300) })), // Portal's own script errors
       screen: innerWidth + 'x' + innerHeight,
       theme: document.body.classList.contains('asurion-dark') ? 'dark' : 'light',
       scans: (AE.scanLog || []).slice(-10), // Master's Mend scan to open: the last few scans and what happened
@@ -179,7 +185,7 @@ AE.feedback = (() => {
     ensureCss();
     let kind = 'bug';
     const ctx = opts.context && (opts.context.error || opts.context.where)
-      ? { where: String(opts.context.where || '').slice(0, 120), error: String(opts.context.error || '').slice(0, 600) } : null;
+      ? { where: clean(opts.context.where || '', 120), error: clean(opts.context.error || '', 600) } : null;
     const text = h('textarea', { maxlength: 4000, placeholder: 'What happened, and what did you expect? (Which work order or page, if it matters.)' });
     const include = h('input', { type: 'checkbox', checked: true });
     const setKind = (k) => {
@@ -246,18 +252,18 @@ AE.feedback = (() => {
       tabs, body);
     const close = modal('sg-admin', card);
 
-    const key = () => GM_getValue(ADMIN_KEY_GM, '');
+    const key = () => adminKeyHeld;
     function unlock(msg) {
       tabs.replaceChildren();
       const input = h('input', { type: 'password', placeholder: 'Admin key', autocomplete: 'off' });
       const go = h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: async () => {
         go.disabled = true;
-        try { await call('GET', '/v1/admin/ping', null, input.value.trim()); GM_setValue(ADMIN_KEY_GM, input.value.trim()); draw(); }
+        try { await call('GET', '/v1/admin/ping', null, input.value.trim()); adminKeyHeld = input.value.trim(); draw(); }
         catch (e) { go.disabled = false; unlock('That key didn\'t work (' + (e.message || e) + ').'); }
       } }, 'Unlock');
       body.replaceChildren(h('div', { class: 'unlock' },
         h('b', null, 'Admin key'),
-        h('div', { class: 'sg-soft' }, 'Kept in this browser only. It is not part of the script, so nobody else can read reports or usage.'),
+        h('div', { class: 'sg-soft' }, 'Kept in this tab only until you reload. It is not part of the script, so nobody else can read reports or usage.'),
         input, go, msg ? h('div', { style: 'color:var(--aui-status-error,#b91a24);margin-top:8px' }, msg) : null));
       input.focus();
     }
@@ -272,7 +278,7 @@ AE.feedback = (() => {
         h('button', { type: 'button', class: 'tab' + (tab === 'settings' ? ' on' : ''), onclick: () => { tab = 'settings'; draw(); } }, 'Settings'));
       body.replaceChildren(h('div', { class: 'sg-soft' }, 'Loading…'));
       try { tab === 'reports' ? await drawReports() : tab === 'usage' ? await drawUsage() : tab === 'stores' ? await drawStores() : tab === 'auto' ? await drawAuto() : await drawSettings(); }
-      catch (e) { if (/admin key/.test(e.message)) { GM_deleteValue(ADMIN_KEY_GM); unlock('The saved key was refused.'); } else body.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load: " + (e.message || e))); }
+      catch (e) { if (/admin key/.test(e.message)) { adminKeyHeld = ''; unlock('The saved key was refused.'); } else body.replaceChildren(h('div', { class: 'sg-soft' }, "Couldn't load: " + (e.message || e))); }
     }
 
     async function drawReports() {

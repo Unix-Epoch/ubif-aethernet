@@ -48,6 +48,39 @@ AE.status = (() => {
   const text = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
   const ids = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && /^[A-Za-z]{1,30}$/.test(x)).slice(0, 12) : []);
 
+  // Bulletin rules from the file become CSS (closers, selectors: joined into a <style> block) and regexes (pages: compiled and tested
+  // every second), so they are held to a plain shape. A rejected entry is dropped; the rest of the file still applies. AE.noteError once per entry.
+  const droppedSeen = new Set();
+  const dropped = (kind, v) => { const k = kind + '|' + String(v).slice(0, 80); if (!droppedSeen.has(k)) { droppedSeen.add(k); try { AE.noteError('Notice file', 'dropped a bulletin ' + kind + ': ' + String(v).slice(0, 80)); } catch (_) {} } return false; };
+  const BAD_CSS = /[{};@\\<]|\/\*|url\(/i;
+  const okSelector = (x) => {
+    if (BAD_CSS.test(x)) return dropped('selector', x);
+    try { document.querySelector(x); } catch (_) { return dropped('selector', x); }
+    return true;
+  };
+  // A quantified group (or a repeat of one) whose inside has a quantifier of its own: (a+)+, (x*)*, ((a+)b)* …: can backtrack for ages.
+  function nestedQuantifier(src) {
+    const open = []; let inClass = false;
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (c === '\\') { i++; continue; }
+      if (inClass) { if (c === ']') inClass = false; continue; }
+      if (c === '[') { inClass = true; continue; }
+      if (c === '(') open.push({ q: false });
+      else if (c === ')') {
+        const g = open.pop(); if (!g) continue;
+        if (g.q && /^(?:[+*]|\{\d)/.test(src.slice(i + 1))) return true;
+        if (open.length && g.q) open[open.length - 1].q = true;
+      } else if ((c === '+' || c === '*' || (c === '{' && /^\{\d/.test(src.slice(i)))) && open.length) open[open.length - 1].q = true;
+    }
+    return false;
+  }
+  const okPage = (x) => {
+    if (x.length > 120 || nestedQuantifier(x)) return dropped('page pattern', x);
+    try { new RegExp(x); } catch (_) { return dropped('page pattern', x); }
+    return true;
+  };
+
   function clean(raw) {
     const out = { latest: null, incident: null, bulletins: null };
     if (!raw || typeof raw !== 'object') return out;
@@ -58,7 +91,7 @@ AE.status = (() => {
     const strs = (a, n, re) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && x.length && x.length <= 200 && (!re || re.test(x))).slice(0, n) : []);
     const b = raw.bulletins;
     if (b && typeof b === 'object') {
-      out.bulletins = { pages: strs(b.pages, 20), patterns: strs(b.patterns, 12, /^[a-z-]{1,24}$/), selectors: strs(b.selectors, 20), closers: strs(b.closers, 20) };
+      out.bulletins = { pages: strs(b.pages, 20).filter(okPage), patterns: strs(b.patterns, 12, /^[a-z-]{1,24}$/), selectors: strs(b.selectors, 20).filter(okSelector), closers: strs(b.closers, 20).filter(okSelector) };
     }
     const i = raw.incident;
     if (i && typeof i === 'object' && text(i.title, 140)) {

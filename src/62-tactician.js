@@ -69,8 +69,9 @@ AE.tactician = (() => {
       if (!fresh && hit && Date.now() - hit.at < (recent || !hit.done ? 10 * 60000 : 24 * 3600000)) rows = hit.rows;
       else {
         const j = await AE.api('GET', '/api/store-time-sheet?fromDate=' + start + '&toDate=' + end);
-        rows = ((j && j.rows) || []).map((r) => ({ u: r.userId, n: r.username, s: r.storeId, c: r.clockTypeId, i: r.timeIn, o: r.timeOut })); // only what's needed
-        mine[start] = { at: Date.now(), done, rows };
+        // `rows` is proven by the real capture (vault: Tactician.md). A wrong shape throws to the callers' error handling instead of caching an empty week.
+        rows = AE.shape.list(j, 'rows', 'store time sheet').map((r) => ({ u: r.userId, n: r.username, s: r.storeId, c: r.clockTypeId, i: r.timeIn, o: r.timeOut })); // only what's needed
+        mine[start] = { at: Date.now(), done: done && rows.length > 0, rows }; // an empty week is never kept as finished: it is re-asked on the 10-minute cycle (it may be a Portal blip)
       }
       out.push(...rows);
     }
@@ -122,6 +123,7 @@ AE.tactician = (() => {
       try {
         const store = Number((await AE.profile()).storeId);
         if (!store) return;
+        if (!(await canManage()).ok) return; // without Store time sheet access Portal only shows the person's own punches: a partial day must not overwrite a manager's
         const t = new Date(), f = new Date(t); f.setDate(f.getDate() - 6);
         const today = ymd(t), [ps, gm] = await Promise.all([punches(ymd(f), today), gmIds()]);
         const days = new Map();

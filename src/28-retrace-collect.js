@@ -782,20 +782,8 @@ AE.retrace = (() => {
     return flushing;
   }
 
-  // Dev: what a Portal call looks like, with anything that could be a customer's removed.
-  const PERSONAL = /customer|phone|email|address|street|city|zip|postal|passcode|password|token|auth|cookie|givenName|familyName|fullName|firstName|lastName|imei|signature|card|dob|birth/i;
-  function scrubText(t) {
-    let v;
-    try { v = JSON.parse(t); } catch (_) { return String(t || '').replace(/[^\s@"]+@[^\s@"]+\.[a-z]{2,}/gi, '[email]').replace(/\+?\d[\d\s().-]{8,}\d/g, '[number]').slice(0, 8000); }
-    const walk = (x, d) => {
-      if (d > 8 || x == null) return x;
-      if (Array.isArray(x)) return x.slice(0, 50).map((y) => walk(y, d + 1));
-      if (typeof x === 'object') return Object.fromEntries(Object.entries(x).map(([k, y]) => [k, PERSONAL.test(k) ? '[removed]' : walk(y, d + 1)]));
-      if (typeof x === 'string') return x.replace(/[^\s@]+@[^\s@]+\.[a-z]{2,}/gi, '[email]').replace(/^\+?1?[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/, '[phone]').slice(0, 300);
-      return x;
-    };
-    return JSON.stringify(walk(v, 0)).slice(0, 8000);
-  }
+  // Dev: what a Portal call looks like, with anything that could be a customer's removed (the scrubber lives in 00-core: bug reports use it too).
+  const scrubText = AE.scrubText;
   const recording = () => AE_DEV && !!GM_getValue(REC_KEY, false);
   function record(c) {
     const rec = { at: c.at, method: c.method, url: String(c.url || '').replace(/^https?:\/\/[^/]+/, ''), status: c.status, body: scrubText(c.body), response: scrubText(c.response) };

@@ -62,7 +62,20 @@ AE.tracker = (() => {
       A 404 on the work order throws with e.gone.
   */
   const WOD_MS = 10 * 60 * 1000, WOD_KEEP = 2 * 60 * 60 * 1000, wodKey = (store) => 'ae_wod_' + store;
-  const wodLoading = new Map();
+  const wodLoading = new Map(), wodPruned = new Set();
+  // The kept details (notes included) of one store: entries older than WOD_KEEP are dropped the first time this page reads them,
+  // not only at the next write. The key is listed with AE.localCache so sign-out and a store change can wipe it.
+  function wodRead(k) {
+    AE.localCache.note(k);
+    const all = GM_getValue(k, {}) || {};
+    if (!wodPruned.has(k)) {
+      wodPruned.add(k);
+      let n = 0; const at = Date.now();
+      for (const [w, x] of Object.entries(all)) if (!x || at - x.at > WOD_KEEP) { delete all[w]; n++; }
+      if (n) GM_setValue(k, all);
+    }
+    return all;
+  }
   async function notesOf(wo) {
     const all = []; let total = null, latest = null;
     for (let off = 0, i = 0; i < NOTE_PAGES; i++) {
@@ -109,12 +122,12 @@ AE.tracker = (() => {
   function wodGet(store, wo, opts = {}) {
     const id = String(wo), k = wodKey(store);
     if (!opts.force) {
-      const hit = (GM_getValue(k, {}) || {})[id];
+      const hit = wodRead(k)[id];
       if (hit && Date.now() - hit.at < (opts.maxAge || WOD_MS) && (!opts.updatedAt || hit.u === opts.updatedAt)) return Promise.resolve(Object.assign({ at: hit.at }, hit.d));
       if (wodLoading.has(k + ':' + id)) return wodLoading.get(k + ':' + id);
     }
     const run = fetchDetail(id).then(({ d, failed }) => {
-      const at = Date.now(), all = GM_getValue(k, {}) || {};
+      const at = Date.now(), all = wodRead(k);
       for (const [w, x] of Object.entries(all)) if (!x || at - x.at > WOD_KEEP) delete all[w];
       const w = d.workorder && d.workorder.workorder;
       if (!failed && w) all[id] = { at, u: w.updatedAt || null, d }; else delete all[id];

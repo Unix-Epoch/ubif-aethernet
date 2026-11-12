@@ -87,9 +87,21 @@ AE.shard({
 
     // ------------------------------------------------------------ storage (per store, shared by tabs)
     let storeId = null;
-    const key = (k) => 'ae_assize_' + k + '_' + storeId;
+    // 'rows' and 'details' hold work order data (details include notes): listed with AE.localCache so sign-out and a store change wipe them.
+    const key = (k) => { const n = 'ae_assize_' + k + '_' + storeId; if (k === 'rows' || k === 'details') AE.localCache.note(n); return n; };
     const readRows = () => GM_getValue(key('rows'), null);     // { at, rows: [trimmed open rows], closed: [trimmed closed AM rows] }
-    const readDetails = () => GM_getValue(key('details'), {}); // { woId: { u: list updatedAt, at: fetched, d: trimmed detail } }
+    // Details older than 2 hours are dropped the first time this page reads them (a pass refetches anything older than DETAIL_TTL anyway).
+    let detailsPruned = false;
+    const readDetails = () => {
+      const all = GM_getValue(key('details'), {}) || {};
+      if (!detailsPruned) {
+        detailsPruned = true;
+        let n = 0; const t = Date.now();
+        for (const [w, x] of Object.entries(all)) if (!x || t - (x.at || 0) > 2 * 3600000) { delete all[w]; n++; }
+        if (n) GM_setValue(key('details'), all);
+      }
+      return all;
+    };
 
     // Only what the rules read, so GM storage stays small (and no passcodes, phones or emails): the engine's trimRow / trimDetail.
     const { trimRow, trimDetail } = R;
