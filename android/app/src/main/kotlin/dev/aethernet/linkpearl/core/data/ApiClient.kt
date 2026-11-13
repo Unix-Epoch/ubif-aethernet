@@ -18,43 +18,43 @@ import kotlinx.serialization.json.JsonElement
 interface ApiClient {
     suspend fun get(path: String, query: Map<String, String> = emptyMap()): ApiResult<JsonElement>
     suspend fun post(path: String, body: JsonElement? = null): ApiResult<JsonElement>
+    suspend fun put(path: String, body: JsonElement? = null): ApiResult<JsonElement>
+    suspend fun delete(path: String): ApiResult<JsonElement>
 }
 
 sealed interface ApiResult<out T> {
     data class Success<T>(val value: T) : ApiResult<T>
-    data class Failure(val error: ApiError) : ApiResult<Nothing>
+    data class Failure(val error: ApiError, val status: Int? = null, val message: String? = null) : ApiResult<Nothing>
 }
 
-enum class ApiError { NotConfigured, Offline, Unauthorized, Server }
+enum class ApiError { NotConfigured, Offline, Unauthorized, Forbidden, NotFound, RateLimited, Server }
 
 /** Answers every call with [ApiError.NotConfigured] until agent A provides the real client. */
 object UnconfiguredApiClient : ApiClient {
     override suspend fun get(path: String, query: Map<String, String>) = ApiResult.Failure(ApiError.NotConfigured)
     override suspend fun post(path: String, body: JsonElement?) = ApiResult.Failure(ApiError.NotConfigured)
+    override suspend fun put(path: String, body: JsonElement?) = ApiResult.Failure(ApiError.NotConfigured)
+    override suspend fun delete(path: String) = ApiResult.Failure(ApiError.NotConfigured)
 }
 
-/**
- * STUB for agent A (`feature/onboarding` + `core/data`).
- *
- * Whether this phone is registered with the server and may call it. The app shows `feature/onboarding` while [state] is
- * [AuthState.Unregistered] and the normal navigation once it is [AuthState.Registered]. Real implementation: register the device
- * (send the public key from [DeviceIdentity] with a one-time code from the admin site), store the result, handle revocation.
- */
 interface Auth {
     val state: StateFlow<AuthState>
-    suspend fun register(code: String): Boolean
+    suspend fun register(name: String): Boolean
+    suspend fun refresh()
     suspend fun signOut()
 }
 
 sealed interface AuthState {
     data object Unregistered : AuthState
-    data object Registered : AuthState
+    data class Pending(val fingerprint: String, val name: String) : AuthState
+    data class Registered(val name: String, val stores: List<StoreRef>) : AuthState
 }
 
 /** Placeholder: reports Registered so the fake Home is reachable until onboarding exists. */
-class FakeAuth(initial: AuthState = AuthState.Registered) : Auth {
+class FakeAuth(initial: AuthState = AuthState.Registered("Phone", emptyList())) : Auth {
     override val state = MutableStateFlow(initial)
-    override suspend fun register(code: String): Boolean { state.value = AuthState.Registered; return true }
+    override suspend fun register(name: String): Boolean { state.value = AuthState.Registered(name, emptyList()); return true }
+    override suspend fun refresh() {}
     override suspend fun signOut() { state.value = AuthState.Unregistered }
 }
 
