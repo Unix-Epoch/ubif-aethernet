@@ -58,16 +58,18 @@ class P256Test {
         assertEquals(32, P256.fixed32(BigInteger(1, ByteArray(32) { 0xFF.toByte() })).size) // toByteArray adds a sign byte here
         var shortSeen = 0
         val gen = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }
-        repeat(1500) {
+        var tries = 0
+        while (tries < 100_000 && (tries < 300 || shortSeen < 3)) { // keep going until some keys had a leading zero byte
+            tries++
             val pub = gen.generateKeyPair().public as ECPublicKey
             val jwk = P256.jwk(pub)
             for (k in listOf("x", "y")) {
                 val s = jwk[k]!!.jsonPrimitive.content
                 assertEquals(43, s.length); assertFalse(s.contains('=') || s.contains('+') || s.contains('/'))
             }
-            if (pub.w.affineX.toByteArray().size < 32) shortSeen++
+            if (pub.w.affineX.toByteArray().size < 32 || pub.w.affineY.toByteArray().size < 32) shortSeen++
         }
-        assertTrue("expected some keys with a short coordinate in 1500 tries", shortSeen > 0)
+        assertTrue("no key with a short coordinate in $tries tries", shortSeen > 0)
     }
 
     @Test fun peerKeysThatAreNotPointsAreRefused() {
