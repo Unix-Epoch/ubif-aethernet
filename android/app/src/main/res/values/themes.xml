@@ -1,0 +1,13 @@
+<resources>
+    <!-- System splash: deep indigo with the pearl, then the Compose theme takes over (LinkpearlTheme follows the system light/dark setting). -->
+    <style name="Theme.Linkpearl.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/lp_indigo</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.Linkpearl</item>
+    </style>
+    <style name="Theme.Linkpearl" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

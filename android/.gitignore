@@ -1,0 +1,15 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+.kotlin/
+*.jks
+*.keystore
+*.apk
+*.aab
+# screenshots/ is committed on purpose: it is the review artifact. Roborazzi scratch output is not.
+app/build/
+*.hprof
+.DS_Store
