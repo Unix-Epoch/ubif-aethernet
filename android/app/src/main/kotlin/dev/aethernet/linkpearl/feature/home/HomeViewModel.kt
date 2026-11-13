@@ -83,7 +83,11 @@ class HomeViewModel(
                     lastData = r.data; lastScope = scope; lastAt = nowMs()
                     _state.update { it.copy(view = HomeView.Ok, data = r.data, offline = r.cached, failed = false, busy = false, stores = r.data.stores.ifEmpty { it.stores }) }
                 }
-                is HomeResult.Failed -> _state.update {
+                is HomeResult.Failed -> if (r.reason == FailureReason.NotYourStore && scope is StoreScope.One) {
+                    // The chosen store is no longer approved for this phone: back to All stores.
+                    viewModelScope.launch { prefs.set(StoreScope.All) }
+                    load(StoreScope.All, manual = false)
+                } else _state.update {
                     when {
                         have != null && r.reason == FailureReason.Offline -> it.copy(view = HomeView.Ok, offline = true, busy = false)
                         have != null -> it.copy(view = HomeView.Ok, failed = true, busy = false)

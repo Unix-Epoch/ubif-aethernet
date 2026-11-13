@@ -1,0 +1,38 @@
+{
+ "status": 200,
+ "body": {
+  "id": "ef6f6b72c6bd3001439980677e3b8ac8",
+  "name": "Pixel Fold",
+  "kind": "phone",
+  "status": "active",
+  "stores": [
+   914,
+   326
+  ],
+  "fingerprint": "4DA4-A174-D5DD-EC32",
+  "keys": [
+   {
+    "store": 326,
+    "publicJwk": {
+     "kty": "EC",
+     "crv": "P-256",
+     "x": "3FqJSLZRBEL2YtZaG9mXE4uokBjR25f6IVs1XgcQ2k4",
+     "y": "Lk5L2biR4uylAbJN2FEi55VesTYDocz4GbvatSbNThU"
+    },
+    "wrapped": "v1.BDb8hs6Dp4a5PK3hX2n4Bk_-ZbPIgx8E2Q05PEBX2hQy27Xvg7fSO5BF0YTPxXvVLykbFhj5B_g3XQL2aEgygfBTXU7A234W53MTwdZuXT1ejg7IHilMZi7Wo-_QEg3d_ngw23VVQ8VOj9dsRyyX4ugkO53i-siTANYywPWJdKu3DCbgR9Idm01hpsxyiHoWzd9bF-iE4ivTsqNqXvmk1GkZ1v1tLJzv5pyxWgTMOuDaAyMv4CAi8TncLF5e6jyHSgDDSWeM9UW6ICiPptk2-dHZqB-JyMPaG4Op0Z57lIRUSLUVEMV1"
+   },
+   {
+    "store": 914,
+    "publicJwk": {
+     "kty": "EC",
+     "crv": "P-256",
+     "x": "M8gWNq1D5SpAbSQ_DXGYnxx8bS0ZArGwi-Ceh_1sjwM",
+     "y": "OtVKGolr9O-mqmUbMdNS1pfE9oZdTjrwVyRB4yL52U0"
+    },
+    "wrapped": "v1.BI268xtdi2ZYGJUD6QXOf2x_QK8Pf6w1ufwWTa1HjX676Fw5VZ3rNZukqZZ8kWG8JEn49iA2KC7KmZOFFY9agiFL4BRdtQFv3pM54zltGl6silbUWgTIXgbjn7GCe4Nr9RuJujIFNPQ15uzcdBZW65Av--HyvSDdNOooXxsUH2eAgd-_GUKgMW_X1UndkklkQaKS_MmrMpqUnUEvnR8xZpKTki7kQ-3LGpPiQIjf4faZAxL3ZjwJzPMxA9WtZdig22Dngzo3lLoP-ky-b8Cp4azCRBrD0id0Xd3IyjnOS6cRqu_1MMaW"
+   }
+  ],
+  "runNow": false,
+  "lastRun": null
+ }
+}

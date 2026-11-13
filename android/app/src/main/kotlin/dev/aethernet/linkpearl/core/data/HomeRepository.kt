@@ -17,7 +17,8 @@ sealed interface StoreScope {
     }
 }
 
-enum class FailureReason { Offline, Server, Unauthorized }
+/** [NotYourStore]: the chosen store is no longer approved for this phone (Home falls back to All stores). */
+enum class FailureReason { Offline, Server, Unauthorized, NotYourStore }
 
 sealed interface HomeResult {
     /** [cached] = the answer came from the phone's last-known copy because the network is unavailable (drawn as "Offline"). */
@@ -26,8 +27,8 @@ sealed interface HomeResult {
 }
 
 /**
- * Source of Home's numbers. The real implementation (agent A) calls `GET /api/m/home` through [ApiClient] and keeps the last answer
- * on disk so it can be returned with `cached = true` when offline. The fake in [FakeHomeRepository] drives the UI until then.
+ * Source of Home's numbers. [RealHomeRepository] calls `GET /v1/agents/m/home` through [ApiClient] and keeps the last answer per scope
+ * (in memory and encrypted on disk) so it can be returned with `cached = true` when offline. [FakeHomeRepository] drives tests and screenshots.
  */
 interface HomeRepository {
     /** [fresh] = the refresh button was pressed: skip any server-side cache (`&fresh=1`). */
