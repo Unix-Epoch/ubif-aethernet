@@ -1777,6 +1777,58 @@ await t('Assize cache: details older than 2 hours are dropped on first read, and
   assert.deepEqual(Object.keys(readDetails()), ['2']); assert.deepEqual(Object.keys(env.gm.get('ae_assize_details_914')), ['2']);
   env.AE.signedOut(); assert.equal(env.gm.has('ae_assize_details_914'), false);
 });
+// ---- Spread on dark themes: every colour in Spread's CSS comes from Portal's design tokens (Glamour sets them), with today's light value as the fallback.
+// A hard-coded neutral (white, light grey, near-black) next to a theme-coloured text is what made the board a light island on a dark theme.
+const spSrc = readFileSync(path.join(ROOT, 'src/59-spread.js'), 'utf8');
+const spCss = spSrc.slice(spSrc.indexOf('const CSS = `') + 13, spSrc.indexOf('\n    `;', spSrc.indexOf('const CSS = `'))).replace(/\/\*[\s\S]*?\*\//g, '');
+// the text with every var(...) group (fallbacks included) cut out, parens balanced
+const spNoVar = (str) => { let out = '', i = 0; while (i < str.length) { if (str.startsWith('var(', i)) { let d = 0; i += 3; do { if (str[i] === '(') d++; else if (str[i] === ')') d--; i++; } while (d > 0 && i < str.length); } else out += str[i++]; } return out; };
+// The colours Spread keeps on purpose, by "selector | property": status amber and red (Attention, Urgent, the old-age text and dot) and their dark-theme variants; shadows are black.
+const SP_FIXED = new Set([
+  '.sp-att.warning | color', '.sp-att.warning | background', '.sp-att.urgent | color', '.sp-att.urgent | background',
+  ':is(.asurion-dark, .partner-dark) .sp-att.warning | color', ':is(.asurion-dark, .partner-dark) .sp-att.warning | background',
+  '.sp-age.old | color', '.sp-age.old::after | background', ':is(.asurion-dark, .partner-dark) .sp-age.old | color',
+]);
+const spLiterals = (decl) => spNoVar(decl).match(/#[0-9a-fA-F]{3,8}\b|\brgba?\([^)]*\)|\b(?:white|black|gray|grey|silver|ivory|beige|whitesmoke|gainsboro)\b/g) || [];
+await t('Spread: no neutral colour literal in the CSS outside var(--aui-…, fallback); only the listed semantic colours stay fixed', () => {
+  const bad = [];
+  for (const m of spCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const sel = m[1].trim().replace(/\s+/g, ' ');
+    for (const d of m[2].split(';')) {
+      const i = d.indexOf(':'); if (i < 0) continue;
+      const prop = d.slice(0, i).trim(), val = d.slice(i + 1);
+      for (const lit of spLiterals(val)) {
+        if (/^rgba\(0,\s*0,\s*0,/.test(lit) && /^box-shadow$/.test(prop)) continue; // shadows are black on any theme
+        if (!SP_FIXED.has(sel + ' | ' + prop)) bad.push(sel + ' { ' + prop + ': … ' + lit);
+      }
+    }
+  }
+  assert.deepEqual(bad, []);
+});
+await t('Spread: every design token in the CSS has today\'s light value as its fallback (stock Portal keeps its look)', () => {
+  const toks = spCss.match(/var\(--aui-[a-z0-9-]+(?=[,)])[^)]*\)?/g) || [];
+  assert.ok(toks.length > 25, 'tokens found: ' + toks.length);
+  const bare = toks.filter((x) => !/^var\(--aui-[a-z0-9-]+,\s*[^)\s]/.test(x));
+  assert.deepEqual(bare, []);
+});
+await t('Spread: the board, columns, cards, chips and tags take their colours from the theme tokens', () => {
+  const rule = (sel) => { const m = spCss.match(new RegExp('(?:^|\\n)\\s*' + sel.replace(/[.#]/g, '\\$&') + ' \\{([^}]*)\\}')); assert.ok(m, sel); return m[1]; };
+  assert.match(rule('#sp-board'), /color:var\(--aui-on-surface,/);
+  assert.match(rule('.sp-col'), /background:var\(--aui-neutral-soft,/);
+  assert.match(rule('.sp-card'), /background:var\(--aui-surface,/);
+  assert.match(rule('.sp-card'), /border:1px solid var\(--aui-outline-soft,/);
+  assert.match(rule('.sp-count'), /background:var\(--aui-surface,/);
+  assert.match(rule('.sp-prog'), /background:var\(--aui-neutral-soft,/);
+  assert.match(rule('.sp-bin'), /background:var\(--aui-surface,/);
+  assert.match(rule('.sp-seg button.on'), /color:var\(--aui-on-primary,/);
+});
+await t('Spread: the amber age text, the Attention badge, the WO link and the card shadow have dark-theme variants; the edge falls back to a token', () => {
+  for (const sel of ['.sp-age.old', '.sp-att.warning', '.sp-card:hover']) assert.ok(spCss.includes(':is(.asurion-dark, .partner-dark) ' + sel + ' {'), sel);
+  assert.ok(spCss.includes(':is(.asurion-dark, .partner-dark) :is(.sp-wo,'));
+  const edge = spSrc.split('\n').find((l) => l.includes('const edgeOf'));
+  assert.ok(edge && spLiterals(edge.replace(/\/\/.*$/, '')).length === 0, 'the edge colour used when Rainbow Drip is off is a token: ' + edge);
+});
+
 
 // ================================================================== summary
 const failed = results.filter(([, p]) => !p);
