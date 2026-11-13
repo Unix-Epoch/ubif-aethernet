@@ -19,7 +19,7 @@ import dev.aethernet.linkpearl.feature.settings.settingsGraph
 import dev.aethernet.linkpearl.feature.workorders.workOrdersGraph
 
 /**
- * The app's root: onboarding until the device is registered ([Auth]), then the chrome with the four destinations.
+ * The app's root: onboarding until the device is registered and approved ([Auth]), then the chrome with the four destinations.
  * Each feature registers its destinations through its own `*Graph()` function; this file only lists them once.
  */
 @Composable
@@ -27,7 +27,9 @@ fun LinkpearlRoot() {
     val container = LocalAppContainer.current
     val auth = remember { container.get<Auth>() }
     val authState by auth.state.collectAsStateWithLifecycle()
-    if (authState == AuthState.Unregistered) OnboardingScreen() else MainShell()
+    // Onboarding until the phone is registered, approved and has at least one store (Pending and "No stores" live there too).
+    val state = authState
+    if (state is AuthState.Registered && state.stores.isNotEmpty()) MainShell() else OnboardingScreen()
 }
 
 @Composable

@@ -37,7 +37,14 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+
+        // Server base URL and the public app key (one place: android/gradle.properties).
+        fun prop(name: String) = providers.gradleProperty(name).get().replace("\\", "\\\\").replace("\"", "\\\"")
+        buildConfigField("String", "API_BASE_URL", "\"${prop("linkpearl.baseUrl")}\"")
+        buildConfigField("String", "APP_KEY", "\"${prop("linkpearl.appKey")}\"")
     }
+
+    buildFeatures { buildConfig = true }
 
     signingConfigs {
         if (missingSigning.isEmpty()) {
