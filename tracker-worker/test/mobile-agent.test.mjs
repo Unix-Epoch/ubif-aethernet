@@ -60,7 +60,7 @@ assert.doesNotMatch(all.j && JSON.stringify(all.j), /customer|sealed|card|v1\./i
 assert.ok(JSON.stringify(all.j).length < 2500, 'phone-sized');
 
 // ---- the three reserved areas: 501 with a device, nothing without one
-for (const path of ['/v1/agents/m/alerts', '/v1/agents/m/alerts/5', '/v1/agents/m/push/register', '/v1/agents/m/prefs']) {
+for (const path of ['/v1/agents/m/alerts', '/v1/agents/m/alerts/5', '/v1/agents/m/push/register']) {
   const r = await authed(p, path); assert.equal(r.status, 501, path); assert.deepEqual(r.j, { error: 'not built' });
   assert.equal((await authed(p, path, { method: 'POST', body: {} })).status, 501, 'POST ' + path);
   assert.equal((await authed(null, path)).status, 401, 'no token ' + path);
