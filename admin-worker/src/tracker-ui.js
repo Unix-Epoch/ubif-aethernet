@@ -763,16 +763,17 @@ async function drawAgents(box) {
     const slot = h('div'), toggle = (make) => () => { slot.firstChild ? slot.replaceChildren() : slot.replaceChildren(make()); };
     const btn = (label, fn) => h('button', { class: 'btn' + (label === 'Approve…' ? ' p' : ''), style: 'height:28px', onclick: fn }, label);
     const needUnlock = (make) => () => { if (!keys.master) return ui.toast('Unlock work orders with your passphrase first.'); toggle(make)(); };
+    const phone = a.kind === 'phone'; // Linkpearl, the phone app: no audit settings or runs
     const buttons = a.status === 'pending'
       ? [btn('Approve…', needUnlock(() => picker(a, 'Approve')))]
-      : [btn('Change stores…', needUnlock(() => picker(a, 'Save stores'))), btn('Settings', toggle(() => settingsPanel(a))),
-        a.runNow ? h('span', { class: 'soft' }, 'Will run at its next check') : btn('Run now', async () => { try { await ui.api('POST', '/tracker/agents/' + a.id + '/run-now'); ui.toast('It will run within 30 minutes.'); again(); } catch (e) { fail(e); } })];
-    buttons.push(btn('Remove', async () => { if (!confirm('Remove ' + a.name + '? It will stop working until it is connected again.')) return; try { await ui.api('POST', '/tracker/agents/' + a.id + '/remove'); again(); } catch (e) { fail(e); } }));
+      : [btn('Change stores…', needUnlock(() => picker(a, 'Save stores'))), ...(phone ? [] : [btn('Settings', toggle(() => settingsPanel(a)))]),
+        phone ? null : a.runNow ? h('span', { class: 'soft' }, 'Will run at its next check') : btn('Run now', async () => { try { await ui.api('POST', '/tracker/agents/' + a.id + '/run-now'); ui.toast('It will run within 30 minutes.'); again(); } catch (e) { fail(e); } })];
+    buttons.push(btn('Remove', async () => { if (!confirm('Remove ' + a.name + '? It will stop working until it is ' + (phone ? 'set up again.' : 'connected again.'))) return; try { await ui.api('POST', '/tracker/agents/' + a.id + '/remove'); again(); } catch (e) { fail(e); } }));
     return h('div', { style: 'padding:10px 0;border-top:1px solid var(--line)' },
-      h('div', { class: 'srch' }, h('b', null, a.name), h('span', { class: 'st ' + (a.status === 'active' ? 'rfp' : 'wait') }, a.status === 'active' ? 'Connected' : 'Waiting for approval'),
+      h('div', { class: 'srch' }, h('b', null, a.name), phone ? h('span', { class: 'st' }, 'Phone') : null, h('span', { class: 'st ' + (a.status === 'active' ? 'rfp' : 'wait') }, a.status === 'active' ? 'Connected' : 'Waiting for approval'),
         a.status === 'active' && a.settings.paused ? h('span', { class: 'st' }, 'Paused') : null),
       h('div', { class: 'soft' }, 'Code ' + a.fingerprint + ' · ' + (a.status === 'active' ? 'Stores: ' + (a.stores.join(', ') || 'none') : 'Asked to connect ' + ui.fmt(a.created_at)) + ' · Last seen ' + (a.last_seen_at ? ui.fmt(a.last_seen_at) : 'never')),
-      a.status === 'active' ? lastRun(a) : null,
+      a.status === 'active' && !phone ? lastRun(a) : null,
       h('div', { style: 'margin-top:6px;display:flex;gap:6px;flex-wrap:wrap' }, ...buttons), slot);
   });
   box.replaceChildren(h('h3', null, 'Connected programs'),

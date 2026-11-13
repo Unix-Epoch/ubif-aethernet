@@ -171,6 +171,13 @@ CREATE TABLE IF NOT EXISTS agent_keys (
   PRIMARY KEY (agent_id, store)
 );
 
+-- Nov 13, 2026: which agents are phones (Linkpearl, src/mobile-agent.js); migrations/2026-11-13-mobile-devices.sql
+CREATE TABLE IF NOT EXISTS agent_kind (
+  agent_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  created_at TEXT
+);
+
 -- Oct 17, 2026: Metrics page. When each WO sat in each (open) status · kept from each WO upload (src/metrics.js).
 CREATE TABLE IF NOT EXISTS status_periods (
   store INTEGER NOT NULL, wo INTEGER NOT NULL,

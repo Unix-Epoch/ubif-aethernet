@@ -17,7 +17,7 @@
   Cached for a minute (caches.default) so repeat opens and auto-refresh cost no D1 reads.
 */
 import { buildMetrics, local, addDays, hoursFor } from './metrics.js';
-import { AGENT_DEFAULTS } from './index.js';
+import { AGENT_DEFAULTS } from './agent-defaults.js';
 
 // Sales per labor hour target band, dollars. Same band as Tactician's TARGET.withoutGm (src/62-tactician.js, Oct 12, 2026):
 // the userscript's constant can't be imported by a Worker, so it is repeated here, once. labor_hours excludes general managers.

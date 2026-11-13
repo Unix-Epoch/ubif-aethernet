@@ -26,9 +26,9 @@ APP_KEY = "ae_QFa2DKDy0DrlBd_A3bfZL3BtgM51idh6"   # public: ships inside Aethern
 # People who may do the first setup (create the master key) on the admin site.
 TRACKER_OWNERS = "green.trimar@gmail.com"
 
-# Daily: trim/archive data older than 6 months.
+# Daily: trim/archive data older than 6 months. Every 10 minutes: the phone app's alert tick (src/mobile-alerts.js alertsTick; TICK_CRON in src/index.js must match).
 [triggers]
-crons = ["30 9 * * *"]
+crons = ["30 9 * * *", "*/10 * * * *"]
 
 [[ratelimits]]
 name = "LIMITER"

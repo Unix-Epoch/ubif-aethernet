@@ -59,8 +59,12 @@ import { metricsApi, statusPeriodStmts, closeStatusPeriod } from './metrics.js';
 import { assizeStore, assizeAdmin } from './assize.js';
 import { retraceStore, retraceAdmin, woRetraceStmts } from './retrace-api.js';
 import { meter, usageLoad, pruneUsage } from './usage.js';
+import { AGENT_DEFAULTS } from './agent-defaults.js';
+import { mobileAgentApi } from './mobile-agent.js';
+import { alertsTick } from './mobile-alerts.js';
 import { over, charge, spend, pruneBudget, PER_WO_HOUR } from './budget.js';
 
+const TICK_CRON = '*/10 * * * *'; // must match wrangler.toml
 const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
 const CLOSED_IDS = new Set([14, 15, 25]); // Sale complete, Closed, Cancelled
@@ -245,7 +249,7 @@ const sha256hex = async (t) => [...new Uint8Array(await crypto.subtle.digest('SH
 const fingerprint = async (k) => (await sha256hex(JSON.stringify({ crv: k.crv, kty: k.kty, x: k.x, y: k.y }))).slice(0, 16).toUpperCase().match(/.{4}/g).join('-');
 
 // Audit settings (set on the admin site, read by the program). Strict on write, defaults filled on read.
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/, AGENT_DEFAULTS = { paused: false, days: [1, 2, 3, 5, 6], times: ['10:00', '18:00'], emailTo: ['green.trimar@gmail.com'], closedDays: 3, staleMinutes: 45, openHours: { from: '10:00', to: '19:00' } };
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const isList = (v, min, max) => Array.isArray(v) && v.length >= min && v.length <= max;
 export function agentSettings(b) {
   if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
@@ -263,30 +267,51 @@ export function agentSettings(b) {
 const withDefaults = (text) => { let s = {}; try { s = JSON.parse(text || '{}'); } catch (_) {} return Object.assign({}, AGENT_DEFAULTS, s); };
 const parseRun = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 
+// 'phone' for a Linkpearl device (agent_kind row, migrations/2026-11-13-mobile-devices.sql), else 'agent'. Before the migration every agent is 'agent'.
+const kindOf = async (T, id) => ((await T.prepare('SELECT kind FROM agent_kind WHERE agent_id = ?').bind(id).first().catch(() => null)) || {}).kind || 'agent';
+
 async function agentApi(req, env, url) {
   const T = env.TR, path = url.pathname.replace(/^\/v1\/agents/, '');
   if (path === '/register' && req.method === 'POST') {
     const b = await readJson(req, 4000), name = clean(b.name, 60);
     if (!HEX32.test(b.id) || !name || !isJwk(b.publicJwk) || !HEX64.test(b.token)) return fail(400, 'id, name, publicJwk and token required');
+    const phone = b.kind === 'phone'; // Linkpearl, the phone app (src/mobile-agent.js); everything else registers as before
+    if (b.kind !== undefined && !phone) return fail(400, 'kind must be "phone" when given');
     await T.prepare("DELETE FROM agents WHERE status = 'pending' AND created_at < ?").bind(new Date(Date.now() - 7 * 86400000).toISOString()).run();
     if (await T.prepare('SELECT 1 FROM agents WHERE id = ?').bind(b.id).first()) return fail(409, 'already registered');
     if ((await T.prepare("SELECT COUNT(*) AS n FROM agents WHERE status = 'pending'").first()).n >= 5) return fail(429, 'too many programs waiting for approval');
+    if (phone) {
+      await T.prepare('DELETE FROM agent_kind WHERE agent_id NOT IN (SELECT id FROM agents)').run();
+      const c = await T.prepare("SELECT COUNT(*) AS n, SUM(a.status = 'pending') AS p FROM agent_kind k JOIN agents a ON a.id = k.agent_id WHERE k.kind = 'phone'").first();
+      if ((c.p || 0) >= 3) return fail(429, 'too many phones waiting for approval');
+      if (c.n >= 10) return fail(429, 'too many phones');
+    }
     const jwk = pubJwk(b.publicJwk);
-    await T.prepare("INSERT INTO agents (id, name, public_jwk, token_hash, status, stores, created_at) VALUES (?, ?, ?, ?, 'pending', '[]', ?)")
-      .bind(b.id, name, JSON.stringify(jwk), await sha256hex(b.token), now()).run();
-    await log(env, 'agent:' + name, 'agent:register', null, null, b.id);
-    return json({ id: b.id, fingerprint: await fingerprint(jwk), status: 'pending' });
+    await T.batch([
+      T.prepare("INSERT INTO agents (id, name, public_jwk, token_hash, status, stores, created_at) VALUES (?, ?, ?, ?, 'pending', '[]', ?)").bind(b.id, name, JSON.stringify(jwk), await sha256hex(b.token), now()),
+      ...(phone ? [T.prepare("INSERT INTO agent_kind (agent_id, kind, created_at) VALUES (?, 'phone', ?)").bind(b.id, now())] : []),
+    ]);
+    await log(env, 'agent:' + name, phone ? 'agent:register-phone' : 'agent:register', null, null, b.id);
+    return json({ id: b.id, fingerprint: await fingerprint(jwk), status: 'pending', kind: phone ? 'phone' : 'agent' });
   }
   const m = /^Bearer ([0-9a-f]{32})\.([0-9a-f]{64})$/.exec(req.headers.get('authorization') || '');
   const a = m && await T.prepare('SELECT * FROM agents WHERE id = ?').bind(m[1]).first();
   if (!a || (await sha256hex(m[2])) !== a.token_hash) return fail(401, 'unknown program or wrong token');
   await T.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').bind(now(), a.id).run();
   const stores = JSON.parse(a.stores || '[]'), jwk = JSON.parse(a.public_jwk), active = a.status === 'active';
+  const kind = await kindOf(T, a.id);
+
+  // The phone app's API: /v1/agents/m/… . Auth is done above; routing is in src/mobile-agent.js (the only place to add phone routes).
+  if (path === '/m' || path.startsWith('/m/')) {
+    if (kind !== 'phone') return fail(403, 'not a phone');
+    if (!active) return fail(403, 'not approved yet');
+    return await mobileAgentApi(req, env, url, { id: a.id, name: a.name, kind, stores, active, publicJwk: jwk }, { json, fail, readJson, int, clean, iso, now, log, serverError });
+  }
 
   if (path === '/me' && req.method === 'GET') {
     const keys = active ? (await T.prepare('SELECT k.store, s.public_jwk, k.wrapped FROM agent_keys k JOIN store_keys s ON s.store = k.store WHERE k.agent_id = ? ORDER BY k.store').bind(a.id).all()).results
       .filter((k) => stores.includes(k.store)).map((k) => ({ store: k.store, publicJwk: JSON.parse(k.public_jwk), wrapped: k.wrapped })) : [];
-    return json({ id: a.id, name: a.name, status: a.status, stores, fingerprint: await fingerprint(jwk), keys, settings: withDefaults(a.settings), runNow: !!a.run_now, lastRun: parseRun(a.last_run) });
+    return json({ id: a.id, name: a.name, kind, status: a.status, stores, fingerprint: await fingerprint(jwk), keys, settings: withDefaults(a.settings), runNow: !!a.run_now, lastRun: parseRun(a.last_run) });
   }
   if (path === '/report' && req.method === 'POST') {
     const b = await readJson(req, 4000), ranAt = iso(b.ranAt);
@@ -874,7 +899,8 @@ async function trackerRoutes(req, env, url, path, email, who) {
   }
   if (req.method === 'GET' && path === '/agents') {
     const r = await T.prepare('SELECT * FROM agents ORDER BY created_at').all();
-    return json({ agents: await Promise.all(r.results.map(async (a) => ({ id: a.id, name: a.name, fingerprint: await fingerprint(JSON.parse(a.public_jwk)), status: a.status, stores: JSON.parse(a.stores || '[]'),
+    const kinds = new Map(((await T.prepare('SELECT agent_id, kind FROM agent_kind').all().catch(() => ({ results: [] }))).results).map((k) => [k.agent_id, k.kind]));
+    return json({ agents: await Promise.all(r.results.map(async (a) => ({ id: a.id, name: a.name, kind: kinds.get(a.id) || 'agent', fingerprint: await fingerprint(JSON.parse(a.public_jwk)), status: a.status, stores: JSON.parse(a.stores || '[]'),
       created_at: a.created_at, approved_by: a.approved_by, approved_at: a.approved_at, last_seen_at: a.last_seen_at, publicJwk: JSON.parse(a.public_jwk),
       settings: withDefaults(a.settings), runNow: !!a.run_now, lastRun: parseRun(a.last_run) }))) }, 200, false);
   }
@@ -884,6 +910,7 @@ async function trackerRoutes(req, env, url, path, email, who) {
     if (!a) return fail(404, 'no such program', false);
     if (am[2] === 'remove') {
       await T.batch([T.prepare('DELETE FROM agent_keys WHERE agent_id = ?').bind(a.id), T.prepare('DELETE FROM agents WHERE id = ?').bind(a.id)]);
+      await T.prepare('DELETE FROM agent_kind WHERE agent_id = ?').bind(a.id).run().catch(() => {}); // revoked: its token stops working at once
       await log(env, email, 'agent:remove', null, null, a.name + ' ' + a.id);
       return json({ ok: true }, 200, false);
     }
@@ -998,7 +1025,9 @@ export default {
     const m = meter(env, req);
     try { return await handle(req, m.env); } finally { await m.done(ctx); }
   },
-  async scheduled(_ev, env, ctx) {
+  async scheduled(ev, env, ctx) {
+    // wrangler.toml has two crons: the frequent tick (alerts, src/mobile-alerts.js) and the daily job below, which is unchanged.
+    if (ev && ev.cron === TICK_CRON) { ctx.waitUntil(Promise.resolve().then(() => alertsTick(env, Date.now())).catch((e) => console.error('alerts tick failed:', e))); return; }
     ctx.waitUntil(trim(env).catch((e) => console.error('trim failed:', e)));
     ctx.waitUntil(pruneUsage(env).catch(() => {}));
   },
