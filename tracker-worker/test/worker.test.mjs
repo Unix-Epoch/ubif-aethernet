@@ -219,10 +219,11 @@ await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
 s = await call('POST', '/v1/914/tracker/scan', { rows: listNow });
 assert.equal(s.j.written, 0, 'unchanged list → no row writes');
 await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run(); // the scan above claimed stale WOs for their hourly refresh
-const moved = listNow.map((r, i) => (i === 0 ? Object.assign({}, r, { statusId: 13, status: 'Ready for pickup' }) : r));
+const mi = listNow.findIndex((r) => r.statusId !== 13); // not row 0: the list's order isn't fixed (it follows whichever index the query uses)
+const moved = listNow.map((r, i) => (i === mi ? Object.assign({}, r, { statusId: 13, status: 'Ready for pickup' }) : r));
 s = await call('POST', '/v1/914/tracker/scan', { rows: moved });
-assert.equal(s.j.written, 1); assert.ok(s.j.need.some((n) => n.wo === moved[0].wo && n.why === 'changed'), 'a status change alone asks for the detail');
-await env.TR.prepare('UPDATE workorders SET status_id = 2, status_name = ? WHERE store = 914 AND wo = ?').bind('Work in progress', moved[0].wo).run(); // put it back for the totals below
+assert.equal(s.j.written, 1); assert.ok(s.j.need.some((n) => n.wo === moved[mi].wo && n.why === 'changed'), 'a status change alone asks for the detail');
+await env.TR.prepare('UPDATE workorders SET status_id = 2, status_name = ? WHERE store = 914 AND wo = ?').bind('Work in progress', moved[mi].wo).run(); // put it back for the totals below
 
 // --- the store's RFP total (Sales card): one sum, no WO details
 const rt = (await call('GET', '/v1/914/tracker/rfp')).j;
