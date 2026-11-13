@@ -1,0 +1,6 @@
+{
+ "status": 400,
+ "body": {
+  "error": "store: all or a store number"
+ }
+}

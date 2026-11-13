@@ -1,0 +1,14 @@
+{
+ "status": 200,
+ "body": {
+  "id": "ef6f6b72c6bd3001439980677e3b8ac8",
+  "name": "Pixel Fold",
+  "kind": "phone",
+  "status": "active",
+  "stores": [],
+  "fingerprint": "4DA4-A174-D5DD-EC32",
+  "keys": [],
+  "runNow": false,
+  "lastRun": null
+ }
+}

@@ -45,7 +45,7 @@ class OkHttpApiClient(
     private val base: HttpUrl = baseUrl.toHttpUrl().also {
         require(it.isHttps || (allowLoopbackHttp && it.host in LOOPBACK)) { "the server URL must be https" }
     }
-    private val http = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+    private val http = client.newBuilder().followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build() // retries are ours: one, GET only
 
     override suspend fun get(path: String, query: Map<String, String>) = call("GET", path, query, null, credentials(), true)
     override suspend fun post(path: String, body: JsonElement?) = call("POST", path, emptyMap(), body ?: EmptyObject, credentials(), true)
@@ -94,7 +94,7 @@ class OkHttpApiClient(
             val text = read ?: return@use ApiResult.Failure(ApiError.Server, r.code, "answer too large")
             val json = runCatching { LinkpearlJson.parseToJsonElement(text.ifBlank { "{}" }) }.getOrNull()
             if (r.isSuccessful) {
-                if (json == null) ApiResult.Failure(ApiError.Server, r.code, "bad answer") else ApiResult.Success(json)
+                if (json !is JsonObject && json !is kotlinx.serialization.json.JsonArray) ApiResult.Failure(ApiError.Server, r.code, "bad answer") else ApiResult.Success(json)
             } else {
                 val message = ((json as? JsonObject)?.get("error") as? JsonPrimitive)?.contentOrNull?.take(200)
                 ApiResult.Failure(errorFor(r.code), r.code, message)

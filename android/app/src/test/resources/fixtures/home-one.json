@@ -1,0 +1,111 @@
+{
+ "status": 200,
+ "body": {
+  "v": 1,
+  "now": "2026-11-13T17:16:17.932Z",
+  "tz": "America/New_York",
+  "today": "2026-11-13",
+  "scope": 914,
+  "stores": [
+   {
+    "id": 326,
+    "name": "Lynnhaven"
+   },
+   {
+    "id": 914,
+    "name": "Newport News"
+   }
+  ],
+  "days": [
+   "2026-11-07",
+   "2026-11-08",
+   "2026-11-09",
+   "2026-11-10",
+   "2026-11-11",
+   "2026-11-12",
+   "2026-11-13"
+  ],
+  "sales": {
+   "today": 1800,
+   "yesterday": 1910,
+   "week": [
+    2460,
+    2350,
+    2240,
+    2130,
+    2020,
+    1910,
+    1800
+   ]
+  },
+  "splh": {
+   "today": 150,
+   "hours": 12,
+   "week": [
+    205,
+    167.86,
+    172.31,
+    177.5,
+    144.29,
+    146.92,
+    150
+   ],
+   "target": [
+    160,
+    180
+   ]
+  },
+  "rfp": {
+   "total": 485,
+   "count": 2,
+   "oldestDays": 12,
+   "ages": [
+    {
+     "label": "0–2 days",
+     "n": 1
+    },
+    {
+     "label": "3–6 days",
+     "n": 0
+    },
+    {
+     "label": "7–13 days",
+     "n": 1
+    },
+    {
+     "label": "14–29 days",
+     "n": 0
+    },
+    {
+     "label": "30+ days",
+     "n": 0
+    }
+   ]
+  },
+  "lanes": {
+   "order": 1,
+   "start": 0,
+   "work": 1,
+   "wait": 0,
+   "rfp": 1,
+   "total": 3
+  },
+  "cleaning": {
+   "cln": 14,
+   "am": 18,
+   "rate": 0.78,
+   "week": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.78
+   ]
+  },
+  "asOf": "2026-11-13T17:13:17.773Z",
+  "stale": false,
+  "behind": null
+ }
+}

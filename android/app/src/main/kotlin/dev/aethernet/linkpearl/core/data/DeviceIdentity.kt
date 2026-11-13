@@ -79,6 +79,9 @@ object P256 {
         require(bytes.size == 65 && bytes[0] == 4.toByte()) { "peer key must be a 65-byte uncompressed P-256 point" }
         val x = BigInteger(1, bytes.copyOfRange(1, 33))
         val y = BigInteger(1, bytes.copyOfRange(33, 65))
+        // On the curve? (Some providers do not check; a point off the curve must never reach the key agreement.)
+        val p = (params.curve.field as java.security.spec.ECFieldFp).p
+        require(x < p && y < p && y.multiply(y).mod(p) == x.pow(3).add(params.curve.a.multiply(x)).add(params.curve.b).mod(p)) { "peer key is not a valid P-256 point" }
         return try {
             KeyFactory.getInstance("EC").generatePublic(ECPublicKeySpec(ECPoint(x, y), params)) as ECPublicKey
         } catch (e: java.security.GeneralSecurityException) {
