@@ -1,7 +1,7 @@
 # Linkpearl (Android)
 
 The phone app for Aethernet: store numbers, alerts and work order lookup. Kotlin, Jetpack Compose, Material 3, single `app` module.
-Version 1.0.0 (versionCode 1), Nov 13, 2026: all five areas are built and merged: device sign-in (Onboarding), Home, Work orders (with
+Version 1.0.1 (versionCode 2), Nov 13, 2026: all five areas are built and merged: device sign-in (Onboarding), Home, Work orders (with
 unlock of encrypted customer details), Alerts (feed, per-phone settings, background check, notifications) and Settings. The app talks to the
 tracker Worker (`tracker-worker/MOBILE-API*.md`); there is no other server.
 

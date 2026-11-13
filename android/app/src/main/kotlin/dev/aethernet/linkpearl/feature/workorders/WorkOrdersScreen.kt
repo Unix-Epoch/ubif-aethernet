@@ -19,6 +19,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import dev.aethernet.linkpearl.core.nav.LocalAdaptive
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -96,10 +108,16 @@ fun WorkOrdersScreen(
     remaining: Duration? = null,
     selected: WoKey? = null,
     actions: WoListActions = WoListActions(),
+    /** Wide screens: cards in two columns, the gap on the fold when one is known. */
+    twoColumns: Boolean = false,
 ) {
     val nowMs = rememberNowMs(state.skewMs)
     var storeMenu by remember { mutableStateOf(false) }
-    val listState = rememberLazyListState()
+    val listState = rememberLazyGridState()
+    var originX by remember { mutableFloatStateOf(0f) }
+    val hinge = LocalAdaptive.current.hinge
+    val cells: GridCells = if (twoColumns) rememberTwoColumnCells(hinge, originX) else GridCells.Fixed(1)
+    val colGap = if (twoColumns) twoColumnGap(hinge) else 0.dp
     val onLoadMore by rememberUpdatedState(actions.onLoadMore)
     LaunchedEffect(listState) {
         snapshotFlow { listState.layoutInfo.let { it.totalItemsCount > 0 && (it.visibleItemsInfo.lastOrNull()?.index ?: 0) >= it.totalItemsCount - 4 } }
@@ -107,7 +125,7 @@ fun WorkOrdersScreen(
     }
     val search = state.search
 
-    Column(modifier.fillMaxSize()) {
+    Column(modifier.fillMaxSize().onGloballyPositioned { originX = it.positionInWindow().x }) {
         Column(Modifier.padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Work orders", style = LpType.Title.copy(fontWeight = FontWeight.Bold), color = Lp.colors.fg, modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1)
@@ -125,19 +143,19 @@ fun WorkOrdersScreen(
         }
 
         if (search != null) {
-            SearchResults(state, search, nowMs, selected, actions)
+            SearchResults(state, search, nowMs, selected, actions, cells, colGap)
         } else {
             when (state.view) {
                 LoadView.Loading -> Column(Modifier.padding(LpSpacing.Gutter), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) { repeat(4) { SkeletonRow() } }
                 LoadView.Error -> StateMessage(problemText(state.problem), actionLabel = if (canRetry(state.problem)) "Retry" else null, onAction = actions.onRefresh)
                 LoadView.Ok -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = actions.onRefresh, modifier = Modifier.fillMaxSize()) {
-                    LazyColumn(
-                        state = listState, modifier = Modifier.fillMaxSize(),
+                    LazyVerticalGrid(
+                        columns = cells, state = listState, modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(start = LpSpacing.Gutter, end = LpSpacing.Gutter, top = LpSpacing.M, bottom = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(LpSpacing.M),
+                        verticalArrangement = Arrangement.spacedBy(LpSpacing.M), horizontalArrangement = Arrangement.spacedBy(colGap),
                     ) {
                         state.problem?.let { p ->
-                            item(key = "banner") {
+                            item(key = "banner", span = { GridItemSpan(maxLineSpan) }) {
                                 val at = state.receivedAtMs?.let { java.time.Instant.ofEpochMilli(it).toString() }
                                 val clock = Fmt.clock(at, LocalWoClock.current.zone.id)
                                 when (p) {
@@ -146,11 +164,11 @@ fun WorkOrdersScreen(
                                 }
                             }
                         }
-                        if (state.rows.isEmpty()) item(key = "empty") { EmptyLane() }
+                        if (state.rows.isEmpty()) item(key = "empty", span = { GridItemSpan(maxLineSpan) }) { EmptyLane() }
                         items(state.rows, key = { it.key.id }) { row ->
                             WoRowCard(row, state, nowMs, selected == row.key) { actions.onOpen(row) }
                         }
-                        if (state.loadingMore) item(key = "more") { SkeletonRow() }
+                        if (state.loadingMore) item(key = "more", span = { GridItemSpan(maxLineSpan) }) { SkeletonRow() }
                     }
                 }
             }
@@ -165,13 +183,39 @@ fun WorkOrdersScreen(
     }
 }
 
+/** Gap between the two columns: the fold's width when it has one, at least the pane gutter. */
 @Composable
-private fun SearchResults(state: WoListUi, search: SearchUi, nowMs: Long, selected: WoKey?, actions: WoListActions) {
+private fun twoColumnGap(hinge: androidx.compose.ui.geometry.Rect?): androidx.compose.ui.unit.Dp {
+    val d = LocalDensity.current
+    val hw = if (hinge != null) with(d) { (hinge.right - hinge.left).toDp() } else 0.dp
+    return maxOf(hw, LpSpacing.PaneGutter)
+}
+
+/** Two columns split on the fold (window px, [originX] is this list's own left edge in the window); an even split without one. */
+@Composable
+private fun rememberTwoColumnCells(hinge: androidx.compose.ui.geometry.Rect?, originX: Float): GridCells {
+    val d = LocalDensity.current
+    val gutter = with(d) { LpSpacing.Gutter.roundToPx() }
+    return remember(hinge, originX, gutter) {
+        object : GridCells {
+            override fun Density.calculateCrossAxisCellSizes(availableSize: Int, spacing: Int): List<Int> {
+                val cells = availableSize - spacing
+                val cx = hinge?.center?.x?.minus(originX)?.minus(gutter)
+                val usable = cx != null && cx in (availableSize * 0.2f)..(availableSize * 0.8f)
+                val left = if (usable) (cx!! - spacing / 2f).toInt() else cells / 2
+                return listOf(left.coerceIn(0, cells), cells - left.coerceIn(0, cells))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResults(state: WoListUi, search: SearchUi, nowMs: Long, selected: WoKey?, actions: WoListActions, cells: GridCells, colGap: androidx.compose.ui.unit.Dp) {
     when {
         search.busy -> Column(Modifier.padding(LpSpacing.Gutter), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) { repeat(2) { SkeletonRow() } }
-        search.results.isNotEmpty() -> LazyColumn(
-            Modifier.fillMaxSize(), contentPadding = PaddingValues(start = LpSpacing.Gutter, end = LpSpacing.Gutter, top = LpSpacing.M, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(LpSpacing.M),
+        search.results.isNotEmpty() -> LazyVerticalGrid(
+            cells, Modifier.fillMaxSize(), contentPadding = PaddingValues(start = LpSpacing.Gutter, end = LpSpacing.Gutter, top = LpSpacing.M, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(LpSpacing.M), horizontalArrangement = Arrangement.spacedBy(colGap),
         ) {
             items(search.results, key = { "s" + it.key.id }) { row -> WoRowCard(row, state, nowMs, selected == row.key, showStoreAlways = true) { actions.onOpen(row) } }
         }

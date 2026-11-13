@@ -22,12 +22,12 @@ object Routes {
     fun deepLink(route: String) = "$DEEP_LINK_SCHEME://$route"
 }
 
-/** The four top-level destinations: bottom bar on compact width, navigation rail from 600dp. */
-enum class TopLevel(val route: String, val label: String, val railLabel: String, val icon: ImageVector) {
-    Home(Routes.HOME, "Home", "Home", LpIcons.Home),
-    Alerts(Routes.ALERTS, "Alerts", "Alerts", LpIcons.Bell),
-    WorkOrders(Routes.WORK_ORDERS, "Work orders", "Orders", LpIcons.Orders),
-    Settings(Routes.SETTINGS, "Settings", "Settings", LpIcons.Sliders);
+/** The four top-level destinations: bottom bar. */
+enum class TopLevel(val route: String, val label: String, val icon: ImageVector) {
+    Home(Routes.HOME, "Home", LpIcons.Home),
+    Alerts(Routes.ALERTS, "Alerts", LpIcons.Bell),
+    WorkOrders(Routes.WORK_ORDERS, "Work orders", LpIcons.Orders),
+    Settings(Routes.SETTINGS, "Settings", LpIcons.Sliders);
 
     companion object {
         /** The top-level destination that owns [route] (`alerts/settings` belongs to Alerts). */

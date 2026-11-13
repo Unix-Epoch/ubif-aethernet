@@ -32,7 +32,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navDeepLink
 import dev.aethernet.linkpearl.core.data.AuthState
 import dev.aethernet.linkpearl.core.di.LocalAppContainer
-import dev.aethernet.linkpearl.core.nav.LocalAdaptive
 import dev.aethernet.linkpearl.core.nav.Routes
 import kotlinx.coroutines.launch
 
@@ -122,10 +121,9 @@ fun AlertSettingsRoute(onClose: (() -> Unit)?, modifier: Modifier = Modifier) {
     val names by hub.storeNames.collectAsStateWithLifecycle()
     val storeIds by hub.storeIds.collectAsStateWithLifecycle()
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
-    val compact = LocalAdaptive.current.isCompact
     LaunchedEffect(hub) { hub.settings.load() }
     AlertSettingsScreen(
         ui, names, storeIds, onEdit = { hub.settings.edit(it) }, onBack = onClose ?: { back?.onBackPressed(); Unit },
-        onRetry = { hub.settings.load(force = true) }, modifier = modifier, editorStyle = if (compact) EditorStyle.Sheet else EditorStyle.Dialog,
+        onRetry = { hub.settings.load(force = true) }, modifier = modifier, editorStyle = EditorStyle.Sheet,
     )
 }

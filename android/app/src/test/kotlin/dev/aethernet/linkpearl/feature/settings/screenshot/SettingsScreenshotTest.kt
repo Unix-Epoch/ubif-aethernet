@@ -25,12 +25,12 @@ import org.junit.runner.RunWith
 import org.robolectric.ParameterizedRobolectricTestRunner
 import org.robolectric.ParameterizedRobolectricTestRunner.Parameters
 
-/** Settings at phone, cover and inner sizes, dark and light; locked/unlocked, notifications on/off, the confirm dialog's content. */
+/** Settings at phone and cover sizes (the wide sizes are in WideChromeScreenshotTest, inside the bottom bar), dark and light; locked/unlocked, notifications on/off, the confirm dialog's content. */
 @RunWith(ParameterizedRobolectricTestRunner::class)
 class SettingsScreenshotTest(private val device: Device, private val dark: Boolean) {
     companion object {
         @JvmStatic @Parameters(name = "{0} dark={1}")
-        fun params() = listOf(Device.Phone, Device.Cover, Device.Inner).flatMap { d -> listOf(true, false).map { arrayOf<Any>(d, it) } }
+        fun params() = listOf(Device.Phone, Device.Cover).flatMap { d -> listOf(true, false).map { arrayOf<Any>(d, it) } }
     }
 
     @get:Rule val rule = createComposeRule()

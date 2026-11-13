@@ -78,8 +78,7 @@ data class AlertsActions(
 )
 
 /**
- * Alerts: on phones one pane at a time (work-order alerts open the work order, store-level ones a small detail pane); from 600dp the
- * list is on the left and the selected alert's detail on the right, with that alert's own switch and threshold.
+ * Alerts, one pane at a time at every width: work-order alerts open the work order, store-level ones a full-screen detail with back.
  */
 @Composable
 fun AlertsContent(
@@ -94,22 +93,21 @@ fun AlertsContent(
     editorStyle: EditorStyle? = null,
     initialEditing: Boolean = false,
 ) {
-    val compact = LocalAdaptive.current.isCompact
     var selectedId by remember { mutableStateOf(initialSelection) }
     LpListDetail<Int>(
         modifier = modifier, initialSelection = initialSelection,
         list = { select ->
             AlertsListPane(
-                ui, names, storeIds, notificationsOn, actions, selectedId = if (compact) null else selectedId,
+                ui, names, storeIds, notificationsOn, actions, selectedId = null,
                 onTap = { a ->
                     if (!a.read) actions.onMarkRead(a.id)
-                    if (a.wo != null && compact) actions.onOpenWorkOrder(a.store, a.wo) else { selectedId = a.id; select(a.id) }
+                    if (a.wo != null) actions.onOpenWorkOrder(a.store, a.wo) else { selectedId = a.id; select(a.id) }
                 },
             )
         },
         detail = { id ->
             val a = ui.alerts.firstOrNull { it.id == id }
-            if (a != null) AlertDetail(a, names, settings, actions, editorStyle ?: if (compact) EditorStyle.Sheet else EditorStyle.InPane, initialEditing)
+            if (a != null) AlertDetail(a, names, settings, actions, editorStyle ?: EditorStyle.Sheet, initialEditing)
         },
         emptyDetail = { Box(Modifier.fillMaxSize()) },
     )

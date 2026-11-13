@@ -25,10 +25,10 @@ import dev.aethernet.linkpearl.core.design.LpIcon
 import dev.aethernet.linkpearl.core.design.LpType
 
 /**
- * The app chrome: bottom bar on compact width, navigation rail from 600dp (Material 3 adaptive navigation suite). Stateless so the
+ * The app chrome: bottom navigation bar at every width (Material 3 adaptive navigation suite). Stateless so the
  * screenshot tests can draw it with any content.
  *
- * [showBar] hides the bottom bar on phone-width detail screens (the rail stays on wide screens, as in the mockups).
+ * [showBar] hides the bottom bar on phone-width detail screens (wide screens always show it).
  * Content gets the status-bar and side insets; the bar handles the bottom one.
  */
 @Composable
@@ -43,7 +43,7 @@ fun LpNavScaffold(
     val c = Lp.colors
     val adaptive = LocalAdaptive.current
     val layoutType = when {
-        !adaptive.isCompact -> NavigationSuiteType.NavigationRail
+        !adaptive.isCompact -> NavigationSuiteType.NavigationBar
         showBar -> NavigationSuiteType.NavigationBar
         else -> NavigationSuiteType.None
     }
@@ -55,19 +55,17 @@ fun LpNavScaffold(
         contentColor = c.fg,
         navigationSuiteColors = NavigationSuiteDefaults.colors(
             navigationBarContainerColor = c.navBg, navigationBarContentColor = c.fg,
-            navigationRailContainerColor = c.navBg, navigationRailContentColor = c.fg,
         ),
         navigationItems = {
             TopLevel.entries.forEach { dest ->
                 val count = badges[dest] ?: 0
-                val label = if (adaptive.isCompact) dest.label else dest.railLabel
                 NavigationSuiteItem(
                     selected = dest == selected,
                     onClick = { onSelect(dest) },
                     icon = { LpIcon(dest.icon, null) },
                     modifier = if (count > 0) Modifier.semantics { contentDescription = "${dest.label}, $count unread" } else Modifier,
                     badge = if (count > 0) ({ Badge(containerColor = c.acc, contentColor = c.onAcc) { Text(count.toString(), style = LpType.Caption) } }) else null,
-                    label = { Text(label, style = LpType.Caption, maxLines = 1) },
+                    label = { Text(dest.label, style = LpType.Caption, maxLines = 1) },
                 )
             }
         },

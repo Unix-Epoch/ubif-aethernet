@@ -64,7 +64,7 @@ class AlertsScreenshotTest(private val device: Device, private val scenario: Ale
         @JvmStatic
         @Parameters(name = "{0} {1} dark={2}")
         fun params(): List<Array<Any>> = buildList {
-            for (d in listOf(Device.Phone, Device.Cover, Device.Inner))
+            for (d in listOf(Device.Phone, Device.Cover, Device.Inner, Device.InnerMedium))
                 for (s in AlertScenario.entries)
                     for (dark in listOf(true, false)) add(arrayOf(d, s, dark))
         }
@@ -72,13 +72,11 @@ class AlertsScreenshotTest(private val device: Device, private val scenario: Ale
 
     @Test
     fun render() = rule.shoot("alerts", scenario.key, device, dark) {
-        val compact = device != Device.Inner
         val f = AlertFixtures
         LpNavScaffold(selected = TopLevel.Alerts, onSelect = {}, badges = mapOf(TopLevel.Alerts to 3)) {
             when (scenario) {
                 AlertScenario.Settings -> AlertSettingsScreen(f.settings, f.names, f.storeIds, onEdit = {}, onBack = { }, onRetry = {})
-                AlertScenario.Threshold -> if (compact) AlertSettingsScreen(f.settings, f.names, f.storeIds, onEdit = {}, onBack = {}, onRetry = {}, editorStyle = EditorStyle.InlineSheet, initialEditing = AlertType.Stuck)
-                else content(f.feed, selected = f.stuck.id, editing = true)
+                AlertScenario.Threshold -> AlertSettingsScreen(f.settings, f.names, f.storeIds, onEdit = {}, onBack = {}, onRetry = {}, editorStyle = EditorStyle.InlineSheet, initialEditing = AlertType.Stuck)
                 AlertScenario.Feed -> content(f.feed, selected = null)
                 AlertScenario.DetailStore -> content(f.feed, selected = f.quiet.id)
                 AlertScenario.DetailWorkOrder -> content(f.feed, selected = f.stuck.id)
@@ -97,7 +95,7 @@ class AlertsScreenshotTest(private val device: Device, private val scenario: Ale
         AlertsContent(
             ui, f.names, f.storeIds, notificationsOn, f.settings, AlertsActions(),
             initialSelection = selected, initialEditing = editing,
-            editorStyle = if (editing && device == Device.Inner) EditorStyle.InPane else if (editing) EditorStyle.InlineSheet else null,
+            editorStyle = if (editing) EditorStyle.InlineSheet else null,
         )
     }
 }

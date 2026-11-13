@@ -182,10 +182,7 @@ fun IconBadge(icon: ImageVector, size: Dp = 72.dp, tint: Color = Lp.colors.onAcc
 fun UnlockOverlay(attempt: UnlockAttempt, onRetry: () -> Unit, onDismiss: () -> Unit, onRegisterAgain: () -> Unit, modifier: Modifier = Modifier) {
     if (attempt == UnlockAttempt.Idle) return
     val c = Lp.colors
-    // Two panes: the panel sits over the detail pane, never across the fold.
-    val wide = LocalAdaptive.current.isTwoPane
     Row(modifier.fillMaxSize().background(c.shade).clickable(onClickLabel = "Close", role = Role.Button, onClick = onDismiss), verticalAlignment = Alignment.CenterVertically) {
-        if (wide) Spacer(Modifier.weight(1f))
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { UnlockPanel(attempt, onRetry, onDismiss, onRegisterAgain) }
     }
 }

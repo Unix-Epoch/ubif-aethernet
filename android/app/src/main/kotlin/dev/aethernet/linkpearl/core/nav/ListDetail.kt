@@ -13,12 +13,11 @@ import androidx.compose.ui.Modifier
 import kotlinx.coroutines.launch
 
 /**
- * List-detail scaffold for Work orders and Alerts (agents B and C). One pane at a time on phones, list on the left and detail on the
- * right from 600dp, with the pane boundary kept off the fold: the directive comes from the window's real fold information
- * (`HingePolicy.AlwaysAvoid`, so even a flat fold keeps a gap and nothing interactive crosses it).
+ * List-detail scaffold for Alerts and the phone Work orders flow: always one pane at a time (the directive is forced to one horizontal
+ * partition, so wide screens behave like phones).
  *
  * - [list] gets `select(item)`: call it when a row is tapped. On a phone this shows the detail pane; the system back gesture returns.
- * - [detail] is called with the selected item. [emptyDetail] fills the right pane before anything is selected (wide screens only).
+ * - [detail] is called with the selected item. [emptyDetail] is unused with one pane but kept for the signature.
  *
  * Deep links such as `workorders/{id}` should call `select` from a LaunchedEffect.
  */
@@ -30,8 +29,9 @@ fun <T : Any> LpListDetail(
     initialSelection: T? = null,
     emptyDetail: @Composable () -> Unit = {},
 ) {
-    val adaptive = LocalAdaptive.current
-    val directive = calculatePaneScaffoldDirective(adaptive.info, HingePolicy.AlwaysAvoid)
+    // One pane at a time at every width: the detail replaces the list and the system back gesture returns.
+    val base = calculatePaneScaffoldDirective(LocalAdaptive.current.info, HingePolicy.NeverAvoid)
+    val directive = base.copy(maxHorizontalPartitions = 1)
     val navigator = rememberListDetailPaneScaffoldNavigator<T>(scaffoldDirective = directive)
     val scope = rememberCoroutineScope()
     androidx.compose.runtime.LaunchedEffect(initialSelection) { initialSelection?.let { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, it) } }

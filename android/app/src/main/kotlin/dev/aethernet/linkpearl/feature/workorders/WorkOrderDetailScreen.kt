@@ -82,7 +82,7 @@ data class WoDetailActions(
  * Tabletop posture: content above the fold, big actions below. FLAG_SECURE is on while customer details are on screen.
  */
 @Composable
-fun WorkOrderDetailScreen(state: WoDetailUi, remaining: Duration?, showBack: Boolean, actions: WoDetailActions, modifier: Modifier = Modifier) {
+fun WorkOrderDetailScreen(state: WoDetailUi, remaining: Duration?, showBack: Boolean, actions: WoDetailActions, modifier: Modifier = Modifier, closeIcon: Boolean = false) {
     val shown = (state.sealed as? SealedUi.Shown)?.data
     SecureWindow(enabled = shown != null)
     val nowMs = rememberNowMs(state.skewMs)
@@ -91,7 +91,7 @@ fun WorkOrderDetailScreen(state: WoDetailUi, remaining: Duration?, showBack: Boo
 
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = if (showBack) 4.dp else LpSpacing.Gutter, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (showBack) LpIconButton(LpIcons.Back, "Back", actions.onBack)
+            if (showBack) LpIconButton(if (closeIcon) LpIcons.Close else LpIcons.Back, if (closeIcon) "Close" else "Back", actions.onBack)
             Text(key?.wo?.toString() ?: "", style = LpType.Title.copy(fontWeight = FontWeight.Bold), color = Lp.colors.fg, maxLines = 1,
                 modifier = Modifier.weight(1f).padding(start = if (showBack) 8.dp else 0.dp).semantics { heading() })
             if (key != null) {

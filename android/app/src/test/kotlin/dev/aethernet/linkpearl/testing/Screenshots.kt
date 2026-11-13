@@ -42,6 +42,8 @@ enum class Device(val key: String, val widthDp: Int, val heightDp: Int, val fold
     Cover("cover", 412, 960),
     /** Galaxy Z Fold inner screen with a vertical fold down the middle. */
     Inner("inner", 859, 954, foldXDp = 429.5f),
+    /** Inner screen at the Medium width class (600-840dp) with a flat vertical fold down the middle. */
+    InnerMedium("inner-medium", 750, 900, foldXDp = 375f),
     /** Inner screen without any fold information (the generic wide fallback). */
     InnerNoFold("inner-nofold", 859, 954),
 }

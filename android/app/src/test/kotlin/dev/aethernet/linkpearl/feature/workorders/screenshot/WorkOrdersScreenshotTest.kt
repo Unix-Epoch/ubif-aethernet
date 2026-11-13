@@ -48,6 +48,7 @@ class WorkOrdersScreenshotTest(private val device: Device, private val shot: WoS
                 WoShot.entries.forEach { add(arrayOf(Device.Phone, it, dark, false)) }
                 listOf(WoShot.ListLocked, WoShot.ListUnlocked, WoShot.SearchNoResults, WoShot.DetailUnlocked).forEach { add(arrayOf(Device.Cover, it, dark, false)) }
                 listOf(WoShot.ListLocked, WoShot.ListUnlocked, WoShot.UnlockFailed, WoShot.SearchUnlocked).forEach { add(arrayOf(Device.Inner, it, dark, false)) }
+                listOf(WoShot.ListUnlocked, WoShot.ListLocked).forEach { add(arrayOf(Device.InnerMedium, it, dark, false)) }
                 listOf(WoShot.DetailLocked, WoShot.DetailUnlocked).forEach { add(arrayOf(Device.InnerNoFold, it, dark, true)) }
             }
         }
@@ -84,14 +85,14 @@ class WorkOrdersScreenshotTest(private val device: Device, private val shot: WoS
     @Composable
     private fun Content() {
         val rem = if (unlocked) remaining else null
-        val wide = device == Device.Inner || device == Device.InnerNoFold
+        val wide = device == Device.Inner || device == Device.InnerMedium || device == Device.InnerNoFold
         when {
             isDetail && !wide -> LpNavScaffold(selected = TopLevel.WorkOrders, onSelect = {}, showBar = false) {
                 WorkOrderDetailScreen(detailState(), rem, showBack = true, actions = WoDetailActions())
             }
             isDetail && tabletop -> WorkOrderDetailScreen(detailState(), rem, showBack = true, actions = WoDetailActions())
             wide -> LpNavScaffold(selected = TopLevel.WorkOrders, onSelect = {}, badges = mapOf(TopLevel.Alerts to 3)) {
-                WorkOrdersLayout(listState(), detailState(), rem, initialSelection = "999999-700000014", WoListActions(), WoDetailActions(), onSelect = {})
+                WorkOrdersLayout(listState(), detailState(), rem, initialSelection = null, WoListActions(), WoDetailActions(), onSelect = {})
             }
             else -> LpNavScaffold(selected = TopLevel.WorkOrders, onSelect = {}, badges = mapOf(TopLevel.Alerts to 3)) {
                 WorkOrdersScreen(state = listState(), remaining = rem)
@@ -115,5 +116,26 @@ class WorkOrdersFontScaleScreenshotTest(private val detail: Boolean) {
     @Test fun render() = rule.shootWo(if (detail) "detail-unlocked" else "list-unlocked", Device.Phone, dark = true, fontScale = 1.3f) {
         if (detail) WorkOrderDetailScreen(WoSamples.detail(SealedUi.Shown(WoSamples.unsealed), true), 28.minutes, showBack = true, actions = WoDetailActions())
         else LpNavScaffold(selected = TopLevel.WorkOrders, onSelect = {}) { WorkOrdersScreen(state = WoSamples.list(true), remaining = 28.minutes) }
+    }
+}
+
+/** The work order panel open over the list on the wide screens (right-anchored, 90% of the width). */
+@RunWith(ParameterizedRobolectricTestRunner::class)
+class WorkOrderPanelScreenshotTest(private val device: Device, private val dark: Boolean) {
+    @get:Rule val rule = createComposeRule()
+
+    companion object {
+        @JvmStatic @Parameters(name = "{0} dark={1}") fun params() = listOf(Device.InnerMedium, Device.Inner).flatMap { d -> listOf(true, false).map { arrayOf<Any>(d, it) } }
+    }
+
+    @Test fun render() = rule.shootWo("panel", device, dark) {
+        Box {
+            LpNavScaffold(selected = TopLevel.WorkOrders, onSelect = {}, badges = mapOf(TopLevel.Alerts to 3)) {
+                WorkOrdersLayout(
+                    WoSamples.list(true), WoSamples.detail(SealedUi.Shown(WoSamples.unsealed), true), 28.minutes,
+                    initialSelection = "999999-700000014", WoListActions(), WoDetailActions(), onSelect = {},
+                )
+            }
+        }
     }
 }

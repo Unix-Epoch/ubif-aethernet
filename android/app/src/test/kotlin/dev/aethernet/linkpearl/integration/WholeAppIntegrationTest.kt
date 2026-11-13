@@ -212,7 +212,7 @@ class WholeAppIntegrationTest {
         assertEquals(setOf(914, 326), scans.keys); assertTrue(scans.values.all { it != null })
         val min = ((prefs["minApp"] as JsonObject)["code"]).toString().toInt()
         assertTrue("the server accepts this app (minApp $min, app ${BuildConfig.VERSION_CODE})", min <= BuildConfig.VERSION_CODE)
-        assertEquals("1.0.0", BuildConfig.VERSION_NAME)
+        assertEquals("1.0.1", BuildConfig.VERSION_NAME)
 
         // ---- forget this phone: the server removes it, the phone wipes everything, the old token is dead
         val oldCredentials = store.current.credentials!!

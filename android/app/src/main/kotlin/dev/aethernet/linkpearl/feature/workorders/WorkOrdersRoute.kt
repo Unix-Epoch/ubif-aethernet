@@ -1,7 +1,40 @@
 package dev.aethernet.linkpearl.feature.workorders
 
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
+import dev.aethernet.linkpearl.core.design.Lp
+import dev.aethernet.linkpearl.core.design.LpShapes
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -83,7 +116,10 @@ fun WorkOrdersRoute(initialId: String? = null) {
     }
 }
 
-/** List and detail through the shared list-detail scaffold: one pane on phones, list left and detail right from 600dp. */
+/**
+ * Phones and the cover screen: list, then full-screen detail with back (the shared list-detail scaffold). Wide screens (600dp and up):
+ * the list takes the full width and the detail opens over it as a popover (a panel sliding in from the right).
+ */
 @Composable
 fun WorkOrdersLayout(
     list: WoListUi,
@@ -96,19 +132,68 @@ fun WorkOrdersLayout(
 ) {
     val wide = LocalAdaptive.current.isTwoPane
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    if (wide) {
+        WideWorkOrders(list, detail, remaining, initialSelection, listActions, detailActions, onSelect)
+        return
+    }
     LpListDetail<String>(
         list = { select ->
             WorkOrdersScreen(
-                state = list, remaining = remaining, selected = if (wide) detail.key else null,
+                state = list, remaining = remaining, selected = null,
                 actions = listActions.copy(onOpen = { row -> onSelect(row.key); select(row.key.id) }),
             )
         },
         detail = { id ->
             LaunchedEffect(id) { WoKey.parse(id)?.let(onSelect) }
-            WorkOrderDetailScreen(detail, remaining, showBack = !wide, actions = detailActions.copy(onBack = { back?.onBackPressed() }))
+            WorkOrderDetailScreen(detail, remaining, showBack = true, actions = detailActions.copy(onBack = { back?.onBackPressed() }))
         },
         initialSelection = initialSelection,
         emptyDetail = { NoSelection() },
     )
 }
 
+/** The list at full width; the detail is a right-anchored panel (90% of the width, top of the screen to the bottom bar) over a scrim. */
+@Composable
+private fun WideWorkOrders(
+    list: WoListUi, detail: WoDetailUi, remaining: Duration?, initialSelection: String?,
+    listActions: WoListActions, detailActions: WoDetailActions, onSelect: (WoKey) -> Unit,
+) {
+    var open by remember { mutableStateOf(initialSelection != null) }
+    var openId by remember { mutableStateOf(initialSelection) }
+    // Starts settled open when a work order is already selected (deep link, tests); animates only on later changes.
+    val visible = remember { MutableTransitionState(initialSelection != null) }
+    visible.targetState = open
+    Box(Modifier.fillMaxSize()) {
+        WorkOrdersScreen(
+            state = list, remaining = remaining, twoColumns = true,
+            actions = listActions.copy(onOpen = { row -> onSelect(row.key); openId = row.key.id; open = true }),
+        )
+        openId?.let { id -> LaunchedEffect(id) { WoKey.parse(id)?.let(onSelect) } }
+        BackHandler(enabled = open) { open = false }
+        val c = Lp.colors
+        // The content area sits below the status bar; the scrim and panel reach up under it, and the panel pads its content back down.
+        val topInset = WindowInsets.safeDrawing.getTop(LocalDensity.current)
+        val reachUp = Modifier.layout { m, cs ->
+            val p = m.measure(cs.copy(minHeight = cs.maxHeight + topInset, maxHeight = cs.maxHeight + topInset))
+            layout(p.width, cs.maxHeight) { p.place(0, -topInset) }
+        }
+        AnimatedVisibility(visible, enter = fadeIn(tween(250)), exit = fadeOut(tween(250))) {
+            Box(reachUp.fillMaxSize().background(c.page.copy(alpha = 0.6f)).pointerInput(Unit) { detectTapGestures { open = false } })
+        }
+        AnimatedVisibility(
+            visible, modifier = Modifier.align(Alignment.CenterEnd).then(reachUp).fillMaxWidth(0.9f),
+            enter = slideInHorizontally(tween(250)) { it }, exit = slideOutHorizontally(tween(250)) { it },
+        ) {
+            val shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)
+            Box(
+                Modifier.fillMaxSize().clip(shape).background(c.page).border(1.dp, c.line, shape)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+            ) {
+                WorkOrderDetailScreen(
+                    detail, remaining, showBack = true, closeIcon = true, actions = detailActions.copy(onBack = { open = false }),
+                    modifier = Modifier.padding(top = with(LocalDensity.current) { topInset.toDp() }),
+                )
+            }
+        }
+    }
+}
