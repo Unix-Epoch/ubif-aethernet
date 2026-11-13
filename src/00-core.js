@@ -711,8 +711,8 @@ const AE = (() => {
   // Each shard's FFXIV action icon, plus a few FFXIV UI pieces under "ui/<name>"
   // (embedded by build.py from assets/icons/ and assets/ui/).
   const ACTION_ICONS = __ACTION_ICONS__;
-  // Spread has no icon of its own yet (assets/icons/spread.jpg): it borrows the Settings one until that file exists.
-  const ICON_FALLBACK = { spread: 'settings' };
+  // A shard with no icon file of its own yet can borrow another's here ({ shardId: 'otherId' }).
+  const ICON_FALLBACK = {};
   const iconOf = (id) => ACTION_ICONS[id] || ACTION_ICONS[ICON_FALLBACK[id]];
   const actionIcon = (id, size = 24, extra = '') => iconOf(id)
     ? '<img class="sg-aicon" src="' + iconOf(id) + '" width="' + size + '" height="' + size + '" alt="" draggable="false"' + (extra ? ' ' + extra : '') + '>'
