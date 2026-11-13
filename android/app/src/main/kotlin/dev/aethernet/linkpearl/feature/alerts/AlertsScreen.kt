@@ -58,6 +58,11 @@ import dev.aethernet.linkpearl.core.design.StateMessage
 import dev.aethernet.linkpearl.core.nav.LocalAdaptive
 import dev.aethernet.linkpearl.core.nav.LpListDetail
 
+/** Compatibility entry (the nav chrome screenshot test draws it without state): the empty, loaded feed. */
+@Composable
+fun AlertsScreen(modifier: Modifier = Modifier) =
+    AlertsContent(FeedUi(loaded = true), emptyMap(), emptyList(), notificationsOn = true, settings = SettingsUi.Loading, actions = AlertsActions(), modifier = modifier)
+
 /** Everything the Alerts screen can ask for; the stateful route fills these in, screenshot tests leave them empty. */
 data class AlertsActions(
     val onRefresh: () -> Unit = {},
@@ -77,7 +82,7 @@ data class AlertsActions(
  * list is on the left and the selected alert's detail on the right, with that alert's own switch and threshold.
  */
 @Composable
-fun AlertsScreen(
+fun AlertsContent(
     ui: FeedUi,
     names: Map<Int, String>,
     storeIds: List<Int>,

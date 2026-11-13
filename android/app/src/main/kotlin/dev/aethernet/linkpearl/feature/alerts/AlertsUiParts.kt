@@ -125,7 +125,7 @@ fun AlertRow(
             )
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!alert.read) LpDot(c.acc, size = 8.dp)
-                Text(meta, style = LpType.Small, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(meta, style = LpType.Small, color = c.soft, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         LpIcon(LpIcons.ChevronRight, null, tint = c.soft)

@@ -112,7 +112,7 @@ fun AlertsRoute(navigate: ((String) -> Unit)? = null, modifier: Modifier = Modif
         onOpenWorkOrder = { wo -> val route = Routes.workOrder(wo.toString()); navigate?.invoke(route) ?: openRoute(context, route) },
         onEdit = { hub.settings.edit(it) },
     )
-    AlertsScreen(feedUi, names, storeIds, notificationsOn, settings, actions, modifier)
+    AlertsContent(feedUi, names, storeIds, notificationsOn, settings, actions, modifier)
 }
 
 @Composable
