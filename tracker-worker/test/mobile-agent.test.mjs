@@ -59,10 +59,9 @@ assert.equal((await authed(p, HOME + '?store=914', { method: 'POST', body: {} })
 assert.doesNotMatch(all.j && JSON.stringify(all.j), /customer|sealed|card|v1\./i, 'no customer details, nothing sealed');
 assert.ok(JSON.stringify(all.j).length < 2500, 'phone-sized');
 
-// ---- the three reserved areas: 501 with a device, nothing without one
-for (const path of ['/v1/agents/m/prefs']) {
-  const r = await authed(p, path); assert.equal(r.status, 501, path); assert.deepEqual(r.j, { error: 'not built' });
-  assert.equal((await authed(p, path, { method: 'POST', body: {} })).status, 501, 'POST ' + path);
+// ---- nothing is a stub any more: the real routes answer (not 501), and need a device
+for (const path of ['/v1/agents/m/prefs', '/v1/agents/m/alerts']) {
+  const r = await authed(p, path); assert.notEqual(r.status, 501, path); assert.equal(r.status, 200, path);
   assert.equal((await authed(null, path)).status, 401, 'no token ' + path);
 }
 assert.equal((await authed(p, '/v1/agents/m/nope')).status, 404); assert.equal((await authed(p, '/v1/agents/m')).status, 404);
