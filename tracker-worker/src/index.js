@@ -931,7 +931,7 @@ async function gz(text) {
   return new Response(new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
 }
 // Moves rows older than the cutoff to R2 (when bound) in chunks, then deletes them.
-export { dayEnd };
+export { dayEnd, AGENT_DEFAULTS };
 export async function trim(env, { keepDays = KEEP_DAYS, chunk = 500, rounds = 20 } = {}) {
   const T = env.TR, cutoff = new Date(Date.now() - keepDays * 86400000).toISOString(), run = now().replace(/[:.]/g, '');
   const out = { snapshots: 0, changes: 0, archived: !!env.ARCHIVE };

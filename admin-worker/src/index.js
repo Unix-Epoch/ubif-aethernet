@@ -18,6 +18,7 @@
   through one gate (tracker-worker/src/access.js): route → page, deny by default, store scope, developers
   (TRACKER_OWNERS) bypass. Refusals are 403 { error, page } and an access_log 'denied' row. Pages
   are only drawn for what GET /api/tracker/me says the person has.
+    GET  /m, /m/…    Linkpearl, the phone app (src/m.js; data from /api/m/home, tracker-worker/src/mobile.js); developers only for now
     GET  /metrics-ui.js  the Metrics page (loaded by page.js on first use; data from /api/tracker/metrics)
     GET  /rulegraph.js, /assize-rules.js   the rule graph interpreter and Assize's rules engine as browser modules
                       (page 'rules'; the same files the tracker Worker imports and build.py inlines into Aethernet)
@@ -33,6 +34,8 @@ import { trackerAdmin } from '../../tracker-worker/src/index.js';
 import { accessOf, check } from '../../tracker-worker/src/access.js';
 import { meter } from '../../tracker-worker/src/usage.js';
 import { PAGE } from './page.js';
+import { shell as mShell } from './m.js';
+import { homeApi } from '../../tracker-worker/src/mobile.js';
 import CRYPTO_SRC from '../../tracker-worker/src/crypto.js';
 import WORDS from './words.txt';
 import TRACKER_UI from './tracker-ui.js';
@@ -123,12 +126,19 @@ async function handle(req, env) {
   if (url.pathname === '/crypto.js') return new Response(CRYPTO_SRC, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
   if (url.pathname === '/tracker-ui.js') return new Response(TRACKER_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
   if (url.pathname === '/words.txt') return new Response(WORDS, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'max-age=86400' } });
-  if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/metrics') && !SHARED[url.pathname]) return new Response('Not found', { status: 404 });
+  const isM = url.pathname === '/m' || url.pathname.startsWith('/m/');
+  if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/metrics') && !SHARED[url.pathname] && !isM) return new Response('Not found', { status: 404 });
   // The access gate: nothing below runs for a route, page or store this person wasn't given.
   if (!env.TR) return new Response(JSON.stringify({ error: 'tracker database not bound' }), { status: 503, headers: { 'content-type': 'application/json' } });
   const me = await accessOf(env, who.email);
   const denied = await check(env, me, who.email, req.method, url.pathname, url.search);
   if (denied) return new Response(JSON.stringify(denied), { status: 403, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+  // Linkpearl (the phone app): the shell, then its data (GET /api/m/home). Same gate: developers only for now.
+  if (isM) return mShell(url.pathname);
+  if (url.pathname === '/api/m/home') {
+    try { const now = env.LOCAL_TEST && Number(url.searchParams.get('now')) > 0 ? Number(url.searchParams.get('now')) : undefined; return await homeApi(req, env, url, me, { now }); } // ?now= (ms): local testing only
+    catch (e) { return apiError(e, req, url); }
+  }
   // The Metrics page's own script: after the gate, so only people with page 'metrics' get it.
   if (url.pathname === '/metrics-ui.js') return new Response(METRICS_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
   // The Assize rules editor and its engine (page 'rules'): import * as RG from '/rulegraph.js'; import { makeRules } from '/assize-rules.js'.
