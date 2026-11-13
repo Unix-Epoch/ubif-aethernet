@@ -93,6 +93,8 @@ data class StoredSession(
     /** store id -> wrapped store key from /me. */
     val keys: Map<Int, String> = emptyMap(),
     val revoked: Boolean = false,
+    /** The stores' time zone from the last Home answer (see [StoreZone]). */
+    val tz: String? = null,
 ) {
     val credentials: Credentials? get() = if (deviceId != null && token != null) Credentials(deviceId, token) else null
     override fun toString() = "StoredSession(deviceId=$deviceId, name=$name, status=$status, stores=${stores.map { it.id }})"

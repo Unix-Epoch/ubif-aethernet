@@ -15,6 +15,7 @@ object DataModule : FeatureModule {
     override fun install(c: AppContainer) {
         val app: Application = c.application
         c.provide<SessionStore> { SessionStore(EncryptedFile(File(app.filesDir, "lp-session.bin"), keystoreBox("linkpearl-data-v1"))) }
+        c.provide<StoreZone> { StoreZone(c.get<SessionStore>()) }
         c.provide<DeviceIdentity> { KeystoreDeviceIdentity(app, c.get<SessionStore>()) }
         c.provide<OkHttpApiClient> {
             val session = c.get<SessionStore>()
@@ -23,6 +24,7 @@ object DataModule : FeatureModule {
                 credentials = { session.current.credentials },
                 hooks = { c.get<Auth>() as? SessionHooks },
                 userAgent = "Linkpearl/" + BuildConfig.VERSION_NAME,
+                appVersion = BuildConfig.VERSION_NAME + "+" + BuildConfig.VERSION_CODE,
             )
         }
         c.provide<ApiClient> { c.get<OkHttpApiClient>() }
@@ -31,6 +33,7 @@ object DataModule : FeatureModule {
                 api = c.get<ApiClient>(),
                 cache = EncryptedFile(File(app.filesDir, "lp-home.bin"), keystoreBox("linkpearl-data-v1")),
                 onStores = { stores -> (c.get<Auth>() as? RealAuth)?.rememberStoreNames(stores) },
+                onZone = { tz -> c.get<StoreZone>().remember(tz) },
             )
         }
         c.provide<HomeRepository> { c.get<RealHomeRepository>() }

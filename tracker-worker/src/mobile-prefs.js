@@ -10,7 +10,7 @@
 
 // The oldest app the server still accepts. Raise `code` (the Android versionCode) in the same deploy as a breaking change: the app shows an update notice
 // instead of failing. Today every build is acceptable.
-export const MIN_APP = { code: 1, name: '0.1.0' };
+export const MIN_APP = { code: 1, name: '1.0.0' };
 
 const sha256hex = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map((x) => x.toString(16).padStart(2, '0')).join('');
 // 3F2A-91C0-7B44-0DDE: the same fingerprint the admin site shows next to this phone (index.js fingerprint)

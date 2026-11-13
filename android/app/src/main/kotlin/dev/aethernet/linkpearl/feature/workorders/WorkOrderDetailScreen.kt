@@ -199,7 +199,7 @@ private fun CustomerBlock(state: WoDetailUi, actions: WoDetailActions, modifier:
         }
         SealedUi.Loading -> LpCard(modifier) { Skeleton(width = 80.dp); Spacer(Modifier.height(12.dp)); Skeleton(width = 180.dp, height = 24.dp); Spacer(Modifier.height(12.dp)); Skeleton(width = 140.dp) }
         SealedUi.NoKey -> LpCard(modifier) { IconLine(LpIcons.Lock, "No key for this store") }
-        SealedUi.Missing -> LpCard(modifier) { IconLine(WoIcons.Person, "No customer details yet") }
+        SealedUi.Missing -> LpCard(modifier) { IconLine(LpIcons.Person, "No customer details yet") }
         SealedUi.Failed -> LpCard(modifier) {
             IconLine(LpIcons.Warning, "Couldn't open customer details")
             Spacer(Modifier.height(12.dp)); PillButton("Retry", actions.onRefresh, tonal = true)
@@ -237,7 +237,7 @@ fun CustomerCard(u: Unsealed, actions: WoDetailActions, modifier: Modifier = Mod
         u.emails.forEach { e ->
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                LpIcon(WoIcons.Mail, "Email", size = 20.dp, tint = c.soft)
+                LpIcon(LpIcons.Mail, "Email", size = 20.dp, tint = c.soft)
                 Text(e, style = LpType.Body, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -260,7 +260,7 @@ private fun MaskedValue(label: String, value: String) {
             Text(if (revealed) value else WoFmt.mask(value), style = LpType.Row.copy(fontWeight = FontWeight.Bold), color = c.fg, maxLines = 1,
                 modifier = Modifier.semantics { if (!revealed) contentDescription = "$label hidden, ends ${value.takeLast(4)}" })
         }
-        PillButton(if (revealed) "Hide" else "Reveal", { revealed = !revealed }, tonal = true, icon = if (revealed) WoIcons.EyeOff else WoIcons.Eye,
+        PillButton(if (revealed) "Hide" else "Reveal", { revealed = !revealed }, tonal = true, icon = if (revealed) LpIcons.EyeOff else LpIcons.Eye,
             modifier = Modifier.semantics { stateDescription = if (revealed) "Shown" else "Hidden" })
     }
 }
@@ -279,7 +279,7 @@ fun NotesCard(u: Unsealed, modifier: Modifier = Modifier) {
             Text(n.text, style = LpType.Body, color = if (auto) c.soft else c.fg)
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (auto) LpIcon(WoIcons.Auto, null, size = 16.dp, tint = c.soft)
+                if (auto) LpIcon(LpIcons.Auto, null, size = 16.dp, tint = c.soft)
                 val meta = listOfNotNull(if (auto) "Auto" else null, n.author, WoFmt.shortDayTime(n.createdAt, zone)).joinToString(Fmt.DOT)
                 Text(meta, style = LpType.Small, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }

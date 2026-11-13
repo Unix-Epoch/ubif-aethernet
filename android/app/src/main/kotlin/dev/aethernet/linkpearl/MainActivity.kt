@@ -46,6 +46,8 @@ class MainActivity : ComponentActivity() {
     private fun applyTheme(dark: Boolean) {
         val bars = if (dark) SystemBarStyle.dark(AColor.TRANSPARENT) else SystemBarStyle.light(AColor.TRANSPARENT, AColor.TRANSPARENT)
         enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+        // The theme's XML window background already follows the phone's light/dark setting; this covers the in-app appearance choice
+        // when it differs from the phone's.
         window.setBackgroundDrawable(ColorDrawable((if (dark) DarkLpColors else LightLpColors).page.toArgb()))
     }
 }

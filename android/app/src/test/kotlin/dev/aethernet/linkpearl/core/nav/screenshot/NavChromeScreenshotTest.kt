@@ -15,7 +15,7 @@ import org.robolectric.ParameterizedRobolectricTestRunner
 import org.robolectric.ParameterizedRobolectricTestRunner.Parameters
 
 /**
- * The navigation chrome (bottom bar on phones, rail on the Fold's inner screen) around the three stub screens. Feature agents
+ * The navigation chrome (bottom bar on phones, rail on the Fold's inner screen) around the real screens (empty state). 
  * replace the stub screens; this test keeps drawing whatever the screen composable is.
  */
 @RunWith(ParameterizedRobolectricTestRunner::class)

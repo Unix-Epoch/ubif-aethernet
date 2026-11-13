@@ -73,7 +73,7 @@ data class AlertsActions(
     val onMarkRead: (Int) -> Unit = {},
     val onOpenSettings: () -> Unit = {},
     val onTurnOnNotifications: () -> Unit = {},
-    val onOpenWorkOrder: (Long) -> Unit = {},
+    val onOpenWorkOrder: (store: Int, wo: Long) -> Unit = { _, _ -> },
     val onEdit: (SettingsEdit) -> Unit = {},
 )
 
@@ -103,7 +103,7 @@ fun AlertsContent(
                 ui, names, storeIds, notificationsOn, actions, selectedId = if (compact) null else selectedId,
                 onTap = { a ->
                     if (!a.read) actions.onMarkRead(a.id)
-                    if (a.wo != null && compact) actions.onOpenWorkOrder(a.wo) else { selectedId = a.id; select(a.id) }
+                    if (a.wo != null && compact) actions.onOpenWorkOrder(a.store, a.wo) else { selectedId = a.id; select(a.id) }
                 },
             )
         },
@@ -147,7 +147,7 @@ fun AlertsListPane(
             LpIconButton(LpIcons.Sliders, "Alert settings", actions.onOpenSettings)
         }
         Column(Modifier.padding(horizontal = LpSpacing.Gutter), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (!notificationsOn) NoticeLine("Notifications are off", AlertIcons.BellOff, warn = true, actionLabel = "Turn on", onAction = actions.onTurnOnNotifications)
+            if (!notificationsOn) NoticeLine("Notifications are off", LpIcons.BellOff, warn = true, actionLabel = "Turn on", onAction = actions.onTurnOnNotifications)
             if (ui.loaded) when (ui.status) {
                 FeedStatus.Offline -> NoticeLine(Fmt.offline(Fmt.clock(ui.loadedAt, AlertText.TZ)), LpIcons.WifiOff)
                 FeedStatus.Error -> NoticeLine(Fmt.couldntRefresh(Fmt.clock(ui.loadedAt, AlertText.TZ)), LpIcons.Warning, warn = true, actionLabel = "Retry", onAction = actions.onRefresh)
@@ -183,7 +183,7 @@ fun AlertsListPane(
                     repeat(5) { Skeleton(Modifier.fillMaxWidth(), height = 72.dp, shape = LpShapes.Row) }
                 }
                 ui.alerts.isEmpty() -> Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically)) {
-                    Box(Modifier.padding(top = 24.dp).background(c.infoBg, CircleShape).padding(28.dp)) { LpIcon(AlertIcons.BellOff, null, size = 40.dp, tint = c.info) }
+                    Box(Modifier.padding(top = 24.dp).background(c.infoBg, CircleShape).padding(28.dp)) { LpIcon(LpIcons.BellOff, null, size = 40.dp, tint = c.info) }
                     Text("No alerts yet", style = LpType.Title, color = c.fg)
                     PillButton("Alert settings", actions.onOpenSettings, tonal = true)
                 }
@@ -289,7 +289,7 @@ fun AlertDetail(
                     is SettingsUi.Failed -> {}
                 }
             }
-            if (alert.wo != null) PillButton("Open work order", { actions.onOpenWorkOrder(alert.wo) }, Modifier.fillMaxWidth(), icon = LpIcons.External)
+            if (alert.wo != null) PillButton("Open work order", { actions.onOpenWorkOrder(alert.store, alert.wo) }, Modifier.fillMaxWidth(), icon = LpIcons.External)
         }
         val ready = settings as? SettingsUi.Ready
         val cur = ready?.bundle?.settings?.types?.get(settingType)

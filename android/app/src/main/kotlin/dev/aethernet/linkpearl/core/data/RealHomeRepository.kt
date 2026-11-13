@@ -20,6 +20,7 @@ class RealHomeRepository(
     private val api: ApiClient,
     private val cache: EncryptedFile? = null,
     private val onStores: (List<StoreRef>) -> Unit = {},
+    private val onZone: (String?) -> Unit = {},
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : HomeRepository {
     private val memory = ConcurrentHashMap<String, CachedHome>()
@@ -33,6 +34,7 @@ class RealHomeRepository(
                 val data = try { LinkpearlJson.decodeFromJsonElement<HomeData>(r.value) } catch (_: Exception) { return HomeResult.Failed(FailureReason.Server) }
                 if (!data.empty) remember(scope, data)
                 onStores(data.stores)
+                if (!data.empty) onZone(data.tz)
                 HomeResult.Ok(data, cached = false)
             }
             is ApiResult.Failure -> when (r.error) {

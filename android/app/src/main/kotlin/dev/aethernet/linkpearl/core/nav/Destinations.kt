@@ -17,6 +17,8 @@ object Routes {
     const val DEEP_LINK_SCHEME = "linkpearl"
 
     fun workOrder(id: String) = "workorders/$id"
+    /** The id format Work orders opens: `<store>-<wo>`, e.g. `workorders/914-7000001`. */
+    fun workOrder(store: Int, wo: Long) = workOrder("$store-$wo")
     fun deepLink(route: String) = "$DEEP_LINK_SCHEME://$route"
 }
 

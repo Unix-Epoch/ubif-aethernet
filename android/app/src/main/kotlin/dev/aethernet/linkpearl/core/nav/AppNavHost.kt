@@ -1,6 +1,12 @@
 package dev.aethernet.linkpearl.core.nav
 
+import android.content.Intent
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.core.util.Consumer
+import androidx.navigation.NavHostController
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -39,6 +45,7 @@ private fun MainShell() {
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
     val badges by remember { container.get<NavBadges>().counts }.collectAsStateWithLifecycle()
+    DeepLinksWhileRunning(nav)
     LpNavScaffold(
         selected = TopLevel.of(route),
         onSelect = { dest ->
@@ -49,14 +56,31 @@ private fun MainShell() {
             }
         },
         badges = badges,
-        // Phone width: detail screens (alerts/settings, workorders/{id}) are full screen without the bottom bar.
+        // Phone width: detail screens (alerts/settings, workorders/{id}) are full screen without the bottom bar. They are their own
+        // destinations, so Back pops to the screen that opened them.
         showBar = TopLevel.entries.any { it.route == route } || route == null,
     ) {
         NavHost(nav, startDestination = Routes.HOME, modifier = Modifier) {
             homeGraph()
-            alertsGraph()
+            // Alerts and Settings open each other's screens (alert settings, a work order) inside this one back stack, so Back returns to them.
+            alertsGraph(navigate = nav::navigate)
             workOrdersGraph()
-            settingsGraph()
+            settingsGraph(navigate = { nav.navigate(it) })
         }
+    }
+}
+
+/**
+ * A notification tap or a `linkpearl://` link that arrives while the activity is already running (launch mode singleTask, so no second
+ * instance) lands here through `onNewIntent`. The task flags are dropped so the destination goes on top of the current back stack
+ * and Back returns to where the owner was.
+ */
+@Composable
+private fun DeepLinksWhileRunning(nav: NavHostController) {
+    val activity = LocalActivity.current as? ComponentActivity ?: return
+    DisposableEffect(activity, nav) {
+        val listener = Consumer<Intent> { intent -> if (intent.data != null) nav.handleDeepLink(Intent(intent).setFlags(0)) }
+        activity.addOnNewIntentListener(listener)
+        onDispose { activity.removeOnNewIntentListener(listener) }
     }
 }

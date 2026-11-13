@@ -9,6 +9,7 @@ import dev.aethernet.linkpearl.core.data.ApiClient
 import dev.aethernet.linkpearl.core.data.ApiResult
 import dev.aethernet.linkpearl.core.data.Auth
 import dev.aethernet.linkpearl.core.data.AuthState
+import dev.aethernet.linkpearl.core.data.StoreZone
 import dev.aethernet.linkpearl.core.design.Fmt
 import dev.aethernet.linkpearl.core.di.AppContainer
 import dev.aethernet.linkpearl.core.lock.AppLock
@@ -129,7 +130,7 @@ class SettingsViewModel(
             }.toMap()
 
         fun factory(c: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { SettingsViewModel(c.get(), c.get(), c.get(), c.get()) }
+            initializer { SettingsViewModel(c.get(), c.get(), c.get(), c.get(), tz = runCatching { c.get<StoreZone>().id }.getOrDefault(STORE_TZ)) }
         }
     }
 }

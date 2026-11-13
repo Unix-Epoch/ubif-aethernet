@@ -159,14 +159,34 @@ class RealAuthTest {
         assertFalse(a.register("Pixel Fold")); assertNull(store.current.deviceId)
     }
 
-    @Test fun signOutDeletesTokenStateAndKey() = runBlocking {
-        val a = begin(REGISTER to listOf(r("register")))
-        a.register("Pixel Fold")
+    private val FORGET = "POST /v1/agents/m/prefs/forget"
+
+    @Test fun signOutTellsTheServerThenDeletesTokenStateAndKey() = runBlocking {
+        val a = begin(REGISTER to listOf(r("register")), ME to listOf(r("me-active")), FORGET to listOf(MockResponse().setResponseCode(200).setBody("""{"ok":true}""")))
+        a.register("Pixel Fold"); a.refresh()
+        val credentials = store.current.credentials!!.bearer
         a.signOut()
         assertEquals(AuthState.Unregistered, a.state.value)
         assertEquals(StoredSession(), store.current); assertFalse(File(dir, "session.bin").exists())
-        assertEquals(1, wiped); assertNull(a.issue.value)
-        assertEquals("only the registration itself went to the server (the contract has no self-removal)", 1, script.seen.size)
+        assertEquals(1, wiped)
+        assertNull(a.issue.value)
+        val forget = script.seen.last()
+        assertEquals("POST /v1/agents/m/prefs/forget", forget.method + " " + forget.requestUrl!!.encodedPath)
+        assertEquals("the phone's own token went with it", credentials, forget.getHeader("authorization"))
+    }
+
+    @Test fun signOutStillForgetsWhenTheServerRefusesOrIsGone() = runBlocking {
+        val a = begin(REGISTER to listOf(r("register")), FORGET to listOf(MockResponse().setResponseCode(500).setBody("""{"error":"server error"}""")))
+        a.register("Pixel Fold")
+        a.signOut()
+        assertEquals(AuthState.Unregistered, a.state.value); assertEquals(StoredSession(), store.current); assertEquals(1, wiped)
+
+        val b = begin(REGISTER to listOf(r("register")))
+        b.register("Pixel Fold")
+        server.shutdown() // offline
+        b.signOut()
+        assertEquals(AuthState.Unregistered, b.state.value); assertEquals(StoredSession(), store.current); assertEquals(2, wiped)
+        assertTrue("the device key was reset", identity.resets >= 2)
     }
 
     @Test fun pendingAndRegisteredSurviveARestart() = runBlocking {

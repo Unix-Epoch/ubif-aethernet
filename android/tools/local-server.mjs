@@ -4,11 +4,27 @@
 //   cd tracker-worker && node ../android/tools/local-server.mjs serve [port]       app key "k"; control routes below
 //   cd tracker-worker && node ../android/tools/local-server.mjs fixtures <outDir>  writes real JSON answers, then exits
 //
-// Control routes (only here, not in the Worker): POST /__ctl/approve {id, stores}, POST /__ctl/remove {id}, GET /__ctl/ping.
+// Control routes (only here, not in the Worker): POST /__ctl/approve {id, stores}, POST /__ctl/remove {id}, GET /__ctl/ping, and the ones the
+// whole-app integration test uses: POST /__ctl/clock {at: ISO|null} (moves the Worker's clock: Date.now() and new Date() in this process),
+// /__ctl/advance {ms}, /__ctl/seed-wo (invented work orders through the real upload route, sealed to the store keys),
+// /__ctl/seed-alerts (a row of every kind of alert condition, then the real alerts tick), /__ctl/resume (store 326 reports again, tick), /__ctl/tick.
 import { createServer } from 'node:http';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { setup, C, APP_KEY, OWNER, hex } from '../../tracker-worker/test/mobile-helpers.mjs';
 import worker from '../../tracker-worker/src/index.js';
+import { scrub, plainPart, cardOf, scanRow } from '../../tracker-worker/src/shape.js';
+import { alertsTick } from '../../tracker-worker/src/mobile-alerts.js';
+
+// A movable clock for the Worker code that runs in this process (the local D1 itself does not read the clock).
+let clockOffset = 0;
+{
+  const RealDate = Date;
+  globalThis.Date = class extends RealDate {
+    constructor(...a) { if (a.length) super(...a); else super(RealDate.now() + clockOffset); }
+    static now() { return RealDate.now() + clockOffset; }
+  };
+  globalThis.__setClock = (atMs) => { clockOffset = atMs == null ? 0 : atMs - RealDate.now(); };
+}
 
 const [mode = 'serve', arg] = process.argv.slice(2);
 const T = await setup('.wrangler-linkpearl-local');
@@ -35,6 +51,55 @@ const approveById = async (id, stores) => {
   return T.admin(OWNER, 'POST', `/agents/${id}/approve`, { stores, keys: await Promise.all(stores.map(async (st) => ({ store: st, wrapped: await C.sealBytes(T.storeKeys[st].bytes, jwk, 'agentkey|' + id + '|' + st) }))) });
 };
 const removeById = (id) => T.admin(OWNER, 'POST', `/agents/${id}/remove`);
+
+// ---- work orders and alert conditions for the integration test (everything invented; the customer is "Jordan Reyes" below)
+const ago = (hours) => new Date(Date.now() - hours * 3600000).toISOString();
+const cartOf = (v) => ({ cartItems: [{ name: 'Screen', sku: '1001', price: v, quantity: 1, totalPrice: v, partStatus: 'Reserved' }], payment: { total: v, amountPaid: 0, amountDue: v } });
+const WOS = [ // store, wo, status id, status name, [[status, hours ago it began]], extras
+  [914, 7000001, 2, 'Need to order', [[2, 24]], { cart: cartOf(199), notes: 2, bin: 'B-12' }],
+  [914, 7000002, 9, 'Diagnostics', [[2, 100], [9, 72.17]], { cart: cartOf(89) }],      // crossed 3 days in Diagnostics 10 minutes ago: a stuck alert that notifies
+  [914, 7000003, 13, 'Ready for pickup', [[9, 300], [13, 216]], { cart: cartOf(149), notes: 1 }],
+];
+const detailOf = (store, [, wo, status, name, trail0, s]) => {
+  const trail = trail0.map(([st, h]) => ({ workorderStatusId: st, createdAt: ago(h), createdBy: 'Tech Person', completed: false }));
+  return {
+    workorder: { workorder: { workorderId: wo, storeId: store, workorderStatusId: status, WorkorderStatus: { name }, programId: 1, Program: { name: 'Retail' },
+      CustomerDevice: { DeviceCatalog: { name: 'Galaxy S23 Ultra' }, imei: '353000111222333', serial: 'SN-REYES-1' }, claimNumber: 'CLM-' + wo,
+      createdAt: ago(300), updatedAt: trail[trail.length - 1].createdAt, createdBy: { givenName: 'Staffy', familyName: 'Tech' }, slaEndTime: ago(-24), nextUpdate: ago(-4),
+      WorkorderBinDeviceLocation: s.bin ? { WorkorderBin: { name: s.bin } } : null } },
+    audit_trail: trail,
+    customer_data: { customerId: 'C' + wo, CustomerDatum: { fullName: 'Jordan Reyes' }, CustomerDataPhones: [{ phone: '757-555-0100' }], CustomerDataEmails: [{ email: 'jordan.reyes@example.com' }] },
+    notes: { total: s.notes || 0, latestManualNote: null, notes: Array.from({ length: s.notes || 0 }, (_, i) => ({ noteId: 'n' + i, noteType: 2, noteTag: i ? null : 'initial_checkin', noteText: 'Screen is cracked, Jordan will pick up', createdAt: ago(100 - i), UserDatum: { userId: 5, givenName: 'Alex', familyName: 'Kim' } })) },
+    cart: s.cart || null, events: { events: [] },
+  };
+};
+async function seedWo() {
+  const rows = WOS.map((w) => ({ workorderId: w[1], workorderStatusId: w[2], workorderStatusName: w[3], programId: 1, programName: 'Retail', deviceCatalog: { name: 'Galaxy S23 Ultra' }, createdAt: ago(300), updatedAt: ago(1) }));
+  let r = await T.call('POST', '/v1/914/tracker/scan', { rows: rows.map(scanRow), storeName: 'x', by: 'Tech Person' });
+  if (r.status !== 200) return r;
+  for (const w of WOS) {
+    const d = scrub(detailOf(914, w)), plain = plainPart(d, null), pub = T.storeKeys[914].publicJwk;
+    r = await T.call('POST', `/v1/914/tracker/wo/${w[1]}`, { hash: await C.hashJson([plain, d]), trigger: 'new', plain, sealed: await C.sealJson(d, pub, C.aad.snapshot(914, w[1])),
+      card: await C.sealJson(cardOf(d, null), pub, C.aad.card(914, w[1])), by: 'Tech Person' });
+    if (r.status !== 200) return r;
+  }
+  return { status: 200, j: { ok: true } };
+}
+async function seedAlerts() {
+  const TR = T.env.TR, AE = T.env.AE, today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  await AE.prepare('CREATE TABLE IF NOT EXISTS auto_marks (store INTEGER NOT NULL, wo INTEGER NOT NULL, due TEXT NOT NULL, created_at TEXT NOT NULL, removed_at TEXT, kind TEXT, PRIMARY KEY (store, wo))').run();
+  await AE.prepare('CREATE TABLE IF NOT EXISTS wo_closed (store INTEGER NOT NULL, wo INTEGER NOT NULL, closed_at TEXT NOT NULL, PRIMARY KEY (store, wo))').run();
+  await TR.batch([
+    // pickup: two devices at Ready for pickup for more than the default 7 days (the upload above already opened one for 9 days)
+    TR.prepare('INSERT INTO rfp_periods (store, wo, start_at, value) VALUES (914, 7000090, ?, 100)').bind(ago(24 * 12)),
+    // follow-up: today's Auto-Waymark mark on work order 7000003
+    // (its table lives in the admin database)
+    // quiet: store 326 last reported 4.5 hours ago, in store hours
+    TR.prepare("INSERT INTO scans (store, at, by_name, open_count) VALUES (326, ?, 'Tracker', 10)").bind(ago(4.5)),
+  ]);
+  await AE.prepare('INSERT OR REPLACE INTO auto_marks (store, wo, due, created_at, removed_at, kind) VALUES (914, 7000003, ?, ?, NULL, ?)').bind(today, ago(30), 'rfp').run();
+  return { status: 200, j: await alertsTick(T.E, Date.now()) };
+}
 
 if (mode === 'fixtures') {
   const out = arg; mkdirSync(out, { recursive: true });
@@ -72,6 +137,12 @@ const server = createServer(async (req, res) => {
   if (url.pathname === '/__ctl/ping') return send(200, { ok: true });
   if (url.pathname === '/__ctl/approve') { const b = JSON.parse(body); const r = await approveById(b.id, b.stores); return send(r.status, r.j); }
   if (url.pathname === '/__ctl/remove') { const b = JSON.parse(body); const r = await removeById(b.id); return send(r.status, r.j); }
+  if (url.pathname === '/__ctl/clock') { const b = JSON.parse(body); globalThis.__setClock(b.at ? Date.parse(b.at) : null); return send(200, { now: new Date().toISOString() }); }
+  if (url.pathname === '/__ctl/advance') { const b = JSON.parse(body); globalThis.__setClock(Date.now() + b.ms); return send(200, { now: new Date().toISOString() }); }
+  if (url.pathname === '/__ctl/seed-wo') { const r = await seedWo(); return send(r.status, r.j); }
+  if (url.pathname === '/__ctl/seed-alerts') { const r = await seedAlerts(); return send(r.status, r.j); }
+  if (url.pathname === '/__ctl/resume') { await T.env.TR.prepare("INSERT INTO scans (store, at, by_name, open_count) VALUES (326, ?, 'Tracker', 10)").bind(new Date().toISOString()).run(); return send(200, await alertsTick(T.E, Date.now())); }
+  if (url.pathname === '/__ctl/tick') return send(200, await alertsTick(T.E, Date.now()));
   const headers = {}; for (const [k, v] of Object.entries(req.headers)) if (k !== 'host' && k !== 'connection' && k !== 'content-length') headers[k] = v;
   const r = await worker.fetch(new Request('https://t.test' + req.url, { method: req.method, headers, body: ['GET', 'HEAD'].includes(req.method) ? undefined : body }), T.E, {});
   res.writeHead(r.status, Object.fromEntries(r.headers)); res.end(Buffer.from(await r.arrayBuffer()));

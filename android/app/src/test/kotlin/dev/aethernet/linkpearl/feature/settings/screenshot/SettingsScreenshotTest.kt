@@ -40,7 +40,7 @@ class SettingsScreenshotTest(private val device: Device, private val dark: Boole
         stores = listOf(StoreLine(914, "Newport News #914", "4:12 PM"), StoreLine(326, "Lynnhaven #326", "1:40 PM")),
         unlocked = false, notificationsOn = true, appearance = Appearance.Dark,
     )
-    private val version = "0.1.0 (1)"
+    private val version = "1.0.0 (1)"
 
     @Test fun locked() = rule.shoot("settings", "locked", device, dark) { SettingsScreen(base.copy(appearance = if (dark) Appearance.Dark else Appearance.Light), version) }
     @Test fun unlockedNotificationsOff() = rule.shoot("settings", "unlocked-notifications-off", device, dark) {

@@ -50,28 +50,10 @@ import dev.aethernet.linkpearl.core.design.Tone
 import dev.aethernet.linkpearl.core.design.bg
 import dev.aethernet.linkpearl.core.design.fg
 
-/** Icons core/design does not have (same 24-unit outline style). Kept here because core/design is not this package's to edit. */
-object AlertIcons {
-    private fun icon(name: String, vararg paths: String): ImageVector {
-        val b = ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f)
-        paths.forEach { d ->
-            b.addPath(
-                pathData = PathParser().parsePathString(d).toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 2f,
-                strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
-            )
-        }
-        return b.build()
-    }
-
-    val Calendar = icon("calendar", "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4")
-    val Package = icon("package", "M12 3l8 4.5v9L12 21l-8-4.5v-9z", "M4 7.5l8 4.5 8-4.5M12 12v9")
-    val BellOff = icon("bellOff", "M6 8a6 6 0 0 1 9.5-4.9M18 11c0 5 3 6 3 6H8M10.3 21a1.94 1.94 0 0 0 3.4 0", "M3 3l18 18")
-}
-
 fun AlertType.icon(): ImageVector = when (this) {
     AlertType.Stuck -> LpIcons.Hourglass
-    AlertType.Pickup -> AlertIcons.Package
-    AlertType.Followup -> AlertIcons.Calendar
+    AlertType.Pickup -> LpIcons.Package
+    AlertType.Followup -> LpIcons.Calendar
     AlertType.Quiet -> LpIcons.Clock
     AlertType.Back -> LpIcons.Check
 }

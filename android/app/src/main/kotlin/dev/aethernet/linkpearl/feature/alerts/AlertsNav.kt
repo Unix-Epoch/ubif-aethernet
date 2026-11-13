@@ -37,10 +37,10 @@ import dev.aethernet.linkpearl.core.nav.Routes
 import kotlinx.coroutines.launch
 
 /**
- * Alerts' destinations (agent C). Notifications open `linkpearl://alerts` or a work order (`linkpearl://workorders/{id}`).
+ * Alerts' destinations (agent C). Notifications open `linkpearl://alerts` or a work order (`linkpearl://workorders/{store}-{wo}`).
  *
- * [navigate] opens a route inside the app's own back stack. AppNavHost does not pass one yet, so the fallback sends the route's deep link
- * to this app's own activity (back then returns to Home rather than to Alerts); passing `nav::navigate` here fixes that.
+ * [navigate] opens a route inside the app's own back stack (the shell passes `nav::navigate`), so Back from a work order or from Alert
+ * settings returns to Alerts. Without it (screenshots, tests) settings open in place and work orders through the route's deep link.
  */
 fun NavGraphBuilder.alertsGraph(navigate: ((route: String) -> Unit)? = null) {
     composable(Routes.ALERTS, deepLinks = listOf(navDeepLink { uriPattern = Routes.deepLink(Routes.ALERTS) })) { AlertsRoute(navigate) }
@@ -108,8 +108,8 @@ fun AlertsRoute(navigate: ((String) -> Unit)? = null, modifier: Modifier = Modif
     val actions = AlertsActions(
         onRefresh = { hub.feed.refresh(seen = true) }, onLoadMore = hub.feed::loadMore, onStore = hub.feed::setStore,
         onUnreadOnly = hub.feed::setUnreadOnly, onMarkAll = hub.feed::markAllRead, onMarkRead = { hub.feed.markRead(listOf(it)) },
-        onOpenSettings = { showSettings = true }, onTurnOnNotifications = turnOn,
-        onOpenWorkOrder = { wo -> val route = Routes.workOrder(wo.toString()); navigate?.invoke(route) ?: openRoute(context, route) },
+        onOpenSettings = { navigate?.invoke(Routes.ALERT_SETTINGS) ?: run { showSettings = true } }, onTurnOnNotifications = turnOn,
+        onOpenWorkOrder = { store, wo -> val route = Routes.workOrder(store, wo); navigate?.invoke(route) ?: openRoute(context, route) },
         onEdit = { hub.settings.edit(it) },
     )
     AlertsContent(feedUi, names, storeIds, notificationsOn, settings, actions, modifier)

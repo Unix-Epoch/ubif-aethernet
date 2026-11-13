@@ -41,6 +41,8 @@ class OkHttpApiClient(
     private val maxBytes: Long = 4L * 1024 * 1024,
     allowLoopbackHttp: Boolean = false,
     private val userAgent: String = "Linkpearl",
+    /** Sent as `x-linkpearl-version` ("1.0.0+1", name and code) so the server can see which app build is calling. */
+    private val appVersion: String? = null,
 ) : ApiClient, AgentTransport {
     private val base: HttpUrl = baseUrl.toHttpUrl().also {
         require(it.isHttps || (allowLoopbackHttp && it.host in LOOPBACK)) { "the server URL must be https" }
@@ -63,6 +65,7 @@ class OkHttpApiClient(
         }
         val request = Request.Builder().url(url)
             .header("x-aethernet-key", appKey).header("accept", "application/json").header("user-agent", userAgent)
+            .apply { if (appVersion != null) header("x-linkpearl-version", appVersion) }
             .apply { if (credentials != null) header("authorization", credentials.bearer) }
             .method(method, body?.let { LinkpearlJson.encodeToString(JsonElement.serializer(), it).toRequestBody(JSON) })
             .build()

@@ -6,7 +6,7 @@
         <item name="postSplashScreenTheme">@style/Theme.Linkpearl</item>
     </style>
     <style name="Theme.Linkpearl" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowBackground">@color/lp_page_light</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>

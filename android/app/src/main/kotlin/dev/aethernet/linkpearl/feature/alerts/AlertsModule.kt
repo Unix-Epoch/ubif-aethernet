@@ -6,6 +6,7 @@ import android.os.Bundle
 import dev.aethernet.linkpearl.core.data.ApiClient
 import dev.aethernet.linkpearl.core.data.Auth
 import dev.aethernet.linkpearl.core.data.AuthState
+import dev.aethernet.linkpearl.core.data.StoreZone
 import dev.aethernet.linkpearl.core.di.AppContainer
 import dev.aethernet.linkpearl.core.di.FeatureModule
 import dev.aethernet.linkpearl.core.nav.NavBadges
@@ -24,6 +25,8 @@ object AlertsModule : FeatureModule {
         AlertType.configurableTypes.forEach { t ->
             c.channel(AppContainer.ChannelSpec(t.channelId!!, t.label, NotificationManager.IMPORTANCE_DEFAULT))
         }
+
+        c.appScope.launch { c.get<StoreZone>().ids.collect { AlertText.TZ = it } }
 
         c.workerFactory.addFactory(AlertsWorkerFactory { c.get<AlertsHub>() })
 

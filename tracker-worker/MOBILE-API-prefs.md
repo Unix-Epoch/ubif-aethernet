@@ -10,7 +10,7 @@ Auth as for every `/v1/agents/m/…` route (app key header + `Authorization: Bea
  "device":{"id":"a08af12d1cc71c6559e5de5405a84c4a","name":"Pixel Fold","kind":"phone","fingerprint":"BE12-2440-5B95-C3D8"},
  "stores":[{"id":326,"name":"Lynnhaven","lastScanAt":null},{"id":914,"name":"Newport News","lastScanAt":"2026-11-13T16:12:00.000Z"}],
  "now":"2026-11-13T17:10:46.725Z",
- "minApp":{"code":1,"name":"0.1.0"}}
+ "minApp":{"code":1,"name":"1.0.0"}}
 ```
 - `device.fingerprint`: the one the admin site shows next to this phone.
 - `stores`: the approved stores only, by id; `name` can be null; `lastScanAt` is the newest tracker scan of that store (ISO UTC) or null (show a dash).

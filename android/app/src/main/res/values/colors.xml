@@ -1,4 +1,7 @@
 <resources>
     <color name="lp_indigo">#1B0F41</color>
     <color name="lp_cream">#F6ECD9</color>
+    <!-- The app's page colour (core/design Color.kt) so the window behind the first frame matches the theme: no white flash. -->
+    <color name="lp_page_dark">#FF1B0F41</color>
+    <color name="lp_page_light">#FFF4F4F4</color>
 </resources>

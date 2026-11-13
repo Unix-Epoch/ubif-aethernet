@@ -15,7 +15,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.compose.runtime.CompositionLocalProvider
 import dev.aethernet.linkpearl.core.data.Auth
+import dev.aethernet.linkpearl.core.data.StoreZone
+import kotlinx.coroutines.flow.flowOf
+import java.time.ZoneId
 import dev.aethernet.linkpearl.core.di.AppContainer
 import dev.aethernet.linkpearl.core.di.LocalAppContainer
 import dev.aethernet.linkpearl.core.lock.AppLock
@@ -61,6 +65,10 @@ fun WorkOrdersRoute(initialId: String? = null) {
         onRefresh = detailVm::refresh, onUnlock = lock::unlock, onLock = lock::lock,
         onCall = { ctx.dial(it) }, onText = { ctx.text(it) }, onOpenPortal = { ctx.openPortal(it) },
     )
+    // Times in the store's zone (from Home), not the phone's.
+    val zoneId by remember { runCatching { c.get<StoreZone>().ids }.getOrNull() ?: flowOf(null) }.collectAsStateWithLifecycle(null)
+    val clock = remember(zoneId) { zoneId?.let { WoClock(zone = ZoneId.of(it)) } ?: WoClock() }
+    CompositionLocalProvider(LocalWoClock provides clock) {
     Box(Modifier.fillMaxSize().then(if (unlocked) Modifier.onAnyTouch { lock.touch() } else Modifier)) {
         WorkOrdersLayout(
             list = list, detail = detail, remaining = remaining,
@@ -71,6 +79,7 @@ fun WorkOrdersRoute(initialId: String? = null) {
             lock.dismissAttempt()
             scope.launch { c.authOrNull()?.signOut() }
         })
+    }
     }
 }
 

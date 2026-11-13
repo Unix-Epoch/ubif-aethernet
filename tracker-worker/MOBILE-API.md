@@ -3,7 +3,7 @@
 The app talks to the **tracker Worker**, not the admin site. Each phone is a registered *device* (the tracker's "agents" mechanism, marked `kind: "phone"`), approved once by the owner on the admin site. There is no Cloudflare Access cookie and no password on the phone.
 
 - Base URL: `https://aethernet-tracker.ubifaethernet.workers.dev` (name from `wrangler.toml`; `workers.dev` subdomain as deployed).
-- Every request: header `x-aethernet-key: <public app key>` (the `APP_KEY` var in `wrangler.toml`; it ships inside the userscript, so it is a gate against strangers, not a secret). Missing or wrong: `403 {"error":"app key required"}`.
+- Every request: header `x-aethernet-key: <public app key>`. The app also sends `x-linkpearl-version: <versionName>+<versionCode>` (e.g. `1.0.0+1`) and `user-agent: Linkpearl/<versionName>`; the server does not read them yet (the `APP_KEY` var in `wrangler.toml`; it ships inside the userscript, so it is a gate against strangers, not a secret). Missing or wrong: `403 {"error":"app key required"}`.
 - Authenticated requests also send `authorization: Bearer <id>.<token>` (below). JSON bodies use `content-type: application/json`. All answers are JSON with `cache-control: no-store` (Home adds `private, max-age=60`).
 - Errors: `{ "error": "message" }` with the HTTP status. Unexpected failures are `500 {"error":"server error (id 1a2b3c4d)"}`; quote the id, the real error is in the Worker log. `429 {"error":"slow down"}` from a per-IP limit (240 requests per minute); back off.
 
@@ -47,9 +47,9 @@ The app talks to the **tracker Worker**, not the admin site. Each phone is a reg
 | `POST /v1/agents/register` | built | above (app key only) |
 | `GET /v1/agents/me` | built | above; also the approval poll |
 | `GET /v1/agents/m/home?store=<id>\|all[&fresh=1]` | built | Home's numbers, below |
-| `/v1/agents/m/wo…` | reserved, `501 {"error":"not built"}` | work order lookup/unlock (`src/mobile-wo.js`) |
-| `/v1/agents/m/alerts…`, `/v1/agents/m/push…` | reserved, 501 | alerts and push (`src/mobile-alerts.js`) |
-| `/v1/agents/m/prefs…` | reserved, 501 | settings (`src/mobile-prefs.js`) |
+| `/v1/agents/m/wo…` | built | work order lookup and sealed detail, see `MOBILE-API-wo.md` (`src/mobile-wo.js`) |
+| `/v1/agents/m/alerts…` | built | feed, poll, read marks, settings, see `MOBILE-API-alerts.md` (`src/mobile-alerts.js`); there is no push service (`/push…` is 404) |
+| `/v1/agents/m/prefs…` | built | device details, rename, forget this phone, see `MOBILE-API-prefs.md` (`src/mobile-prefs.js`) |
 | `GET /v1/agents/wos?store=<id>&closedDays=<0-14>` | existing (the Mac audit's route; a phone may use it) | open work orders plus ones closed within `closedDays` (default 3, max 14), each with its plain columns, `plain` JSON and latest sealed snapshot; `403 not approved for this store` otherwise |
 
 Other `/v1/agents/m/…` paths are `404`. A Mac agent (not a phone) calling `/m/…` gets `403 not a phone`.

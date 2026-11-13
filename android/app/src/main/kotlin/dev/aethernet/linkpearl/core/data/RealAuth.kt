@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -21,8 +22,7 @@ import java.security.SecureRandom
  * Registration with the tracker Worker (MOBILE-API.md "Registration, step by step"), kept in an encrypted [SessionStore].
  *
  * Statuses on disk: "registering" (the request was sent, the answer not seen: retried with the SAME id, token and key so a lost answer
- * cannot strand a pending registration on the server), "pending", "active". The server has no call for a phone to remove itself, so
- * [signOut] only forgets locally (the owner removes the entry on the admin site).
+ * cannot strand a pending registration on the server), "pending", "active". [signOut] asks the server to remove this phone first (best effort), then forgets locally.
  */
 class RealAuth(
     private val store: SessionStore,
@@ -97,8 +97,19 @@ class RealAuth(
         }
     }
 
+    /**
+     * "Forget this phone": first tells the server (`POST /v1/agents/m/prefs/forget`, which revokes this phone and deletes its wrapped store
+     * keys), best effort: offline, refused or slow (5 s) still forgets locally. Then the token, state, device key, saved answers (and, through
+     * the state change, the alerts cursor and work and the unlock state) are wiped.
+     */
     override suspend fun signOut() {
-        lock.withLock { forget(revoked = false) }
+        lock.withLock {
+            val have = store.current
+            if (have.credentials != null && (have.status == "active" || have.status == "pending")) {
+                withTimeoutOrNull(FORGET_TIMEOUT_MS) { transport.call("POST", "/v1/agents/m/prefs/forget", body = EmptyObject, credentials = have.credentials, notify = false) }
+            }
+            forget(revoked = false)
+        }
     }
 
     /** A 401 or "not approved yet" came back on a normal call: re-check in the background. */
@@ -161,6 +172,8 @@ class RealAuth(
     private fun randomHex(bytes: Int): String = ByteArray(bytes).also(random::nextBytes).joinToString("") { "%02x".format(it) }
 
     companion object {
+        const val FORGET_TIMEOUT_MS = 5_000L
+
         fun stateOf(s: StoredSession): AuthState = when (s.status) {
             "pending" -> AuthState.Pending(s.fingerprint, s.name)
             "active" -> AuthState.Registered(s.name, s.stores)

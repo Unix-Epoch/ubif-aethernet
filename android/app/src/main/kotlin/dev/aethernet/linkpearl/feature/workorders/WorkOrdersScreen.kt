@@ -233,7 +233,7 @@ fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showS
                     Bar(92.dp, height = 10.dp)
                 }
                 name != null -> {
-                    LpIcon(WoIcons.Person, null, size = 20.dp, tint = c.fg)
+                    LpIcon(LpIcons.Person, null, size = 20.dp, tint = c.fg)
                     Text(name, style = LpType.Body, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 row.store in state.noKeyStores -> {
@@ -241,7 +241,7 @@ fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showS
                     Text("No key", style = LpType.Small, color = c.soft)
                 }
                 else -> {
-                    LpIcon(WoIcons.Person, null, size = 20.dp, tint = c.soft)
+                    LpIcon(LpIcons.Person, null, size = 20.dp, tint = c.soft)
                     Text(Fmt.DASH, style = LpType.Body, color = c.soft)
                 }
             }

@@ -17,7 +17,7 @@ import androidx.compose.ui.unit.dp
 
 /**
  * The icon set: 24-unit outline icons, 2-unit round strokes (the web app's style), defined from SVG path data so no icon library is
- * needed. Add new icons here (core/design is scaffold-owned: ask in your report). Tinted by the surrounding content colour.
+ * needed. Every feature's icons live here, once. Tinted by the surrounding content colour.
  */
 object LpIcons {
     private fun icon(name: String, vararg paths: String): ImageVector {
@@ -58,6 +58,14 @@ object LpIcons {
     val Warning = icon("warning", "M12 4l9 16H3z", "M12 10v4M12 17v.01")
     val Hourglass = icon("hourglass", "M7 3h10M7 21h10M8 3v4l4 5-4 5v4M16 3v4l-4 5 4 5v4")
     val External = icon("external", "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6")
+    val Person = icon("person", "M8 7a4 4 0 1 0 8 0a4 4 0 1 0-8 0", "M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1")
+    val Eye = icon("eye", "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z", "M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0")
+    val EyeOff = icon("eyeOff", "M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.6 3.5M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6", "M3 3l18 18", "M9.9 9.9a3 3 0 0 0 4.2 4.2")
+    val Mail = icon("mail", "M3 6h18v12H3z", "M3 7l9 6 9-6")
+    val Auto = icon("auto", "M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1")
+    val Calendar = icon("calendar", "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4")
+    val Package = icon("package", "M12 3l8 4.5v9L12 21l-8-4.5v-9z", "M4 7.5l8 4.5 8-4.5M12 12v9")
+    val BellOff = icon("bellOff", "M6 8a6 6 0 0 1 9.5-4.9M18 11c0 5 3 6 3 6H8M10.3 21a1.94 1.94 0 0 0 3.4 0", "M3 3l18 18")
 }
 
 /** An icon with a content description (or `null` when the surrounding control already says what it is: then it is hidden from TalkBack). */

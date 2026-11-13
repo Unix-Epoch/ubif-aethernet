@@ -93,7 +93,11 @@ fun parsePoll(o: JsonObject): PollResult? = PollResult(
 
 /** Store names come from the registered device's stores; a missing name falls back to "Store #id". */
 object AlertText {
-    const val TZ = "America/New_York"
+    /**
+     * The store zone used for every time on the Alerts screens. [AlertsModule] keeps it at the zone Home reported (core/data
+     * `StoreZone`); until then, and in tests, it is the zone the server uses today.
+     */
+    @Volatile var TZ: String = "America/New_York"
 
     fun storeName(id: Int, names: Map<Int, String>): String = names[id]?.takeIf { it.isNotBlank() } ?: "Store #$id"
 

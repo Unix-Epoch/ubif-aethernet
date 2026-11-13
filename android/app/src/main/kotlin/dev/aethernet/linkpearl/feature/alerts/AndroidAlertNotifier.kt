@@ -13,7 +13,7 @@ import dev.aethernet.linkpearl.core.nav.Routes
 
 /**
  * Channels per type (so the owner can silence one in Android's settings), a group per store with an inbox summary, and a tap that opens
- * the work order (`linkpearl://workorders/{wo}`) or the Alerts screen. Titles are the store, text is the sentence: nothing else.
+ * the work order (`linkpearl://workorders/{store}-{wo}`) or the Alerts screen. Titles are the store, text is the sentence: nothing else.
  */
 class AndroidAlertNotifier(private val context: Context) : AlertNotifier {
     private val nm = NotificationManagerCompat.from(context)
@@ -38,7 +38,7 @@ class AndroidAlertNotifier(private val context: Context) : AlertNotifier {
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
     private fun tap(note: PlannedNote): PendingIntent {
-        val uri = note.workOrder?.let { Routes.deepLink(Routes.workOrder(it.toString())) } ?: Routes.deepLink(Routes.ALERTS)
+        val uri = note.workOrder?.let { Routes.deepLink(Routes.workOrder(note.store, it)) } ?: Routes.deepLink(Routes.ALERTS)
         return PendingIntent.getActivity(context, note.id, intentFor(uri), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
