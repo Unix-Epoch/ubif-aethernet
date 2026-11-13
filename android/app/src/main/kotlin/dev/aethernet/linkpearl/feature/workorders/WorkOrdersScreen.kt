@@ -186,10 +186,7 @@ private fun NoResults(search: SearchUi, unlocked: Boolean, actions: WoListAction
     val c = Lp.colors
     Column(Modifier.fillMaxWidth().padding(horizontal = LpSpacing.L, vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(LpSpacing.L)) {
         IconBadge(if (search.needsUnlock) LpIcons.Lock else LpIcons.Search, size = 80.dp, tint = if (search.needsUnlock) c.onAccSoft else c.warn, background = if (search.needsUnlock) c.accSoft else c.warnBg)
-        Text(
-            if (search.needsUnlock) "Name, phone and IMEI need unlocking" else "No match for ${search.query}",
-            style = LpType.Row.copy(fontWeight = FontWeight.SemiBold), color = c.fg, maxLines = 2, overflow = TextOverflow.Ellipsis,
-        )
+        if (!search.needsUnlock) Text("No match for ${search.query}", style = LpType.Row.copy(fontWeight = FontWeight.SemiBold), color = c.fg, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Row(horizontalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
             OutlineButton("Clear", null, actions.onClearQuery)
             if (!unlocked) PillButton("Unlock to search names", actions.onUnlock, icon = LpIcons.Lock)
@@ -223,10 +220,10 @@ fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showS
         }
         val sub = listOfNotNull(row.device, row.program).joinToString(Fmt.DOT).ifEmpty { Fmt.DASH }
         Text(sub, style = LpType.Row, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatusChip(row.status, row.lane, Modifier.weight(1f, fill = false))
-            Spacer(Modifier.weight(1f))
-            if (state.showStore || showStoreAlways) Text(state.storeName(row.store), style = LpType.Small, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            StatusChip(row.status, row.lane)
+            if (state.showStore || showStoreAlways) Text(state.storeName(row.store), style = LpType.Small, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.weight(1f, fill = false).padding(start = 8.dp))
         }
         Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(c.line))
         Row(Modifier.heightIn(min = 28.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

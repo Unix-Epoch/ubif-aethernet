@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -54,6 +55,7 @@ import dev.aethernet.linkpearl.core.design.bg
 import dev.aethernet.linkpearl.core.design.fg
 import dev.aethernet.linkpearl.core.lock.UnlockAttempt
 import dev.aethernet.linkpearl.core.lock.UnlockProblem
+import dev.aethernet.linkpearl.core.nav.LocalAdaptive
 import kotlinx.coroutines.delay
 import java.time.ZoneId
 import kotlin.time.Duration
@@ -180,10 +182,18 @@ fun IconBadge(icon: ImageVector, size: Dp = 72.dp, tint: Color = Lp.colors.onAcc
 fun UnlockOverlay(attempt: UnlockAttempt, onRetry: () -> Unit, onDismiss: () -> Unit, onRegisterAgain: () -> Unit, modifier: Modifier = Modifier) {
     if (attempt == UnlockAttempt.Idle) return
     val c = Lp.colors
-    Box(
-        modifier.fillMaxSize().background(c.shade).clickable(onClickLabel = "Close", role = Role.Button, onClick = onDismiss),
-        contentAlignment = Alignment.Center,
-    ) {
+    // Two panes: the panel sits over the detail pane, never across the fold.
+    val wide = LocalAdaptive.current.isTwoPane
+    Row(modifier.fillMaxSize().background(c.shade).clickable(onClickLabel = "Close", role = Role.Button, onClick = onDismiss), verticalAlignment = Alignment.CenterVertically) {
+        if (wide) Spacer(Modifier.weight(1f))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { UnlockPanel(attempt, onRetry, onDismiss, onRegisterAgain) }
+    }
+}
+
+@Composable
+private fun UnlockPanel(attempt: UnlockAttempt, onRetry: () -> Unit, onDismiss: () -> Unit, onRegisterAgain: () -> Unit) {
+    val c = Lp.colors
+    run {
         LpCard(Modifier.widthIn(max = 420.dp).padding(LpSpacing.L).clickable(enabled = false) {}, padding = 24.dp) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(LpSpacing.L)) {
                 IconBadge(LpIcons.Lock)
