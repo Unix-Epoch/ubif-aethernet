@@ -771,8 +771,8 @@ AE.shard({
       tr.sg-wm-hidden { display:none !important; }
       #${FILTER_ID} { position:relative; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px 0 14px; margin-left:8px; border-radius:8px; cursor:pointer;
         border:1px solid var(--aui-primary, #8223d2); background:transparent; color:var(--aui-primary, #8223d2); font:400 15px Apercu, "Helvetica Neue", Arial, sans-serif; }
-      #${FILTER_ID} .ae { position:absolute; left:-8px; top:-9px; width:18px; height:18px; border-radius:50%; background:var(--aui-primary, #8223d2); color:#fff;
-        font:700 8px/18px Apercu, Arial, sans-serif; text-align:center; box-shadow:0 0 0 2px var(--aui-surface, #fff); }
+      #${FILTER_ID} .ae { position:absolute; left:-8px; top:-9px; width:18px; height:18px; line-height:0; }
+      #${FILTER_ID} .ae .sg-aicon { box-shadow:0 0 0 2px var(--aui-surface, #fff); }
       #${FILTER_ID}.on { background:var(--aui-primary, #8223d2); color:#fff; }
     `));
     const listOrder = (c) => new Map((c ? c.list : []).map((l, i) => [l.name, i]));
@@ -877,7 +877,7 @@ AE.shard({
       if (!f) {
         f = h('button', { type: 'button', id: FILTER_ID, class: 'sg', title: 'Show only work orders with a Waymark tag (on this page)', onclick: (e) => { e.stopPropagation(); filterMenu(f); } });
       }
-      if (f.dataset.label !== label) { f.dataset.label = label; f.replaceChildren(h('span', { class: 'ae' }, 'Ae'), label + ' ▾'); f.classList.toggle('on', !!listFilter); }
+      if (f.dataset.label !== label) { f.dataset.label = label; f.replaceChildren(h('span', { class: 'ae', 'aria-hidden': 'true', html: AE.actionIcon('waymark', 18) }), label + ' ▾'); f.classList.toggle('on', !!listFilter); }
       const host = anchor.closest('div') || anchor;
       if (f.previousElementSibling !== host) host.after(f);
     }

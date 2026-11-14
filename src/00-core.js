@@ -677,6 +677,8 @@ const AE = (() => {
   .sg-chip .sg-mk { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border:0; padding:0; border-radius:50%;
     background:var(--aui-primary,#8223d2); color:var(--aui-on-primary,#fff); cursor:pointer; }
   .sg-chip .sg-mk:hover { filter:brightness(.9); }
+  .sg-menu-ic { display:inline-flex; flex:none; align-items:center; justify-content:center; line-height:0; color:var(--aui-primary, #8223d2); }
+  .sg-menu-ic svg, .sg-menu-ic img { width:100%; height:100%; }
   .sg-aicon { display:inline-block; flex:none; border-radius:22%; vertical-align:middle; box-shadow:0 0 0 1px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.25); }
   @keyframes sg-spin { to { transform: rotate(360deg); } }
   @keyframes sg-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
@@ -742,6 +744,9 @@ const AE = (() => {
     clipboard: '<path fill="currentColor" d="M9 2h6a1 1 0 0 1 1 1v1h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V3a1 1 0 0 1 1-1zm1 2v2h4V4h-4zM8 11v2h8v-2H8zm0 4v2h5v-2H8z"/>',
     printer: '<path fill="currentColor" d="M7 3h10v4H7V3zM5 8h14a2 2 0 0 1 2 2v6h-4v4H7v-4H3v-6a2 2 0 0 1 2-2zm4 7v3h6v-3H9zm8-5a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/>',
     aetheryte: '<ellipse cx="12" cy="11" rx="10.5" ry="3.2" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".55"/><path fill="currentColor" d="M12 1.5 6 10l6 12.5L18 10z"/><path fill="#fff" opacity=".4" d="M12 1.5 9.2 10l2.8 12.5z"/><path fill="currentColor" d="M3.5 3.5 2 6l1.5 2.5L5 6zM20.5 15.5 19 18l1.5 2.5L22 18z" opacity=".7"/>',
+    // The Aethernet crystal with a wrench across its lower right (Send Aethernet feedback).
+    aetheryteWrench: '<ellipse cx="10" cy="10" rx="9" ry="2.8" fill="none" stroke="currentColor" stroke-width="1.3" opacity=".55"/><path fill="currentColor" d="M10 1 5 8.8l5 11.2 5-11.2z"/><path fill="#fff" opacity=".4" d="M10 1 7.7 8.8 10 20z"/>'
+      + '<path transform="translate(11 11) scale(.54)" style="stroke:var(--aui-surface, #fff)" stroke-width="3.2" paint-order="stroke" stroke-linejoin="round" fill="currentColor" d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/>',
     grip: '<g fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></g>',
   };
   /*
@@ -1603,6 +1608,42 @@ const AE = (() => {
 
   // Poll a route/DOM check — Portal is a single-page app, so pages
   // change without a load and Portal re-renders often.
+  /*
+    An Aethernet item in Portal's avatar menu: a clone of Portal's "View my account" item (same look, both themes) with
+    our icon in place of Portal's and our label. Items keep one order whichever shard draws first:
+    10 Aethernet settings, 20 Price estimate, 30 IMEI lookup, 40 Send Aethernet feedback; all sit just above Log out.
+    Call it on every DOM change (Portal draws the menu each time it opens); a no-op once the item is there.
+  */
+  function avatarItem({ testid, label, icon: iconHtml, order, onClick }) {
+    const logout = document.querySelector('[data-testid="option-logout"]');
+    const model = document.querySelector('[data-testid="option-view-account"]');
+    if (!logout || !model || document.querySelector('[data-testid="' + testid + '"]')) return null;
+    ensureCss();
+    const item = model.cloneNode(true);
+    item.setAttribute('data-testid', testid);
+    item.dataset.aeOrder = String(order);
+    const text = item.querySelector('[data-aui="text"]');
+    const modelText = model.querySelector('[data-aui="text"]');
+    const own = [...model.querySelectorAll('svg, img')].find((el) => !modelText || !modelText.contains(el));
+    const size = (own && Math.round(own.getBoundingClientRect().width)) || 20;
+    const ic = h('span', { class: 'sg-menu-ic', 'aria-hidden': 'true', style: 'width:' + size + 'px;height:' + size + 'px', html: iconHtml(size) });
+    if (text) {
+      text.textContent = label;
+      const clonedOwn = [...item.querySelectorAll('svg, img')].find((el) => !text.contains(el));
+      if (clonedOwn) clonedOwn.replaceWith(ic); else text.before(ic);
+    } else { item.textContent = label; item.prepend(ic); }
+    item.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      // close Portal's menu the way a user would, then open ours
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      onClick(e);
+    });
+    const after = [...logout.parentElement.querySelectorAll(':scope > [data-ae-order]')].find((el) => Number(el.dataset.aeOrder) > order);
+    logout.parentElement.insertBefore(item, after || logout);
+    return item;
+  }
+
   function every(ms, fn) {
     // Promise.resolve so async callbacks' rejections are caught too.
     const safe = () => (halted ? undefined : Promise.resolve().then(fn).catch((e) => { noteError('timer', e); console.error('[' + AE_NAME + ']', e); }));
@@ -1611,7 +1652,7 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, woHeadingRow, woChip, textEl, findButton,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, woHeadingRow, woChip, textEl, findButton, avatarItem,
     api, unwrap, Stopped, ApiError, BadShape, shape, health, workerCall, timedFetch, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every,
     api, unwrap, Stopped, portal, sameStore, assertSameStore, halt, halted: () => !!halted, localCache, signedOut, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,

@@ -127,7 +127,8 @@ AE.shard({
     .sp-switch { display:flex; flex:1 1 auto; justify-content:flex-end; align-items:center; gap:8px; margin:0 14px 0 0; font-family:Apercu,"Helvetica Neue",Helvetica,Arial,sans-serif; }
     .sp-switch .sp-name { font-size:13px; font-weight:700; color:var(--aui-primary,#8223d2); letter-spacing:.2px; }
     .sp-seg { position:relative; display:inline-flex; height:32px; border:1px solid var(--aui-primary,#8223d2); border-radius:8px; }
-    .sp-seg .ae, .sp-note .ae { position:absolute; left:-8px; top:-9px; width:18px; height:18px; border-radius:50%; background:var(--aui-primary,#8223d2); color:var(--aui-on-primary,#fff); font:700 8px/18px Apercu,Arial,sans-serif; text-align:center; box-shadow:0 0 0 2px var(--aui-surface,#fff); z-index:1; }
+    .sp-seg .ae { position:absolute; left:-8px; top:-9px; width:18px; height:18px; line-height:0; z-index:1; }
+    .sp-seg .ae .sg-aicon { box-shadow:0 0 0 2px var(--aui-surface,#fff); }
     .sp-seg button { border:0; margin:0; background:transparent; color:var(--aui-primary,#8223d2); font:400 15px Apercu,"Helvetica Neue",Arial,sans-serif; padding:0 14px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
     .sp-seg button:first-of-type { border-radius:7px 0 0 7px; padding-left:16px; } .sp-seg button:last-of-type { border-radius:0 7px 7px 0; }
     .sp-seg button.on { background:var(--aui-primary,#8223d2); color:var(--aui-on-primary,#fff); }
@@ -231,7 +232,7 @@ AE.shard({
       const btn = (v, label) => h('button', { type: 'button', 'data-v': v, 'aria-pressed': 'false', html: ICON[v] + label, onclick: () => choose(v), onmouseenter: v === 'board' ? warm : null, onfocus: v === 'board' ? warm : null });
       return h('div', { class: 'sp-switch', id: 'sp-switch', role: 'group', 'aria-label': 'Spread: List or Board' },
         h('span', { class: 'sp-name' }, 'Spread'),
-        h('div', { class: 'sp-seg' }, h('span', { class: 'ae', 'aria-hidden': 'true' }, 'Ae'), btn('list', 'List'), btn('board', 'Board')));
+        h('div', { class: 'sp-seg' }, h('span', { class: 'ae', 'aria-hidden': 'true', html: AE.actionIcon('spread', 18) }), btn('list', 'List'), btn('board', 'Board')));
     }
     function buildBoard() {
       const cols = S.COLUMNS.map((c, ci) => {

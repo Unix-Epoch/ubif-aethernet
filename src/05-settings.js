@@ -641,24 +641,7 @@
   AE.ensureModalCss = ensureModalCss;
 
   // Add our item to the avatar menu whenever Portal renders it: in the same frame (2.23), timer as backup.
-  function menuItem() {
-    const logout = document.querySelector('[data-testid="option-logout"]');
-    const model = document.querySelector('[data-testid="option-view-account"]');
-    if (!logout || !model || document.querySelector('[data-testid="option-aethernet"]')) return;
-    const item = model.cloneNode(true); // same classes → same look, both themes
-    item.setAttribute('data-testid', 'option-aethernet');
-    const label = item.querySelector('[data-aui="text"]') || item;
-    label.textContent = AE_NAME + ' settings';
-    item.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      // close Portal's menu the way a user would, then open ours
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      open();
-    });
-    logout.parentElement.insertBefore(item, logout);
-  }
+  const menuItem = () => AE.avatarItem({ testid: 'option-aethernet', label: AE_NAME + ' settings', order: 10, icon: (s) => icon('aetheryte', s), onClick: () => open() });
   AE.every(400, menuItem);
   AE.onDom(menuItem);
 

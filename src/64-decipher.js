@@ -497,21 +497,7 @@ AE.shard({
     }
 
     // ------------------------------------------------------------ avatar menu
-    function menuItem() {
-      const settingsItem = document.querySelector('[data-testid="option-aethernet"]');
-      if (!settingsItem || document.querySelector(`[data-testid="${MENU}"]`)) return;
-      const item = settingsItem.cloneNode(true);
-      item.setAttribute('data-testid', MENU);
-      const label = item.querySelector('[data-aui="text"]') || item;
-      label.textContent = 'IMEI lookup';
-      item.addEventListener('click', (e) => {
-        e.preventDefault(); e.stopPropagation();
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-        open({ from: 'menu' });
-      });
-      settingsItem.before(item);
-    }
+    const menuItem = () => AE.avatarItem({ testid: MENU, label: 'IMEI lookup', order: 30, icon: (s) => AE.actionIcon('decipher', s), onClick: () => open({ from: 'menu' }) });
 
     // ------------------------------------------------------------ learning
     const woId = () => { const m = location.pathname.match(/^\/repair\/workorder\/(\d{5,12})(\/|$)/); return m ? m[1] : null; };

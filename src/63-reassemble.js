@@ -245,21 +245,7 @@ AE.shard({
     AE.reassemble.open = open;
 
     // ------------------------------------------------------------ avatar menu
-    function menuItem() {
-      const settingsItem = document.querySelector('[data-testid="option-aethernet"]');
-      if (!settingsItem || document.querySelector(`[data-testid="${MENU}"]`)) return;
-      const item = settingsItem.cloneNode(true);
-      item.setAttribute('data-testid', MENU);
-      const label = item.querySelector('[data-aui="text"]') || item;
-      label.textContent = 'Price estimate';
-      item.addEventListener('click', (e) => {
-        e.preventDefault(); e.stopPropagation();
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-        open({ from: 'menu' });
-      });
-      settingsItem.before(item);
-    }
+    const menuItem = () => AE.avatarItem({ testid: MENU, label: 'Price estimate', order: 20, icon: (s) => AE.actionIcon('reassemble', s), onClick: () => open({ from: 'menu' }) });
 
     // ------------------------------------------------------------ the Price estimate button
     // Check-in's Repair estimate step: bottom left of the step's empty space, just above Back.

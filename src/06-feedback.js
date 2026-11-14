@@ -614,23 +614,9 @@ AE.feedback = (() => {
 
   // ------------------------------------------------------------ entry points
   // Avatar menu: "Send Aethernet feedback", cloned like the Settings item.
-  function menuItem() {
-    const settingsItem = document.querySelector('[data-testid="option-aethernet"]');
-    if (!settingsItem || document.querySelector('[data-testid="option-aethernet-feedback"]')) return;
-    const item = settingsItem.cloneNode(true);
-    item.setAttribute('data-testid', 'option-aethernet-feedback');
-    const label = item.querySelector('[data-aui="text"]') || item;
-    label.textContent = 'Send ' + AE_NAME + ' feedback';
-    item.addEventListener('click', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      openFeedback();
-    });
-    settingsItem.after(item);
-  }
+  const menuItem = () => AE.avatarItem({ testid: 'option-aethernet-feedback', label: 'Send ' + AE_NAME + ' feedback', order: 40, icon: (s) => AE.icon('aetheryteWrench', s), onClick: () => openFeedback() });
   AE.every(400, menuItem);
-  AE.onDom(menuItem); // right after Settings' item, same frame (Settings registers first)
+  AE.onDom(menuItem); // AE.avatarItem keeps the menu order whichever shard draws first
   if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Send ' + AE_NAME + ' feedback', openFeedback);
   AE.trackDaily('active');
 
