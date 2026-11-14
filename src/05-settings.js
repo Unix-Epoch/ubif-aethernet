@@ -188,6 +188,7 @@
   .sg-switch i::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:transform .15s; }
   .sg-switch input:checked + i { background:var(--aui-primary, #8223d2); }
   .sg-switch input:checked + i::after { transform:translateX(20px); }
+  .sg-switch input:focus-visible + i { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; }
   .sg-kv { display:grid; grid-template-columns: 90px 1fr; gap:6px 12px; font-size:14px; }
   .sg-kv dt { color:var(--aui-on-surface-soft, #5d5e61); } .sg-kv dd { margin:0; overflow-wrap:anywhere; }
   .sg-sheet-foot { position:sticky; bottom:-24px; margin:auto -24px -24px; padding-top:16px; flex:none; padding:16px 24px; display:flex; gap:8px;
@@ -247,17 +248,18 @@
     background:#ffcc00; color:#3d2e00; font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
   /* updated shards: the same sheen in Aethernet purple, until Settings is closed once */
   .sg-shard.sg-upd { position:relative; margin:0 -10px; padding:0 10px; border-radius:10px; border-top-color:transparent;
-    background:linear-gradient(105deg, rgba(130,35,210,.08) 0%, rgba(130,35,210,.08) 38%, rgba(196,140,255,.38) 50%, rgba(130,35,210,.08) 62%, rgba(130,35,210,.08) 100%);
-    background-size:250% 100%; box-shadow:inset 0 0 0 1px rgba(130,35,210,.45); animation:sg-sheen 2.6s ease-in-out infinite; }
+    --t:color-mix(in srgb, var(--aui-primary, #8223d2) 8%, transparent);
+    background:linear-gradient(105deg, var(--t) 0%, var(--t) 38%, color-mix(in srgb, var(--aui-primary, #8223d2) 30%, transparent) 50%, var(--t) 62%, var(--t) 100%);
+    background-size:250% 100%; box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--aui-primary, #8223d2) 45%, transparent); animation:sg-sheen 2.6s ease-in-out infinite; }
   .sg-shard.sg-upd + .sg-shard { border-top-color:transparent; }
-  .sg-new-tag.upd { background:#8223d2; color:#fff; }
+  .sg-new-tag.upd { background:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); }
   .sg-exp-tag { display:inline-block; padding:1px 7px; border-radius:10000rem; font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
     background:repeating-linear-gradient(135deg, #fff0c0 0 6px, #ffe28a 6px 12px); color:#5a4300; border:1px solid #d6a000; }
   /* "Aethernet has updated!" pill */
   .sg-update-pill { position:fixed; z-index:2147483645; left:50%; bottom:20px; transform:translateX(-50%);
     display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 14px; border:0; border-radius:10000rem; cursor:pointer;
     color:var(--aui-on-primary, #fff); font:700 14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; white-space:nowrap;
-    background:linear-gradient(105deg, var(--aui-primary, #8223d2) 0%, var(--aui-primary, #8223d2) 40%, #b36cf0 50%, var(--aui-primary, #8223d2) 60%, var(--aui-primary, #8223d2) 100%);
+    background:linear-gradient(105deg, var(--aui-primary, #8223d2) 0%, var(--aui-primary, #8223d2) 40%, color-mix(in srgb, var(--aui-primary, #8223d2) 60%, #fff) 50%, var(--aui-primary, #8223d2) 60%, var(--aui-primary, #8223d2) 100%);
     background-size:250% 100%; box-shadow:0 8px 28px rgba(12,14,17,.28); animation:sg-pill-in .3s ease-out, sg-sheen 3s ease-in-out .3s infinite; }
   .sg-update-pill:hover { filter:brightness(1.08); }
   .sg-update-pill .ver { font-weight:400; opacity:.8; }
@@ -271,9 +273,9 @@
   .sg-update-pill:hover .x .ring circle { animation-play-state:paused; }
   @keyframes sg-countdown { to { stroke-dashoffset:69.1; } }
   /* Save & reload, while there are changes to save */
-  .sg-btn.sg-primary.sg-pending { background:linear-gradient(105deg, var(--aui-primary, #8223d2) 0%, var(--aui-primary, #8223d2) 40%, #b36cf0 50%, var(--aui-primary, #8223d2) 60%, var(--aui-primary, #8223d2) 100%);
+  .sg-btn.sg-primary.sg-pending { background:linear-gradient(105deg, var(--aui-primary, #8223d2) 0%, var(--aui-primary, #8223d2) 40%, color-mix(in srgb, var(--aui-primary, #8223d2) 60%, #fff) 50%, var(--aui-primary, #8223d2) 60%, var(--aui-primary, #8223d2) 100%);
     background-size:250% 100%; animation:sg-sheen 2.4s ease-in-out infinite, sg-save-pulse 1.6s ease-out infinite; }
-  @keyframes sg-save-pulse { 0% { box-shadow:0 0 0 0 rgba(130,35,210,.5); } 100% { box-shadow:0 0 0 10px rgba(130,35,210,0); } }
+  @keyframes sg-save-pulse { 0% { box-shadow:0 0 0 0 color-mix(in srgb, var(--aui-primary, #8223d2) 50%, transparent); } 100% { box-shadow:0 0 0 10px transparent; } }
   @keyframes sg-pill-in { from { opacity:0; transform:translate(-50%, 10px); } to { opacity:1; transform:translate(-50%, 0); } }
   @media (prefers-reduced-motion: reduce) { .sg-shard.sg-new, .sg-shard.sg-upd, .sg-update-pill, .sg-btn.sg-pending { animation:none; } .sg-update-pill .x .ring { display:none; } }
   `;
@@ -294,7 +296,7 @@
     const linkInput = h('input', { type: 'text', value: AE_INSTALL_URL, readonly: true, onfocus: (e) => e.target.select() });
     const copyBtn = h('button', { type: 'button', class: 'sg-btn', onclick: async () => {
       try { await navigator.clipboard.writeText(AE_INSTALL_URL); copyBtn.textContent = 'Copied'; }
-      catch (_) { linkInput.select(); copyBtn.textContent = 'Press ⌘C'; }
+      catch (_) { linkInput.select(); copyBtn.textContent = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? 'Press ⌘C' : 'Press Ctrl+C'; }
       setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
     } }, 'Copy');
     const whoBox = h('span', null, '…');
@@ -401,8 +403,8 @@
     const input = (label, value, placeholder, onInput, type = 'text') =>
       h('label', { class: 'sg-field' }, h('span', null, label),
         h('input', { type, value: value ?? '', placeholder: placeholder || '', oninput: (e) => onInput(e.target.value) }));
-    const toggle = (checked, onChange) => h('label', { class: 'sg-switch' },
-      h('input', { type: 'checkbox', checked, onchange: (e) => onChange(e.target.checked) }), h('i'));
+    const toggle = (checked, onChange, label) => h('label', { class: 'sg-switch' },
+      h('input', { type: 'checkbox', role: 'switch', 'aria-label': label || null, checked, onchange: (e) => onChange(e.target.checked) }), h('i'));
 
     // Collapsible section. Open/closed is remembered per browser (a viewer
     // preference, not a setting — it isn't part of Save).
@@ -442,11 +444,11 @@
           h('div', null, h('b', { style: 'display:inline-flex;align-items:center;gap:6px' }, h('span', { html: AE.actionIcon('dualcast', 20), style: 'line-height:0' }),
             h('span', { html: AE.actionIcon('triplecast', 20), style: 'line-height:0' }), 'Dualcast/Triplecast'),
             h('span', { class: 'sg-soft', style: 'display:block' }, 'Swiftcast, but even more efficient. Close multiple (two or more) cleanings in one click. Wherever you see the icons, click it to close the referenced cleanings.')),
-          toggle(s.autoClose.dualcast !== false, (v) => { s.autoClose.dualcast = v; repaintSums(); })),
+          toggle(s.autoClose.dualcast !== false, (v) => { s.autoClose.dualcast = v; repaintSums(); }, 'Dualcast/Triplecast')),
         h('div', { class: 'sg-row', style: 'margin:8px 0' },
           h('div', null, h('b', null, 'VZW Refresh screen protector'),
             h('span', { class: 'sg-soft', style: 'display:block' }, 'Adds the SKU 101516 to any VZW Refresh cleanings automatically. If an error occurs, Swiftcast will complete the cleaning without it. (Shouldn\'t happen, though!)')),
-          toggle(!!(s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT), (v) => { s.autoClose.refreshLabor = v; repaintSums(); }))],
+          toggle(!!(s.autoClose.refreshLabor ?? AE_REFRESH_LABOR_DEFAULT), (v) => { s.autoClose.refreshLabor = v; repaintSums(); }, 'VZW Refresh screen protector'))],
       ...(AE_DEMO ? {} : { // not in the demo build
         galaxy: [() => ['technicianName', 'email', 'location'].some((k) => s.galaxy[k]) ? 'Overrides set' : 'Using your login',
           h('div', { class: 'sg-soft', style: 'margin-top:8px' }, 'Leave blank to use your login. Only fill in to override.'),
@@ -464,12 +466,12 @@
             ['filter', 'Tag filter on the Work orders list', 'A Waymark button next to Portal\'s filters, to show only work orders with one tag (on the page shown).']]
             .map(([k, name, desc]) => h('div', { class: 'sg-row', style: 'margin:8px 0' },
               h('div', null, h('b', null, name), h('span', { class: 'sg-soft', style: 'display:block' }, desc)),
-              toggle(!!(s.waymarkList || {})[k], (v) => { s.waymarkList = Object.assign({}, s.waymarkList, { [k]: v }); }))),
+              toggle(!!(s.waymarkList || {})[k], (v) => { s.waymarkList = Object.assign({}, s.waymarkList, { [k]: v }); }, name))),
           AE.waymark.editor()],
         fixes: [() => AE.fixesInfo.filter(([id]) => s.fixes[id] !== false).length + ' of ' + AE.fixesInfo.length + ' on',
           ...AE.fixesInfo.flatMap(([id, name, desc, extra]) => [h('div', { class: 'sg-row', style: 'margin:8px 0' },
             h('div', null, h('b', null, name), h('span', { class: 'sg-soft', style: 'display:block' }, desc)),
-            toggle(s.fixes[id] !== false, (v) => { s.fixes[id] = v; repaintSums(); })),
+            toggle(s.fixes[id] !== false, (v) => { s.fixes[id] = v; repaintSums(); }, name)),
             extra ? extra(s, h) : null])],
         timeSheet: [() => AE.tactician.summary(), AE.tactician.gmEditor()],
         printLabels: [() => s.printLabels.delayMs + ' ms between labels',
@@ -511,7 +513,7 @@
           h('div', null, h('b', { class: 'sg-cname' }, h('span', { class: 'sg-cicon', html: AE.actionIcon(id, 24) }), name, fresh ? h('span', { class: 'sg-new-tag' }, 'New') : upd ? h('span', { class: 'sg-new-tag upd' }, 'Updated') : null,
               issueTag(id)),
             h('span', { class: 'sg-soft' }, ...boldParts(desc)), optToggle ? h('div', null, optToggle) : null),
-          toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); })),
+          toggle(!!s.crystals[id], (v) => { s.crystals[id] = v; repaintSums(); }, name)),
         optBody);
     };
 
@@ -626,7 +628,9 @@
       galaxyAuto.technicianName = p.name; galaxyAuto.email = p.email; galaxyAuto.location = loc;
       for (const k of Object.keys(galaxyAuto)) if (galaxyInputs[k]) galaxyInputs[k].querySelector('input').placeholder = 'Auto: ' + (galaxyAuto[k] || '—');
       repaintSums();
-    }).catch((e) => { who.replaceChildren(h('dt', null, 'Error'), h('dd', null, esc(e.message))); });
+    }).catch((e) => { // staff get a plain line; the error itself goes in the bug report
+      who.replaceChildren(h('dt', null, 'Name'), h('dd', { html: "Couldn't load your login. Reload the page, or " + AE.bugLink('report a bug', { where: 'Settings: Signed in as', error: String((e && e.message) || e) }) + '.' }));
+    });
   }
 
   // The pop-over dialog styles (.sg-about-scrim, .sg-about…), for any shard's dialog too (Reassemble).

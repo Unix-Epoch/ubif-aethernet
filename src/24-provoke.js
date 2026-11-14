@@ -59,18 +59,18 @@ AE.shard({
       #${BOX_ID} .hd { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
       #${BOX_ID} .hd .txt { flex:1; }
       #${BOX_ID} .pill { font-size:12px; font-weight:600; padding:2px 10px; border-radius:10000px; background:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); }
-      #${BOX_ID}.need .pill { background:var(--aui-warning-soft, #fff4cc); color:var(--aui-on-warning-soft, #3d2e00); }
+      #${BOX_ID}.need .pill { background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
       #${BOX_ID} select, #${BOX_ID} textarea { width:100%; box-sizing:border-box; font:inherit; color:inherit; background:var(--aui-surface, #fff);
-        border:1px solid var(--aui-outline-variant, #c9c6cf); border-radius:8px; padding:7px 9px; }
+        border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; padding:7px 9px; }
       #${BOX_ID} textarea { min-height:96px; resize:vertical; margin-top:8px; }
       #${BOX_ID} .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; align-items:center; }
       #${BOX_ID} .chip { font:inherit; font-size:13px; padding:3px 10px; border-radius:10000px; cursor:pointer;
-        border:1px solid var(--aui-outline-variant, #c9c6cf); background:transparent; color:inherit; }
+        border:1px solid var(--aui-outline, #c6c6ca); background:transparent; color:inherit; }
       #${BOX_ID} .chip.on { border-color:var(--aui-primary, #8223d2); background:var(--aui-primary-soft, #f3e8fc); }
       #${BOX_ID} .ft { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px; }
       #${BOX_ID} .ft .sp { flex:1; }
       #${BOX_ID} label.chk { display:flex; gap:6px; align-items:center; font-size:13px; margin-top:8px; }
-      #${BOX_ID} .call { margin:0 0 10px; padding:8px 10px; border-radius:8px; background:var(--aui-warning-soft, #fff4cc); color:var(--aui-on-warning-soft, #3d2e00); font-size:13px; }
+      #${BOX_ID} .call { margin:0 0 10px; padding:8px 10px; border-radius:8px; background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); font-size:13px; }
       #${BOX_ID} .hint { text-decoration:underline dotted; text-underline-offset:3px; cursor:help; }
     `));
 
@@ -262,13 +262,13 @@ AE.shard({
       #${CHAT_ID} .hd .sp { flex:1; }
       #${CHAT_ID} .cs { display:flex; flex-wrap:wrap; gap:8px; position:relative; }
       #${CHAT_ID} .c { font:inherit; font-size:14px; padding:5px 12px; border-radius:10000px; cursor:pointer; white-space:nowrap;
-        border:1px solid var(--aui-outline-variant, #c9c6cf); background:transparent; color:inherit; }
+        border:1px solid var(--aui-outline, #c6c6ca); background:transparent; color:inherit; }
       #${CHAT_ID} .c.top { background:var(--aui-primary, #8223d2); border-color:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); font-weight:600; }
       #${CHAT_ID} .c.top small { font-weight:400; opacity:.85; margin-left:4px; }
       #${CHAT_ID} .c.on { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; }
       #${CHAT_ID} .c.more { border-style:dashed; }
       #${CHAT_ID} .menu { position:absolute; z-index:5; left:0; right:0; bottom:calc(100% + 34px); max-height:320px; overflow:auto; padding:6px 0;
-        background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1b1b1f); border:1px solid var(--aui-outline-variant, #c9c6cf); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.3); }
+        background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1b1b1f); border:1px solid var(--aui-outline, #c6c6ca); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.3); }
       #${CHAT_ID} .menu button { display:block; width:100%; text-align:left; font:inherit; font-size:14px; padding:7px 14px; border:0; background:transparent; color:inherit; cursor:pointer; }
       #${CHAT_ID} .menu button:hover { background:var(--aui-primary-soft, #f3e8fc); }
       #${CHAT_ID} .menu .g { font-size:11.5px; text-transform:uppercase; letter-spacing:.6px; padding:8px 14px 4px; opacity:.7; }

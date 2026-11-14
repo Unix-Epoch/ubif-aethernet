@@ -178,7 +178,7 @@ AE.shard({
     .sp-spacer { flex:1; }
     .sp-att { display:inline-flex; align-items:center; gap:3px; height:18px; padding:0 6px 0 4px; border-radius:9px; font:700 11px/1 Apercu,Arial,sans-serif; }
     .sp-att svg { width:13px; height:13px; fill:currentColor; }
-    .sp-att.warning { color:#7a5200; background:#ffecb8; } .sp-att.urgent { color:#fff; background:#d1344b; }
+    .sp-att.warning { color:#7a5200; background:#ffecb8; } .sp-att.urgent { color:#fff; background:var(--aui-status-error, #b91a24); }
     .sp-cust { display:flex; align-items:center; gap:5px; margin-top:3px; font-size:15px; font-weight:700; line-height:1.25; min-width:0; }
     .sp-dev { margin-top:1px; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .sp-cust span.n { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }

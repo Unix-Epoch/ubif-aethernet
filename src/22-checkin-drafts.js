@@ -309,7 +309,7 @@ AE.shard({
           if (!(await label(labelFor(d)))) printedOrRetry(AE.toast('Return', "The label didn't print.", 'err', 30000), 'Return', 'Label printed.', labelFor(d));
         } }, 'Reprint label'),
         h('button', { type: 'button', class: 'sg-btn', onclick: async () => {
-          const ok = await AE.confirm({ icon: 'checkinDrafts', title: 'Delete this saved check-in?', message: 'The label will cease to function, and all data will be deleted.', confirmLabel: 'Delete' });
+          const ok = await AE.confirm({ danger: true, icon: 'checkinDrafts', title: 'Delete this saved check-in?', message: 'The label will cease to function, and all data will be deleted.', confirmLabel: 'Delete' });
           if (!ok) return;
           try { await call('POST', '/' + d.id + '/remove', {}); AE.track('checkinDrafts:discard'); boxData = []; box.remove(); }
           catch (e) { AE.toast('Return', { html: "Couldn't discard it." + report('Discarding saved check-in ' + d.id, e) }, 'err'); }

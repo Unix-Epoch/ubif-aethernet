@@ -690,6 +690,11 @@ const AE = (() => {
   .sg-collapse-tip::after { content:''; position:absolute; bottom:-8px; right:20px; width:16px; height:16px; transform:rotate(45deg);
     background:var(--aui-surface, #fff); box-shadow:2px 2px 3px rgba(12,14,17,.08); }
   @keyframes sg-flash { 0%,100% { box-shadow:0 8px 28px rgba(12,14,17,.18); } 50% { box-shadow:0 0 0 3px var(--aui-primary, #8223d2); } }
+  /* Reduced motion, for everything Aethernet draws: no slides, shakes, pulses or sheens (spinners keep turning, so busy still reads as busy). */
+  @media (prefers-reduced-motion: reduce) {
+    .sg, .sg *, .sg::before, .sg *::before, .sg::after, .sg *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; }
+    .sg .sg-spin, .sg.sg-spin { animation-duration:.7s !important; animation-iteration-count:infinite !important; }
+  }
   `;
   // Put a <style>/<script> in the page, even at page start, when <html> may not exist yet.
   function addEarly(node) {
@@ -727,6 +732,8 @@ const AE = (() => {
       else el.setAttribute(k, v === true ? '' : v);
     }
     for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : String(kid));
+    // A ✕-only close button reads as "multiplication x" to a screen reader: give it a name (its title, else "Close").
+    if (tag === 'button' && !el.hasAttribute('aria-label') && /^\s*[✕×]\s*$/.test(el.textContent)) el.setAttribute('aria-label', el.getAttribute('title') || 'Close');
     return el;
   }
 
@@ -922,22 +929,24 @@ const AE = (() => {
   .sg-confirm .sg-actions .sg-btn { flex:1; }
   `;
   // icon: a shard/spell id shown left of the title. cancelLabel: null = no Cancel button (a notice with just OK).
-  function confirmDialog({ title, message, warning, icon: iconId, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) {
+  // danger: the confirm button deletes or removes something: it's red, and Cancel has the focus so a stray Enter doesn't confirm.
+  function confirmDialog({ title, message, warning, icon: iconId, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false }) {
     ensureCss();
     if (!document.getElementById('sg-confirm-css')) document.head.append(h('style', { id: 'sg-confirm-css' }, CONFIRM_CSS));
     return new Promise((resolve) => {
       const done = (v) => { scrim.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
-      const ok = h('button', { type: 'button', class: 'sg-btn sg-lg sg-primary', onclick: () => done(true) }, confirmLabel);
+      const ok = h('button', { type: 'button', class: 'sg-btn sg-lg ' + (danger ? 'sg-danger' : 'sg-primary'), onclick: () => done(true) }, confirmLabel);
+      const cancel = cancelLabel === null ? null : h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => done(false) }, cancelLabel);
       const card = h('div', { class: 'sg sg-card sg-confirm', role: 'alertdialog', 'aria-modal': 'true' },
         iconId ? h('h2', { style: 'display:flex;align-items:center;gap:10px' }, h('span', { html: actionIcon(iconId, 28), style: 'line-height:0;flex:none' }), title) : h('h2', null, title),
         message ? h('div', { html: message }) : null,
         warning ? h('div', { class: 'sg-warn' }, warning) : null,
-        h('div', { class: 'sg-actions' }, cancelLabel === null ? null : h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => done(false) }, cancelLabel), ok));
+        h('div', { class: 'sg-actions' }, cancel, ok));
       const scrim = h('div', { class: 'sg sg-confirm-scrim', onclick: (e) => { if (e.target === scrim) done(false); } }, card);
       const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
       document.addEventListener('keydown', onKey, true);
       document.body.appendChild(scrim);
-      ok.focus();
+      (danger && cancel ? cancel : ok).focus();
     });
   }
 
@@ -947,7 +956,7 @@ const AE = (() => {
     ensureCss();
     const mark = kind === 'busy' ? '<span class="sg-spin" style="margin-top:2px"></span>'
       : '<span class="sg-icon-state" style="color:' + (kind === 'ok' ? 'var(--aui-status-success,#136d31)' : 'var(--aui-status-error,#b91a24)') + '">' + (kind === 'ok' ? '✓' : '!') + '</span>';
-    const el = h('div', { class: 'sg sg-card sg-toast', role: 'status', style:
+    const el = h('div', { class: 'sg sg-card sg-toast', role: kind === 'err' ? 'alert' : 'status', style:
       'position:fixed;z-index:2147483647;left:16px;bottom:16px;max-width:420px;padding:12px 16px;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4;animation:sg-in .2s ease-out' +
       (kind === 'err' ? ';border-color:var(--aui-status-error,#b91a24)' : ''),
       html: mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">' + esc(title) + '</b>' + (text && typeof text === 'object' ? text.html : esc(text)) + '</div>' });
@@ -1301,7 +1310,7 @@ const AE = (() => {
     text-align:center; white-space:nowrap; font-variant-numeric:tabular-nums; pointer-events:none; background:#6b6c70; color:#fff; }
   .ae-hi .n:empty { display:none; }
   .ae-hi .n.dot { min-width:0; width:12px; height:12px; padding:0; top:-1px; right:-2px; display:block; }
-  .ae-hi.sev-red .n { background:var(--aui-status-error, #d1344b); color:#fff; }
+  .ae-hi.sev-red .n { background:var(--aui-status-error, #b91a24); color:#fff; }
   .ae-hi.sev-amber .n { background:var(--aui-status-warning, #e0a23a); color:#2a2000; }
   .ae-hi.sev-green .n { background:var(--aui-status-success, #136d31); color:#fff; }
   .ae-hi.sev-purple .n { background:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); }
