@@ -50,6 +50,7 @@ The app talks to the **tracker Worker**, not the admin site. Each phone is a reg
 | `/v1/agents/m/wo…` | built | work order lookup and sealed detail, see `MOBILE-API-wo.md` (`src/mobile-wo.js`) |
 | `/v1/agents/m/alerts…` | built | feed, poll, read marks, settings, see `MOBILE-API-alerts.md` (`src/mobile-alerts.js`); there is no push service (`/push…` is 404) |
 | `/v1/agents/m/prefs…` | built | device details, rename, forget this phone, see `MOBILE-API-prefs.md` (`src/mobile-prefs.js`) |
+| `/v1/agents/m/retrace…` | built | inventory lookup: items, item, label, purchase orders, see `MOBILE-API-retrace.md` (`src/mobile-retrace.js`) |
 | `GET /v1/agents/wos?store=<id>&closedDays=<0-14>` | existing (the Mac audit's route; a phone may use it) | open work orders plus ones closed within `closedDays` (default 3, max 14), each with its plain columns, `plain` JSON and latest sealed snapshot; `403 not approved for this store` otherwise |
 
 Other `/v1/agents/m/…` paths are `404`. A Mac agent (not a phone) calling `/m/…` gets `403 not a phone`.

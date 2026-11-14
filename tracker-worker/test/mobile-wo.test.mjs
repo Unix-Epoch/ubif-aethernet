@@ -4,9 +4,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { setup, C } from './mobile-helpers.mjs';
 import { scrub, plainPart, cardOf, scanRow } from '../src/shape.js';
+import { todayOf, marksFor } from '../src/mobile-waymark.js';
+import { addDays } from '../src/metrics.js';
 
 const T = await setup('.wrangler-test-mobile-wo');
 const { env, call, admin, authed, registerPhone, approve } = T;
+// Waymark's tables (../worker/schema.sql) in the local AE database, the way the live one has them
+for (const st of readFileSync('../worker/schema.sql', 'utf8').replace(/--[^\n]*/g, '').split(';').map((x) => x.trim()).filter(Boolean)) await env.AE.prepare(st).run();
 const WO = '/v1/agents/m/wo';
 const ago = (hours) => new Date(Date.now() - hours * 3600000).toISOString();
 const maxLog = async () => (await env.TR.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM access_log').first()).m;
@@ -95,7 +99,7 @@ assert.equal(all.filter((x) => x.store === 914).length, 3 + 7); assert.equal(all
   assert.equal(c.order, 2 + 1); assert.equal(c.start, 2); assert.equal(c.rfp, 2 + 1); assert.equal(c.work, 2 + 1); assert.equal(c.wait, 2);
 }
 const row1 = all.find((x) => x.wo === 7000001);
-assert.deepEqual(Object.keys(row1).sort(), ['bin', 'cartDue', 'cartValue', 'closedAt', 'createdAt', 'device', 'lane', 'notes', 'open', 'outcome', 'program', 'status', 'statusId', 'statusSince', 'store', 'updatedAt', 'wo']);
+assert.deepEqual(Object.keys(row1).sort(), ['bin', 'cartDue', 'cartValue', 'closedAt', 'closedReason', 'createdAt', 'device', 'followUp', 'lane', 'lastCartValue', 'notes', 'open', 'outcome', 'program', 'status', 'statusId', 'statusSince', 'store', 'tags', 'updatedAt', 'wo']);
 assert.equal(row1.lane, 'order'); assert.equal(row1.status, 'Need to order'); assert.equal(row1.statusId, 2); assert.equal(row1.device, 'Galaxy S23 Ultra'); assert.equal(row1.program, 'Retail'); assert.equal(row1.bin, 'B-12');
 assert.equal(row1.notes, 2); assert.equal(row1.cartValue, 199); assert.equal(row1.cartDue, 199); assert.equal(row1.closedAt, null); assert.ok(row1.createdAt && row1.updatedAt);
 assert.ok(Math.abs(Date.parse(row1.statusSince) - (Date.now() - 120 * 3600000)) < 60000, 'status began 120 hours ago');
@@ -266,6 +270,150 @@ for (const path of ['', '/find?q=7000', '/914/7000001', '/914/7000001?sealed=1',
   const x = await authed(E, WO); assert.equal(x.status, 200); assert.deepEqual(x.j.rows, []); assert.deepEqual((await authed(E, WO + '/find?q=7000')).j.rows, []); assert.equal((await authed(E, WO + '/914/7000001')).status, 403);
 }
 
+
+// ================================================================ closed list (state=closed): every closed work order, newest close first
+{
+  const closed = (path) => get(A, WO + '?state=closed' + path);
+  await env.TR.prepare("INSERT INTO workorders (store, wo, status_id, status_name, is_open, closed_at, closed_reason, last_cart_value) VALUES (326, 7100009, 15, 'Closed', 0, ?, 'Closed', 42.5)").bind(ago(3 * 24)).run();
+  const tie = (await env.TR.prepare('SELECT closed_at FROM workorders WHERE store = 914 AND wo = 7000010').first()).closed_at;
+  await env.TR.prepare('UPDATE workorders SET closed_at = ? WHERE store = 326 AND wo = 7100009').bind(tie).run(); // the same close time as 914/7000010: store breaks the tie
+  await env.TR.prepare("INSERT INTO workorders (store, wo, status_id, is_open) VALUES (914, 7000013, 15, 0)").run(); // closed with no close time: not listed
+  await env.TR.prepare('UPDATE workorders SET last_cart_value = 149 WHERE store = 914 AND wo = 7000010').run();
+  r = await closed('&limit=100');
+  assert.equal(r.status, 200); assert.equal(r.j.state, 'closed'); assert.equal(r.j.sort, 'closed'); assert.equal(r.j.closedDays, undefined); assert.equal(r.j.lanes, undefined); assert.equal(r.j.followUps, undefined);
+  assert.deepEqual(r.j.rows.map((x) => [x.store, x.wo]), [[326, 7100009], [914, 7000010], [914, 7000011], [914, 7000012]], 'all closed, newest close first, equal times by store');
+  assert.ok(r.j.rows.every((x) => x.open === false && x.lane === null && x.statusSince === null && !('tags' in x)));
+  assert.deepEqual([r.j.rows[1].closedReason, r.j.rows[1].lastCartValue, r.j.rows[0].closedReason, r.j.rows[0].lastCartValue], ['Sale complete', 149, 'Closed', 42.5]);
+  assert.equal(r.j.rows[2].lastCartValue, null);
+  assert.equal(r.j.next, null);
+  { // paging one at a time reaches the 20-day-old one that `recent` can never show, with no gaps or repeats
+    const seenK = []; let after = null;
+    for (let i = 0; i < 10; i++) { const x = await closed('&limit=1' + (after ? '&after=' + after : '')); assert.equal(x.status, 200); seenK.push(...x.j.rows.map((y) => y.store + '|' + y.wo)); after = x.j.next; if (!after) break; }
+    assert.deepEqual(seenK, r.j.rows.map((y) => y.store + '|' + y.wo)); assert.equal(after, null);
+  }
+  assert.deepEqual((await closed('&store=914&limit=2')).j.rows.map((x) => x.wo), [7000010, 7000011]);
+  assert.deepEqual((await get(A, WO + '?state=closed&store=914&limit=2&after=' + (await closed('&store=914&limit=2')).j.next)).j.rows.map((x) => x.wo), [7000012]);
+  assert.equal((await closed('&store=536')).status, 403); assert.equal((await closed('&sort=updated')).status, 400); assert.equal((await closed('&lane=work')).status, 400);
+  { const a = await closed('&limit=1'); assert.equal((await get(A, WO + '?state=recent&after=' + a.j.next)).status, 400, 'cursors do not cross lists'); assert.equal((await get(A, WO + '?after=' + a.j.next)).status, 400); }
+  assert.equal((await get(B, WO + '?state=closed')).j.rows.length, 0, 'store 536 has none closed'); assert.equal((await get(B, WO + '?state=closed&store=914')).status, 403);
+  // cards on the closed list: same rules as the other lists
+  { const x = await closed('&store=914&cards=1&limit=5'); assert.equal(x.status, 200); assert.deepEqual(x.j.cardsFor, [914]); assert.ok(x.j.rows.every((y) => /^v1\./.test(y.card))); }
+  assert.equal((await get(D, WO + '?state=closed&store=326&cards=1')).status, 403);
+  // old clients: state=recent, its default sort, closedDays clamp and its page shape are unchanged by the new state
+  { const x = await get(A, WO + '?state=recent&store=914&closedDays=14'); assert.deepEqual(x.j.rows.map((y) => y.wo), [7000010, 7000011]); assert.equal(x.j.closedDays, 14); assert.equal(x.j.state, 'recent');
+    assert.deepEqual(Object.keys(x.j).sort(), ['closedDays', 'next', 'now', 'rows', 'scope', 'sort', 'state', 'stores', 'v']); assert.equal(x.j.rows[0].lastCartValue, 149); }
+  assert.equal((await get(A, WO + '?state=recent&store=914&sort=closed&closedDays=999')).j.closedDays, 14);
+  // the index: each store's statement seeks wo_closed (store, is_open, closed_at) and never reads past its page
+  const plan = (await env.TR.prepare("EXPLAIN QUERY PLAN SELECT w.store, w.wo, w.closed_at AS e FROM workorders w WHERE w.store = ? AND w.is_open = 0 AND w.closed_at IS NOT NULL AND w.closed_at <= ? ORDER BY w.closed_at DESC, w.wo LIMIT 5").bind(914, 'x').all()).results.map((x) => x.detail).join(' | ');
+  assert.match(plan, /USING INDEX wo_closed/); if (process.env.WO_PLAN) console.log('PLAN', plan);
+}
+
+// ================================================================ detail: parts sold, status / next-update changes, closed fields
+{
+  await env.TR.batch([
+    env.TR.prepare("INSERT OR REPLACE INTO statuses (id, name) VALUES (9, 'Diagnostics'), (8, 'Ready for work'), (2, 'Need to order'), (13, 'Ready for pickup'), (14, 'Sale complete')"),
+    env.TR.prepare("INSERT INTO inv_items (store, item, name, first_seen, last_seen) VALUES (914, '176255', 'Galaxy S23 screen', ?1, ?1)").bind(ago(500)),
+    env.TR.prepare("INSERT INTO inv_wo_sold (store, wo, state, updated_at) VALUES (914, '7000010', 'done', ?)").bind(ago(1)),
+    env.TR.prepare("INSERT INTO inv_wo_parts (store, wo, line, label, item, sku, name, quantity, price, serial_status, line_type, sales_order, sold_at, recorded_at) VALUES (914, '7000010', 'L1', '176255-0000514371', '176255', '176255', 'Screen assembly', 1, 129.99, 'Sold', 'part', 'FSO000011111', ?1, ?1), (914, '7000010', 'L2', '176300-0000000009', '176255', '176300', NULL, 2, 5, 'Sold', 'part', 'FSO000011111', ?1, ?1)").bind(ago(60)),
+    env.TR.prepare("INSERT INTO inv_wo_parts (store, wo, line, label, item, quantity, price, recorded_at) VALUES (914, '7000011', 'x', '176255-0000000001', '176255', 1, 1, ?)").bind(ago(1)),
+    // the changes: status and next-update rows the app wants, rows it must never get (staff, cart, audit trail, other fields)
+    env.TR.prepare("DELETE FROM changes WHERE store = 914 AND wo = 7000010"),
+  ]);
+  const ins = (field, o, n, h) => env.TR.prepare('INSERT INTO changes (store, wo, changed_at, field, old, new) VALUES (914, 7000010, ?, ?, ?, ?)').bind(ago(h), field, o, n);
+  await env.TR.batch([ // oldest first, the way the tracker writes them (ids rise with time)
+    ins('workorder.statusId', null, '9', 300), ins('workorder.nextUpdate', null, JSON.stringify('2026-11-13T15:00:00.000Z'), 200), ins('workorder.nextUpdate', JSON.stringify('2026-11-13T15:00:00Z'), 'null', 100),
+    ins('workorder.nextUpdate', JSON.stringify('not a date'), JSON.stringify('2026-11-20T10:30:00+01:00'), 90),
+    ins('workorder.updatedBy', '"Staffy Tech"', '"Alex Kim"', 70), ins('workorder.createdBy.givenName', null, '"Staffy"', 70), ins('auditTrail.0.createdBy', null, '"Tech Person"', 70),
+    ins('cart.payment.total', '199', '0', 61), ins('cart.items.0.price', '199', null, 61), ins('workorder.status', '"Diagnostics"', '"Sale complete"', 60), ins('workorder.total', '1', '2', 60),
+    ins('workorder.statusId', '9', '14', 60), ins('workorder.statusId', '14', '77', 59),
+  ]);
+  r = await get(A, WO + '/914/7000010');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.j.changes.map((c) => [c.field, c.old, c.new]), [
+    ['status', 'Sale complete', '77'],                          // newest: an id the statuses table does not know comes back as the id as text
+    ['status', 'Diagnostics', 'Sale complete'],                 // ids resolved through `statuses`
+    ['nextUpdate', null, '2026-11-20T09:30:00.000Z'],           // old was not a time: null; new carried an offset: ISO UTC
+    ['nextUpdate', '2026-11-13T15:00:00.000Z', null],           // cleared (stored as JSON null)
+    ['nextUpdate', null, '2026-11-13T15:00:00.000Z'],           // set (stored JSON-quoted)
+    ['status', null, 'Diagnostics'],                            // first sight: no old
+  ]);
+  assert.ok(r.j.changes.every((c) => Object.keys(c).sort().join() === 'at,field,new,old' && /^\d{4}-\d\d-\d\dT.*Z$/.test(c.at)));
+  assert.ok(r.j.changes.every((c, i, a) => !i || a[i - 1].at >= c.at), 'newest first');
+  assert.ok(!r.j.changes.some((c) => c.field === 'cartValue'), 'no cart value: the tracker records no single field for it (see MOBILE-API-wo.md)');
+  assert.deepEqual(r.j.parts, { state: 'done', rows: [
+    { line: 'L1', label: '176255-0000514371', item: '176255', sku: '176255', name: 'Screen assembly', quantity: 1, price: 129.99, status: 'Sold', soldAt: r.j.parts.rows[0].soldAt },
+    { line: 'L2', label: '176300-0000000009', item: '176255', sku: '176300', name: 'Galaxy S23 screen', quantity: 2, price: 5, status: 'Sold', soldAt: r.j.parts.rows[1].soldAt }] }, 'a line without a name takes the item name');
+  assert.ok(r.j.parts.rows.every((p) => p.soldAt));
+  for (const k of ['closedAt', 'closedReason', 'soldAt', 'outcome', 'lastCartValue']) assert.ok(k in r.j.wo, k);
+  assert.deepEqual([r.j.wo.closedReason, r.j.wo.lastCartValue, r.j.wo.outcome], ['Sale complete', 149, null]);
+  assert.deepEqual([r.j.wo.tags, r.j.wo.followUp], [[], null]);
+  // no parts read yet: state null, rows []; an order whose sales order has no part lines: state 'empty'
+  assert.deepEqual((await get(A, WO + '/914/7000001')).j.parts, { state: null, rows: [] });
+  await env.TR.prepare("INSERT INTO inv_wo_sold (store, wo, state, updated_at) VALUES (914, '7000001', 'empty', ?)").bind(ago(1)).run();
+  assert.deepEqual((await get(A, WO + '/914/7000001')).j.parts, { state: 'empty', rows: [] });
+  // a work order's own parts never leak to another's detail, nor another store's
+  assert.deepEqual((await get(A, WO + '/914/7000011')).j.parts.rows.map((p) => p.line), ['x']); assert.deepEqual((await get(A, WO + '/914/7000012')).j.parts.rows, []);
+  // changes come from the real upload route too: a next-update that moved is one 'nextUpdate' row of ISO times, and nothing but status / nextUpdate is returned
+  { const x = (await get(A, WO + '/914/7000001')).j, raw = (await env.TR.prepare("SELECT old, new FROM changes WHERE store = 914 AND wo = 7000001 AND field = 'workorder.nextUpdate' ORDER BY id DESC").first());
+    assert.match(raw.new, /^"\d{4}-/, 'the tracker stores it JSON-quoted'); const nu = x.changes.filter((c) => c.field === 'nextUpdate'); assert.ok(nu.length >= 1);
+    assert.ok(nu.every((c) => /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(c.new))); assert.ok(x.changes.every((c) => ['status', 'nextUpdate'].includes(c.field)));
+    const rawFields = (await env.TR.prepare('SELECT DISTINCT field FROM changes WHERE store = 914 AND wo = 7000001').all()).results.map((y) => y.field);
+    assert.ok(rawFields.some((f) => /^cart\./.test(f)) && rawFields.length > x.changes.length, 'cart and other rows exist in `changes` and are left out'); }
+  // cap and order: 105 status rows → 100, newest first
+  { const st = []; for (let i = 0; i < 105; i++) st.push(env.TR.prepare("INSERT INTO changes (store, wo, changed_at, field, old, new) VALUES (914, 7000005, ?, 'workorder.statusId', '8', '9')").bind(ago(1000 - i)));
+    for (let i = 0; i < st.length; i += 50) await env.TR.batch(st.slice(i, i + 50));
+    const x = (await get(A, WO + '/914/7000005')).j; assert.equal(x.changes.length, 100); assert.ok(x.changes[0].at > x.changes[99].at); assert.equal(x.changes[0].at, (await env.TR.prepare("SELECT MAX(changed_at) AS m FROM changes WHERE wo = 7000005").first()).m); }
+  assert.equal((await get(B, WO + '/914/7000010')).status, 403);
+}
+
+// ================================================================ Waymark: tags and follow-ups on open rows and the detail, the follow-ups filter
+{
+  const today = todayOf(env), dd = (n) => addDays(today, n);
+  assert.match(today, /^\d{4}-\d\d-\d\d$/);
+  const AE = env.AE;
+  await AE.batch([
+    AE.prepare("INSERT INTO list (store, name, color, pos) VALUES (914, 'Priority', '#d9534f', 0), (914, 'Waiting on customer', '#f0ad4e', 1), (326, 'Priority', '#00aa00', 0)"),
+    AE.prepare("INSERT INTO wo_tags (store, wo, tag, by_name, by_id, at) VALUES (914, 7000001, 'Waiting on customer', 'Alex Kim', 5, '2026-11-10T10:00:00Z'), (914, 7000001, 'Priority', 'Alex Kim', 5, '2026-11-09T10:00:00Z'), (914, 7000001, 'One-off', 'Staffy', 6, '2026-11-11T10:00:00Z'), (326, 7100001, 'Priority', 'Tech Person', 7, '2026-11-11T10:00:00Z'), (914, 7000002, 'Priority', 'Alex Kim', 5, '2026-11-11T10:00:00Z')"),
+    AE.prepare('INSERT INTO auto_marks (store, wo, due, created_at, removed_at, kind) VALUES (914, 7000003, ?1, ?5, NULL, \'rfp\'), (914, 7000002, ?2, ?5, NULL, \'callback\'), (914, 7000004, ?3, ?5, NULL, \'rfp\'), (914, 7000005, ?2, ?5, ?5, \'rfp\'), (914, 7000007, ?2, ?5, NULL, NULL), (914, 7000006, ?2, ?5, NULL, \'rfp\'), (326, 7100001, ?4, ?5, NULL, \'rfp\'), (914, 7000010, ?2, ?5, NULL, \'rfp\'), (536, 7200001, ?2, ?5, NULL, \'rfp\'), (914, 7000001, ?3, ?5, NULL, \'callback\')').bind(dd(-1), today, dd(1), dd(-10), '2026-11-01T10:00:00Z'),
+    AE.prepare("INSERT INTO wo_closed (store, wo, closed_at) VALUES (914, 7000006, '2026-11-12T10:00:00Z')"),
+    AE.prepare("INSERT INTO history (store, wo, action, tag, by_name, by_id, at) VALUES (914, 7000001, 'add', 'Priority', 'Alex Kim', 5, '2026-11-09T10:00:00Z')"),
+  ]);
+  r = await get(A, WO + '?limit=100');
+  const row = (n) => r.j.rows.find((x) => x.wo === n);
+  assert.deepEqual(row(7000001).tags, [{ tag: 'Priority', color: '#d9534f' }, { tag: 'Waiting on customer', color: '#f0ad4e' }, { tag: 'One-off', color: null }], 'by time added; a tag not in the list has no colour');
+  assert.deepEqual(row(7000001).followUp, { kind: 'callback', due: dd(1) }, 'a future follow-up is on the row too');
+  assert.deepEqual(row(7000003).followUp, { kind: 'rfp', due: dd(-1) }); assert.deepEqual(row(7000002).followUp, { kind: 'callback', due: today }); assert.deepEqual(row(7000007).followUp, { kind: 'rfp', due: today }, 'NULL kind = rfp');
+  assert.equal(row(7000005).followUp, null, 'removed with the x'); assert.equal(row(7000006).followUp, null, 'in wo_closed'); assert.deepEqual(row(7000004).tags, []);
+  assert.deepEqual(row(7100001).tags, [{ tag: 'Priority', color: '#00aa00' }], 'the colour is the work order\'s own store list');
+  assert.ok(r.j.rows.every((x) => Array.isArray(x.tags) && 'followUp' in x));
+  // the filter: due today or overdue, open only, in the phone's stores; the chip count rides on the first page
+  assert.deepEqual(r.j.followUps, { count: 4, today });
+  r = await get(A, WO + '?followups=1&limit=100');
+  assert.deepEqual(r.j.rows.map((x) => x.wo).sort(), [7000002, 7000003, 7000007, 7100001], 'overdue + today; not tomorrow, not removed, not in wo_closed, not a closed work order');
+  assert.deepEqual(r.j.followUps, { count: 4, today }); assert.ok(r.j.lanes.total > 4, 'lane chips are not narrowed by the filter');
+  assert.ok(r.j.rows.every((x) => x.open && x.followUp && x.followUp.due <= today));
+  assert.deepEqual((await get(A, WO + '?followups=1&store=914&limit=100')).j.rows.map((x) => x.wo).sort(), [7000002, 7000003, 7000007]); assert.equal((await get(A, WO + '?followups=1&store=914')).j.followUps.count, 3);
+  assert.deepEqual((await get(A, WO + '?followups=1&lane=rfp&limit=100')).j.rows.map((x) => x.wo).sort(), [7000003], 'with a lane: both apply (7000007 is Start, 7000003 is Pickup)');
+  { // paging inside the filter; chips only on the first page
+    const p1 = await get(A, WO + '?followups=1&limit=2'); assert.equal(p1.j.rows.length, 2); assert.ok(p1.j.next); const p2 = await get(A, WO + '?followups=1&limit=2&after=' + p1.j.next);
+    assert.equal(p2.j.rows.length, 2); assert.equal(p2.j.next, null); assert.equal(p2.j.followUps, undefined); assert.equal(new Set([...p1.j.rows, ...p2.j.rows].map((x) => x.wo)).size, 4); }
+  assert.deepEqual((await get(B, WO + '?followups=1')).j.rows.map((x) => x.wo), [7200001], 'another phone sees its own store only'); assert.deepEqual((await get(B, WO)).j.followUps, { count: 1, today });
+  assert.equal((await get(A, WO + '?followups=1&state=recent')).status, 400); assert.equal((await get(A, WO + '?followups=1&state=closed')).status, 400); assert.equal((await get(A, WO + '?followups=yes')).status, 400);
+  assert.equal((await get(A, WO + '?followups=1&store=536')).status, 403);
+  assert.equal((await get(A, WO + '?followups=0&limit=100')).j.rows.length, (await get(A, WO + '?limit=100')).j.rows.length, 'followups=0 is no filter');
+  // the filter's date is the store-local day, not the UTC day: a mark due on the next local day is not due; STORE_TZ moves the day
+  { const tzEnv = Object.assign({}, env, { STORE_TZ: 'Pacific/Kiritimati' }); assert.notEqual(todayOf(tzEnv, Date.parse('2026-11-13T20:00:00Z')), todayOf(env, Date.parse('2026-11-13T20:00:00Z')), 'a zone 14 h ahead is on the next day'); assert.equal(todayOf(env, Date.parse('2026-11-13T03:00:00Z')), '2026-11-12', 'Eastern: still the 12th at 03:00 UTC'); }
+  // detail: same marks; a closed order never has a follow-up (its mark row is ignored); tags stay
+  { const x = (await get(A, WO + '/914/7000003')).j.wo; assert.deepEqual(x.followUp, { kind: 'rfp', due: dd(-1) }); assert.deepEqual(x.tags, []);
+    const y = (await get(A, WO + '/914/7000001')).j.wo; assert.equal(y.tags.length, 3); const z = (await get(A, WO + '/914/7000010')).j.wo; assert.equal(z.followUp, null); assert.equal(z.open, false);
+    assert.equal((await get(A, WO + '/914/7000006')).j.wo.followUp, null, 'in wo_closed'); }
+  // a Waymark read that fails is "no marks", never an error
+  { const bad = { AE: { prepare() { throw new Error('boom'); }, batch() { throw new Error('boom'); } } }; const m = await marksFor(bad, [{ store: 914, wo: 1, open: true }]); assert.deepEqual(m.get('914|1'), { tags: [], followUp: null }); }
+  // one batched read per page: a page of 100 rows costs one tags + one marks statement per store, not per row
+  { let n = 0; const spy = { AE: { prepare: (q) => env.AE.prepare(q), batch: (st) => { n += st.length; return env.AE.batch(st); } } }; await marksFor(spy, r.j.rows.concat(all.slice(0, 20).map((x) => ({ store: x.store, wo: x.wo, open: true }))));
+    assert.ok(n <= 4, 'statements: ' + n); }
+}
+
 // ================================================================ caps: page size, find size, closedDays
 {
   const stmts = [];
@@ -292,6 +440,7 @@ if (process.env.WO_DUMP) { // writes example answers (and query plans) for MOBIL
   ex.list = cut((await authed(A, WO + '?store=914&limit=3&lane=order,work,rfp')).j); ex.listCards = cut((await authed(A, WO + '?store=914&limit=1&cards=1')).j);
   ex.recent = cut((await authed(A, WO + '?state=recent&store=914&closedDays=14&limit=2')).j); ex.find = cut((await authed(A, WO + '/find?q=70000&limit=2')).j);
   ex.detail = cut((await authed(A, WO + '/914/7000003')).j); ex.sealed = cut((await authed(A, WO + '/914/7000003?sealed=1')).j.sealed);
+  ex.closed = cut((await authed(A, WO + '?state=closed&store=914&limit=2')).j); ex.followups = cut((await authed(A, WO + '?followups=1&store=914&limit=2')).j); ex.detailClosed = cut((await authed(A, WO + '/914/7000010')).j); ex.detailOpen = cut((await authed(A, WO + '/914/7000003')).j);
   ex.err = [(await authed(A, WO + '?store=536')).j, (await authed(A, WO + '/914/1234567')).j];
   const plan = async (sql, ...a) => (await env.TR.prepare('EXPLAIN QUERY PLAN ' + sql).bind(...a).all()).results.map((x) => x.detail);
   ex.plan = { find: await plan("SELECT w.wo FROM workorders w WHERE w.store = ? AND w.wo BETWEEN ? AND ? ORDER BY w.wo LIMIT 5", 914, 1, 2),
