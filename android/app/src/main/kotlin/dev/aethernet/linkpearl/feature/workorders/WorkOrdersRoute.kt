@@ -86,6 +86,8 @@ fun WorkOrdersRoute(initialId: String? = null) {
     LifecycleResumeEffect(Unit) { listVm.refreshIfStale(); onPauseOrDispose { } }
     // A bare number in the deep link: search for it.
     LaunchedEffect(initialId) { if (initialId != null && WoKey.parse(initialId) == null && initialId.all { it.isDigit() }) listVm.setQuery(initialId) }
+    // A bare number that finds exactly one work order opens it (a Portal link); several or none stay on the search results.
+    val autoOpen = PortalLink.singleResult(initialId?.takeIf { PortalLink.isBareNumber(it) }, list.search)
     // Customer names on screen: no screenshots, no Recents thumbnail.
     SecureWindow(enabled = unlocked && (list.names.isNotEmpty() || list.search?.results?.isNotEmpty() == true))
 
@@ -105,7 +107,7 @@ fun WorkOrdersRoute(initialId: String? = null) {
     Box(Modifier.fillMaxSize().then(if (unlocked) Modifier.onAnyTouch { lock.touch() } else Modifier)) {
         WorkOrdersLayout(
             list = list, detail = detail, remaining = remaining,
-            initialSelection = WoKey.parse(initialId)?.id, listActions = listActions, detailActions = detailActions,
+            initialSelection = WoKey.parse(initialId)?.id ?: autoOpen?.id, listActions = listActions, detailActions = detailActions,
             onSelect = detailVm::show,
         )
         UnlockOverlay(attempt, onRetry = lock::unlock, onDismiss = lock::dismissAttempt, onRegisterAgain = {
@@ -163,6 +165,8 @@ private fun WideWorkOrders(
     // Starts settled open when a work order is already selected (deep link, tests); animates only on later changes.
     val visible = remember { MutableTransitionState(initialSelection != null) }
     visible.targetState = open
+    // A selection that arrives later (a Portal link whose search found one work order) opens the panel too.
+    LaunchedEffect(initialSelection) { if (initialSelection != null) { openId = initialSelection; open = true } }
     Box(Modifier.fillMaxSize()) {
         WorkOrdersScreen(
             state = list, remaining = remaining, twoColumns = true,

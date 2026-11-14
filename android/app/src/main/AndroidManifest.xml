@@ -14,6 +14,12 @@
         <intent><action android:name="android.intent.action.DIAL" /></intent>
         <intent><action android:name="android.intent.action.SENDTO" /><data android:scheme="smsto" /></intent>
         <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>
+        <!-- The default-browser probe behind "Open in Portal" (it must never resolve to Linkpearl itself). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="http" />
+        </intent>
     </queries>
 
     <application
@@ -43,6 +49,20 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="linkpearl" />
+            </intent-filter>
+            <!-- Portal work order links: https://portal.ubreakifix.net/repair/workorder/<number>. No autoVerify (the domain is not ours):
+                 the owner turns this on by hand under App info > Open by default. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="portal.ubreakifix.net" android:pathPrefix="/repair/workorder/" />
+            </intent-filter>
+            <!-- Share target: text that contains a Portal work order link. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
 

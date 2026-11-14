@@ -253,7 +253,6 @@ fun Bar(width: Dp, modifier: Modifier = Modifier, height: Dp = 12.dp) {
 
 fun Context.dial(digits: String) = launch(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", digits, null)))
 fun Context.text(digits: String) = launch(Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", digits, null)))
-fun Context.openPortal(wo: Long) = launch(Intent(Intent.ACTION_VIEW, Uri.parse(WoFmt.portalUrl(wo))))
 
 private fun Context.launch(i: Intent) {
     try { startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: ActivityNotFoundException) {}

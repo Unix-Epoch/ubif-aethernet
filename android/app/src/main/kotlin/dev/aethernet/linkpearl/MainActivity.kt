@@ -3,6 +3,7 @@ package dev.aethernet.linkpearl
 import android.graphics.Color as AColor
 import android.graphics.drawable.ColorDrawable
 import android.content.res.Configuration
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -22,11 +23,14 @@ import dev.aethernet.linkpearl.core.di.LocalAppContainer
 import dev.aethernet.linkpearl.core.nav.AdaptiveProvider
 import dev.aethernet.linkpearl.core.nav.LinkpearlRoot
 import dev.aethernet.linkpearl.core.prefs.AppPrefs
+import dev.aethernet.linkpearl.feature.workorders.PortalLink
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        // A Portal work order link (opened or shared) becomes a linkpearl://workorders/<number> link before the NavController reads the intent.
+        setIntent(PortalLink.normalize(intent))
         val container = (application as LinkpearlApp).container
         val prefs = container.get<AppPrefs>()
         val first = prefs.appearanceNow() // read before the first frame: no flash of the wrong theme
@@ -41,6 +45,12 @@ class MainActivity : ComponentActivity() {
                 LinkpearlTheme(darkTheme = dark) { AdaptiveProvider { LinkpearlRoot() } }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        val normalized = PortalLink.normalize(intent)
+        super.onNewIntent(normalized)
+        setIntent(normalized)
     }
 
     private fun applyTheme(dark: Boolean) {

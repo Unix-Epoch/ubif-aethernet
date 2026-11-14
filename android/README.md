@@ -77,6 +77,14 @@ Alerts, and Back from Alert settings returns to Alerts or Settings, whichever op
 screens). Notifications and `linkpearl://` links use the same routes (`linkpearl://workorders/914-7000001`); a link arriving while the app runs goes to the
 running activity (launch mode singleTask, `onNewIntent`) and lands on top of the current back stack.
 
+Portal links: `https://portal.ubreakifix.net/repair/workorder/<number>` (the shape `WoFmt.portalUrl` builds; a trailing slash, query or fragment is fine) opens in Linkpearl,
+and so does sharing text that contains one (`ACTION_SEND` text/plain; a share without such a link just opens the app). `MainActivity` rewrites either intent to
+`linkpearl://workorders/<number>` (`feature/workorders/PortalLink.kt`, in `onCreate` and `onNewIntent`), so it takes the same route as above: Work orders with that number searched, and
+when the search finds exactly one work order its detail opens (slide-in panel on wide screens, full screen on phones). Onboarding and the lock are unchanged. The link filter has no
+`autoVerify` (we do not control that domain): on the phone, turn it on by hand under Settings > Apps > Linkpearl > Open by default > Add link, then tick portal.ubreakifix.net.
+"Open in Portal" (`openPortal`) always goes to a browser, never back to Linkpearl: it sends the link to the default browser found with an `http` probe (Linkpearl only claims `https`
+Portal links), else a chooser with Linkpearl excluded.
+
 Sign-in: Onboarding registers the phone (`POST /v1/agents/register`); the owner approves it on the admin site; the app polls `/v1/agents/me` and then holds
 the store ids and the wrapped store keys. "Forget this phone" calls `POST /v1/agents/m/prefs/forget` first (best effort: offline or refused still
 forgets locally), then wipes the token, state, device key, saved Home answers, alerts cursor and work, and locks. Every request carries `x-aethernet-key` and,
@@ -176,6 +184,6 @@ than 12 hours is skipped by design (it stays in the feed).
 
 Real fold bounds and state reporting on a Galaxy Z Fold (including tabletop posture), window insets and system bars, the system splash and themed icon, the window
 background colour at cold start, predictive back, TalkBack, the real font-scale setting, install and launch (no emulator or device was available), the notification
-permission flow and the "Mark read" action, a notification tap opening the work order (cold start and while running) with Back landing sensibly, the system biometric prompt and the
+permission flow and the "Mark read" action, a notification tap and a Portal link or share opening the work order (cold start and while running; the "Open by default" step; "Open in Portal" going to the browser) with Back landing sensibly, the system biometric prompt and the
 real Keystore-backed device key (ECDH with a hardware key, key invalidation on a new fingerprint), FLAG_SECURE hiding customer names in Recents, how often the 15-minute job really runs
 on that phone with the screen off, and signing and installing the release APK.
