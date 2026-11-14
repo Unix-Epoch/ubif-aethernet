@@ -224,7 +224,7 @@ class WholeAppIntegrationTest {
         assertEquals(setOf(914, 326), scans.keys); assertTrue(scans.values.all { it != null })
         val min = ((prefs["minApp"] as JsonObject)["code"]).toString().toInt()
         assertTrue("the server accepts this app (minApp $min, app ${BuildConfig.VERSION_CODE})", min <= BuildConfig.VERSION_CODE)
-        assertEquals("1.0.1", BuildConfig.VERSION_NAME)
+        assertEquals("1.1.0", BuildConfig.VERSION_NAME)
 
         // ---- closed work orders, parts and changes, Waymark, and Retrace against the real Worker code (seeded straight into its local tables)
         val seeded = control("/__ctl/seed-more")
