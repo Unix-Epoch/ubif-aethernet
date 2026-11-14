@@ -1,5 +1,17 @@
 package dev.aethernet.linkpearl.integration
 
+import dev.aethernet.linkpearl.feature.retrace.NowGroup
+import dev.aethernet.linkpearl.feature.retrace.RetraceRepository
+import dev.aethernet.linkpearl.feature.retrace.RetraceView
+import dev.aethernet.linkpearl.feature.retrace.RetraceViewModel
+import dev.aethernet.linkpearl.feature.workorders.DueState
+import dev.aethernet.linkpearl.feature.workorders.FollowUp
+import dev.aethernet.linkpearl.feature.workorders.FollowUpsInfo
+import dev.aethernet.linkpearl.feature.workorders.LoadView
+import dev.aethernet.linkpearl.feature.workorders.MemoryWoStorePreference
+import dev.aethernet.linkpearl.feature.workorders.WoParts
+import dev.aethernet.linkpearl.feature.workorders.WoTag
+import dev.aethernet.linkpearl.core.data.ApiError
 import dev.aethernet.linkpearl.BuildConfig
 import dev.aethernet.linkpearl.core.data.ApiResult
 import dev.aethernet.linkpearl.core.data.AuthState
@@ -213,6 +225,61 @@ class WholeAppIntegrationTest {
         val min = ((prefs["minApp"] as JsonObject)["code"]).toString().toInt()
         assertTrue("the server accepts this app (minApp $min, app ${BuildConfig.VERSION_CODE})", min <= BuildConfig.VERSION_CODE)
         assertEquals("1.0.1", BuildConfig.VERSION_NAME)
+
+        // ---- closed work orders, parts and changes, Waymark, and Retrace against the real Worker code (seeded straight into its local tables)
+        val seeded = control("/__ctl/seed-more")
+        val today = Regex("\"today\":\"([0-9-]+)\"").find(seeded)!!.groupValues[1]
+        assertEquals("2026-10-15", today)
+        // the closed list: state=closed, newest close first, paged with the cursor, sold value and how it closed on the rows
+        val closed1 = (wo.list(ListQuery(store = 914, filter = LaneFilter.Closed, sort = WoSort.Closed, limit = 1)) as ApiResult.Success).value
+        assertEquals("closed", closed1.state); assertNull(closed1.lanes)
+        assertEquals(listOf(7000010L), closed1.rows.map { it.wo }); assertNotNull(closed1.next)
+        assertEquals(149.0, closed1.rows[0].lastCartValue); assertEquals("Sale complete", closed1.rows[0].closedReason); assertFalse(closed1.rows[0].open)
+        val closed2 = (wo.list(ListQuery(store = 914, filter = LaneFilter.Closed, sort = WoSort.Closed, limit = 1, after = closed1.next)) as ApiResult.Success).value
+        assertEquals(listOf(7000011L), closed2.rows.map { it.wo }); assertNull(closed2.next); assertNull(closed2.rows[0].lastCartValue)
+        // the closed detail: parts sold (with their labels) and status / next-update changes, newest first
+        val closedDetail = (wo.detail(WoKey(914, 7000010), sealed = false) as ApiResult.Success).value
+        assertEquals("done", closedDetail.parts!!.state); assertEquals(listOf("L1", "L2"), closedDetail.parts!!.rows.map { it.line })
+        assertEquals("176255-0000514371", closedDetail.parts!!.rows[0].label); assertEquals(129.99, closedDetail.parts!!.rows[0].price)
+        assertEquals(listOf("status", "nextUpdate"), closedDetail.changes.map { it.field }.distinct().sortedByDescending { it == "status" })
+        assertTrue(closedDetail.changes.any { it.field == "status" && it.old == "Diagnostics" && it.new == "Sale complete" })
+        assertEquals(WoParts("done").state, closedDetail.parts!!.state)
+        // Waymark: tags with the list colour (one-off: null), follow-ups, the chip count and the server's today, and the filter
+        val open = (wo.list(ListQuery(store = 914, filter = LaneFilter.All, sort = WoSort.Status, limit = 100)) as ApiResult.Success).value
+        assertEquals(FollowUpsInfo(2, today), open.followUps)
+        val r3 = open.rows.first { it.wo == 7000003L }; val r1 = open.rows.first { it.wo == 7000001L }
+        assertEquals(listOf(WoTag("Priority", "red")), r3.tags); assertEquals(FollowUp("rfp", today), r3.followUp)
+        assertEquals(listOf(WoTag("One-off", null)), r1.tags); assertEquals(FollowUp("callback", "2026-10-14"), r1.followUp)
+        assertEquals(DueState.Overdue, r1.followUp!!.state(open.followUps!!.today!!)); assertEquals(DueState.Today, r3.followUp!!.state(today))
+        val due = (wo.list(ListQuery(store = 914, filter = LaneFilter.FollowUps, sort = WoSort.Status)) as ApiResult.Success).value
+        assertEquals(setOf(7000001L, 7000003L), due.rows.map { it.wo }.toSet())
+        val openDetail = (wo.detail(WoKey(914, 7000003), sealed = false) as ApiResult.Success).value
+        assertEquals(listOf(WoTag("Priority", "red")), openDetail.wo.tags); assertEquals("rfp", openDetail.wo.followUp!!.kind)
+        // Retrace: items (as-of, counts), the label jump, an item, a label, purchase orders, store scoping
+        val rt = RetraceRepository(client)
+        val items = (rt.items(914, null, null) as ApiResult.Success).value
+        assertEquals(listOf("176255", "180001"), items.items.map { it.item }); assertNotNull(items.asOf)
+        assertEquals(3, items.items[0].available); assertEquals(5, items.items[0].onHand); assertNull(items.items[1].onHand)
+        val jump = (rt.items(914, "176255-0000514371", null) as ApiResult.Success).value
+        assertEquals(listOf("176255-0000514371"), jump.labels!!.map { it.label }); assertEquals("Sold", jump.labels!![0].now); assertEquals("out", jump.labels!![0].group)
+        assertEquals(listOf("176255"), (rt.items(914, "screen", null) as ApiResult.Success).value.items.map { it.item })
+        val item = (rt.item(914, "176255") as ApiResult.Success).value
+        assertEquals("Galaxy S23 screen", item.info!!.name); assertEquals(3, item.labels.size); assertEquals(3, item.labelsTotal)
+        assertEquals(mapOf(NowGroup.In to 1, NowGroup.Wo to 1, NowGroup.Out to 1), item.groupCounts())
+        assertEquals("7000002", item.labels.first { it.now == "Reserved" }.wo)
+        val label = (rt.label(914, "176255-0000514371") as ApiResult.Success).value
+        assertEquals("7000010", label.row!!.wo); assertEquals(listOf("received", "reserved", "sold"), label.movements.map { it.kind })
+        assertEquals(3, label.movementsTotal)
+        val pos = (rt.pos(914, null) as ApiResult.Success).value
+        assertEquals(listOf("UBFPO000000003", "UBFPO000000002"), pos.pos.map { it.po }); assertEquals(120.0, pos.pos[0].total); assertEquals(2, pos.pos[1].received); assertEquals(3, pos.pos[1].labels)
+        assertEquals(ApiError.Forbidden, (rt.items(536, null, null) as ApiResult.Failure).error)
+        assertEquals("a label the store has not seen is the generic failure", ApiError.Server, (rt.label(914, "999999-0000000000") as ApiResult.Failure).error)
+        // the real view models over the real client: Retrace home picks the first store, lists its items and the purchase orders
+        val rtVm = RetraceViewModel(rt, auth, MemoryWoStorePreference(null), searchDebounceMs = 0)
+        until("retrace items") { rtVm.state.value.load == LoadView.Ok && rtVm.state.value.items.isNotEmpty() }
+        assertEquals(914, rtVm.state.value.store); assertEquals(listOf("176255", "180001"), rtVm.state.value.items.map { it.item })
+        rtVm.pickView(RetraceView.PurchaseOrders)
+        until("retrace pos") { rtVm.state.value.pos.size == 2 }
 
         // ---- forget this phone: the server removes it, the phone wipes everything, the old token is dead
         val oldCredentials = store.current.credentials!!

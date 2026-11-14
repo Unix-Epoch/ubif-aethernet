@@ -2,7 +2,9 @@
 
 The phone app for Aethernet: store numbers, alerts and work order lookup. Kotlin, Jetpack Compose, Material 3, single `app` module.
 Version 1.0.1 (versionCode 2), Nov 13, 2026: all five areas are built and merged: device sign-in (Onboarding), Home, Work orders (with
-unlock of encrypted customer details), Alerts (feed, per-phone settings, background check, notifications) and Settings. The app talks to the
+unlock of encrypted customer details), Alerts (feed, per-phone settings, background check, notifications) and Settings. Built since, not yet released
+and needing the tracker Worker at 7b4ed92 or later to be deployed: closed work orders with parts and changes, Auto-Waymark (tags and follow-ups) in Work
+orders, and the Retrace tab (see "Closed work orders, Auto-Waymark and Retrace" below). The app talks to the
 tracker Worker (`tracker-worker/MOBILE-API*.md`); there is no other server.
 
 ## Build, test, screenshots
@@ -63,7 +65,7 @@ app/src/main/kotlin/dev/aethernet/linkpearl/
   core/lock     RealAppLock (system prompt, in-memory store keys, 30-minute idle and 60-second background re-lock), SealedBox crypto
   core/prefs    app preferences (appearance, notification-ask flag) on DataStore
   core/di       AppContainer (service locator), FeatureModule, Modules.kt (the one list of modules)
-  feature/home, onboarding, workorders, alerts, settings   one package each; each registers its destinations through `*Graph()` and its services in its `*Module`
+  feature/home, onboarding, workorders, retrace, alerts, settings   one package each; each registers its destinations through `*Graph()` and its services in its `*Module`
 app/src/test/kotlin/dev/aethernet/linkpearl/
   testing/Screenshots.kt   shared harness (Device sizes, simulated vertical fold, tabletop posture, extra composition locals)
   core/..., feature/<x>/   unit tests next to the package; feature/<x>/screenshot/ the screenshot tests (output screenshots/<x>/)
@@ -71,8 +73,8 @@ app/src/test/kotlin/dev/aethernet/linkpearl/
 tools/  local-server.mjs (the real Worker over HTTP on localhost), run-integration.sh, overview.py (contact sheet)
 ```
 
-Navigation: one `NavHost` in `core/nav/AppNavHost.kt` with destinations `home`, `alerts`, `alerts/settings`, `workorders`, `workorders/{store}-{wo}` and
-`settings`. Alerts and Settings open each other's screens through that same NavController, so Back from a work order opened from Alerts returns to
+Navigation: one `NavHost` in `core/nav/AppNavHost.kt` with destinations `home`, `alerts`, `alerts/settings`, `workorders`, `workorders/{store}-{wo}`,
+`retrace`, `retrace/item/{store}/{item}`, `retrace/label/{store}/{label}` and `settings`; the bottom bar has five items (Home, Alerts, Work orders, Retrace, Settings). Alerts and Settings open each other's screens through that same NavController, so Back from a work order opened from Alerts returns to
 Alerts, and Back from Alert settings returns to Alerts or Settings, whichever opened it. Detail destinations hide the bottom bar on phones (the rail stays on wide
 screens). Notifications and `linkpearl://` links use the same routes (`linkpearl://workorders/914-7000001`); a link arriving while the app runs goes to the
 running activity (launch mode singleTask, `onNewIntent`) and lands on top of the current back stack.
@@ -97,6 +99,42 @@ America/New_York until Home has answered once).
 
 Lock: Settings' Lock/Unlock control, the Work orders header and the unlock overlay all drive the one `AppLock` (`RealAppLock`, platform BiometricPrompt with the
 phone's screen lock as fallback), so they stay in step; forgetting the phone, a revoked registration or a change of approved stores locks it.
+
+## Closed work orders, Auto-Waymark and Retrace
+
+Server side: `tracker-worker/MOBILE-API-wo.md` (closed list, `parts`, `changes`, `tags`, `followUp`, `followups=1`, `followUps`) and `tracker-worker/MOBILE-API-retrace.md`
+(tracker at 7b4ed92). The app was built and tested against those docs and the local copy of the real Worker; **the deployed tracker does not have them yet** (deploy
+the Worker and apply `2026-11-13-mobile-wo-index.sql` first). Against an older tracker the app still works: rows get no tags or follow-ups, the Follow-ups chip is not
+drawn (the list has no `followUps`), a closed work order's Parts and Changes cards show a dash, and a 400 for `state=closed` or a 404 from `/m/retrace/*` is the
+generic "Couldn't load" with Retry (never a crash).
+
+Screens (all stateless composables on plain UI data; screenshots in `screenshots/workorders` and `screenshots/retrace`):
+- **Work orders** header: Open / Closed switch (`LpSegmented`) under the search. Open: lane chips plus **Follow-ups N** (right after All; filter `followups=1`; count and the
+  server's "today" from `followUps`). Cards carry tag chips (`tags`: the list colour as a dot with the name; `color: null` is the outlined one-off style) and a follow-up marker
+  (`followUp`: Ready for pickup / Callback, then Overdue / Today / the date, computed against `followUps.today`, else the detail's server time). Closed (`state=closed`, paged with
+  `after`): number, closed date, device, program, outcome (`outcome`, else `closedReason`), sold value (`lastCartValue`), customer after unlock. Closed detail: Closed chip, Sold value,
+  Status history, **Parts** (`parts.rows`: name, quantity, price, label; a dash when none; tapping a label opens its Retrace page), **Changes** (`changes`: status and next update only,
+  old to new, status names and times; a dash when none). An open detail shows tags and a Follow-up line in the device card. The name search index still uses `state=recent` (7 days),
+  never `state=closed`.
+- **Retrace** (fifth tab): search (`q`: item number start, name, or a label), Items / Purchase orders, store pill (one store: the one chosen on Work orders if approved, else the
+  first), "As of" (`asOf`, the last sweep), items (name, item number, last movement, Available, On hand), a label search shows the label jump results first. Item: count tiles per
+  now-group (the API's `counts` added up by `group`), labels (`labels`, `labelsTotal`), recent movements. Label: item, status now, linked WO and PO, timeline (API order oldest first,
+  shown newest first). Purchase orders: number, date, counterpart, status as given, `total` as money, "received of labels" (just "received" if `labels` were null). No staff names and no
+  customer or device identifiers exist in these routes, so Retrace needs no FLAG_SECURE. Pages with the server's cursor.
+- On unfolded widths the lists are two columns split on the fold and a detail is the shared slide-in panel (`core/nav/DetailPanel.kt`, also used by Work orders); on phones a detail is a
+  full screen with Back.
+
+Deep links (scheme only, no host): `linkpearl://retrace`, `linkpearl://retrace/item/{store}/{item}`, `linkpearl://retrace/label/{store}/{label}`. A work order reference inside Retrace (a label's
+linked WO, a movement's WO) opens `workorders/{store}-{wo}`; a part's label in a closed work order opens `retrace/label/{store}/{label}`. Each of these is its own back-stack entry, so Back returns.
+
+Routes used: `GET /v1/agents/m/wo` (`state=open|recent|closed`, `lane`, `followups=1`, `sort`, `limit`, `after`, `cards`), `/wo/find`, `/wo/<store>/<wo>`, `/retrace/items`,
+`/retrace/item/<store>/<item>`, `/retrace/label/<store>/<label>`, `/retrace/pos`. Notes: the server sends tag colours as stored by Waymark (a name such as `orange`, or a CSS hex; the app
+accepts both, unknown = grey), though the doc's examples show hex.
+
+The integration test (`./tools/run-integration.sh`) seeds closed work orders, parts, changes, Waymark marks and Retrace rows straight into the local Worker's tables (`/__ctl/seed-more`) and walks the
+closed list with paging, the closed detail, tags and follow-ups with the chip count and the filter, and all four Retrace routes (items, label jump, item, label, purchase orders, a 403 for another store, the
+404 as the generic failure) through the real repositories and the Retrace view model. Not covered there: an older tracker (the local Worker is the new code; that case is unit-tested with canned 400 / 404
+answers), item search paging beyond one page, and the UI itself.
 
 ## Fold, hinge, posture
 
@@ -181,6 +219,11 @@ later after long idle spells in Doze; the server keeps alerts in the feed and th
 than 12 hours is skipped by design (it stays in the feed).
 
 ## Not verified without the owner's phone
+
+Added with closed work orders, Auto-Waymark and Retrace (also not verified on a phone): the five-item bottom bar at 412dp with TalkBack, a real tracker answering `state=closed`, `followups=1` and
+`/m/retrace/*` (after the Worker deploy), Retrace deep links from outside the app, Back from a label opened from a part (Work orders detail to Retrace label and back), the Retrace store pill following the
+store chosen on Work orders, long item names and 100-label items on the real fold, the Follow-ups chip and tag chips with the real Waymark colours, and the Open / Closed switch with the lock open (names on
+closed cards come from the same sealed cards, `cards=1` on the closed list).
 
 Real fold bounds and state reporting on a Galaxy Z Fold (including tabletop posture), window insets and system bars, the system splash and themed icon, the window
 background colour at cold start, predictive back, TalkBack, the real font-scale setting, install and launch (no emulator or device was available), the notification

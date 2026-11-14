@@ -38,12 +38,16 @@ enum class Device(val key: String, val widthDp: Int, val heightDp: Int, val fold
     Phone("phone", 412, 915),
     /** A phone-width screen tall enough to see all of Home at once (for review; the real phone scrolls). */
     PhoneTall("phone-tall", 412, 1500),
+    /** Phone width, tall enough for a whole long detail (for review of the mock-ups). */
+    PhoneXTall("phone-xtall", 412, 2300),
     /** Galaxy Z Fold cover screen (sizes derived in the mockup notes). */
     Cover("cover", 412, 960),
     /** Galaxy Z Fold inner screen with a vertical fold down the middle. */
     Inner("inner", 859, 954, foldXDp = 429.5f),
     /** Inner screen at the Medium width class (600-840dp) with a flat vertical fold down the middle. */
     InnerMedium("inner-medium", 750, 900, foldXDp = 375f),
+    /** Inner screen at the Medium width class, tall enough to see a whole detail panel (for review of the mock-ups). */
+    InnerMediumTall("inner-medium-tall", 750, 2300, foldXDp = 375f),
     /** Inner screen without any fold information (the generic wide fallback). */
     InnerNoFold("inner-nofold", 859, 954),
 }
@@ -80,6 +84,8 @@ fun ComposeContentTestRule.shoot(
     tabletop: Boolean = false,
     /** Extra composition locals for the content (a fixed clock, say). */
     providers: Array<ProvidedValue<*>> = emptyArray(),
+    /** Where to write instead of `android/screenshots` (the design mock-up renders go to the build directory). */
+    outDir: File? = null,
     content: @Composable () -> Unit,
 ) {
     RuntimeEnvironment.setQualifiers("w${device.widthDp}dp-h${device.heightDp}dp-xhdpi")
@@ -93,7 +99,7 @@ fun ComposeContentTestRule.shoot(
         }
     }
     waitForIdle()
-    val file = File(screenshotDir, "$feature/${device.key}${if (tabletop) "-tabletop" else ""}-$name-${if (dark) "dark" else "light"}.png")
+    val file = File(outDir ?: screenshotDir, "$feature/${device.key}${if (tabletop) "-tabletop" else ""}-$name-${if (dark) "dark" else "light"}.png")
     file.parentFile?.mkdirs()
     onRoot().captureRoboImage(file.path)
 }

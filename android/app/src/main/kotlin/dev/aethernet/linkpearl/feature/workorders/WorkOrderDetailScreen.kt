@@ -1,6 +1,7 @@
 package dev.aethernet.linkpearl.feature.workorders
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -74,6 +75,8 @@ data class WoDetailActions(
     val onCall: (String) -> Unit = {},
     val onText: (String) -> Unit = {},
     val onOpenPortal: (Long) -> Unit = {},
+    /** A part's label on a closed work order: opens its Retrace page (store, label). */
+    val onOpenLabel: (Int, String) -> Unit = { _, _ -> },
 )
 
 /**
@@ -113,12 +116,20 @@ fun WorkOrderDetailScreen(state: WoDetailUi, remaining: Duration?, showBack: Boo
                     CustomerBlock(state, actions)
                     if (shown != null && shown.hasSnapshot) NotesCard(shown)
                     TimelineCard(d, nowMs)
-                    CartCard(d)
+                    SoldOrCart(d, actions)
+                    if (!d.wo.open) ChangesCard(d.changes)
                 }
                 BottomBar(state, remaining, actions)
             }
         }
     }
+}
+
+/** An open work order's live cart; a closed one's parts sold (Portal empties the cart at the sale). */
+@Composable
+private fun SoldOrCart(d: WoDetailResponse, actions: WoDetailActions) {
+    if (d.wo.open) CartCard(d)
+    else PartsCard(d.parts?.rows.orEmpty(), onOpenLabel = { actions.onOpenLabel(d.wo.store, it) })
 }
 
 @Composable
@@ -156,9 +167,11 @@ private fun HeaderCard(state: WoDetailUi, d: WoDetailResponse, nowMs: Long, modi
                 LpChip(WoFmt.inStatusLong(w.statusSince, nowMs), tone = if (WoFmt.isLong(w.statusSince, nowMs)) Tone.Warn else Tone.Neutral, icon = LpIcons.Hourglass,
                     modifier = Modifier.semantics { contentDescription = "In status ${WoFmt.inStatusLong(w.statusSince, nowMs)}" })
             }
+            if (!w.open) LpChip("Closed", tone = Tone.Neutral, icon = LpIcons.Check)
         }
         Spacer(Modifier.height(10.dp))
         StatusChip(w.status, w.lane)
+        if (w.tags.isNotEmpty()) { Spacer(Modifier.height(10.dp)); TagRow(w.tags) }
         Box(Modifier.fillMaxWidth().padding(vertical = 14.dp).height(1.dp).background(c.line))
         Row {
             LabelValue("Program", w.program ?: Fmt.DASH, Modifier.weight(1f))
@@ -167,7 +180,15 @@ private fun HeaderCard(state: WoDetailUi, d: WoDetailResponse, nowMs: Long, modi
         Spacer(Modifier.height(12.dp))
         Row {
             LabelValue("Store", state.storeName(w.store), Modifier.weight(1f))
-            LabelValue("Cart value", WoFmt.money(w.cartValue ?: d.cart?.value), Modifier.weight(1f))
+            if (!w.open) LabelValue("Sold value", WoFmt.money(w.lastCartValue ?: w.cartValue), Modifier.weight(1f))
+            else LabelValue("Cart value", WoFmt.money(w.cartValue ?: d.cart?.value), Modifier.weight(1f))
+        }
+        val follow = w.followUp?.takeIf { it.valid }
+        if (follow != null) {
+            Spacer(Modifier.height(12.dp))
+            Text("Follow-up", style = LpType.Small, color = c.soft)
+            Spacer(Modifier.height(4.dp))
+            FollowUpMarker(follow, todayLocal(nowMs), longName = true)
         }
         if (!w.open) {
             Spacer(Modifier.height(12.dp))
@@ -308,19 +329,34 @@ private fun TimelineCard(d: WoDetailResponse, nowMs: Long, modifier: Modifier = 
     LpCard(modifier) {
         CardLabel("Status history")
         Spacer(Modifier.height(8.dp))
-        items.forEachIndexed { i, it ->
-            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).semantics(mergeDescendants = true) { if (it.current) stateDescription = "Current" }) {
+        TimelineRows(items.map { TimelineRow(it.name, WoFmt.dayTime(it.at, zone), it.dur, it.current) })
+    }
+}
+
+/** One stop on a timeline: what, when, and the trailing text (time in the status; a reference on a label's timeline). */
+data class TimelineRow(val name: String, val whenText: String, val trailing: String?, val current: Boolean, val onClick: (() -> Unit)? = null)
+
+/** The vertical timeline (dots on a line): the current stop has the filled accent dot. Shared by the work order and Retrace timelines. */
+@Composable
+fun TimelineRows(rows: List<TimelineRow>) {
+    val c = Lp.colors
+    Column {
+        rows.forEachIndexed { i, it ->
+            Row(
+                Modifier.fillMaxWidth().height(IntrinsicSize.Min).let { m -> if (it.onClick != null) m.clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = it.onClick) else m }
+                    .semantics(mergeDescendants = true) { if (it.current) stateDescription = "Current" },
+            ) {
                 Box(Modifier.width(32.dp).heightIn(min = 60.dp), contentAlignment = Alignment.TopCenter) {
-                    if (i < items.lastIndex) Box(Modifier.padding(top = 14.dp).width(2.dp).fillMaxHeight().background(c.line))
+                    if (i < rows.lastIndex) Box(Modifier.padding(top = 14.dp).width(2.dp).fillMaxHeight().background(c.line))
                     if (it.current) Box(Modifier.padding(top = 4.dp).size(20.dp).clip(CircleShape).background(c.accSoft), contentAlignment = Alignment.Center) {
                         Box(Modifier.size(14.dp).clip(CircleShape).background(c.acc))
                     } else Box(Modifier.padding(top = 6.dp).size(16.dp).clip(CircleShape).background(c.surf).drawBehind { drawCircle(c.outline, style = Stroke(2.dp.toPx())) })
                 }
                 Column(Modifier.weight(1f).padding(start = 8.dp, bottom = 14.dp)) {
                     Text(it.name, style = if (it.current) LpType.Row.copy(fontWeight = FontWeight.Bold) else LpType.Row, color = c.fg)
-                    Text(WoFmt.dayTime(it.at, zone), style = LpType.Small, color = c.soft)
+                    Text(it.whenText, style = LpType.Small, color = c.soft)
                 }
-                if (it.dur != null) Text(it.dur, style = LpType.Body, color = c.soft, modifier = Modifier.padding(top = 2.dp))
+                if (it.trailing != null) Text(it.trailing, style = LpType.Body, color = c.soft, modifier = Modifier.padding(top = 2.dp))
             }
         }
     }
@@ -379,7 +415,8 @@ private fun ColumnScope.TabletopDetail(state: WoDetailUi, d: WoDetailResponse, s
                         CustomerCard(shown, actions, contactButtons = false)
                         if (shown.hasSnapshot) NotesCard(shown)
                     } else CustomerBlock(state, actions)
-                    CartCard(d)
+                    SoldOrCart(d, actions)
+                    if (!d.wo.open) ChangesCard(d.changes)
                 }
             }
             Spacer(Modifier.height(bottomStart - topH + 16.dp))

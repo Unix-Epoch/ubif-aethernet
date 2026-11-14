@@ -113,3 +113,27 @@ class WorkOrderDetailViewModelTest {
         assertEquals(Problem.Offline, vm.state.value.problem)
     }
 }
+
+class WorkOrderDetailClosedTest {
+    private val main = UnconfinedTestDispatcher()
+    @Before fun setUp() = Dispatchers.setMain(main)
+    @After fun tearDown() = Dispatchers.resetMain()
+
+    @Test fun closedDetailKeepsPartsAndChanges() = runTest {
+        val api = FakeApi()
+        api.on({ p, _ -> p == "/v1/agents/m/wo/914/7000010" }, WoWaymarkFixtures.DETAIL_CLOSED)
+        val vm = WorkOrderDetailViewModel(WoRepository(api), FakeAppLock(), TestAuth(), nowMs = { 0L }, work = main)
+        vm.show(WoKey(914, 7000010))
+        val d = vm.state.value.detail!!
+        assertEquals(2, d.parts!!.rows.size); assertEquals(5, d.changes.size); assertEquals(false, d.wo.open)
+    }
+
+    @Test fun olderTrackerDetailStillShows() = runTest {
+        val api = FakeApi()
+        api.on({ p, _ -> p == "/v1/agents/m/wo/914/7000003" }, WoFixtures.DETAIL)
+        val vm = WorkOrderDetailViewModel(WoRepository(api), FakeAppLock(), TestAuth(), nowMs = { 0L }, work = main)
+        vm.show(WoKey(914, 7000003))
+        assertEquals(LoadView.Ok, vm.state.value.view)
+        assertEquals(null, vm.state.value.detail!!.parts)
+    }
+}

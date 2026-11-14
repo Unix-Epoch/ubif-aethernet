@@ -71,6 +71,7 @@ import dev.aethernet.linkpearl.core.design.LpIcon
 import dev.aethernet.linkpearl.core.design.LpIconButton
 import dev.aethernet.linkpearl.core.design.LpIcons
 import dev.aethernet.linkpearl.core.design.LpShapes
+import dev.aethernet.linkpearl.core.design.LpSegmented
 import dev.aethernet.linkpearl.core.design.LpSpacing
 import dev.aethernet.linkpearl.core.design.LpType
 import dev.aethernet.linkpearl.core.design.NoticeLine
@@ -133,7 +134,8 @@ fun WorkOrdersScreen(
             }
             SearchField(state.query, state.unlocked, actions.onQuery, actions.onClearQuery, actions.onUnlock)
             if (search == null) {
-                LaneChips(state.lanes, state.filter, actions.onPickFilter)
+                LpSegmented(listOf("Open", "Closed"), if (state.filter == LaneFilter.Closed) 1 else 0, { actions.onPickFilter(if (it == 1) LaneFilter.Closed else LaneFilter.All) })
+                if (state.filter != LaneFilter.Closed) LaneChips(state.lanes, state.filter, actions.onPickFilter, state.followUps)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StorePill(if (state.store == null) "All stores" else state.storeName(state.store)) { storeMenu = true }
                     Spacer(Modifier.weight(1f))
@@ -166,7 +168,8 @@ fun WorkOrdersScreen(
                         }
                         if (state.rows.isEmpty()) item(key = "empty", span = { GridItemSpan(maxLineSpan) }) { EmptyLane() }
                         items(state.rows, key = { it.key.id }) { row ->
-                            WoRowCard(row, state, nowMs, selected == row.key) { actions.onOpen(row) }
+                            if (state.filter == LaneFilter.Closed) ClosedWoCard(row, state, selected == row.key) { actions.onOpen(row) }
+                            else WoRowCard(row, state, nowMs, selected == row.key) { actions.onOpen(row) }
                         }
                         if (state.loadingMore) item(key = "more", span = { GridItemSpan(maxLineSpan) }) { SkeletonRow() }
                     }
@@ -185,7 +188,7 @@ fun WorkOrdersScreen(
 
 /** Gap between the two columns: the fold's width when it has one, at least the pane gutter. */
 @Composable
-private fun twoColumnGap(hinge: androidx.compose.ui.geometry.Rect?): androidx.compose.ui.unit.Dp {
+internal fun twoColumnGap(hinge: androidx.compose.ui.geometry.Rect?): androidx.compose.ui.unit.Dp {
     val d = LocalDensity.current
     val hw = if (hinge != null) with(d) { (hinge.right - hinge.left).toDp() } else 0.dp
     return maxOf(hw, LpSpacing.PaneGutter)
@@ -193,7 +196,7 @@ private fun twoColumnGap(hinge: androidx.compose.ui.geometry.Rect?): androidx.co
 
 /** Two columns split on the fold (window px, [originX] is this list's own left edge in the window); an even split without one. */
 @Composable
-private fun rememberTwoColumnCells(hinge: androidx.compose.ui.geometry.Rect?, originX: Float): GridCells {
+internal fun rememberTwoColumnCells(hinge: androidx.compose.ui.geometry.Rect?, originX: Float): GridCells {
     val d = LocalDensity.current
     val gutter = with(d) { LpSpacing.Gutter.roundToPx() }
     return remember(hinge, originX, gutter) {
@@ -250,7 +253,6 @@ private fun EmptyLane() {
 @Composable
 fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showStoreAlways: Boolean = false, onClick: () -> Unit) {
     val c = Lp.colors
-    val name = state.names[row.key]
     val shape = LpShapes.Card
     Column(
         Modifier.fillMaxWidth().clip(shape).background(if (selected) c.accSoft else c.surf).border(if (selected) 2.dp else 1.dp, if (selected) c.acc else c.line, shape)
@@ -269,32 +271,43 @@ fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showS
             if (state.showStore || showStoreAlways) Text(state.storeName(row.store), style = LpType.Small, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.weight(1f, fill = false).padding(start = 8.dp))
         }
+        if (row.tags.isNotEmpty()) TagRow(row.tags)
+        val follow = row.followUp?.takeIf { it.valid }
+        if (follow != null) FollowUpMarker(follow, state.followUps?.today ?: todayLocal(nowMs))
         Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(c.line))
-        Row(Modifier.heightIn(min = 28.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            when {
-                !state.unlocked -> {
-                    LpIcon(LpIcons.Lock, "Customer locked", size = 20.dp, tint = c.soft)
-                    Bar(92.dp, height = 10.dp)
-                }
-                name != null -> {
-                    LpIcon(LpIcons.Person, null, size = 20.dp, tint = c.fg)
-                    Text(name, style = LpType.Body, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                row.store in state.noKeyStores -> {
-                    LpIcon(LpIcons.Lock, null, size = 20.dp, tint = c.soft)
-                    Text("No key", style = LpType.Small, color = c.soft)
-                }
-                else -> {
-                    LpIcon(LpIcons.Person, null, size = 20.dp, tint = c.soft)
-                    Text(Fmt.DASH, style = LpType.Body, color = c.soft)
-                }
+        CustomerLine(row, state)
+    }
+}
+
+/** The card's bottom line: the customer after unlock, a lock while locked. */
+@Composable
+internal fun CustomerLine(row: WoRow, state: WoListUi) {
+    val c = Lp.colors
+    val name = state.names[row.key]
+    Row(Modifier.heightIn(min = 28.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        when {
+            !state.unlocked -> {
+                LpIcon(LpIcons.Lock, "Customer locked", size = 20.dp, tint = c.soft)
+                Bar(92.dp, height = 10.dp)
+            }
+            name != null -> {
+                LpIcon(LpIcons.Person, null, size = 20.dp, tint = c.fg)
+                Text(name, style = LpType.Body, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            row.store in state.noKeyStores -> {
+                LpIcon(LpIcons.Lock, null, size = 20.dp, tint = c.soft)
+                Text("No key", style = LpType.Small, color = c.soft)
+            }
+            else -> {
+                LpIcon(LpIcons.Person, null, size = 20.dp, tint = c.soft)
+                Text(Fmt.DASH, style = LpType.Body, color = c.soft)
             }
         }
     }
 }
 
 @Composable
-private fun SkeletonRow() {
+internal fun SkeletonRow() {
     Column(
         Modifier.fillMaxWidth().background(Lp.colors.surf, LpShapes.Card).border(1.dp, Lp.colors.line, LpShapes.Card).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -307,7 +320,7 @@ private fun SkeletonRow() {
 
 /** The search field. Locked: "Number" plus a lock chip for name / phone / IMEI (tapping it starts unlocking). */
 @Composable
-fun SearchField(query: String, unlocked: Boolean, onQuery: (String) -> Unit, onClear: () -> Unit, onUnlock: () -> Unit, modifier: Modifier = Modifier) {
+fun SearchField(query: String, unlocked: Boolean, onQuery: (String) -> Unit, onClear: () -> Unit, onUnlock: () -> Unit, modifier: Modifier = Modifier, placeholder: String? = null) {
     val c = Lp.colors
     Row(
         modifier.fillMaxWidth().heightIn(min = 56.dp).clip(LpShapes.Pill).background(c.surf3).border(1.5.dp, c.outline, LpShapes.Pill).padding(start = 18.dp, end = 6.dp),
@@ -315,13 +328,13 @@ fun SearchField(query: String, unlocked: Boolean, onQuery: (String) -> Unit, onC
     ) {
         LpIcon(LpIcons.Search, null, tint = c.fg)
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-            if (query.isEmpty()) Text(if (unlocked) "Number, name, phone, IMEI" else "Number", style = LpType.Row, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (query.isEmpty()) Text(placeholder ?: if (unlocked) "Number, name, phone, IMEI" else "Number", style = LpType.Row, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
             BasicTextField(
                 value = query, onValueChange = onQuery, singleLine = true,
                 textStyle = LpType.Row.copy(color = c.fg), cursorBrush = SolidColor(c.acc),
                 // Locked: digits only (number lookup). Unlocked: any text, never auto-corrected or learned by the keyboard.
                 keyboardOptions = KeyboardOptions(keyboardType = if (unlocked) KeyboardType.Text else KeyboardType.Number, autoCorrectEnabled = false),
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = if (unlocked) "Search number, name, phone or IMEI" else "Search number" },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = placeholder ?: if (unlocked) "Search number, name, phone or IMEI" else "Search number" },
             )
         }
         if (query.isNotEmpty()) LpIconButton(LpIcons.Close, "Clear search", onClear)
@@ -338,16 +351,17 @@ fun SearchField(query: String, unlocked: Boolean, onQuery: (String) -> Unit, onC
 }
 
 @Composable
-private fun LaneChips(lanes: WoLanes?, filter: LaneFilter, onPick: (LaneFilter) -> Unit) {
+private fun LaneChips(lanes: WoLanes?, filter: LaneFilter, onPick: (LaneFilter) -> Unit, followUps: FollowUpsInfo?) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip("All", lanes?.total, filter == LaneFilter.All) { onPick(LaneFilter.All) }
+        // Next to All so it is on screen. Only a tracker that answers with follow-up counts has the filter.
+        if (followUps != null) FilterChip("Follow-ups", followUps.count, filter == LaneFilter.FollowUps) { onPick(LaneFilter.FollowUps) }
         Lane.entries.forEach { l -> FilterChip(l.label, lanes?.count(l), filter == LaneFilter.One(l)) { onPick(LaneFilter.One(l)) } }
-        FilterChip("Closed", null, filter == LaneFilter.Closed) { onPick(LaneFilter.Closed) }
     }
 }
 
 @Composable
-private fun FilterChip(label: String, count: Int?, selected: Boolean, onClick: () -> Unit) {
+internal fun FilterChip(label: String, count: Int?, selected: Boolean, onClick: () -> Unit) {
     val c = Lp.colors
     Row(
         Modifier.heightIn(min = LpSpacing.Touch).clip(LpShapes.Row).let { if (selected) it.background(c.accSoft) else it.border(1.5.dp, c.outline, LpShapes.Row) }
@@ -360,7 +374,7 @@ private fun FilterChip(label: String, count: Int?, selected: Boolean, onClick: (
 }
 
 @Composable
-private fun StorePill(label: String, onClick: () -> Unit) {
+internal fun StorePill(label: String, onClick: () -> Unit) {
     val c = Lp.colors
     Row(
         Modifier.heightIn(min = LpSpacing.Touch).widthIn(max = 260.dp).clip(LpShapes.Row).border(1.5.dp, c.line, LpShapes.Row)

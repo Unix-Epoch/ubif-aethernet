@@ -6,6 +6,7 @@ import dev.aethernet.linkpearl.core.nav.NavModule
 import dev.aethernet.linkpearl.feature.alerts.AlertsModule
 import dev.aethernet.linkpearl.feature.home.HomeModule
 import dev.aethernet.linkpearl.feature.onboarding.OnboardingModule
+import dev.aethernet.linkpearl.feature.retrace.RetraceModule
 import dev.aethernet.linkpearl.feature.settings.SettingsModule
 import dev.aethernet.linkpearl.feature.workorders.WorkOrdersModule
 
@@ -15,9 +16,9 @@ import dev.aethernet.linkpearl.feature.workorders.WorkOrdersModule
  *  - NavModule: default nav badge source (core/nav, scaffold-owned)
  *  - DataModule: ApiClient, Auth, DeviceIdentity, HomeRepository (agent A)
  *  - LockModule: AppLock (agent B)
- *  - HomeModule / OnboardingModule (agent A), WorkOrdersModule (B), AlertsModule (C), SettingsModule (D)
+ *  - HomeModule / OnboardingModule (agent A), WorkOrdersModule (B), RetraceModule, AlertsModule (C), SettingsModule (D)
  */
 val AllModules: List<FeatureModule> = listOf(
     NavModule, DataModule, LockModule,
-    HomeModule, OnboardingModule, WorkOrdersModule, AlertsModule, SettingsModule,
+    HomeModule, OnboardingModule, WorkOrdersModule, RetraceModule, AlertsModule, SettingsModule,
 )

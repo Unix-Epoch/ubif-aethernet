@@ -56,6 +56,8 @@ data class WoListUi(
     val view: LoadView = LoadView.Loading,
     val rows: List<WoRow> = emptyList(),
     val lanes: WoLanes? = null,
+    /** The Follow-ups chip's count and the server's "today"; null from a tracker that predates Auto-Waymark (no chip then). */
+    val followUps: FollowUpsInfo? = null,
     val hasMore: Boolean = false,
     val loadingMore: Boolean = false,
     val refreshing: Boolean = false,
@@ -182,7 +184,7 @@ class WorkOrdersViewModel(
         _state.update {
             when {
                 keepRows && it.view == LoadView.Ok -> it.copy(refreshing = manual, problem = null)
-                cached != null -> it.copy(view = LoadView.Ok, rows = cached.first.rows, lanes = cached.first.lanes ?: it.lanes, hasMore = false, receivedAtMs = cached.second, refreshing = true, problem = null)
+                cached != null -> it.copy(view = LoadView.Ok, rows = cached.first.rows, lanes = cached.first.lanes ?: it.lanes, followUps = cached.first.followUps ?: it.followUps, hasMore = false, receivedAtMs = cached.second, refreshing = true, problem = null)
                 else -> it.copy(view = LoadView.Loading, rows = emptyList(), hasMore = false, refreshing = false, problem = null)
             }
         }
@@ -199,7 +201,7 @@ class WorkOrdersViewModel(
                     val names = openNames(page.rows)
                     _state.update {
                         it.copy(
-                            view = LoadView.Ok, rows = page.rows.map { row -> row.copy(card = null) }, lanes = page.lanes ?: it.lanes,
+                            view = LoadView.Ok, rows = page.rows.map { row -> row.copy(card = null) }, lanes = page.lanes ?: it.lanes, followUps = page.followUps ?: it.followUps,
                             hasMore = page.next != null, refreshing = false, problem = null, receivedAtMs = at, skewMs = skew(page.now, at),
                             names = if (it.unlocked) it.names + names else emptyMap(), noKeyStores = page.noKey.toSet(),
                         )
@@ -324,11 +326,11 @@ class WorkOrdersViewModel(
         index?.let { return it }
         val opener = lock.opener ?: return null
         val rows = mutableListOf<WoRow>()
-        for (filter in listOf(LaneFilter.All, LaneFilter.Closed)) {
+        for (filter in listOf(LaneFilter.All, LaneFilter.Recent)) {
             var after: String? = null
             var pages = 0
             do {
-                val r = repo.list(ListQuery(store = null, filter = filter, sort = if (filter == LaneFilter.Closed) WoSort.Closed else WoSort.Status, cards = true, after = after, limit = 100))
+                val r = repo.list(ListQuery(store = null, filter = filter, sort = if (filter == LaneFilter.Recent) WoSort.Closed else WoSort.Status, cards = true, after = after, limit = 100))
                 if (r !is ApiResult.Success) return null
                 rows += r.value.rows
                 after = r.value.next

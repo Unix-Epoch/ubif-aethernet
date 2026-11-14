@@ -51,11 +51,11 @@ class WorkOrdersViewModelTest {
         assertEquals("rfp", api.calls.last().second["lane"])
         vm.pickSort(WoSort.Updated)
         assertEquals("updated", api.calls.last().second["sort"])
-        api.on({ p, q -> p == "/v1/agents/m/wo" && q["state"] == "recent" }, WoFixtures.LIST_RECENT)
+        api.on({ p, q -> p == "/v1/agents/m/wo" && q["state"] == "closed" }, WoWaymarkFixtures.LIST_CLOSED)
         vm.pickFilter(LaneFilter.Closed)
         val q = api.calls.last().second
-        assertEquals("recent", q["state"]); assertEquals("closed", q["sort"]); assertEquals("7", q["closedDays"])
-        assertFalse(vm.state.value.rows.single().open)
+        assertEquals("closed", q["state"]); assertEquals("closed", q["sort"]); assertNull("no window: every closed work order", q["closedDays"])
+        assertTrue(vm.state.value.rows.none { it.open })
         assertEquals("lanes kept from the open list for the chips", 11, vm.state.value.lanes!!.total)
     }
 
@@ -175,5 +175,75 @@ class WorkOrdersViewModelTest {
         vm.setQuery("9999")
         assertTrue(vm.state.value.search!!.results.isEmpty())
         assertNull(vm.state.value.search!!.problem)
+    }
+
+    // ---- closed work orders (state=closed) and Auto-Waymark ------------------------------------------------------------------
+
+    @Test fun closedListPagesWithTheCursorAndKeepsLastCartValue() = runTest {
+        api.on(isList, WoFixtures.LIST_OPEN)
+        val vm = vm(store = 914)
+        api.on({ p, q -> p == "/v1/agents/m/wo" && q["state"] == "closed" && q["after"] == null }, WoWaymarkFixtures.LIST_CLOSED)
+        vm.pickFilter(LaneFilter.Closed)
+        assertEquals(WoSort.Closed, vm.state.value.sort)
+        assertEquals(listOf(7000010L, 7000011L), vm.state.value.rows.map { it.wo })
+        assertEquals(149.0, vm.state.value.rows[0].lastCartValue)
+        assertEquals("Sale complete", vm.state.value.rows[0].closedReason)
+        assertTrue(vm.state.value.hasMore)
+        api.on({ p, q -> p == "/v1/agents/m/wo" && q["state"] == "closed" && q["after"] != null }, WoWaymarkFixtures.LIST_CLOSED_LAST)
+        vm.loadMore()
+        assertEquals("closed", api.calls.last().second["state"])
+        assertEquals(listOf(7000010L, 7000011L, 7000012L), vm.state.value.rows.map { it.wo })
+        assertEquals("Declined", vm.state.value.rows.last().outcome)
+        assertFalse(vm.state.value.hasMore)
+        vm.pickFilter(LaneFilter.All)
+        assertEquals("open", api.calls.last().second["state"])
+        assertEquals("Open again: the sort leaves Closed", WoSort.Status, vm.state.value.sort)
+    }
+
+    @Test fun olderTrackerAnswers400ForClosedAndTheListShowsItsErrorState() = runTest {
+        api.on(isList, WoFixtures.LIST_OPEN)
+        val vm = vm(store = 914)
+        api.fail({ p, q -> p == "/v1/agents/m/wo" && q["state"] == "closed" }, ApiResult.Failure(ApiError.Server, 400, "state: open or recent"))
+        vm.pickFilter(LaneFilter.Closed)
+        assertEquals(LoadView.Error, vm.state.value.view)
+        assertEquals(Problem.Server, vm.state.value.problem)
+        assertEquals("Couldn't load", problemText(vm.state.value.problem))
+        vm.pickFilter(LaneFilter.All)
+        assertEquals("the switch goes back to Open", LoadView.Ok, vm.state.value.view)
+    }
+
+    @Test fun followUpsChipCountAndFilter() = runTest {
+        api.on(isList, WoWaymarkFixtures.LIST_WAYMARK)
+        val vm = vm(store = 914)
+        val s = vm.state.value
+        assertEquals(3, s.followUps!!.count); assertEquals("2026-11-13", s.followUps!!.today)
+        assertEquals(listOf("Priority", "Waiting on customer", "One-off"), s.rows[0].tags.map { it.tag })
+        assertEquals(FollowUpRule.Callback, s.rows[0].followUp!!.rule)
+        api.on({ p, q -> p == "/v1/agents/m/wo" && q["followups"] == "1" }, WoWaymarkFixtures.LIST_FOLLOWUPS)
+        vm.pickFilter(LaneFilter.FollowUps)
+        val q = api.calls.last().second
+        assertEquals("open", q["state"]); assertEquals("1", q["followups"]); assertNull(q["lane"])
+        assertEquals(listOf(7000003L), vm.state.value.rows.map { it.wo })
+        assertEquals(3, vm.state.value.followUps!!.count)
+        vm.pickFilter(LaneFilter.One(Lane.Rfp))
+        assertNull("the filter is off for a lane", api.calls.last().second["followups"])
+    }
+
+    @Test fun olderTrackerHasNoFollowUpsChipAndNoMarks() = runTest {
+        api.on(isList, WoFixtures.LIST_OPEN)
+        val s = vm(store = 914).state.value
+        assertNull(s.followUps)
+        assertTrue(s.rows.all { it.tags.isEmpty() && it.followUp == null })
+    }
+
+    @Test fun theNameIndexUsesTheRecentWindowNotEveryClosedWorkOrder() = runTest {
+        api.on(isList, WoFixtures.LIST_OPEN)
+        api.on(withCards, WoFixtures.LIST_CARDS)
+        api.on({ p, q -> p == "/v1/agents/m/wo" && q["cards"] == "1" && q["state"] == "recent" }, WoFixtures.RECENT_CARDS_EMPTY)
+        val lock = FakeAppLock(unlocked = true)
+        val vm = vm(lock)
+        vm.setQuery("sample")
+        assertTrue(api.calls.none { it.second["state"] == "closed" })
+        assertTrue(api.calls.any { it.second["state"] == "recent" && it.second["closedDays"] == "7" })
     }
 }

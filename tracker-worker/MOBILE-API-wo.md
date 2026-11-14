@@ -87,11 +87,11 @@ GET /v1/agents/m/wo?store=914&limit=3&lane=order,work,rfp
       "tags": [
         {
           "tag": "Priority",
-          "color": "#d9534f"
+          "color": "red"
         },
         {
           "tag": "Waiting on customer",
-          "color": "#f0ad4e"
+          "color": "orange"
         },
         {
           "tag": "One-off",
@@ -265,11 +265,11 @@ GET /v1/agents/m/wo?store=914&limit=1&cards=1       (card shortened here)
       "tags": [
         {
           "tag": "Priority",
-          "color": "#d9534f"
+          "color": "red"
         },
         {
           "tag": "Waiting on customer",
-          "color": "#f0ad4e"
+          "color": "orange"
         },
         {
           "tag": "One-off",
@@ -371,7 +371,7 @@ GET /v1/agents/m/wo?state=closed&store=914&limit=2
 
 Waymark's own database (read only, never written) gives each **open-list row** and the **detail's `wo`** two more fields:
 
-- `tags`: `[{ "tag": "Priority", "color": "#d9534f" }, …]` in the order they were put on (oldest first), at most 20; `[]` when none. `color` is the colour in the work order's own store's managed tag list; a tag that is not in that list (a one-off tag) has `"color": null`. Colours are the strings Waymark stores (a CSS colour such as `#d9534f`); show them as given. Who added a tag is never sent.
+- `tags`: `[{ "tag": "Priority", "color": "red" }, …]` in the order they were put on (oldest first), at most 20; `[]` when none. `color` is the colour in the work order's own store's managed tag list; a tag that is not in that list (a one-off tag) has `"color": null`. Colours are the names Waymark stores: one of `purple`, `blue`, `teal`, `green`, `lime`, `yellow`, `orange`, `red`, `grey` (`COLORS` in `worker/src/index.js`). Who added a tag is never sent.
 - `followUp`: `{ "kind": "rfp" | "callback", "due": "YYYY-MM-DD" }` or `null`. From Auto-Waymark's follow-up date: `rfp` = Ready for pickup (also the kind of old rows that have none), `callback` = Awaiting callback. `due` is the **store-local calendar date** (the zone is `tz` in Home, America/New_York today). A follow-up that was removed (the x) or whose work order is in Waymark's closed list is `null`; a closed work order never has one. `due` may be in the future: the row still carries it.
 - Both are read per page in one batch (one tags and one follow-ups statement per store on the page). If Waymark's database cannot be read the rows come back with `tags: []` and `followUp: null` (never an error).
 

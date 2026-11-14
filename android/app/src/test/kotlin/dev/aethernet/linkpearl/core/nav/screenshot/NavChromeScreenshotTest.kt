@@ -27,7 +27,7 @@ class NavChromeScreenshotTest(private val device: Device, private val dest: TopL
         @Parameters(name = "{0} {1} dark={2}")
         fun params(): List<Array<Any>> = buildList {
             for (d in listOf(Device.Phone, Device.Cover, Device.Inner))
-                for (t in listOf(TopLevel.Alerts, TopLevel.WorkOrders, TopLevel.Settings))
+                for (t in listOf(TopLevel.Alerts, TopLevel.WorkOrders, TopLevel.Retrace, TopLevel.Settings))
                     for (dark in listOf(true, false)) add(arrayOf(d, t, dark))
         }
     }
@@ -38,6 +38,7 @@ class NavChromeScreenshotTest(private val device: Device, private val dest: TopL
             when (dest) {
                 TopLevel.Alerts -> AlertsScreen()
                 TopLevel.WorkOrders -> WorkOrdersScreen()
+                TopLevel.Retrace -> dev.aethernet.linkpearl.feature.retrace.RetraceScreen(dev.aethernet.linkpearl.feature.retrace.RetraceUi())
                 TopLevel.Settings -> SettingsScreen()
                 TopLevel.Home -> Unit
             }

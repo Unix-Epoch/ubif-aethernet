@@ -58,6 +58,8 @@ import dev.aethernet.linkpearl.core.di.LocalAppContainer
 import dev.aethernet.linkpearl.core.lock.AppLock
 import dev.aethernet.linkpearl.core.lock.SecureWindow
 import dev.aethernet.linkpearl.core.nav.LocalAdaptive
+import dev.aethernet.linkpearl.core.nav.Routes
+import dev.aethernet.linkpearl.core.nav.SlideInPanelHost
 import dev.aethernet.linkpearl.core.nav.LpListDetail
 import kotlinx.coroutines.launch
 import kotlin.time.Duration
@@ -66,7 +68,7 @@ private fun AppContainer.authOrNull(): Auth? = runCatching { get<Auth>() }.getOr
 
 /** The stateful Work orders destination: view models, the lock, intents, FLAG_SECURE and the unlock overlay. */
 @Composable
-fun WorkOrdersRoute(initialId: String? = null) {
+fun WorkOrdersRoute(initialId: String? = null, navigate: ((String) -> Unit)? = null) {
     val c = LocalAppContainer.current
     val lock = remember { c.get<AppLock>() }
     val listVm: WorkOrdersViewModel = viewModel(factory = viewModelFactory {
@@ -99,6 +101,7 @@ fun WorkOrdersRoute(initialId: String? = null) {
     val detailActions = WoDetailActions(
         onRefresh = detailVm::refresh, onUnlock = lock::unlock, onLock = lock::lock,
         onCall = { ctx.dial(it) }, onText = { ctx.text(it) }, onOpenPortal = { ctx.openPortal(it) },
+        onOpenLabel = { store, label -> navigate?.invoke(Routes.retraceLabel(store, label)) },
     )
     // Times in the store's zone (from Home), not the phone's.
     val zoneId by remember { runCatching { c.get<StoreZone>().ids }.getOrNull() ?: flowOf(null) }.collectAsStateWithLifecycle(null)
@@ -162,42 +165,22 @@ private fun WideWorkOrders(
 ) {
     var open by remember { mutableStateOf(initialSelection != null) }
     var openId by remember { mutableStateOf(initialSelection) }
-    // Starts settled open when a work order is already selected (deep link, tests); animates only on later changes.
-    val visible = remember { MutableTransitionState(initialSelection != null) }
-    visible.targetState = open
     // A selection that arrives later (a Portal link whose search found one work order) opens the panel too.
     LaunchedEffect(initialSelection) { if (initialSelection != null) { openId = initialSelection; open = true } }
-    Box(Modifier.fillMaxSize()) {
-        WorkOrdersScreen(
-            state = list, remaining = remaining, twoColumns = true,
-            actions = listActions.copy(onOpen = { row -> onSelect(row.key); openId = row.key.id; open = true }),
-        )
-        openId?.let { id -> LaunchedEffect(id) { WoKey.parse(id)?.let(onSelect) } }
-        BackHandler(enabled = open) { open = false }
-        val c = Lp.colors
-        // The content area sits below the status bar; the scrim and panel reach up under it, and the panel pads its content back down.
-        val topInset = WindowInsets.safeDrawing.getTop(LocalDensity.current)
-        val reachUp = Modifier.layout { m, cs ->
-            val p = m.measure(cs.copy(minHeight = cs.maxHeight + topInset, maxHeight = cs.maxHeight + topInset))
-            layout(p.width, cs.maxHeight) { p.place(0, -topInset) }
-        }
-        AnimatedVisibility(visible, enter = fadeIn(tween(250)), exit = fadeOut(tween(250))) {
-            Box(reachUp.fillMaxSize().background(c.page.copy(alpha = 0.6f)).pointerInput(Unit) { detectTapGestures { open = false } })
-        }
-        AnimatedVisibility(
-            visible, modifier = Modifier.align(Alignment.CenterEnd).then(reachUp).fillMaxWidth(0.9f),
-            enter = slideInHorizontally(tween(250)) { it }, exit = slideOutHorizontally(tween(250)) { it },
-        ) {
-            val shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)
-            Box(
-                Modifier.fillMaxSize().clip(shape).background(c.page).border(1.dp, c.line, shape)
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
-            ) {
-                WorkOrderDetailScreen(
-                    detail, remaining, showBack = true, closeIcon = true, actions = detailActions.copy(onBack = { open = false }),
-                    modifier = Modifier.padding(top = with(LocalDensity.current) { topInset.toDp() }),
-                )
-            }
-        }
-    }
+    SlideInPanelHost(
+        open = open, initiallyOpen = initialSelection != null, onClose = { open = false },
+        base = {
+            WorkOrdersScreen(
+                state = list, remaining = remaining, twoColumns = true,
+                actions = listActions.copy(onOpen = { row -> onSelect(row.key); openId = row.key.id; open = true }),
+            )
+            openId?.let { id -> LaunchedEffect(id) { WoKey.parse(id)?.let(onSelect) } }
+        },
+        panel = { topPadding ->
+            WorkOrderDetailScreen(
+                detail, remaining, showBack = true, closeIcon = true, actions = detailActions.copy(onBack = { open = false }),
+                modifier = Modifier.padding(top = topPadding),
+            )
+        },
+    )
 }

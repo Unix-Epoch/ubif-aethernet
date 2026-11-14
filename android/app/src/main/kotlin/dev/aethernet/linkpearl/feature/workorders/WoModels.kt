@@ -37,6 +37,12 @@ data class WoRow(
     val outcomeReason: String? = null,
     val closedReason: String? = null,
     val soldAt: String? = null,
+    /** `workorders.last_cart_value`: the sold value of a closed work order (the wire field is not in the API yet). */
+    val lastCartValue: Double? = null,
+    /** Waymark tags, oldest first (`[]` from a tracker that predates them). */
+    val tags: List<WoTag> = emptyList(),
+    /** Auto-Waymark follow-up (open rows and the detail; null when none or from an older tracker). */
+    val followUp: FollowUp? = null,
 ) {
     val key: WoKey get() = WoKey(store, wo)
 }
@@ -75,6 +81,8 @@ data class WoListResponse(
     val cardsFor: List<Int> = emptyList(),
     val noKey: List<Int> = emptyList(),
     val closedDays: Int? = null,
+    /** First page of an open list: the Follow-ups chip's count and the server's store-local "today". Absent on older trackers. */
+    val followUps: FollowUpsInfo? = null,
 )
 
 @Serializable
@@ -119,6 +127,10 @@ data class WoDetailResponse(
     val timelineSource: String? = null,
     val cart: Cart? = null,
     val sealed: SealedPart? = null,
+    /** Parts sold on a closed work order; null from an older tracker. */
+    val parts: WoParts? = null,
+    /** Status and next-update changes, newest first; `[]` from an older tracker. */
+    val changes: List<WoChange> = emptyList(),
 )
 
 /** The five open lanes, in the order Home shows them; the colour always travels with the name. */
@@ -134,11 +146,17 @@ enum class Lane(val key: String, val label: String) {
     }
 }
 
-/** The list's filter chips: all open, one lane, or recently closed. */
+/**
+ * The list's filter: all open, one lane, open work orders with a follow-up due, or the Closed side of the Open / Closed switch
+ * (`state=closed`, every closed work order, paged). [Recent] is the last 7 days of closed ones (`state=recent`) and is only used to
+ * build the name search index; it has no chip.
+ */
 sealed interface LaneFilter {
     data object All : LaneFilter
     data class One(val lane: Lane) : LaneFilter
+    data object FollowUps : LaneFilter
     data object Closed : LaneFilter
+    data object Recent : LaneFilter
 }
 
 enum class WoSort(val key: String, val label: String) {

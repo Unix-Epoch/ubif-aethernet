@@ -29,9 +29,11 @@ class WoRepository(private val api: ApiClient) {
             when (val f = q.filter) {
                 LaneFilter.All -> put("state", "open")
                 is LaneFilter.One -> { put("state", "open"); put("lane", f.lane.key) }
-                LaneFilter.Closed -> { put("state", "recent"); put("closedDays", "7") }
+                LaneFilter.FollowUps -> { put("state", "open"); put("followups", "1") }
+                LaneFilter.Closed -> put("state", "closed")
+                LaneFilter.Recent -> { put("state", "recent"); put("closedDays", "7") }
             }
-            put("sort", if (q.filter == LaneFilter.Closed) WoSort.Closed.key else q.sort.key)
+            put("sort", if (q.filter == LaneFilter.Closed || q.filter == LaneFilter.Recent) WoSort.Closed.key else q.sort.key)
             put("limit", q.limit.toString())
             if (q.after != null) put("after", q.after)
             if (q.cards) put("cards", "1")

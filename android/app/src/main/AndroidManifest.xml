@@ -43,7 +43,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Deep links (notifications use these): linkpearl://home, alerts, alerts/settings, workorders, workorders/{id}, settings -->
+            <!-- Deep links (notifications use these): linkpearl://home, alerts, alerts/settings, workorders, workorders/{id}, retrace, retrace/item/{store}/{item}, retrace/label/{store}/{label}, settings -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
