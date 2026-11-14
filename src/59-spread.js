@@ -3,7 +3,9 @@
 
   A `Spread [List | Board]` switch sits at the right end of Portal's filter row, left of the "N per page" select. List = Portal's page,
   untouched. Board = Portal's table wrapper hidden (its rows stay in the DOM, so Waymark, Assize, Rainbow Drip and Master's Mend's
-  sorting keep working on them) and a board shown in its place, under Portal's tabs and filters. The choice is remembered per browser.
+  sorting keep working on them) and a board shown in its place. Board also hides what doesn't apply to it: Portal's tabs, the pager and
+  every other block of the tabs area, and every other control in the filter row (Portal's filter chips, Waymark's filter, the per-page
+  menu), so only Spread's switch is left above the board. The choice is remembered per browser.
   Leaving the page (or turning the shard off / pausing it by a notice) removes the switch and the board and un-hides the table.
 
   Data: every OPEN work order, not the page of rows on screen. It reuses AE.data.workorders (the list call Waymark and the tracker
@@ -134,11 +136,10 @@ AE.shard({
       /* secondary text on a card: a little toward the main text colour, so it still reads over the status colour's fade */
       --sp-soft:color-mix(in srgb, var(--aui-on-surface-soft,#5d5e61) 85%, var(--aui-on-surface,#1a1c1e)); }
     #sp-board.sp-on { display:flex; }
-    .sp-note { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--aui-on-surface-soft,#5d5e61); margin:0 0 10px; }
-    .sp-note .ae { position:static; flex:none; box-shadow:none; }
-    .sp-state { font-size:13px; color:var(--aui-on-surface-soft,#5d5e61); margin:-4px 0 10px 26px; }
+    .sp-state { font-size:13px; color:var(--aui-on-surface-soft,#5d5e61); margin:0 0 10px; }
     .sp-state:empty { display:none; }
-    .sp-cols { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:12px; flex:1; min-height:0; }
+    /* columns never narrower than 220px: a narrow window scrolls the board sideways instead of clipping the cards */
+    .sp-cols { display:grid; grid-template-columns:repeat(5, minmax(220px,1fr)); gap:12px; flex:1; min-height:0; overflow-x:auto; }
     .sp-col { display:flex; flex-direction:column; min-height:0; min-width:0; background:var(--aui-neutral-soft,#f3f3f5); border-radius:10px; }
     .sp-head { padding:12px 12px 6px; flex:none; }
     .sp-head .t { display:flex; align-items:center; justify-content:space-between; gap:8px; }
@@ -148,7 +149,7 @@ AE.shard({
     .sp-list { flex:1; min-height:0; overflow-y:auto; padding:4px 8px 10px; display:flex; flex-direction:column; gap:8px; }
     .sp-list::-webkit-scrollbar { width:8px; } .sp-list::-webkit-scrollbar-thumb { background:var(--aui-outline,#b9b9c2); border-radius:4px; } .sp-list::-webkit-scrollbar-track { background:transparent; margin:2px 0; }
     .sp-empty { margin:8px 0; padding:22px 8px; text-align:center; font-size:14px; color:var(--aui-on-surface-soft,#5d5e61); border:1px dashed var(--aui-outline,#c9c9d0); border-radius:8px; }
-    .sp-card { position:relative; display:block; color:inherit; text-decoration:none; background:var(--aui-surface,#fff); border:1px solid var(--aui-outline-soft,#e3e3e8); border-left:6px solid var(--edge); background-image:linear-gradient(90deg, color-mix(in srgb, var(--edge) 35%, transparent), transparent 40px); border-radius:8px; padding:9px 10px 8px 10px; cursor:pointer; flex:none; box-shadow:0 1px 1px rgba(0,0,0,.04); transition:transform 120ms ease-out, box-shadow 120ms ease-out; }
+    .sp-card { position:relative; display:block; color:inherit; text-decoration:none; background:var(--aui-surface,#fff); border:1px solid var(--aui-outline-soft,#e3e3e8); border-left:6px solid var(--edge); background-image:linear-gradient(90deg, color-mix(in srgb, var(--edge-fade, var(--edge)) 35%, transparent), transparent 40px); border-radius:8px; padding:9px 10px 8px 10px; cursor:pointer; flex:none; box-shadow:0 1px 1px rgba(0,0,0,.04); transition:transform 120ms ease-out, box-shadow 120ms ease-out; }
     .sp-card:hover { transform:translateY(-2px); box-shadow:0 4px 10px rgba(0,0,0,.14); }
     .sp-card:focus-visible { outline:2px solid var(--aui-primary,#8223d2); outline-offset:2px; }
     /* Deal-in: transform + opacity only. Cards rise 8px (fits the list's 10px bottom padding, so no scrollbar flash). */
@@ -172,13 +173,14 @@ AE.shard({
     :is(.asurion-dark, .partner-dark) .sp-att.warning { color:#ffe2a0; background:#5c4100; }
     :is(.asurion-dark, .partner-dark) .sp-age.old { color:#f3be5b; }
     .sp-r1 { display:flex; align-items:center; gap:6px; min-height:20px; }
-    .sp-wo { font-size:14px; font-weight:700; color:color-mix(in srgb, var(--aui-primary,#8223d2) 80%, var(--aui-on-surface,#1a1c1e)); text-decoration:underline; text-underline-offset:2px; }
+    .sp-wo { font-size:14px; font-weight:700; color:color-mix(in srgb, var(--aui-primary,#8223d2) 80%, var(--aui-on-surface,#1a1c1e)); text-underline-offset:2px; }
+    .sp-card:hover .sp-wo, .sp-card:focus-visible .sp-wo { text-decoration:underline; }
     .sp-spacer { flex:1; }
     .sp-att { display:inline-flex; align-items:center; gap:3px; height:18px; padding:0 6px 0 4px; border-radius:9px; font:700 11px/1 Apercu,Arial,sans-serif; }
     .sp-att svg { width:13px; height:13px; fill:currentColor; }
     .sp-att.warning { color:#7a5200; background:#ffecb8; } .sp-att.urgent { color:#fff; background:#d1344b; }
-    .sp-dev { margin-top:3px; font-size:15px; font-weight:700; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .sp-cust { display:flex; align-items:center; gap:5px; margin-top:1px; font-size:14px; min-width:0; }
+    .sp-cust { display:flex; align-items:center; gap:5px; margin-top:3px; font-size:15px; font-weight:700; line-height:1.25; min-width:0; }
+    .sp-dev { margin-top:1px; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .sp-cust span.n { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
     .sp-cust .ae-as-mk { flex:none; }
     .sp-issue { margin-top:3px; font-size:13px; color:var(--sp-soft); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -206,7 +208,7 @@ AE.shard({
 
     // ------------------------------------------------------------ state
     let view = (() => { try { return GM_getValue(VIEW_KEY, 'list') === 'board' ? 'board' : 'list'; } catch (_) { return 'list'; } })();
-    let ui = null;          // the mounted pieces: { pt, tableWrap, filterRow, sw, board, cols, note, state }
+    let ui = null;          // the mounted pieces: { pt, tableWrap, filterRow, perPage, sw, board, cols, state }
     let data = null;        // the last good list: { rows, at }
     let err = null;         // the last failed read (kept until a read works)
     let rfp = null;         // the last RFP total from the tracker: { value, updatedAt }
@@ -238,11 +240,9 @@ AE.shard({
           h('div', { class: 'sp-head' }, h('div', { class: 't' }, h('h3', null, c.name), count), rfpEl), list);
         return { el, count, rfpEl, list, cards: new Map(), empty: null };
       });
-      const note = h('div', { class: 'sp-note' }, h('span', { class: 'ae', 'aria-hidden': 'true' }, 'Ae'),
-        h('span', null, h('b', null, 'Spread'), " · Board view is read-only. Click a card to open its work order. Cards can't be dragged yet."));
       const state = h('div', { class: 'sp-state', role: 'status', 'aria-live': 'polite' });
-      const board = h('div', { id: 'sp-board' }, note, state, h('div', { class: 'sp-cols' }, cols.map((c) => c.el)));
-      return { board, cols, note, state };
+      const board = h('div', { id: 'sp-board' }, state, h('div', { class: 'sp-cols' }, cols.map((c) => c.el)));
+      return { board, cols, state };
     }
     function mount() {
       const a = anchors();
@@ -255,11 +255,21 @@ AE.shard({
       paintSwitch();
       return true;
     }
+    // Board view hides everything around the board that doesn't apply to it: every block of Portal's tabs area except the filter row
+    // and the board (the tabs, the table, the pager), and every control in the filter row except Spread's switch (Portal's filter
+    // chips, Waymark's filter, the per-page menu). Re-run as Portal or Waymark redraw, so a block they add back is hidden too.
+    function hideAround() {
+      for (const el of [...ui.pt.children, ...ui.filterRow.children]) {
+        if (el === ui.filterRow || el === ui.board || el === ui.sw) continue;
+        if (el.getAttribute('data-ae-spread') !== 'hidden') el.setAttribute('data-ae-spread', 'hidden');
+      }
+    }
+    const unhide = () => document.querySelectorAll('[data-ae-spread="hidden"]').forEach((el) => el.removeAttribute('data-ae-spread'));
     function teardown() {
       if (!ui) return;
       clearTimeout(dealTimer); clearTimeout(leaveTimer);
       ui.sw.remove(); ui.board.remove(); document.getElementById('sp-css')?.remove();
-      if (ui.tableWrap.getAttribute('data-ae-spread')) ui.tableWrap.removeAttribute('data-ae-spread');
+      unhide();
       ui = null; dealPending = false;
     }
     const intact = () => ui && ui.pt.isConnected && ui.sw.parentElement === ui.filterRow && ui.board.parentElement === ui.pt && ui.tableWrap.isConnected;
@@ -287,7 +297,7 @@ AE.shard({
       const board = ui.board;
       if (view === 'board') {
         clearTimeout(leaveTimer); board.classList.remove('sp-leaving');
-        ui.tableWrap.setAttribute('data-ae-spread', 'hidden');
+        hideAround();
         board.classList.add('sp-on');
         size();
         if (deal) dealPending = true;
@@ -300,13 +310,13 @@ AE.shard({
           clearTimeout(leaveTimer); board.removeEventListener('animationend', onEnd);
           if (!board.classList.contains('sp-leaving')) return; // Board was clicked again meanwhile
           board.classList.remove('sp-leaving', 'sp-on', 'sp-deal');
-          if (ui) ui.tableWrap.removeAttribute('data-ae-spread');
+          if (ui) unhide();
         };
         const onEnd = (e) => { if (e.target === board) fin(); }; // the cards' own animations bubble up here too
         board.addEventListener('animationend', onEnd);
         leaveTimer = setTimeout(fin, 400); // if the animation never reports back (hidden tab)
       } else if (!board.classList.contains('sp-leaving')) {
-        board.classList.remove('sp-on'); ui.tableWrap.removeAttribute('data-ae-spread');
+        board.classList.remove('sp-on'); unhide();
       }
     }
 
@@ -324,17 +334,21 @@ AE.shard({
       return el;
     };
     const edgeOf = (name) => (AE.rowColors && AE.rowColors.edge(name)) || 'var(--aui-outline, #c9c9d0)'; // Rainbow Drip's colour for the status; neutral when it's off
+    // Rainbow Drip's colours are see-through (they tint a whole row): the edge uses the colour at full strength, the fade behind it the tint.
+    const solid = (c) => (/^#[0-9a-f]{8}$/i.test(c) ? c.slice(0, 7) : c);
     function fillCard(el, c) {
       const sig = [c.href, c.device, c.customer, c.issue, c.program, c.bin, c.statusName, c.showStatus, c.attention, c.reasons.join('|'), c.time, c.old, c.since && c.since.kind, edgeOf(c.statusName)].join('\u0001');
       if (el.dataset.sig === sig) return;
       el.dataset.sig = sig;
-      el.style.setProperty('--edge', edgeOf(c.statusName));
-      el.setAttribute('aria-label', 'Work order ' + c.id + (c.device ? ', ' + c.device : '') + (c.customer ? ', ' + c.customer : '') + (c.statusName ? ', ' + c.statusName : ''));
+      el.style.setProperty('--edge', solid(edgeOf(c.statusName)));
+      el.style.setProperty('--edge-fade', edgeOf(c.statusName));
+      el.setAttribute('aria-label', 'Work order ' + c.id + (c.customer ? ', ' + c.customer : '') + (c.device ? ', ' + c.device : '') + (c.statusName ? ', ' + c.statusName : '') +
+        (c.attention ? ', ' + (c.attention === 'urgent' ? 'urgent' : 'needs attention') : '') + (c.time ? ', ' + c.time.toLowerCase() : ''));
       el.replaceChildren(...[
         h('div', { class: 'sp-r1' }, h('span', { class: 'sp-wo' }, String(c.id)), h('span', { class: 'sp-spacer' }),
           c.attention ? h('span', { class: 'sp-att ' + c.attention, title: c.reasons.length ? c.reasons.join(', ') : 'Needs attention', html: ICON.warn + (c.attention === 'urgent' ? 'Urgent' : 'Attention') }) : null),
+        h('div', { class: 'sp-cust' }, h('span', { class: 'n', title: c.customer || null }, c.customer), h('span', { class: 'sp-as' })),
         c.device ? h('div', { class: 'sp-dev', title: c.device }, c.device) : null,
-        h('div', { class: 'sp-cust' }, h('span', { class: 'n' }, c.customer), h('span', { class: 'sp-as' })),
         c.issue ? h('div', { class: 'sp-issue', title: c.issue }, c.issue) : null,
         c.showStatus && c.statusName ? h('div', { class: 'sp-st' }, c.statusName) : null,
         h('div', { class: 'sp-meta' }, c.program ? h('span', { class: 'sp-prog', title: c.program }, c.program) : null,
@@ -440,7 +454,7 @@ AE.shard({
         if (!mount()) return;
         if (!wasOnPage) { wasOnPage = true; if (view === 'board') dealPending = true; } // entering the page opens the board with the deal-in
         apply(false);
-      }
+      } else if (shown() && !ui.board.classList.contains('sp-leaving')) hideAround();
     }
     AE.onDom(sync);
     AE.every(1000, () => {
