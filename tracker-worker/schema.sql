@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS workorders (
   sold_at TEXT,                        -- when it reached Sale complete (status history)
   plain TEXT,                          -- latest plain part (JSON)
   card TEXT,                           -- sealed search card: name, phones, emails, IMEI/serial, claim
+  issues TEXT,                         -- JSON list of Portal's issue names (deviceIssues); NULL = not sent yet
+  attention TEXT,                      -- Portal's attentionState when warning / urgent, else NULL
   PRIMARY KEY (store, wo)
 );
 CREATE INDEX IF NOT EXISTS wo_open ON workorders (store, is_open, status_id);

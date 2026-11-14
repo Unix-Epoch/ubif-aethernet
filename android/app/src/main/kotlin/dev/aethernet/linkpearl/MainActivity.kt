@@ -23,6 +23,8 @@ import dev.aethernet.linkpearl.core.di.LocalAppContainer
 import dev.aethernet.linkpearl.core.nav.AdaptiveProvider
 import dev.aethernet.linkpearl.core.nav.LinkpearlRoot
 import dev.aethernet.linkpearl.core.prefs.AppPrefs
+import dev.aethernet.linkpearl.feature.alerts.AlertsHub
+import dev.aethernet.linkpearl.feature.alerts.NotificationTap
 import dev.aethernet.linkpearl.feature.workorders.PortalLink
 
 class MainActivity : ComponentActivity() {
@@ -32,6 +34,7 @@ class MainActivity : ComponentActivity() {
         // A Portal work order link (opened or shared) becomes a linkpearl://workorders/<number> link before the NavController reads the intent.
         setIntent(PortalLink.normalize(intent))
         val container = (application as LinkpearlApp).container
+        if (savedInstanceState == null) markTappedRead(intent)
         val prefs = container.get<AppPrefs>()
         val first = prefs.appearanceNow() // read before the first frame: no flash of the wrong theme
         val systemDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -51,7 +54,11 @@ class MainActivity : ComponentActivity() {
         val normalized = PortalLink.normalize(intent)
         super.onNewIntent(normalized)
         setIntent(normalized)
+        markTappedRead(normalized)
     }
+
+    private fun markTappedRead(intent: Intent?) =
+        NotificationTap.consume(intent) { ids -> (application as LinkpearlApp).container.get<AlertsHub>().feed.markRead(ids) }
 
     private fun applyTheme(dark: Boolean) {
         val bars = if (dark) SystemBarStyle.dark(AColor.TRANSPARENT) else SystemBarStyle.light(AColor.TRANSPARENT, AColor.TRANSPARENT)

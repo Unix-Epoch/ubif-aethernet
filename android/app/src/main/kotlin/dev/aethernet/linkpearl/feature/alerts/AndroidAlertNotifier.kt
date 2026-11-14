@@ -39,7 +39,7 @@ class AndroidAlertNotifier(private val context: Context) : AlertNotifier {
 
     private fun tap(note: PlannedNote): PendingIntent {
         val uri = note.workOrder?.let { Routes.deepLink(Routes.workOrder(note.store, it)) } ?: Routes.deepLink(Routes.ALERTS)
-        return PendingIntent.getActivity(context, note.id, intentFor(uri), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        return PendingIntent.getActivity(context, note.id, NotificationTap.tag(intentFor(uri), note.alertIds), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
     private fun build(note: PlannedNote): Notification {

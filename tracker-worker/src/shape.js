@@ -10,7 +10,11 @@
     cardOf     the sealed search card: name, customer id, phones, emails, IMEI, serial, claim
 */
 export const scanRow = (r) => ({ wo: r.workorderId, statusId: r.workorderStatusId, status: r.workorderStatusName, programId: r.programId, program: r.programName,
-  device: (r.deviceCatalog && r.deviceCatalog.name) || null, outcome: OUTCOMES.includes(r.serviceOutcome) ? r.serviceOutcome : null, createdAt: r.createdAt, updatedAt: r.updatedAt });
+  device: (r.deviceCatalog && r.deviceCatalog.name) || null, outcome: OUTCOMES.includes(r.serviceOutcome) ? r.serviceOutcome : null, createdAt: r.createdAt, updatedAt: r.updatedAt,
+  // List row facts (Nov 11 capture): deviceIssues is a list of strings, attentionState is none / warning / urgent. Always sent, so the
+  // Worker can tell "cleared" (attention null, issues []) from an older script that sends neither key.
+  issues: Array.isArray(r.deviceIssues) ? r.deviceIssues.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()).slice(0, 5) : [],
+  attention: r.attentionState === 'warning' || r.attentionState === 'urgent' ? r.attentionState : null });
 
 // Passcodes don't belong in a history: removed wherever they appear.
 export function scrub(v) {

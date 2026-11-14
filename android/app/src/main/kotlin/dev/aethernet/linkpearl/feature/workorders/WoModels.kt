@@ -43,8 +43,13 @@ data class WoRow(
     val tags: List<WoTag> = emptyList(),
     /** Auto-Waymark follow-up (open rows and the detail; null when none or from an older tracker). */
     val followUp: FollowUp? = null,
+    /** Portal's issue names from the list row (null from a tracker or script that predates them). */
+    val issues: List<String>? = null,
+    /** Portal's attention state on an open work order: "warning", "urgent" or null. */
+    val attention: String? = null,
 ) {
     val key: WoKey get() = WoKey(store, wo)
+    val urgent: Boolean get() = open && attention == "urgent"
 }
 
 /** A work order's identity; [id] is the route argument and list-detail key ("914-7000001"). */

@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -128,7 +129,8 @@ fun LineChart(
     val measurer = rememberTextMeasurer()
     val lh = labelHeight(textSize)
     val topPad = if (showValues) lh + 12.dp else 5.dp
-    val total = topPad + plotHeight + 6.dp + lh + 4.dp
+    val bottomPad = if (showValues) lh + 10.dp else 0.dp // a label under a low point sits here, clear of the day letters
+    val total = topPad + plotHeight + bottomPad + 6.dp + lh + 4.dp
     Canvas(modifier.fillMaxWidth().height(total).clearAndSetSemantics { this.contentDescription = contentDescription }) {
         val n = values.size
         if (n < 2) return@Canvas
@@ -151,24 +153,45 @@ fun LineChart(
             if (i > 0 && values[i - 1] != null) path.lineTo(xs(i), y(v)) else path.moveTo(xs(i), y(v))
         }
         drawPath(path, c.fg, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-        // points and labels
+        // points
         values.forEachIndexed { i, v ->
             if (v == null) return@forEachIndexed
-            val last = i == n - 1
             val p = Offset(xs(i), y(v))
-            if (last) drawCircle(c.barHi, pointRadius.toPx(), p)
+            if (i == n - 1) drawCircle(c.barHi, pointRadius.toPx(), p)
             else {
                 drawCircle(c.surf, pointRadius.toPx(), p)
                 drawCircle(c.fg, pointRadius.toPx(), p, style = Stroke(1.5.dp.toPx()))
             }
-            if (showValues) {
-                val r = measurer.measure(Fmt.money(v), chartStyle(if (last) c.fg else c.soft, textSize, last), maxLines = 1)
-                val x = (p.x - r.size.width / 2f).coerceIn(0f, size.width - r.size.width)
-                drawText(r, topLeft = Offset(x, p.y - 10.dp.toPx() - r.size.height / 2f))
+        }
+        // value labels: above a point, or below a low one; whichever side clears the other labels, the line and the band's edges
+        if (showValues) {
+            val gap = 10.dp.toPx()
+            val pts = values.mapIndexed { i, v -> v?.let { Offset(xs(i), y(it)) } }
+            val placed = mutableListOf<Rect>()
+            fun crossesLine(r: Rect): Boolean = (1 until n).any { i ->
+                val a = pts[i - 1] ?: return@any false; val b = pts[i] ?: return@any false
+                (0..16).any { k -> r.contains(Offset(a.x + (b.x - a.x) * k / 16f, a.y + (b.y - a.y) * k / 16f)) }
+            }
+            fun crossesBand(r: Rect) = (by0 > r.top && by0 < r.bottom) || (by1 > r.top && by1 < r.bottom)
+            values.forEachIndexed { i, v ->
+                if (v == null) return@forEachIndexed
+                val p = pts[i]!!
+                val last = i == n - 1
+                val t = measurer.measure(Fmt.money(v), chartStyle(if (last) c.fg else c.soft, textSize, last), maxLines = 1)
+                val x = (p.x - t.size.width / 2f).coerceIn(0f, size.width - t.size.width)
+                val above = Rect(Offset(x, p.y - gap - t.size.height / 2f), Size(t.size.width.toFloat(), t.size.height.toFloat()))
+                val below = above.translate(0f, 2 * gap)
+                val near = listOfNotNull(values.getOrNull(i - 1), values.getOrNull(i + 1))
+                val low = near.isNotEmpty() && near.all { it > v }
+                val sides = if (low) listOf(below, above) else listOf(above, below)
+                fun cost(r: Rect) = placed.count { it.overlaps(r) } * 4 + (if (crossesLine(r)) 2 else 0) + (if (crossesBand(r)) 1 else 0)
+                val r = sides.minBy { cost(it) } // minBy keeps the first (preferred) side on a tie
+                placed += r
+                drawText(t, topLeft = r.topLeft)
             }
         }
         values.indices.forEach { i ->
-            if (i < days.size) centred(measurer, Fmt.dayLetter(days[i]), chartStyle(if (i == n - 1) c.fg else c.soft, textSize, i == n - 1), xs(i), top + plotH + 6.dp.toPx())
+            if (i < days.size) centred(measurer, Fmt.dayLetter(days[i]), chartStyle(if (i == n - 1) c.fg else c.soft, textSize, i == n - 1), xs(i), top + plotH + bottomPad.toPx() + 6.dp.toPx())
         }
     }
 }

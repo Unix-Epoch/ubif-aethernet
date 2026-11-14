@@ -31,13 +31,13 @@ Row fields (list, find and the detail header all use the same row):
 | `closedReason` | `closed_reason` | the status name the work order closed with: `Sale complete`, `Closed` or `Cancelled`; null while open (and on a legacy row) |
 | `tags`, `followUp` | Waymark (see below) | **only on rows of the open list (`state=open`) and on the detail's `wo`**; absent on `recent` / `closed` rows and on `find` rows |
 | `notes` | `plain.notes.total` | note count, null when no plain part is stored yet |
+| `issues` | `issues` | Portal's issue names from the list row (`deviceIssues`), e.g. `["Screen"]`; `[]` = none; null until a script that sends them has scanned the store |
+| `attention` | `attention` | Portal's `attentionState` on an open work order: `warning`, `urgent` or null; always null when closed |
 
 Detail adds: `nextUpdate`, `slaEnd`, `rfpAt`, `outcomeReason`, `soldAt` (all ISO or null; `soldAt` = when it reached Sale complete), the timeline, the cart, `parts` and `changes`. For a closed work order the detail's `wo` therefore has `closedAt`, `closedReason`, `soldAt`, `outcome`, `lastCartValue` (each null when unknown).
 
 **The mockups want but the tracker does not store in plain (so they are not in any response):**
 - the customer name shown on every card (sealed in the card; the app shows it after unlocking, from the card it already holds);
-- the issue / repair summary ("Screen", "Battery"): not in the plain part. The cart lines are the closest plain thing (detail only, `cart.lines[].name`), but which line is "the repair" is a guess the server does not make; the full text is in the sealed snapshot (the check-in note and the workorder). A reasonable app rule after unlocking: show the first cart line name, or the sealed intake note;
-- the "Urgent" flag / attention state: not stored anywhere (Assize runs in the browser and its alerts live in the alerts stream, not on the work order). Not available here;
 - `Sandbox #999999` style store labels: use the store id and Home's `stores[].name`.
 
 ## `GET /v1/agents/m/wo`: the list
@@ -904,7 +904,7 @@ Negative check: opening the card blob with `aad = snapshot|914|700000123` must f
 
 ## Notes for the Android implementer
 
-**Locked (no store keys in memory)**: Home, the list without `cards`, `find`, the plain detail (header, timeline, cart). Show the number, device, status, lane chip, time in status, program, cart value. No customer name, issue or Urgent anywhere (not available plain).
+**Locked (no store keys in memory)**: Home, the list without `cards`, `find`, the plain detail (header, timeline, cart). Show the number, device, issue, status, lane chip, Urgent, time in status, program, cart value. No customer name anywhere (not available plain).
 
 **Unlock** (owner's biometrics/PIN gate on the phone, then open the wrapped store keys from `/me` with the Keystore key): fetch `GET /wo?state=open&cards=1&limit=100` per page until `next` is null (a store has roughly 30-150 open work orders), plus `state=recent&cards=1&closedDays=7`; open each card with the store key for `row.store`; keep name / phones / emails / IMEI / serial in memory and search locally (names case-insensitive by word, phones by digit suffix, IMEI by suffix). The Number tab can search the downloaded list first, then call `find` for anything not in it (closed or older). Opening a work order: `GET /wo/<store>/<wo>?sealed=1`, decrypt the snapshot, show notes (manual first) and the timeline. Each of these downloads is logged for the owner, so do not prefetch snapshots; fetch one when the user opens it.
 

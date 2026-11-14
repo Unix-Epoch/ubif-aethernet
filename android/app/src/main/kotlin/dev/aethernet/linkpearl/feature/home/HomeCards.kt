@@ -1,5 +1,7 @@
 package dev.aethernet.linkpearl.feature.home
 
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -114,17 +116,17 @@ fun SplhCard(d: HomeData, wide: Boolean, modifier: Modifier = Modifier) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RfpCard(d: HomeData, modifier: Modifier = Modifier) {
     val r = d.rfp
     LpCard(modifier) {
         CardLabel("RFP total")
-        FlowRow(
-            Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween,
-            verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.Bottom,
-        ) {
-            BigValue(Fmt.money(r.total))
+        // One row at any width: a wide figure steps its size down instead of pushing the counts onto a second line.
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.Bottom) {
+            BasicText(
+                Fmt.money(r.total), Modifier.weight(1f).padding(end = 12.dp), style = LpType.Big.copy(color = Lp.colors.fg), maxLines = 1,
+                autoSize = TextAutoSize.StepBased(minFontSize = 24.sp, maxFontSize = LpType.Big.fontSize, stepSize = 1.sp),
+            )
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     buildAnnotatedString { withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(Fmt.count(r.count)) }; append(" Ready for pickup") },

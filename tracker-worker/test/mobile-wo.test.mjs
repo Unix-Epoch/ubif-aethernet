@@ -59,7 +59,8 @@ const upload = async (store, s, trigger = 'new', withCard = true) => {
 };
 for (const [st, list] of Object.entries(rowsByStore)) {
   const store = Number(st);
-  const listRows = list.map((s) => ({ workorderId: s.wo, workorderStatusId: s.status, workorderStatusName: s.name, programId: 1, programName: 'Retail', deviceCatalog: { name: 'Galaxy S23 Ultra' }, createdAt: ago(s.created), updatedAt: ago(1) }));
+  const listRows = list.map((s) => ({ workorderId: s.wo, workorderStatusId: s.status, workorderStatusName: s.name, programId: 1, programName: 'Retail', deviceCatalog: { name: 'Galaxy S23 Ultra' }, createdAt: ago(s.created), updatedAt: ago(1),
+    ...(s.wo === 7000001 ? { deviceIssues: ['Screen', ' Battery ', '', 5], attentionState: 'urgent' } : s.wo === 7000002 ? { deviceIssues: [], attentionState: 'none' } : {}) }));
   assert.equal((await call('POST', `/v1/${store}/tracker/scan`, { rows: listRows.map(scanRow), storeName: 'x', by: 'Tech Person' })).status, 200);
   for (const s of list) { const r = await upload(store, s); assert.equal(r.status, 200, JSON.stringify(r.j)); }
 }
@@ -99,7 +100,15 @@ assert.equal(all.filter((x) => x.store === 914).length, 3 + 7); assert.equal(all
   assert.equal(c.order, 2 + 1); assert.equal(c.start, 2); assert.equal(c.rfp, 2 + 1); assert.equal(c.work, 2 + 1); assert.equal(c.wait, 2);
 }
 const row1 = all.find((x) => x.wo === 7000001);
-assert.deepEqual(Object.keys(row1).sort(), ['bin', 'cartDue', 'cartValue', 'closedAt', 'closedReason', 'createdAt', 'device', 'followUp', 'lane', 'lastCartValue', 'notes', 'open', 'outcome', 'program', 'status', 'statusId', 'statusSince', 'store', 'tags', 'updatedAt', 'wo']);
+assert.deepEqual(Object.keys(row1).sort(), ['attention', 'bin', 'cartDue', 'cartValue', 'closedAt', 'closedReason', 'createdAt', 'device', 'followUp', 'issues', 'lane', 'lastCartValue', 'notes', 'open', 'outcome', 'program', 'status', 'statusId', 'statusSince', 'store', 'tags', 'updatedAt', 'wo']);
+{ // issue names and attention from the list row: kept as sent (strings only, trimmed); none / no issues = null / []
+  assert.deepEqual(row1.issues, ['Screen', 'Battery']); assert.equal(row1.attention, 'urgent');
+  const row2 = all.find((x) => x.wo === 7000002); assert.deepEqual(row2.issues, []); assert.equal(row2.attention, null);
+  assert.equal(all.find((x) => x.wo === 1).issues, null, 'legacy row: issues unknown');
+  const one = (await authed(A, WO + '/914/7000001')).j.wo; assert.deepEqual(one.issues, ['Screen', 'Battery']); assert.equal(one.attention, 'urgent', 'detail header has them too');
+  const found = (await get(A, WO + '/find?q=7000001')).j.rows[0]; assert.equal(found.attention, 'urgent', 'find rows too');
+}
+
 assert.equal(row1.lane, 'order'); assert.equal(row1.status, 'Need to order'); assert.equal(row1.statusId, 2); assert.equal(row1.device, 'Galaxy S23 Ultra'); assert.equal(row1.program, 'Retail'); assert.equal(row1.bin, 'B-12');
 assert.equal(row1.notes, 2); assert.equal(row1.cartValue, 199); assert.equal(row1.cartDue, 199); assert.equal(row1.closedAt, null); assert.ok(row1.createdAt && row1.updatedAt);
 assert.ok(Math.abs(Date.parse(row1.statusSince) - (Date.now() - 120 * 3600000)) < 60000, 'status began 120 hours ago');

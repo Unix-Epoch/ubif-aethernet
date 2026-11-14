@@ -368,12 +368,15 @@ async function storeApi(req, env, url, store) {
       const wo = int(r && r.wo);
       if (!wo) continue;
       rows.push({ wo, statusId: int(r.statusId), status: clean(r.status, 60) || null, programId: int(r.programId), program: clean(r.program, 80) || null,
-        device: clean(r.device, 80) || null, outcome: clean(r.outcome, 40) || null, createdAt: iso(r.createdAt), updatedAt: iso(r.updatedAt) });
+        device: clean(r.device, 80) || null, outcome: clean(r.outcome, 40) || null, createdAt: iso(r.createdAt), updatedAt: iso(r.updatedAt),
+        // Issue names and attention: only from scripts that send them (older ones send neither key, and leave what is stored alone).
+        facts: Array.isArray(r.issues), issues: Array.isArray(r.issues) ? JSON.stringify(r.issues.map((x) => clean(x, 60)).filter(Boolean).slice(0, 5)) : null,
+        attention: r.attention === 'warning' || r.attention === 'urgent' ? r.attention : null });
     }
     // Only what a scan needs: the store's open WOs, plus any listed WO we have (a closed one coming back).
     // Reading the whole history each scan would grow with it.
     const known = new Map((await T.prepare(`SELECT wo, is_open, api_updated_at, last_detail_at, claimed_until, missing_since, gone_seen_at, store_name, status_id, status_name,
-        program_id, program_name, device, service_outcome, created_at FROM workorders WHERE store = ? AND (is_open = 1 OR wo IN (SELECT value FROM json_each(?)))`)
+        program_id, program_name, device, service_outcome, created_at, issues, attention FROM workorders WHERE store = ? AND (is_open = 1 OR wo IN (SELECT value FROM json_each(?)))`)
       .bind(store, JSON.stringify(rows.map((r) => r.wo))).all()).results.map((r) => [r.wo, r]));
     const need = [], stmts = [];
     let fresh = 0, changed = 0, written = 0;
@@ -382,7 +385,7 @@ async function storeApi(req, env, url, store) {
     // A row is only rewritten when something about it changed (every write is billed, indexes included).
     const differs = (k, r) => !k || (r.updatedAt && r.updatedAt !== k.api_updated_at) || (r.statusId != null && r.statusId !== k.status_id) || (r.status && r.status !== k.status_name)
       || (r.programId != null && r.programId !== k.program_id) || (r.program && r.program !== k.program_name) || (r.device && r.device !== k.device)
-      || (r.outcome && !k.service_outcome) || (storeName && !k.store_name) || (r.createdAt && !k.created_at) || k.missing_since || k.gone_seen_at || !k.is_open;
+      || (r.outcome && !k.service_outcome) || (r.facts && (r.issues !== k.issues || r.attention !== k.attention)) || (storeName && !k.store_name) || (r.createdAt && !k.created_at) || k.missing_since || k.gone_seen_at || !k.is_open;
     for (const r of rows) {
       const k = known.get(r.wo);
       if (!k) { fresh++; need.push({ wo: r.wo, why: 'new' }); }
@@ -390,13 +393,14 @@ async function storeApi(req, env, url, store) {
       else if (!k.is_open && !claimed(k)) need.push({ wo: r.wo, why: 'reopened' });
       if (!differs(k, r)) continue;
       written++;
-      stmts.push(T.prepare(`INSERT INTO workorders (store, wo, store_name, status_id, status_name, program_id, program_name, device, service_outcome, created_at, api_updated_at, is_open, first_seen_at, last_list_seen_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      stmts.push(T.prepare(`INSERT INTO workorders (store, wo, store_name, status_id, status_name, program_id, program_name, device, service_outcome, created_at, api_updated_at, is_open, first_seen_at, last_list_seen_at, issues, attention)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
           ON CONFLICT (store, wo) DO UPDATE SET store_name = COALESCE(excluded.store_name, store_name), status_id = COALESCE(excluded.status_id, status_id),
             status_name = COALESCE(excluded.status_name, status_name), program_id = COALESCE(excluded.program_id, program_id), program_name = COALESCE(excluded.program_name, program_name),
             device = COALESCE(excluded.device, device), service_outcome = COALESCE(service_outcome, excluded.service_outcome), created_at = COALESCE(excluded.created_at, created_at), api_updated_at = COALESCE(excluded.api_updated_at, api_updated_at),
-            last_list_seen_at = excluded.last_list_seen_at, missing_since = NULL, gone_seen_at = NULL`)
-        .bind(store, r.wo, storeName, r.statusId, r.status, r.programId, r.program, r.device, r.outcome, r.createdAt, r.updatedAt, at, at));
+            last_list_seen_at = excluded.last_list_seen_at, missing_since = NULL, gone_seen_at = NULL,
+            issues = CASE WHEN ? THEN excluded.issues ELSE issues END, attention = CASE WHEN ? THEN excluded.attention ELSE attention END`)
+        .bind(store, r.wo, storeName, r.statusId, r.status, r.programId, r.program, r.device, r.outcome, r.createdAt, r.updatedAt, at, at, r.issues, r.attention, r.facts ? 1 : 0, r.facts ? 1 : 0));
     }
     // Per-store write budget (src/budget.js): scans, and work orders this store has never listed. Nothing is written before this.
     const budget = [['scan', 1], ['fresh', fresh]];

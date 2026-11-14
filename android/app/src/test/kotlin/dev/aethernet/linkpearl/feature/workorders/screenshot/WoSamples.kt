@@ -25,15 +25,16 @@ object WoSamples {
 
     val stores = listOf(StoreRef(999999, "Sandbox"), StoreRef(326, "Lynnhaven"))
 
-    private fun row(wo: Long, device: String, program: String, status: String, lane: String, minutes: Long, store: Int = 999999, cart: Double? = null) =
+    private fun row(wo: Long, device: String, program: String, status: String, lane: String, minutes: Long, store: Int = 999999, cart: Double? = null,
+                    issues: List<String>? = null, attention: String? = null) =
         WoRow(store = store, wo = wo, device = device, program = program, status = status, lane = lane, statusSince = ago(minutes), cartValue = cart,
-            createdAt = ago(minutes + 3000), bin = "C7")
+            createdAt = ago(minutes + 3000), bin = "C7", issues = issues, attention = attention)
 
     val rows = listOf(
-        row(700000014, "Galaxy S24", "Out Of Warranty", "Repair in progress", "work", 5 * 1440L, cart = 289.99),
-        row(700000003, "Galaxy S23 Ultra", "Retail", "Awaiting item", "wait", 4 * 1440L + 240),
-        row(700000001, "Galaxy S23 Ultra", "Retail", "Need to order", "order", 2 * 1440L + 120),
-        row(700000007, "iPhone 14", "Asurion", "Ready for work", "start", 2 * 1440L + 1320, store = 326),
+        row(700000014, "Galaxy S24", "Out Of Warranty", "Repair in progress", "work", 5 * 1440L, cart = 289.99, issues = listOf("Screen")),
+        row(700000003, "Galaxy S23 Ultra", "Retail", "Awaiting item", "wait", 4 * 1440L + 240, issues = listOf("Battery"), attention = "urgent"),
+        row(700000001, "Galaxy S23 Ultra", "Retail", "Need to order", "order", 2 * 1440L + 120, issues = listOf("Screen", "Back glass")),
+        row(700000007, "iPhone 14", "Asurion", "Ready for work", "start", 2 * 1440L + 1320, store = 326, issues = listOf("Charging port")),
         row(700000016, "iPhone 15 Pro", "Retail", "Ready for pickup", "rfp", 1440L + 360),
     )
     val names = mapOf(

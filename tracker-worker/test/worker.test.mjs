@@ -52,6 +52,21 @@ let s = await call('POST', '/v1/914/tracker/scan', { rows, storeName: 'Newport N
 ok(s, 'scan'); assert.deepEqual(s.j.need.map((n) => n.why), ['new', 'new', 'new']);
 assert.equal((await call('POST', '/v1/914/tracker/scan', { rows })).j.need.length, 0, 'claimed by the first browser');
 
+// --- issue names and attention (list row facts): stored when sent, left alone by an older script that sends neither, cleared by an empty answer
+{
+  const facts = async () => env.TR.prepare('SELECT issues, attention FROM workorders WHERE store = 914 AND wo = 9001').first();
+  const base = { wo: 9001, statusId: 2, status: 'Need to order', updatedAt: '2026-10-12T10:00:00Z' };
+  await call('POST', '/v1/914/tracker/scan', { rows: [{ ...base, issues: ['Screen', 'x'.repeat(90), '', 7, 'Battery', 'a', 'b', 'c'], attention: 'urgent' }] });
+  let f = await facts(); assert.deepEqual(JSON.parse(f.issues), ['Screen', 'x'.repeat(60), 'Battery', 'a', 'b']); assert.equal(f.attention, 'urgent');
+  await call('POST', '/v1/914/tracker/scan', { rows: [base] });
+  f = await facts(); assert.equal(f.attention, 'urgent', 'older script: kept'); assert.ok(f.issues);
+  await call('POST', '/v1/914/tracker/scan', { rows: [{ ...base, issues: [], attention: 'bogus' }] });
+  f = await facts(); assert.equal(f.issues, '[]'); assert.equal(f.attention, null, 'cleared');
+  const r = await call('POST', '/v1/914/tracker/scan', { rows: [{ ...base, issues: [], attention: null }] });
+  assert.equal(r.j.written, 0, 'unchanged facts: no write');
+  await env.TR.prepare('DELETE FROM workorders WHERE store = 914 AND wo = 9001').run(); // not part of the scenario below
+}
+
 // --- detail: sealed with the store key; plain part readable
 const detail = (wo, statusId, status, extra = {}) => ({ workorder: { workorder: { workorderId: wo, customer: { name: 'Jordan Reyes', phone: '757-555-0100' } } }, notes: ['Customer said hi'], ...extra });
 const plain = (wo, statusId, status, due = 0) => ({ workorder: { workorderId: wo, storeId: 914, statusId, status, programId: 1, program: 'OOW', device: 'iPhone 15', updatedAt: '2026-10-12T10:00:00Z' },

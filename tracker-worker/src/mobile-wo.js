@@ -66,9 +66,15 @@ function rowOf(r, since) {
     statusSince: open ? since || null : null,
     createdAt: r.created_at || null, updatedAt: r.api_updated_at || null, closedAt: r.closed_at || null, closedReason: r.closed_reason || null,
     notes: Number.isInteger(r.notes_total) ? r.notes_total : null,
+    issues: issuesOf(r.issues), attention: open && (r.attention === 'warning' || r.attention === 'urgent') ? r.attention : null,
   };
 }
-const ROW_COLS = `w.store, w.wo, w.status_id, w.status_name, w.program_name, w.device, w.service_outcome, w.cart_value, w.cart_due, w.created_at, w.api_updated_at, w.is_open, w.closed_at, w.closed_reason, w.last_cart_value,
+// Portal's issue names from the list (JSON text); null = not sent yet by this store's script.
+function issuesOf(t) {
+  if (!t) return null;
+  try { const a = JSON.parse(t); return Array.isArray(a) ? a.filter((x) => typeof x === 'string' && x) : null; } catch (_) { return null; }
+}
+const ROW_COLS = `w.store, w.wo, w.status_id, w.status_name, w.program_name, w.device, w.service_outcome, w.cart_value, w.cart_due, w.created_at, w.api_updated_at, w.is_open, w.closed_at, w.closed_reason, w.last_cart_value, w.issues, w.attention,
   json_extract(w.plain, '$.workorder.bin') AS bin, json_extract(w.plain, '$.notes.total') AS notes_total`;
 
 // ---------------------------------------------------------------- GET /wo

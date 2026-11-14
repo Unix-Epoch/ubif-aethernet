@@ -69,6 +69,7 @@ import dev.aethernet.linkpearl.core.design.Lp
 import dev.aethernet.linkpearl.core.design.LpBottomSheet
 import dev.aethernet.linkpearl.core.design.LpIcon
 import dev.aethernet.linkpearl.core.design.LpIconButton
+import dev.aethernet.linkpearl.core.design.LpChip
 import dev.aethernet.linkpearl.core.design.LpIcons
 import dev.aethernet.linkpearl.core.design.LpShapes
 import dev.aethernet.linkpearl.core.design.LpSegmented
@@ -249,7 +250,7 @@ private fun EmptyLane() {
     }
 }
 
-/** One work order card: number and time in status; device and program; status chip and store; the customer line. */
+/** One work order card: number and time in status; device, issue and program; status chip, Urgent and store; the customer line. */
 @Composable
 fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showStoreAlways: Boolean = false, onClick: () -> Unit) {
     val c = Lp.colors
@@ -264,10 +265,14 @@ fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showS
             Text(row.wo.toString(), style = LpType.ValueMedium, color = c.fg, modifier = Modifier.weight(1f), maxLines = 1)
             if (row.open) TimeInStatus(row.statusSince, nowMs) else Text(WoFmt.shortDayTime(row.closedAt, LocalWoClock.current.zone), style = LpType.Small, color = c.soft)
         }
-        val sub = listOfNotNull(row.device, row.program).joinToString(Fmt.DOT).ifEmpty { Fmt.DASH }
+        val issue = row.issues?.takeIf { it.isNotEmpty() }?.joinToString(", ")
+        val sub = listOfNotNull(row.device, issue, row.program).joinToString(Fmt.DOT).ifEmpty { Fmt.DASH }
         Text(sub, style = LpType.Row, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            StatusChip(row.status, row.lane)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatusChip(row.status, row.lane)
+                if (row.urgent) LpChip("Urgent", tone = Tone.Warn, icon = LpIcons.Warning)
+            }
             if (state.showStore || showStoreAlways) Text(state.storeName(row.store), style = LpType.Small, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.weight(1f, fill = false).padding(start = 8.dp))
         }
