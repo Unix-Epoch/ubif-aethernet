@@ -28,17 +28,18 @@
 */
 AE.spread = (() => {
   // Fixed columns. `ids` are Portal's workorderStatusId values; `rfp` marks the one that carries the RFP total.
+  // `oldHours`: how long a card goes without an update (Ready for pickup: time in status) before it is marked old (amber).
+  // Store rule (Nov 14, 2026): Waiting and Ready for pickup 7 days, every other column 3 days.
+  const DAY_H = 24;
   const COLUMNS = [
-    { name: 'Need to order', ids: [2] }, // Portal's own tab counts (Nov 11, 2026): Awaiting item (3) is counted under Waiting
-    { name: 'Ready to start', ids: [8, 24] },
-    { name: 'Work started', ids: [9, 10, 11, 12] },
-    { name: 'Waiting', ids: [3, 4, 7] },
-    { name: 'Ready for pickup', ids: [13], rfp: true },
+    { name: 'Need to order', ids: [2], oldHours: 3 * DAY_H }, // Portal's own tab counts (Nov 11, 2026): Awaiting item (3) is counted under Waiting
+    { name: 'Ready to start', ids: [8, 24], oldHours: 3 * DAY_H },
+    { name: 'Work started', ids: [9, 10, 11, 12], oldHours: 3 * DAY_H },
+    { name: 'Waiting', ids: [3, 4, 7], oldHours: 7 * DAY_H },
+    { name: 'Ready for pickup', ids: [13], rfp: true, oldHours: 7 * DAY_H },
   ];
   const WAITING = 3; // where an open status with no column of its own goes (shown with its real status name)
   const RFP_STATUS = 13;
-  // PLACEHOLDER threshold: how long without a status change / update before a card is marked old (amber). Not a store rule yet.
-  const OLD_HOURS = 48;
   const REFRESH_MS = 60 * 1000;     // background refresh while the board is open
   const OPEN_REFRESH_MS = 10 * 1000; // opening the board reuses a list newer than this
   const HOUR = 3600 * 1000;
@@ -58,7 +59,7 @@ AE.spread = (() => {
   const hoursOf = (since, now) => (since ? Math.max(0, Math.floor((now - since.ms) / HOUR)) : null);
   const ageText = (h) => (h < 1 ? '<1h' : h >= 24 ? Math.floor(h / 24) + 'd ' + (h % 24) + 'h' : h + 'h');
   const timeText = (since, now) => { if (!since) return ''; const a = ageText(hoursOf(since, now)); return since.kind === 'status' ? a + ' in status' : 'Updated ' + a + ' ago'; };
-  const isOld = (since, now) => !!since && hoursOf(since, now) >= OLD_HOURS;
+  const isOld = (since, now, oldHours) => !!since && hoursOf(since, now) >= oldHours;
 
   const txt = (v) => (typeof v === 'string' ? v.trim() : '');
   // What a card shows, from one list row. Strings only; nothing personal beyond the customer's name.
@@ -72,7 +73,7 @@ AE.spread = (() => {
       id, href: '/repair/workorder/' + id, col: ci, status, statusName: txt(r.workorderStatusName),
       device: txt(r.deviceCatalog && r.deviceCatalog.name) || txt(r.customerDevice && r.customerDevice.name),
       customer: AE.data.nameOf(r), issue: issues.join(', '), program: txt(r.programName), bin: txt(r.locationBin),
-      attention: att, reasons, since, time: timeText(since, now), old: isOld(since, now),
+      attention: att, reasons, since, time: timeText(since, now), oldHours: COLUMNS[ci].oldHours, old: isOld(since, now, COLUMNS[ci].oldHours),
       showStatus: COLUMNS[ci].ids.length > 1 || !COLUMNS[ci].ids.includes(status), // the column header already says it when it holds one status
     };
   }
@@ -107,7 +108,7 @@ AE.spread = (() => {
     if (rows.length !== all.length) AE.noteError('spread', new Error((all.length - rows.length) + ' list row(s) without a numeric workorderId were left off the board'));
     return rows;
   }
-  return { COLUMNS, WAITING, OLD_HOURS, REFRESH_MS, OPEN_REFRESH_MS, statusOf, columnIndex, sinceOf, hoursOf, ageText, timeText, isOld, cardOf, layout, header, money, dealDelay, headDelay, refreshDue, read };
+  return { COLUMNS, WAITING, REFRESH_MS, OPEN_REFRESH_MS, statusOf, columnIndex, sinceOf, hoursOf, ageText, timeText, isOld, cardOf, layout, header, money, dealDelay, headDelay, refreshDue, read };
 })();
 
 AE.shard({
@@ -337,7 +338,7 @@ AE.shard({
     // Rainbow Drip's colours are see-through (they tint a whole row): the edge uses the colour at full strength, the fade behind it the tint.
     const solid = (c) => (/^#[0-9a-f]{8}$/i.test(c) ? c.slice(0, 7) : c);
     function fillCard(el, c) {
-      const sig = [c.href, c.device, c.customer, c.issue, c.program, c.bin, c.statusName, c.showStatus, c.attention, c.reasons.join('|'), c.time, c.old, c.since && c.since.kind, edgeOf(c.statusName)].join('\u0001');
+      const sig = [c.href, c.device, c.customer, c.issue, c.program, c.bin, c.statusName, c.showStatus, c.attention, c.reasons.join('|'), c.time, c.old, c.oldHours, c.since && c.since.kind, edgeOf(c.statusName)].join('\u0001');
       if (el.dataset.sig === sig) return;
       el.dataset.sig = sig;
       el.style.setProperty('--edge', solid(edgeOf(c.statusName)));
@@ -353,7 +354,7 @@ AE.shard({
         c.showStatus && c.statusName ? h('div', { class: 'sp-st' }, c.statusName) : null,
         h('div', { class: 'sp-meta' }, c.program ? h('span', { class: 'sp-prog', title: c.program }, c.program) : null,
           c.bin ? h('span', { class: 'sp-bin', html: ICON.bin }, 'Bin ' + c.bin) : null, h('span', { class: 'sp-wm', style: 'display:contents' })),
-        c.time ? h('div', { class: 'sp-foot' }, h('span', { class: 'sp-age' + (c.old ? ' old' : ''), title: c.old ? (c.since.kind === 'status' ? 'Over ' + S.OLD_HOURS + ' hours in this status' : 'Not updated for over ' + S.OLD_HOURS + ' hours') : null, html: ICON.clock }, c.time)) : null].filter(Boolean));
+        c.time ? h('div', { class: 'sp-foot' }, h('span', { class: 'sp-age' + (c.old ? ' old' : ''), title: c.old ? (c.since.kind === 'status' ? 'Over ' + c.oldHours / 24 + ' days in this status' : 'Not updated for over ' + c.oldHours / 24 + ' days') : null, html: ICON.clock }, c.time)) : null].filter(Boolean));
     }
     // Waymark's tag chips and Assize's mark, from those shards when they're on (nothing is re-implemented here).
     function decorate(el, id) {
