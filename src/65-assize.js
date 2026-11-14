@@ -387,14 +387,17 @@ AE.shard({
       .ae-as-f.on i { color:inherit; }
       .ae-as-f:focus-visible { outline:2px solid var(--aui-primary,#8223d2); outline-offset:1px; }
       #${PANEL_ID} .list { overflow:auto; margin:0 -4px; padding:0 4px; min-height:0; }
-      .ae-as-g { margin:10px 0 2px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft,#5d5e61); }
+      .ae-as-g { margin:10px 0 2px; font-size:12px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft,#5d5e61); }
       .ae-as-g:first-child { margin-top:2px; }
       .ae-as-r { display:grid; grid-template-columns:4px 1fr auto; gap:0 10px; padding:7px 2px 7px 0; border-top:1px solid var(--aui-outline-soft,#eeedf1); }
       .ae-as-g + .ae-as-r { border-top:0; }
       .ae-as-r .bar { border-radius:2px; grid-row:1/3; }
       .ae-as-r.fail .bar { background:var(--as-fail); } .ae-as-r.flag .bar { background:var(--as-flag-bar); } .ae-as-r.note .bar { background:var(--as-note-bar); } .ae-as-r.remind .bar { background:var(--as-rem); }
       .ae-as-r .t { display:flex; align-items:baseline; gap:6px; min-width:0; white-space:nowrap; }
-      .ae-as-r .k { font-weight:700; font-size:13px; } .ae-as-r.fail .k { color:var(--as-fail); } .ae-as-r.flag .k { color:var(--as-flag); } .ae-as-r.remind .k { color:var(--as-rem); }
+      .ae-as-r .k { font-weight:700; font-size:13px; }
+      .ae-as-kd { flex:none; display:inline-flex; align-items:center; gap:3px; height:20px; padding:0 7px; border-radius:6px; font-size:12px; font-weight:700; align-self:center; }
+      .ae-as-kd.fail { background:var(--as-fail-soft); color:var(--as-fail-on); } .ae-as-kd.flag { background:var(--as-flag-soft); color:var(--as-flag-on); }
+      .ae-as-kd.note { background:var(--as-note-soft); color:var(--as-note-on); } .ae-as-kd.remind { background:var(--as-rem-soft); color:var(--as-rem-on); }
       .ae-as-r a { color:var(--aui-primary,#8223d2); font-weight:600; text-decoration:none; } .ae-as-r a:hover { text-decoration:underline; }
       .ae-as-r .dv { color:var(--aui-on-surface-soft,#5d5e61); font-size:13px; overflow:hidden; text-overflow:ellipsis; }
       .ae-as-r .ev { font-size:13px; grid-column:2; }
@@ -406,11 +409,9 @@ AE.shard({
       #${PANEL_ID} .ft, #${POP_ID} .ft { margin-top:8px; padding-top:8px; border-top:1px solid var(--aui-outline-soft,#eeedf1); display:flex; gap:8px; align-items:center; }
       #${PANEL_ID} .ft .sg-soft, #${POP_ID} .ft .sg-soft { flex:1; }
       .ae-as-empty { text-align:center; padding:22px 10px 16px; } .ae-as-empty h3 { margin:10px 0 2px; font-size:18px; } .ae-as-empty p { margin:0; }
-      .ae-as-r .dm { margin-left:auto; flex:none; border:0; background:transparent; padding:0 4px; height:20px; border-radius:6px; cursor:pointer; opacity:0;
-        font:400 12px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; color:var(--aui-on-surface-soft,#5d5e61); text-decoration:underline; }
-      .ae-as-r:hover .dm, .ae-as-r:focus-within .dm, .ae-as-r .dm[aria-expanded="true"] { opacity:1; }
-      @media (hover:none) { .ae-as-r .dm { opacity:1; } }
-      .ae-as-r .dm:hover { color:var(--aui-on-surface,#1a1c1e); } .ae-as-r .dm:focus-visible { outline:2px solid var(--aui-primary,#8223d2); outline-offset:1px; }
+      .ae-as-r .dm { margin-left:auto; flex:none; align-self:center; border:1px solid var(--aui-outline,#c6c6ca); background:transparent; padding:0 10px; height:26px; border-radius:10000rem; cursor:pointer;
+        font:400 12.5px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; color:var(--aui-on-surface,#1a1c1e); }
+      .ae-as-r .dm:hover, .ae-as-r .dm[aria-expanded="true"] { border-color:var(--aui-on-surface,#1a1c1e); } .ae-as-r .dm:focus-visible { outline:2px solid var(--aui-primary,#8223d2); outline-offset:1px; }
       .ae-as-dp { grid-column:2 / 4; margin:6px 0 2px; padding:8px 10px 10px; border-radius:12px; background:var(--aui-neutral-soft,#f1f0f4); display:flex; flex-direction:column; gap:8px; }
       .ae-as-dp .q { font-size:12px; font-weight:700; color:var(--aui-on-surface-soft,#5d5e61); }
       .ae-as-dp .dpc { display:flex; flex-wrap:wrap; gap:6px; }
@@ -418,7 +419,7 @@ AE.shard({
       .ae-as-dp input:focus-visible { outline:2px solid var(--aui-primary,#8223d2); outline-offset:1px; }
       .ae-as-dp .act { display:flex; gap:8px; justify-content:flex-end; }
       .ae-as-dp .ae-as-err { margin:0; }
-      .ae-as-r.dis .bar { opacity:.5; } .ae-as-r.dis .k { text-decoration:line-through; color:var(--aui-on-surface-soft,#5d5e61); }
+      .ae-as-r.dis .bar, .ae-as-r.dis .ae-as-kd { opacity:.5; } .ae-as-r.dis .k { text-decoration:line-through; color:var(--aui-on-surface-soft,#5d5e61); }
       .ae-as-r.dis .who { display:flex; }
       .ae-as-err { margin:8px 0; color:var(--as-fail); font-size:13px; } .ae-as-err a { color:inherit; font-weight:700; }
       #${PILL_ID}.fail { background:var(--as-fail-soft); color:var(--as-fail-on); } #${PILL_ID}.flag { background:var(--as-flag-soft); color:var(--as-flag-on); }
@@ -433,6 +434,9 @@ AE.shard({
     `));
 
     // ------------------------------------------------------------ pieces
+    // The finding's kind in words (with a symbol), so it never rests on colour alone.
+    const KIND = { fail: ['✕', 'Fail'], flag: ['!', 'Flag'], note: ['?', 'Check notes'], remind: ['•', 'Reminder'] };
+    const kindTag = (k) => (KIND[k] ? h('span', { class: 'ae-as-kd ' + k }, h('span', { 'aria-hidden': 'true' }, KIND[k][0]), KIND[k][1]) : null);
     const whoChip = (w) => h('span', { class: 'ae-as-who ' + (w.key === 'store' || w.key === 'unassigned' ? w.key : ''), title: w.name }, w.label);
     // The Dismiss form under a finding: why (three chips), an optional note, Dismiss / Cancel.
     function dismissForm() {
@@ -448,7 +452,7 @@ AE.shard({
         f.err ? h('div', { class: 'ae-as-err' }, f.err + ' If you keep seeing this, ', AE.bugLinkEl('report a bug', { where: 'Assize dismiss', error: f.errRaw }), '!') : null,
         h('div', { class: 'act' },
           h('button', { type: 'button', class: 'sg-btn', 'data-fk': 'dc', onclick: (e) => { e.stopPropagation(); dp = null; render(); } }, 'Cancel'),
-          h('button', { type: 'button', class: 'sg-btn sg-primary', 'data-fk': 'dd', disabled: !f.reason || f.busy || null, title: f.reason ? null : 'Pick a reason first', onclick: (e) => { e.stopPropagation(); submitDismiss(); } }, f.busy ? 'Dismissing…' : 'Dismiss')));
+          h('button', { type: 'button', class: 'sg-btn sg-primary', 'data-fk': 'dd', disabled: !f.reason || f.busy || null, title: f.reason ? null : 'Pick a reason first', onclick: (e) => { e.stopPropagation(); submitDismiss(); } }, f.busy ? 'Dismissing…' : 'Dismiss for the store')));
     }
     function rowEl(x, here) {
       const key = R.dismissKey(x.wo, x.rule, x.sig), open = !!dp && dp.key === key && dp.where === (here ? 'pop' : 'panel');
@@ -456,7 +460,7 @@ AE.shard({
         onclick: (e) => { e.stopPropagation(); dp = open ? null : { key, x, where: here ? 'pop' : 'panel', reason: null, note: '', err: null, busy: false }; actErr = null; render(); } }, 'Dismiss') : null;
       return h('div', { class: 'ae-as-r ' + x.kind },
         h('span', { class: 'bar' }),
-        h('div', { class: 't' }, h('span', { class: 'k' }, x.title),
+        h('div', { class: 't' }, kindTag(x.kind), h('span', { class: 'k' }, x.title),
           here ? h('span', { class: 'dv' }, CHECK_NAME[x.check]) : h('a', { href: '/repair/workorder/' + x.wo }, x.wo),
           here ? null : h('span', { class: 'dv' }, [x.device, x.repair].filter(Boolean).join(' · ')), dm),
         h('div', { class: 'ev' }, x.evidence),
@@ -469,7 +473,7 @@ AE.shard({
       const note = [d.by || 'Someone', whenShort(d.at), REASON_NAME[d.reason] || d.reason].filter(Boolean).join(' · ') + (d.note ? '. Note: ' + d.note : '');
       return h('div', { class: 'ae-as-r dis ' + x.kind },
         h('span', { class: 'bar' }),
-        h('div', { class: 't' }, h('span', { class: 'k' }, x.title), h('a', { href: '/repair/workorder/' + x.wo }, x.wo), h('span', { class: 'dv' }, [x.device, x.repair].filter(Boolean).join(' · '))),
+        h('div', { class: 't' }, kindTag(x.kind), h('span', { class: 'k' }, x.title), h('a', { href: '/repair/workorder/' + x.wo }, x.wo), h('span', { class: 'dv' }, [x.device, x.repair].filter(Boolean).join(' · '))),
         h('div', { class: 'ev' }, note),
         h('div', { class: 'who' }, canRestore(d)
           ? h('button', { type: 'button', class: 'sg-btn', 'data-fk': 'rs:' + R.dismissKey(x.wo, x.rule, x.sig), title: 'Bring this finding back', onclick: (e) => { e.stopPropagation(); restore(d); } }, 'Restore')
