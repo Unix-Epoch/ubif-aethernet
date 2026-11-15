@@ -677,6 +677,8 @@ const AE = (() => {
   .sg-chip .sg-mk { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border:0; padding:0; border-radius:50%;
     background:var(--aui-primary,#8223d2); color:var(--aui-on-primary,#fff); cursor:pointer; }
   .sg-chip .sg-mk:hover { filter:brightness(.9); }
+  .sg-menu-ic { display:inline-flex; flex:none; align-items:center; justify-content:center; line-height:0; color:var(--aui-primary, #8223d2); }
+  .sg-menu-ic svg, .sg-menu-ic img { width:100%; height:100%; }
   .sg-aicon { display:inline-block; flex:none; border-radius:22%; vertical-align:middle; box-shadow:0 0 0 1px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.25); }
   @keyframes sg-spin { to { transform: rotate(360deg); } }
   @keyframes sg-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
@@ -690,6 +692,11 @@ const AE = (() => {
   .sg-collapse-tip::after { content:''; position:absolute; bottom:-8px; right:20px; width:16px; height:16px; transform:rotate(45deg);
     background:var(--aui-surface, #fff); box-shadow:2px 2px 3px rgba(12,14,17,.08); }
   @keyframes sg-flash { 0%,100% { box-shadow:0 8px 28px rgba(12,14,17,.18); } 50% { box-shadow:0 0 0 3px var(--aui-primary, #8223d2); } }
+  /* Reduced motion, for everything Aethernet draws: no slides, shakes, pulses or sheens (spinners keep turning, so busy still reads as busy). */
+  @media (prefers-reduced-motion: reduce) {
+    .sg, .sg *, .sg::before, .sg *::before, .sg::after, .sg *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; }
+    .sg .sg-spin, .sg.sg-spin { animation-duration:.7s !important; animation-iteration-count:infinite !important; }
+  }
   `;
   // Put a <style>/<script> in the page, even at page start, when <html> may not exist yet.
   function addEarly(node) {
@@ -727,6 +734,8 @@ const AE = (() => {
       else el.setAttribute(k, v === true ? '' : v);
     }
     for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : String(kid));
+    // A ✕-only close button reads as "multiplication x" to a screen reader: give it a name (its title, else "Close").
+    if (tag === 'button' && !el.hasAttribute('aria-label') && /^\s*[✕×]\s*$/.test(el.textContent)) el.setAttribute('aria-label', el.getAttribute('title') || 'Close');
     return el;
   }
 
@@ -735,6 +744,9 @@ const AE = (() => {
     clipboard: '<path fill="currentColor" d="M9 2h6a1 1 0 0 1 1 1v1h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V3a1 1 0 0 1 1-1zm1 2v2h4V4h-4zM8 11v2h8v-2H8zm0 4v2h5v-2H8z"/>',
     printer: '<path fill="currentColor" d="M7 3h10v4H7V3zM5 8h14a2 2 0 0 1 2 2v6h-4v4H7v-4H3v-6a2 2 0 0 1 2-2zm4 7v3h6v-3H9zm8-5a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/>',
     aetheryte: '<ellipse cx="12" cy="11" rx="10.5" ry="3.2" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".55"/><path fill="currentColor" d="M12 1.5 6 10l6 12.5L18 10z"/><path fill="#fff" opacity=".4" d="M12 1.5 9.2 10l2.8 12.5z"/><path fill="currentColor" d="M3.5 3.5 2 6l1.5 2.5L5 6zM20.5 15.5 19 18l1.5 2.5L22 18z" opacity=".7"/>',
+    // The Aethernet crystal with a wrench across its lower right (Send Aethernet feedback).
+    aetheryteWrench: '<ellipse cx="10" cy="10" rx="9" ry="2.8" fill="none" stroke="currentColor" stroke-width="1.3" opacity=".55"/><path fill="currentColor" d="M10 1 5 8.8l5 11.2 5-11.2z"/><path fill="#fff" opacity=".4" d="M10 1 7.7 8.8 10 20z"/>'
+      + '<path transform="translate(11 11) scale(.54)" style="stroke:var(--aui-surface, #fff)" stroke-width="3.2" paint-order="stroke" stroke-linejoin="round" fill="currentColor" d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/>',
     grip: '<g fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></g>',
   };
   /*
@@ -922,22 +934,24 @@ const AE = (() => {
   .sg-confirm .sg-actions .sg-btn { flex:1; }
   `;
   // icon: a shard/spell id shown left of the title. cancelLabel: null = no Cancel button (a notice with just OK).
-  function confirmDialog({ title, message, warning, icon: iconId, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) {
+  // danger: the confirm button deletes or removes something: it's red, and Cancel has the focus so a stray Enter doesn't confirm.
+  function confirmDialog({ title, message, warning, icon: iconId, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false }) {
     ensureCss();
     if (!document.getElementById('sg-confirm-css')) document.head.append(h('style', { id: 'sg-confirm-css' }, CONFIRM_CSS));
     return new Promise((resolve) => {
       const done = (v) => { scrim.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
-      const ok = h('button', { type: 'button', class: 'sg-btn sg-lg sg-primary', onclick: () => done(true) }, confirmLabel);
+      const ok = h('button', { type: 'button', class: 'sg-btn sg-lg ' + (danger ? 'sg-danger' : 'sg-primary'), onclick: () => done(true) }, confirmLabel);
+      const cancel = cancelLabel === null ? null : h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => done(false) }, cancelLabel);
       const card = h('div', { class: 'sg sg-card sg-confirm', role: 'alertdialog', 'aria-modal': 'true' },
         iconId ? h('h2', { style: 'display:flex;align-items:center;gap:10px' }, h('span', { html: actionIcon(iconId, 28), style: 'line-height:0;flex:none' }), title) : h('h2', null, title),
         message ? h('div', { html: message }) : null,
         warning ? h('div', { class: 'sg-warn' }, warning) : null,
-        h('div', { class: 'sg-actions' }, cancelLabel === null ? null : h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => done(false) }, cancelLabel), ok));
+        h('div', { class: 'sg-actions' }, cancel, ok));
       const scrim = h('div', { class: 'sg sg-confirm-scrim', onclick: (e) => { if (e.target === scrim) done(false); } }, card);
       const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
       document.addEventListener('keydown', onKey, true);
       document.body.appendChild(scrim);
-      ok.focus();
+      (danger && cancel ? cancel : ok).focus();
     });
   }
 
@@ -947,7 +961,7 @@ const AE = (() => {
     ensureCss();
     const mark = kind === 'busy' ? '<span class="sg-spin" style="margin-top:2px"></span>'
       : '<span class="sg-icon-state" style="color:' + (kind === 'ok' ? 'var(--aui-status-success,#136d31)' : 'var(--aui-status-error,#b91a24)') + '">' + (kind === 'ok' ? '✓' : '!') + '</span>';
-    const el = h('div', { class: 'sg sg-card sg-toast', role: 'status', style:
+    const el = h('div', { class: 'sg sg-card sg-toast', role: kind === 'err' ? 'alert' : 'status', style:
       'position:fixed;z-index:2147483647;left:16px;bottom:16px;max-width:420px;padding:12px 16px;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4;animation:sg-in .2s ease-out' +
       (kind === 'err' ? ';border-color:var(--aui-status-error,#b91a24)' : ''),
       html: mark + '<div style="flex:1"><b style="display:block;margin-bottom:2px">' + esc(title) + '</b>' + (text && typeof text === 'object' ? text.html : esc(text)) + '</div>' });
@@ -1301,7 +1315,7 @@ const AE = (() => {
     text-align:center; white-space:nowrap; font-variant-numeric:tabular-nums; pointer-events:none; background:#6b6c70; color:#fff; }
   .ae-hi .n:empty { display:none; }
   .ae-hi .n.dot { min-width:0; width:12px; height:12px; padding:0; top:-1px; right:-2px; display:block; }
-  .ae-hi.sev-red .n { background:var(--aui-status-error, #d1344b); color:#fff; }
+  .ae-hi.sev-red .n { background:var(--aui-status-error, #b91a24); color:#fff; }
   .ae-hi.sev-amber .n { background:var(--aui-status-warning, #e0a23a); color:#2a2000; }
   .ae-hi.sev-green .n { background:var(--aui-status-success, #136d31); color:#fff; }
   .ae-hi.sev-purple .n { background:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); }
@@ -1594,6 +1608,42 @@ const AE = (() => {
 
   // Poll a route/DOM check — Portal is a single-page app, so pages
   // change without a load and Portal re-renders often.
+  /*
+    An Aethernet item in Portal's avatar menu: a clone of Portal's "View my account" item (same look, both themes) with
+    our icon in place of Portal's and our label. Items keep one order whichever shard draws first:
+    10 Aethernet settings, 20 Price estimate, 30 IMEI lookup, 40 Send Aethernet feedback; all sit just above Log out.
+    Call it on every DOM change (Portal draws the menu each time it opens); a no-op once the item is there.
+  */
+  function avatarItem({ testid, label, icon: iconHtml, order, onClick }) {
+    const logout = document.querySelector('[data-testid="option-logout"]');
+    const model = document.querySelector('[data-testid="option-view-account"]');
+    if (!logout || !model || document.querySelector('[data-testid="' + testid + '"]')) return null;
+    ensureCss();
+    const item = model.cloneNode(true);
+    item.setAttribute('data-testid', testid);
+    item.dataset.aeOrder = String(order);
+    const text = item.querySelector('[data-aui="text"]');
+    const modelText = model.querySelector('[data-aui="text"]');
+    const own = [...model.querySelectorAll('svg, img')].find((el) => !modelText || !modelText.contains(el));
+    const size = (own && Math.round(own.getBoundingClientRect().width)) || 20;
+    const ic = h('span', { class: 'sg-menu-ic', 'aria-hidden': 'true', style: 'width:' + size + 'px;height:' + size + 'px', html: iconHtml(size) });
+    if (text) {
+      text.textContent = label;
+      const clonedOwn = [...item.querySelectorAll('svg, img')].find((el) => !text.contains(el));
+      if (clonedOwn) clonedOwn.replaceWith(ic); else text.before(ic);
+    } else { item.textContent = label; item.prepend(ic); }
+    item.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      // close Portal's menu the way a user would, then open ours
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      onClick(e);
+    });
+    const after = [...logout.parentElement.querySelectorAll(':scope > [data-ae-order]')].find((el) => Number(el.dataset.aeOrder) > order);
+    logout.parentElement.insertBefore(item, after || logout);
+    return item;
+  }
+
   function every(ms, fn) {
     // Promise.resolve so async callbacks' rejections are caught too.
     const safe = () => (halted ? undefined : Promise.resolve().then(fn).catch((e) => { noteError('timer', e); console.error('[' + AE_NAME + ']', e); }));
@@ -1602,7 +1652,7 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, woHeadingRow, woChip, textEl, findButton,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, woHeadingRow, woChip, textEl, findButton, avatarItem,
     api, unwrap, Stopped, ApiError, BadShape, shape, health, workerCall, timedFetch, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every,
     api, unwrap, Stopped, portal, sameStore, assertSameStore, halt, halted: () => !!halted, localCache, signedOut, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,

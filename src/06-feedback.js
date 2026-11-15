@@ -457,7 +457,7 @@ AE.feedback = (() => {
         h('div', null, h('b', null, (a.name || 'Store') + ' (#' + a.store + ')'), a.store === me.storeId ? h('span', { class: 'sub' }, ' · this store') : null),
         h('div', { class: 'sub' }, 'Added ' + when(a.added_at) + (a.added_by ? ' by ' + a.added_by : '') + ' · last opened ' + when(a.last_at) + (a.loads ? ' · ' + a.loads + ' page load' + (a.loads === 1 ? '' : 's') : ''))],
         h('button', { type: 'button', class: 'sg-btn', onclick: async () => {
-          const ok = await AE.confirm({ title: 'Remove access?', message: '<b>' + AE.esc((a.name || 'Store') + ' (#' + a.store + ')') + '</b> will lose ' + AE.esc(AE_NAME) + ' on its next page load.',
+          const ok = await AE.confirm({ danger: true, title: 'Remove access?', message: '<b>' + AE.esc((a.name || 'Store') + ' (#' + a.store + ')') + '</b> will lose ' + AE.esc(AE_NAME) + ' on its next page load.',
             warning: a.store === me.storeId ? 'This is the store you\'re signed into: ' + AE_NAME + ' (and this admin panel) will stop here too.' : null, confirmLabel: 'Remove' });
           if (!ok) return;
           await call('POST', '/v1/admin/stores/' + a.store + '/remove', {}, key());
@@ -614,23 +614,9 @@ AE.feedback = (() => {
 
   // ------------------------------------------------------------ entry points
   // Avatar menu: "Send Aethernet feedback", cloned like the Settings item.
-  function menuItem() {
-    const settingsItem = document.querySelector('[data-testid="option-aethernet"]');
-    if (!settingsItem || document.querySelector('[data-testid="option-aethernet-feedback"]')) return;
-    const item = settingsItem.cloneNode(true);
-    item.setAttribute('data-testid', 'option-aethernet-feedback');
-    const label = item.querySelector('[data-aui="text"]') || item;
-    label.textContent = 'Send ' + AE_NAME + ' feedback';
-    item.addEventListener('click', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      openFeedback();
-    });
-    settingsItem.after(item);
-  }
+  const menuItem = () => AE.avatarItem({ testid: 'option-aethernet-feedback', label: 'Send ' + AE_NAME + ' feedback', order: 40, icon: (s) => AE.icon('aetheryteWrench', s), onClick: () => openFeedback() });
   AE.every(400, menuItem);
-  AE.onDom(menuItem); // right after Settings' item, same frame (Settings registers first)
+  AE.onDom(menuItem); // AE.avatarItem keeps the menu order whichever shard draws first
   if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Send ' + AE_NAME + ' feedback', openFeedback);
   AE.trackDaily('active');
 

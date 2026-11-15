@@ -39,7 +39,7 @@ AE.shard({
         border:1px solid var(--aui-outline, #c6c6ca); border-radius:10000rem; cursor:pointer; background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e);
         box-shadow:0 8px 24px rgba(12,14,17,.2); font:600 14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
       #${PILL_ID}:hover { border-color:var(--aui-primary, #8223d2); }
-      #${PILL_ID} .n { min-width:22px; height:22px; padding:0 7px; border-radius:10000rem; box-sizing:border-box; background:#d1344b; color:#fff; font:700 12px/22px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; }
+      #${PILL_ID} .n { min-width:22px; height:22px; padding:0 7px; border-radius:10000rem; box-sizing:border-box; background:var(--aui-status-error, #b91a24); color:#fff; font:700 12px/22px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; }
       #${PILL_ID} .n.zero { background:var(--aui-status-success, #136d31); }
       #${PILL_ID} .sg-aicon { width:28px; height:28px; }
       #${PANEL_ID} { position:fixed; z-index:2147483646; right:16px; bottom:140px; width:min(620px, calc(100vw - 32px)); max-height:calc(100vh - 200px); display:flex; flex-direction:column;
@@ -51,7 +51,7 @@ AE.shard({
       #${PANEL_ID} .stat { border:1px solid var(--aui-outline-soft, #eeedf1); border-radius:10px; padding:6px 10px; }
       #${PANEL_ID} .stat .v { font-size:20px; font-weight:700; font-variant-numeric:tabular-nums; }
       #${PANEL_ID} .stat .k { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
-      #${PANEL_ID} .stat.bad .v { color:#d1344b; }
+      #${PANEL_ID} .stat.bad .v { color:var(--aui-status-error, #b91a24); }
       #${PANEL_ID} .tabs { display:flex; gap:2px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); margin-bottom:8px; }
       #${PANEL_ID} .tab { padding:6px 10px 7px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px; background:none; cursor:pointer;
         color:var(--aui-on-surface-soft, #5d5e61); font:600 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }

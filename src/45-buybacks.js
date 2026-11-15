@@ -64,6 +64,7 @@ AE.shard({
       #${TOOLBAR_ID} .sg-outline:hover { background:var(--aui-primary-soft,#faecff); }
       #${TOOLBAR_ID} .sg-btn:disabled { opacity:.45; cursor:not-allowed; }
       #${TOOLBAR_ID} .count { font-weight:700; }
+      #${TOOLBAR_ID} [data-group] { padding-left:7px; }
       #${TOOLBAR_ID} .status { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--aui-on-surface-soft,#5d5e61); }
       #${TOOLBAR_ID} .sg-spin { width:14px; height:14px; }
     `));
@@ -171,7 +172,7 @@ AE.shard({
       const bar = document.getElementById(TOOLBAR_ID);
       if (!bar) return;
       const table = getTable(getModal());
-      const label = (key, n) => 'Add all ' + GROUPS[key].label + (GROUPS[key].hint ? ' (' + GROUPS[key].hint + ')' : '') + ' · <span class="count">' + n + '</span>';
+      const label = (key, n) => AE.actionIcon('buybacks', 18) + 'Add all ' + GROUPS[key].label + (GROUPS[key].hint ? ' (' + GROUPS[key].hint + ')' : '') + ' · <span class="count">' + n + '</span>';
       const setHtml = (el, html) => { if (el.innerHTML !== html) el.innerHTML = html; };
       for (const btn of bar._groups) {
         const n = table ? groupRows(table, btn.dataset.group).length : 0;

@@ -116,7 +116,7 @@ AE.shard({
       #${DLG} select, #${DLG} input { width:100%; height:38px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; padding:0 10px; font:inherit; font-size:14px;
         background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); }
       #${DLG} .sheet { margin-top:16px; border-radius:10px; padding:12px 14px; background:var(--aui-status-success-soft, #eaf6ee); color:var(--aui-status-on-success-soft, #062011); font-size:14px; }
-      #${DLG} .sheet.miss { background:var(--aui-warning-soft, #fff4cc); color:var(--aui-on-warning-soft, #3d2e00); }
+      #${DLG} .sheet.miss { background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
       #${DLG} .sheet .s { font-size:12.5px; opacity:.8; margin-top:2px; }
       #${DLG} .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
       #${DLG} .chip { font:inherit; font-size:14px; padding:4px 12px; border-radius:999px; cursor:pointer; border:1px solid currentColor; background:transparent; color:inherit; }
@@ -135,7 +135,7 @@ AE.shard({
       #${DLG} .pf { font-size:12px; font-weight:600; margin-top:4px; color:var(--aui-status-success, #1d7a3a); }
       #${DLG} .extra { display:flex; align-items:center; gap:8px; margin-top:12px; font-size:13.5px; }
       #${DLG} .extra input { width:110px; }
-      #${DLG} .foot { display:flex; gap:10px; align-items:center; margin-top:16px; border-top:1px solid var(--aui-outline-variant, #eee); padding-top:12px; }
+      #${DLG} .foot { display:flex; gap:10px; align-items:center; margin-top:16px; border-top:1px solid var(--aui-outline-soft, #eeedf1); padding-top:12px; }
       #${DLG} .foot .sp { flex:1; font-size:12px; opacity:.75; }
       #${DLG} .note { font-size:12px; opacity:.75; margin-top:8px; }
       #${BTN} { position:fixed; z-index:1000; /* over Portal's sticky footer (999), under its dialogs */ display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 16px 0 6px; border-radius:999px; cursor:pointer;
@@ -245,21 +245,7 @@ AE.shard({
     AE.reassemble.open = open;
 
     // ------------------------------------------------------------ avatar menu
-    function menuItem() {
-      const settingsItem = document.querySelector('[data-testid="option-aethernet"]');
-      if (!settingsItem || document.querySelector(`[data-testid="${MENU}"]`)) return;
-      const item = settingsItem.cloneNode(true);
-      item.setAttribute('data-testid', MENU);
-      const label = item.querySelector('[data-aui="text"]') || item;
-      label.textContent = 'Price estimate';
-      item.addEventListener('click', (e) => {
-        e.preventDefault(); e.stopPropagation();
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-        open({ from: 'menu' });
-      });
-      settingsItem.before(item);
-    }
+    const menuItem = () => AE.avatarItem({ testid: MENU, label: 'Price estimate', order: 20, icon: (s) => AE.actionIcon('reassemble', s), onClick: () => open({ from: 'menu' }) });
 
     // ------------------------------------------------------------ the Price estimate button
     // Check-in's Repair estimate step: bottom left of the step's empty space, just above Back.

@@ -11,7 +11,7 @@ AE.shard({
   name: 'Quick Synthesis',
   sites: ['portal.ubreakifix.net'],
   run() {
-    const { h, icon, sleep } = AE;
+    const { h, sleep } = AE;
     const DELAY_MS = AE.settings.printLabels.delayMs;
     const SEL_MENU_BTN = 'button[data-aui="action"]';
     const SEL_PRINT_OPT = 'button[data-testid="option-printLabel"]';
@@ -141,8 +141,8 @@ AE.shard({
       if (existing) return;
       const gen = [...document.querySelectorAll('button')].find((b) => /generate labels/i.test(b.textContent || ''));
       if (!gen || !gen.parentElement) return;
-      const b = h('button', { id: 'sg-print-all-btn', type: 'button', class: 'sg sg-btn sg-primary', style: 'margin-right:8px;height:' + (gen.offsetHeight || 32) + 'px', onclick: onClickPrintAll });
-      b.innerHTML = icon('printer', 16) + '<span>Print all labels</span>';
+      const b = h('button', { id: 'sg-print-all-btn', type: 'button', class: 'sg sg-btn sg-primary', style: 'margin-right:8px;padding-left:7px;height:' + (gen.offsetHeight || 32) + 'px', onclick: onClickPrintAll });
+      b.innerHTML = AE.actionIcon('printLabels', 18) + '<span>Print all labels</span>';
       gen.parentElement.insertBefore(b, gen);
     }
     // Coalesced to one check per 250ms — a label run mutates the DOM constantly.

@@ -172,7 +172,7 @@ AE.status = (() => {
     const busy = AE.toast('Checking for updates…', '', 'busy');
     try { if (!opts.noFetch) await refresh(true); } catch (e) { // noFetch: dev tools, against simulated data
       busy.remove();
-      AE.toast("Couldn't check for updates", 'GitHub didn\'t answer (' + (e.message || e) + '). Try again in a minute.', 'err');
+      AE.toast("Couldn't check for updates", { html: 'Try again in a minute. If you keep seeing this, ' + AE.bugLink('report a bug', { where: 'Check for updates', error: String((e && e.message) || e) }) + '.' }, 'err');
       return;
     }
     busy.remove();

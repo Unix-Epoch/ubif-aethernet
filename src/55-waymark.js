@@ -466,12 +466,12 @@ AE.waymark = (() => {
   #sg-wm-pop li:first-child { border-top:0; }
   #sg-wm-pop .when { color:var(--aui-on-surface-soft, #5d5e61); font-size:12px; }
   #sg-wm-bubble { position:fixed; z-index:2147483646; width:300px; padding:14px 14px 12px; font-size:14px; line-height:1.45; animation:sg-in .25s ease-out;
-    border-color:#d1344b; box-shadow:0 10px 30px rgba(12,14,17,.25); }
+    border-color:var(--aui-status-error, #b91a24); box-shadow:0 10px 30px rgba(12,14,17,.25); }
   #sg-wm-bubble .top { display:flex; gap:10px; align-items:flex-start; }
-  #sg-wm-bubble .top .n { flex:none; min-width:26px; height:26px; padding:0 7px; border-radius:10000rem; background:#d1344b; color:#fff; font:700 14px/26px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; box-sizing:border-box; }
+  #sg-wm-bubble .top .n { flex:none; min-width:26px; height:26px; padding:0 7px; border-radius:10000rem; background:var(--aui-status-error, #b91a24); color:#fff; font:700 14px/26px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; box-sizing:border-box; }
   #sg-wm-bubble .sg-actions { margin-top:10px; justify-content:flex-end; }
   #sg-wm-bubble .sg-actions .sg-btn { flex:none; }
-  #sg-wm-bubble .tail { position:absolute; top:-8px; width:14px; height:14px; background:inherit; border:1px solid #d1344b; border-width:1px 0 0 1px; transform:rotate(45deg); }
+  #sg-wm-bubble .tail { position:absolute; top:-8px; width:14px; height:14px; background:inherit; border:1px solid var(--aui-status-error, #b91a24); border-width:1px 0 0 1px; transform:rotate(45deg); }
   #sg-wm-board { position:fixed; z-index:2147483646; right:16px; width:min(560px, calc(100vw - 32px)); max-height:calc(100vh - 100px); display:flex; flex-direction:column;
     padding:16px 16px 10px; font-size:14px; line-height:1.4; }
   #sg-wm-board .head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
@@ -493,7 +493,7 @@ AE.waymark = (() => {
   .sg-auto svg { width:13px; height:13px; flex:none; }
   .sg-auto.upcoming { --c:#4a68f9; }
   .sg-auto.today { --c:#b38f00; background:color-mix(in srgb, var(--c) 28%, var(--aui-surface, #fff)); color:color-mix(in srgb, var(--c) 52%, var(--aui-on-surface, #1a1c1e)); }
-  .sg-auto.overdue { --c:#d1344b; background:#d1344b; color:#fff; border-color:#d1344b; }
+  .sg-auto.overdue { --c:var(--aui-status-error, #b91a24); background:var(--aui-status-error, #b91a24); color:#fff; border-color:var(--aui-status-error, #b91a24); }
   .sg-auto button { border:0; background:none; padding:0 2px; margin:0; color:inherit; cursor:pointer; font-size:13px; line-height:1; opacity:.75; }
   .sg-auto button:hover { opacity:1; }
   #sg-wm-push { position:fixed; z-index:2147483647; width:230px; padding:8px; font-size:13px; }
@@ -511,7 +511,7 @@ AE.waymark = (() => {
     color:var(--aui-on-surface-soft, #5d5e61); font:600 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
   #sg-wm-board .tab.on { color:var(--aui-primary, #8223d2); border-bottom-color:var(--aui-primary, #8223d2); }
   #sg-wm-board .tab .n { margin-left:4px; font-weight:400; }
-  #sg-wm-board .tab .late { margin-left:4px; padding:0 5px; border-radius:10000rem; background:#d1344b; color:#fff; font-size:11px; }
+  #sg-wm-board .tab .late { margin-left:4px; padding:0 5px; border-radius:10000rem; background:var(--aui-status-error, #b91a24); color:#fff; font-size:11px; }
   .sg-wm-edit .row { display:flex; align-items:center; gap:6px; margin:6px 0; }
   .sg-wm-edit .row input[type=text] { flex:1; min-width:0; height:32px; padding:0 8px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px;
     background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font:14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
@@ -771,8 +771,8 @@ AE.shard({
       tr.sg-wm-hidden { display:none !important; }
       #${FILTER_ID} { position:relative; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px 0 14px; margin-left:8px; border-radius:8px; cursor:pointer;
         border:1px solid var(--aui-primary, #8223d2); background:transparent; color:var(--aui-primary, #8223d2); font:400 15px Apercu, "Helvetica Neue", Arial, sans-serif; }
-      #${FILTER_ID} .ae { position:absolute; left:-8px; top:-9px; width:18px; height:18px; border-radius:50%; background:var(--aui-primary, #8223d2); color:#fff;
-        font:700 8px/18px Apercu, Arial, sans-serif; text-align:center; box-shadow:0 0 0 2px var(--aui-surface, #fff); }
+      #${FILTER_ID} .ae { position:absolute; left:-8px; top:-9px; width:18px; height:18px; line-height:0; }
+      #${FILTER_ID} .ae .sg-aicon { box-shadow:0 0 0 2px var(--aui-surface, #fff); }
       #${FILTER_ID}.on { background:var(--aui-primary, #8223d2); color:#fff; }
     `));
     const listOrder = (c) => new Map((c ? c.list : []).map((l, i) => [l.name, i]));
@@ -877,7 +877,7 @@ AE.shard({
       if (!f) {
         f = h('button', { type: 'button', id: FILTER_ID, class: 'sg', title: 'Show only work orders with a Waymark tag (on this page)', onclick: (e) => { e.stopPropagation(); filterMenu(f); } });
       }
-      if (f.dataset.label !== label) { f.dataset.label = label; f.replaceChildren(h('span', { class: 'ae' }, 'Ae'), label + ' ▾'); f.classList.toggle('on', !!listFilter); }
+      if (f.dataset.label !== label) { f.dataset.label = label; f.replaceChildren(h('span', { class: 'ae', 'aria-hidden': 'true', html: AE.actionIcon('waymark', 18) }), label + ' ▾'); f.classList.toggle('on', !!listFilter); }
       const host = anchor.closest('div') || anchor;
       if (f.previousElementSibling !== host) host.after(f);
     }

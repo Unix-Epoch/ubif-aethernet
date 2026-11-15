@@ -45,7 +45,7 @@ AE.shard({
     document.head.append(h('style', null, `
       .sg-cast { position:relative; padding:0; overflow:visible; background:#1a1c1e; }
       .sg-cast .sg-aicon { border-radius:50%; display:block; width:100%; height:100%; }
-      .sg-cast .n { position:absolute; right:-4px; top:-4px; min-width:18px; height:18px; padding:0 4px; border-radius:10000rem; background:#d1344b; color:#fff;
+      .sg-cast .n { position:absolute; right:-4px; top:-4px; min-width:18px; height:18px; padding:0 4px; border-radius:10000rem; background:var(--aui-status-error, #b91a24); color:#fff;
         font:700 11px/18px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; box-shadow:0 0 0 2px var(--aui-surface, #fff); }
       #${MENU_ID} { position:fixed; z-index:2147483646; width:280px; padding:6px; }
       #${MENU_ID} .opt { display:flex; flex-direction:column; align-items:flex-start; gap:1px; width:100%; padding:8px 10px; border:0; border-radius:8px; background:none; cursor:pointer;
