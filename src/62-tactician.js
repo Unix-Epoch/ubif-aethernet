@@ -481,29 +481,35 @@ AE.shard({
       #${RP} .sw:focus-visible { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; }
       #${RP} .sum { display:flex; flex-wrap:wrap; gap:28px; margin:16px 0 14px; }
       #${RP} .big { font-size:24px; font-weight:700; font-variant-numeric:tabular-nums; }
-      #${RP} .chart { position:relative; height:140px; border-bottom:1px solid var(--aui-outline, #c6c6ca); display:flex; align-items:flex-end; gap:2px; }
+      #${RP} .chart { position:relative; height:140px; margin-left:44px; border-bottom:1px solid var(--aui-outline, #c6c6ca); display:flex; align-items:flex-end; gap:2px; }
+      #${RP} .grid { position:absolute; left:0; right:0; border-top:1px dashed var(--aui-outline-soft, #e4e2e8); pointer-events:none; }
+      #${RP} .yl { position:absolute; left:-44px; width:38px; text-align:right; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); transform:translateY(50%); font-variant-numeric:tabular-nums; pointer-events:none; }
+      #${RP} .legend { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:8px; font-size:12.5px; }
+      #${RP} .legend span { display:inline-flex; align-items:center; gap:6px; }
+      #${RP} .legend i { display:inline-block; width:14px; height:10px; border-radius:2px; }
       #${RP} .band { position:absolute; left:0; right:0; background:color-mix(in srgb, var(--aui-status-success, #136d31) 12%, transparent);
         border-top:1px dashed var(--aui-status-success, #136d31); border-bottom:1px dashed var(--aui-status-success, #136d31); pointer-events:none; z-index:1; }
-      #${RP} .axis .tgt { display:inline-flex; align-items:center; gap:6px; color:var(--aui-status-success, #136d31); font-weight:600; }
-      #${RP} .axis .tgt i { width:18px; height:9px; border:1px dashed currentColor; border-width:1px 0; background:color-mix(in srgb, currentColor 12%, transparent); }
-      #${RP} .col { flex:1; height:100%; display:flex; align-items:flex-end; min-width:2px; position:relative; }
+      #${RP} .legend .good { background:var(--aui-status-success, #136d31); } #${RP} .legend .near { background:#a86400; } #${RP} .legend .miss { background:var(--aui-status-error, #b91a24); }
+      #${RP} .legend .tgt { border:1px dashed var(--aui-status-success, #136d31); border-width:1px 0; border-radius:0; background:color-mix(in srgb, var(--aui-status-success, #136d31) 12%, transparent); }
+      #${RP} .legend .gh { border:1.5px dashed var(--aui-primary, #8223d2); background:color-mix(in srgb, var(--aui-primary, #8223d2) 14%, transparent); }
+      #${RP} .legend .es { background:repeating-linear-gradient(-45deg, var(--aui-status-success, #136d31) 0 3px, transparent 3px 6px); }
+      #${RP} .col { flex:1; height:100%; display:flex; align-items:flex-end; min-width:2px; position:relative; padding:0; border:0; background:none; cursor:pointer; border-radius:3px 3px 0 0; font:inherit; color:inherit; }
+      #${RP} .col:focus-visible, #${RP} .col.sel { outline:2px solid var(--aui-primary, #8223d2); outline-offset:2px; }
       #${RP} .ghost { position:absolute; left:0; right:0; bottom:0; border-radius:3px 3px 0 0; border:1.5px dashed var(--aui-primary, #8223d2); border-bottom:0;
         background:color-mix(in srgb, var(--aui-primary, #8223d2) 14%, transparent); pointer-events:none; }
       #${RP} .bar { position:relative; }
       #${RP} .ghoststat .big { color:color-mix(in srgb, var(--aui-primary, #8223d2) 70%, var(--aui-on-surface, #1a1c1e)); }
       #${RP} .bar { width:100%; border-radius:3px 3px 0 0; color:var(--aui-primary, #8223d2); background:currentColor; }
       /* At or over the target: green. Just below it (within 10%) or would have made it with the RFP total picked up: yellow. Otherwise red. */
-      #${RP} .bar.good { color:var(--aui-status-success, #136d31); } #${RP} .bar.near { color:#d6a000; } #${RP} .bar.miss { color:var(--aui-status-error, #b91a24); }
+      #${RP} .bar.good { color:var(--aui-status-success, #136d31); } #${RP} .bar.near { color:#a86400; } #${RP} .bar.miss { color:var(--aui-status-error, #b91a24); }
       #${RP} .bar.est { background:repeating-linear-gradient(-45deg, currentColor 0 5px, transparent 5px 9px); opacity:.75; }
-      #${RP}-tip { position:fixed; z-index:2147483646; transform:translate(-50%, calc(-100% - 12px)); min-width:220px; max-width:340px; padding:10px 12px; border-radius:12px;
-        background:#1a1c1e; color:#fff; font:13px/1.45 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; box-shadow:0 6px 18px #0005; pointer-events:none; }
-      #${RP}-tip::after { content:''; position:absolute; left:50%; bottom:-7px; margin-left:-7px; border:7px solid transparent; border-bottom:0; border-top-color:#1a1c1e; } /* the bubble's tail, down to the bar */
-      #${RP}-tip .t { font-weight:700; margin-bottom:2px; } #${RP}-tip .s { opacity:.75; font-size:12px; margin-bottom:6px; }
-      #${RP}-tip table { width:100%; border-collapse:collapse; margin:0; } #${RP}-tip td { padding:2px 0; border:0; font-variant-numeric:tabular-nums; } #${RP}-tip td + td { text-align:right; padding-left:12px; white-space:nowrap; }
-      #${RP}-tip .gmt { opacity:.6; font-size:11px; margin-left:4px; } #${RP}-tip .n { opacity:.7; font-size:12px; margin-top:6px; }
+      #${RP} .daybox { margin-top:10px; max-width:360px; padding:10px 12px; border-radius:12px; background:#1a1c1e; color:#fff; font:13px/1.45 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+      #${RP} .daybox .t { font-weight:700; margin-bottom:2px; } #${RP} .daybox .s { opacity:.8; font-size:12.5px; margin-bottom:6px; }
+      #${RP} .daybox table { width:100%; border-collapse:collapse; margin:0; } #${RP} .daybox td { padding:2px 0; border:0; font-variant-numeric:tabular-nums; } #${RP} .daybox td + td { text-align:right; padding-left:12px; white-space:nowrap; }
+      #${RP} .daybox .gmt { opacity:.75; font-size:12px; margin-left:4px; } #${RP} .daybox .n { opacity:.8; font-size:12px; margin-top:6px; }
       #${RP} .bar.none { background:var(--aui-outline, #c6c6ca); }
       #${RP} .col:hover .bar { filter:brightness(1.15); }
-      #${RP} .axis { display:flex; justify-content:space-between; font-size:12px; margin-top:4px; }
+      #${RP} .axis { display:flex; justify-content:space-between; font-size:12px; margin:4px 0 0 44px; }
       #${RP} details { margin-top:12px; } #${RP} summary { cursor:pointer; color:var(--aui-primary, #8223d2); font-weight:600; }
       #${RP} table { width:100%; border-collapse:collapse; margin-top:8px; font-variant-numeric:tabular-nums; }
       #${RP} th { text-align:left; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); padding:6px 8px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); font-weight:400; }
@@ -538,12 +544,13 @@ AE.shard({
     }
     // Bar color: at/over the target's low end = good; within 10% below, or over it with the RFP total picked up = near; else miss.
     const grade = (r, lo) => (r.splh >= lo ? 'good' : r.splh >= lo * 0.9 || (r.ghost && r.ghost >= lo) ? 'near' : 'miss');
-    // Hover a day: a speech bubble with who worked it (this store) and their hours. (No overtime here: Garrett, Oct 12, 2026.)
-    function bubble(col, r, leaveOut) {
-      document.getElementById(RP + '-tip')?.remove();
+    // A day's details under the chart: sales, hours and who worked it (this store). Hovering a bar previews it; a click, a tap or the
+    // keyboard picks the day, and the pick stays (pickDay) until another one. (No overtime here: Garrett, Oct 12, 2026.)
+    let pickDay = null;
+    function dayInfo(r, leaveOut) {
       const fmtD = new Date(r.day + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
       const people = [...r.people.values()].sort((a, b) => b.hrs - a.hrs);
-      const tip = h('div', { id: RP + '-tip', role: 'tooltip' },
+      return [
         h('div', { class: 't' }, fmtD),
         h('div', { class: 's' }, [r.sales != null ? money(r.sales) + ' sales' + (r.source === 'estimated' ? ' (estimated)' : '') : 'No sales data', r.hrs ? r.hrs.toFixed(2) + 'h' : null,
           r.splh != null ? money(r.splh) + '/h' : null, r.ghost ? money(r.ghost) + '/h with the RFP total (' + r.rfpCount + ' devices)' : null].filter(Boolean).join(' · ')),
@@ -551,12 +558,11 @@ AE.shard({
           h('td', null, p.name, p.gm ? h('span', { class: 'gmt' }, leaveOut ? 'GM, left out' : 'GM') : null, p.open ? h('span', { class: 'gmt' }, 'still clocked in') : null),
           h('td', null, p.hrs.toFixed(2) + 'h'))))
           : h('div', { class: 'n' }, 'Nobody clocked in here.'),
-        r.open ? h('div', { class: 'n' }, r.open + ' punch' + (r.open === 1 ? '' : 'es') + ' without a clock-out not counted') : null);
-      document.body.append(tip);
-      const rc = col.getBoundingClientRect(), top = Math.min(...[col.querySelector('.ghost'), col.querySelector('.bar')].filter(Boolean).map((x) => x.getBoundingClientRect().top));
-      const left = Math.min(Math.max(rc.left + rc.width / 2, tip.offsetWidth / 2 + 8), innerWidth - tip.offsetWidth / 2 - 8);
-      tip.style.left = left + 'px'; tip.style.top = Math.max(top, tip.offsetHeight + 20) + 'px'; // above the taller of the bar and its ghost
+        r.open ? h('div', { class: 'n' }, r.open + ' punch' + (r.open === 1 ? '' : 'es') + ' without a clock-out not counted') : null,
+      ];
     }
+    // Y-axis steps: about four lines up to max.
+    const yTicks = (max) => { const raw = max / 4, mag = 10 ** Math.floor(Math.log10(raw)), step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= raw); const out = []; for (let v = 0; v <= max; v += step) out.push(v); return out; };
     function splhCard() {
       const leaveOut = !!GM_getValue(GM_KEY, false);
       const card = h('div', { id: RP, class: 'sg' });
@@ -576,6 +582,27 @@ AE.shard({
       const ghostAll = lastRfp && tH ? (tS + lastRfp.rfp) / tH : null;
       const atTarget = withBoth.filter((r) => r.splh >= tLo).length;
       const fmtDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+      // The chart: one button per day (click, tap, Tab, or the arrow keys), y-axis lines in dollars per labor hour.
+      if (!rows.some((r) => r.day === pickDay)) pickDay = (rows.slice().reverse().find((r) => r.splh != null) || rows[rows.length - 1] || {}).day || null;
+      const dayBox = h('div', { class: 'daybox', 'aria-live': 'polite' });
+      const showDay = (r) => { if (r) dayBox.replaceChildren(...dayInfo(r, leaveOut).filter(Boolean)); };
+      const picked = () => rows.find((r) => r.day === pickDay);
+      const cols = rows.map((r, i) => h('button', { type: 'button', class: 'col' + (r.day === pickDay ? ' sel' : ''), 'aria-pressed': String(r.day === pickDay),
+        'aria-label': fmtDay(r.day) + ': ' + (r.splh != null ? money(r.splh) + ' per labor hour' : 'no data'),
+        onmouseenter: () => showDay(r), onmouseleave: () => showDay(picked()),
+        onclick: () => pick(i),
+        onkeydown: (e) => { const j = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : null; if (j != null && cols[j]) { e.preventDefault(); cols[j].focus(); pick(j); } } },
+        r.ghost ? h('div', { class: 'ghost', style: 'height:' + Math.round(r.ghost / max * 100) + '%' }) : null,
+        h('div', { class: 'bar' + (r.splh == null ? ' none' : ' ' + grade(r, tLo)) + (r.splh != null && r.source === 'estimated' ? ' est' : ''), style: 'height:' + (r.splh != null ? Math.max(2, Math.round(r.splh / max * 100)) : 2) + '%' })));
+      function pick(i) {
+        pickDay = rows[i].day;
+        cols.forEach((c, k) => { c.classList.toggle('sel', k === i); c.setAttribute('aria-pressed', String(k === i)); });
+        showDay(rows[i]);
+      }
+      const chart = h('div', { class: 'chart' },
+        ...yTicks(max).flatMap((v) => [h('div', { class: 'grid', style: 'bottom:' + (v / max * 100) + '%' }), h('span', { class: 'yl', style: 'bottom:' + (v / max * 100) + '%' }, '$' + v)]),
+        h('div', { class: 'band', style: 'bottom:' + (tLo / max * 100) + '%;height:' + ((tHi - tLo) / max * 100) + '%' }), ...cols);
+      showDay(picked());
       card.append(
         h('div', { class: 'sum' },
           h('div', null, h('div', { class: 'big' }, tH ? money(tS / tH) : '—'), h('div', { class: 'sg-soft' }, 'per labor hour')),
@@ -584,10 +611,16 @@ AE.shard({
           best ? h('div', null, h('div', { class: 'big' }, money(best.splh)), h('div', { class: 'sg-soft' }, 'best day · ' + fmtDay(best.day))) : null,
           ghostAll ? h('div', { class: 'ghoststat' }, h('div', { class: 'big' }, money(ghostAll)), h('div', { class: 'sg-soft' }, 'if the RFP total were picked up (' + money(lastRfp.rfp) + ', ' + lastRfp.rfpCount + ' devices)')) : null,
           h('div', null, h('div', { class: 'big' }, atTarget + ' of ' + withBoth.length), h('div', { class: 'sg-soft' }, 'days at target ($' + tLo + '–$' + tHi + (leaveOut ? ', without GM' : ', with GM') + ')'))),
-        h('div', { class: 'chart' }, h('div', { class: 'band', style: 'bottom:' + (tLo / max * 100) + '%;height:' + ((tHi - tLo) / max * 100) + '%', title: 'Target: $' + tLo + '–$' + tHi + ' per labor hour' }), ...rows.map((r) => h('div', { class: 'col', onmouseenter: (e) => bubble(e.currentTarget, r, leaveOut), onmouseleave: () => document.getElementById(RP + '-tip')?.remove() },
-          r.ghost ? h('div', { class: 'ghost', style: 'height:' + Math.round(r.ghost / max * 100) + '%' }) : null,
-          h('div', { class: 'bar' + (r.splh == null ? ' none' : ' ' + grade(r, tLo)) + (r.splh != null && r.source === 'estimated' ? ' est' : ''), style: 'height:' + (r.splh != null ? Math.max(2, Math.round(r.splh / max * 100)) : 2) + '%' })))),
-        h('div', { class: 'axis sg-soft' }, h('span', null, fmtDay(data.from)), h('span', { class: 'tgt' }, h('i'), 'Target $' + tLo + '–$' + tHi + (leaveOut ? ' without GM' : ' with GM')), h('span', null, fmtDay(data.to))),
+        chart,
+        h('div', { class: 'axis sg-soft' }, h('span', null, fmtDay(data.from)), h('span', null, fmtDay(data.to))),
+        h('div', { class: 'legend' },
+          h('span', null, h('i', { class: 'good' }), 'At target'),
+          h('span', null, h('i', { class: 'near' }), 'Near target'),
+          h('span', null, h('i', { class: 'miss' }), 'Below target'),
+          rows.some((r) => r.splh != null && r.source === 'estimated') ? h('span', null, h('i', { class: 'es' }), 'Estimated') : null,
+          rows.some((r) => r.ghost) ? h('span', null, h('i', { class: 'gh' }), 'With RFP') : null,
+          h('span', null, h('i', { class: 'tgt' }), 'Target $' + tLo + '–$' + tHi + (leaveOut ? ' without GM' : ' with GM'))),
+        dayBox,
         h('details', { class: 'days' }, h('summary', null, 'Days'),
           h('table', null, h('tr', null, ['Day', 'Sales', 'Labor hours', 'Per labor hour', 'If RFP picked up', ''].map((x) => h('th', null, x))),
             ...rows.slice().reverse().map((r) => h('tr', null, h('td', null, fmtDay(r.day)), h('td', null, r.sales != null ? money(r.sales) : '—'), h('td', null, r.hrs ? r.hrs.toFixed(2) + 'h' : '—'),

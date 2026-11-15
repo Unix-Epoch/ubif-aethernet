@@ -187,6 +187,9 @@ AE.shard({
       #${DLG} .note { font-size:12.5px; color:var(--aui-on-surface-soft, #777); margin-top:10px; }
       #${DLG} .unk { margin-top:16px; border-radius:12px; padding:12px 14px; font-size:14px; background:var(--aui-status-warning-soft, #fdf6e7); color:var(--aui-status-on-warning-soft, #3d2e00); border:1px solid #f0d9a8; }
       #${DLG} .unk b { font-size:15px; }
+      #${DLG} .cf { margin-top:10px; border:2px solid var(--aui-primary, #8223d2); border-radius:12px; padding:12px 14px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; font-size:14px; }
+      #${DLG} .cf > span { flex:1; min-width:200px; }
+      #${DLG} .wrong { font:inherit; font-size:13px; font-weight:600; padding:0; border:0; background:none; cursor:pointer; color:var(--aui-primary, #8223d2); text-decoration:underline; }
       #${DLG} .unk .s { font-size:13px; opacity:.8; margin-top:2px; }
       #${DLG} .sug { margin-top:10px; display:flex; align-items:center; gap:10px; border:1px solid var(--aui-outline, #d9d9de); border-radius:10px; padding:10px 12px; background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); }
       #${DLG} .sug .t { flex:1; }
@@ -258,7 +261,7 @@ AE.shard({
         const key = meid || hexTyping ? 'hex:' + compact : d;
         if (key === st.key && st.state !== 'idle') return;
         st.key = key; st.digits = d; st.run++;
-        Object.assign(st, { sv: false, data: null, apple: null, warr: null, color: '', pick: null, results: [], query: '', suggestion: null, popup: false, thanks: false });
+        Object.assign(st, { sv: false, data: null, apple: null, warr: null, color: '', pick: null, results: [], query: '', suggestion: null, popup: false, thanks: false, confirming: null, wrong: false });
         if (meid) { st.state = 'meid'; st.tac = ''; }
         else if (hexTyping || d.length < 15) { st.state = 'idle'; st.tac = ''; }
         else if (D.junk(d)) { st.state = 'junk'; st.tac = ''; }
@@ -345,7 +348,9 @@ AE.shard({
           h('div', { class: 'note' }, appleDevice ? (d.colors.length ? "The IMEI can't tell us the color. Pick one stores have seen on this model." : '')
             : 'Serial and Find My are Apple-only.'));
         const use = onDeviceStep() ? btn('Use this device', () => useDevice(), 'sg-primary', st.busy) : null;
-        foot.replaceChildren(h('span', { class: 'sp' }, apple ? 'Serial and Find My use Portal\'s backend to check' : ''),
+        // "Wrong model?": pick the right one from Portal's list; saving it adds a vote, and the most common model per TAC wins.
+        const wrong = h('button', { type: 'button', class: 'wrong', onclick: () => { AE.track('decipher:wrong'); Object.assign(st, { state: 'unknown', wrong: true, suggestion: null, pick: null, results: [], query: '', confirming: null }); search.value = ''; draw(); } }, 'Wrong model?');
+        foot.replaceChildren(wrong, h('span', { class: 'sp' }, apple ? 'Serial and Find My use Portal\'s backend to check' : ''),
           ...[btn('Copy model', () => { AE.track('decipher:copy'); copy(modelText(), 'model'); }, use ? '' : 'sg-primary'), use].filter(Boolean));
       }
 
@@ -398,23 +403,38 @@ AE.shard({
       }
       function drawUnknownFoot() {
         saveBtn = btn('Save model', () => save(), 'sg-primary', !st.pick || st.busy || accepting);
-        foot.replaceChildren(h('span', { class: 'sp' }, "These are Portal's models"), saveBtn);
+        const back = st.wrong ? btn('Cancel', () => { st.run++; st.state = 'loading'; st.wrong = false; draw(); find(st.run); }) : null;
+        foot.replaceChildren(h('span', { class: 'sp' }, "These are Portal's models"), ...[back, saveBtn].filter(Boolean));
       }
       function drawUnknown() {
         const s = st.suggestion;
         const sugText = s ? (s.brand && !D.norm(s.model).startsWith(D.norm(s.brand)) ? s.brand + ' ' : '') + s.model : '';
-        body.replaceChildren(
-          h('div', { class: 'unk' }, h('b', null, 'New device or a rare IMEI! No store has seen this yet.'), h('div', { class: 's' }, 'Tell us what it is once and every store gets it from then on.'),
+        sugBtn = null;
+        body.replaceChildren(...[
+          st.wrong ? null : h('div', { class: 'unk' }, h('b', null, 'New device or a rare IMEI! No store has seen this yet.'), h('div', { class: 's' }, 'Tell us what it is once and every store gets it from then on.'),
             s ? h('div', { class: 'sug' }, h('div', { class: 't' }, sugText, h('div', { class: 's' }, 'Our best guess, from a public device list')),
-              sugBtn = btn("That's it", () => acceptSuggestion(sugText), 'sg-primary', accepting || st.busy)) : null),
-          h('label', { class: 'f' }, s ? 'Not it? Find the model' : 'Find the model'), h('div', { class: 'in' }, search), listWrap);
+              sugBtn = btn("That's it", () => acceptSuggestion(sugText), 'sg-primary', accepting || st.busy || !!st.confirming)) : null),
+          confirmBox,
+          h('label', { class: 'f' }, s ? 'Not it? Find the model' : 'Find the model'), h('div', { class: 'in' }, search), listWrap].filter(Boolean));
+        drawConfirm();
         listWrap.replaceChildren(list);
         drawList();
         setTimeout(() => { if (st.state === 'unknown' && !s) search.focus(); });
       }
       // Both buttons are off while a save (or the search before it) is running, so a double click saves once.
-      const setButtons = () => { const off = accepting || st.busy; if (sugBtn) sugBtn.disabled = off; if (saveBtn) saveBtn.disabled = off || !st.pick; };
-      // "That's it": search Portal for the suggestion; a match is saved right away, no match leaves it in the box.
+      const setButtons = () => { const off = accepting || st.busy; if (sugBtn) sugBtn.disabled = off || !!st.confirming; if (saveBtn) saveBtn.disabled = off || !st.pick; };
+      // "That's it" asks once before saving for every store, naming the model it found in Portal's list.
+      const confirmBox = h('div', { class: 'cf', role: 'group', 'aria-label': 'Confirm model' });
+      function drawConfirm() {
+        const c = st.confirming;
+        confirmBox.hidden = !c;
+        if (!c) { confirmBox.replaceChildren(); return; }
+        const yes = btn('Save', () => { st.confirming = null; drawConfirm(); save(); }, 'sg-primary', st.busy);
+        confirmBox.replaceChildren(h('span', null, 'Save ', h('b', null, c.name), ' for every store?'),
+          btn('Cancel', () => { st.confirming = null; drawConfirm(); setButtons(); search.focus(); }), yes);
+        setTimeout(() => yes.focus());
+      }
+      // "That's it": search Portal for the suggestion; a match is confirmed, then saved; no match leaves it in the box.
       async function acceptSuggestion(text) {
         if (accepting || st.busy) return;
         AE.track('decipher:suggestion');
@@ -422,7 +442,7 @@ AE.shard({
         search.value = text; st.query = text; st.pick = null;
         await runSearch(st.suggestion);
         accepting = false;
-        if (st.pick) return save();
+        if (st.pick) { st.confirming = st.pick; drawConfirm(); setButtons(); return; }
         // Nothing of that name in Portal: the suggestion stays in the box for the tech to adjust.
         setButtons(); search.focus();
       }

@@ -71,7 +71,11 @@ AE.shard({
       #${BOX_ID} .ft .sp { flex:1; }
       #${BOX_ID} label.chk { display:flex; gap:6px; align-items:center; font-size:13px; margin-top:8px; }
       #${BOX_ID} .call { margin:0 0 10px; padding:8px 10px; border-radius:8px; background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); font-size:13px; }
-      #${BOX_ID} .hint { text-decoration:underline dotted; text-underline-offset:3px; cursor:help; }
+      #${BOX_ID} .quote { margin:6px 0 0; padding:6px 10px; border-left:3px solid var(--aui-outline, #c6c6ca); border-radius:0 8px 8px 0;
+        background:var(--aui-neutral-soft, #f1f0f4); font-size:13px; white-space:pre-wrap; }
+      #${BOX_ID} .quote.off { opacity:.45; }
+      #${BOX_ID} .reset { font:inherit; font-size:13px; font-weight:600; margin-top:6px; padding:0; border:0; background:none; cursor:pointer; color:var(--aui-primary, #8223d2); text-decoration:underline; }
+      #${BOX_ID} .ft .half { display:flex; gap:10px; align-items:center; flex-wrap:wrap; color:var(--aui-status-error, #b91a24); font-weight:600; }
     `));
 
     // ------------------------------------------------------------ sheets
@@ -138,17 +142,33 @@ AE.shard({
       const prior = ((hist && hist.messages) || []).find((m) => String(m.direction).toUpperCase() === 'OUTBOUND' && new Date(m.contactDate || m.createdAt).getTime() > since);
       if (prior) return { already: prior };
       const fromNum = String(from.value).startsWith('+1') ? from.value : '+1' + from.value;
-      for (const message of texts) {
-        await AE.api('POST', '/api/messages/v1/send', {
-          customerId: a.customer.customerId, communicationType: SMS, message,
-          messageDestination: { smsPhoneNumber: '+1' + to, smsPhoneNumberType: PRIMARY_CONTACT },
-          messageSource: { smsPhoneNumber: fromNum }, senderTechnicianId: prof.userId, storeId: prof.storeId,
-        });
+      // Once a text has gone out, an error must not read as "nothing sent": it carries what was sent (err.sent, the texts)
+      // and how far the finishing steps got (err.noted), so the box offers only the missing step and never a second text.
+      const done = { sent: [], noted: false };
+      try {
+        for (const message of texts) {
+          await AE.api('POST', '/api/messages/v1/send', {
+            customerId: a.customer.customerId, communicationType: SMS, message,
+            messageDestination: { smsPhoneNumber: '+1' + to, smsPhoneNumberType: PRIMARY_CONTACT },
+            messageSource: { smsPhoneNumber: fromNum }, senderTechnicianId: prof.userId, storeId: prof.storeId,
+          });
+          done.sent.push(message);
+        }
+        await finish(a, done, title);
+      } catch (e) {
+        if (done.sent.length) throw Object.assign(e, { sent: done.sent, noted: done.noted });
+        throw e;
       }
-      await AE.api('POST', '/api/note', { arrivalId: a.arrivalId, noteText: 'Texted the customer (' + title + '):\n\n' + texts.join('\n\n'), noteType: MANUAL_NOTE, noteTag: 'contacted' });
+      return { sent: true };
+    }
+    // The steps after texting: the "contacted" note (with the texts that went out), then the arrival marked contacted.
+    async function finish(a, done, title) {
+      if (!done.noted) {
+        await AE.api('POST', '/api/note', { arrivalId: a.arrivalId, noteText: 'Texted the customer (' + title + '):\n\n' + done.sent.join('\n\n'), noteType: MANUAL_NOTE, noteTag: 'contacted' });
+        done.noted = true;
+      }
       await AE.api('PUT', '/api/arrivals/' + a.arrivalId, { arrivalId: a.arrivalId, arrivalStatusId: a.arrivalStatus && a.arrivalStatus.arrivalStatusId, contacted: true });
       AE.portal('refresh', { tags: ['Arrivals'] });
-      return { sent: true };
     }
 
     // ------------------------------------------------------------ the box
@@ -178,33 +198,52 @@ AE.shard({
       const items = leads.data.items || [];
       const p = pick(a, leads.data, prices && prices.data);
       let price = p.price;
-      const ta = h('textarea', { rows: 4 });
-      const sel = h('select', { onchange: () => { p.item = items[Number(sel.value)] || null; setText(); } },
+      // edited: the tech changed the text by hand. Then a price chip only swaps the dollar amounts it put there, and
+      // picking another message asks before replacing it; "Reset text" (shown only then) puts the sheet's text back.
+      let filled = '', edited = false, locked = false; // locked: texts went out, Send stays off
+      const reset = h('button', { type: 'button', class: 'reset', hidden: true, onclick: () => { setText(); ta.focus(); } }, 'Reset text');
+      const markEdited = () => { edited = ta.value !== filled; reset.hidden = !edited; btn.disabled = locked || !ta.value.trim(); };
+      const ta = h('textarea', { rows: 4, oninput: markEdited });
+      let selAt = '';
+      const sel = h('select', { onchange: async () => {
+        if (edited && !(await AE.confirm({ icon: 'leadReplies', title: 'Replace your edited text?', confirmLabel: 'Replace' }))) { sel.value = selAt; return; }
+        selAt = sel.value; p.item = items[Number(sel.value)] || null; setText();
+      } },
         h('option', { value: '' }, 'Choose a message from the lead sheet…'));
       let group = null, og = null;
       items.forEach((it, i) => {
         if (it.group !== group) { group = it.group; og = h('optgroup', { label: group || 'Messages' }); sel.append(og); }
         og.append(h('option', { value: i, selected: it === p.item }, it.title));
       });
-      const setText = () => { ta.value = p.item ? fill(p.item.texts[0], price) : ''; btn.disabled = !ta.value.trim(); };
+      selAt = sel.value;
+      const setText = () => { ta.value = filled = p.item ? fill(p.item.texts[0], price) : ''; markEdited(); };
+      // Edited text: put the new price where the old one was, and nothing else.
+      const swapPrice = (from, to) => {
+        if (from == null || from === to) return;
+        const a = money(from), b = money(to);
+        if (ta.value.includes(a)) { ta.value = ta.value.split(a).join(b); filled = filled.split(a).join(b); markEdited(); }
+      };
       const chips = p.prices && p.prices.length
         ? h('div', { class: 'chips' }, h('span', { class: 'sg-soft' }, p.prices.every((x) => x.console) ? 'Prices:' : 'Screen:'),
-          p.prices.map((x, i) => { const c = h('button', { type: 'button', class: 'chip' + ((p.slots ? p.slots.includes(x) : i === 0 && price != null) ? ' on' : ''), title: x.raw, 'data-slot': p.slots ? (isOem(x) ? 1 : 0) : '', onclick: () => {
+          p.prices.map((x, i) => { const on = p.slots ? p.slots.includes(x) : i === 0 && price != null; const c = h('button', { type: 'button', class: 'chip' + (on ? ' on' : ''), 'aria-pressed': String(on), title: x.raw, 'data-slot': p.slots ? (isOem(x) ? 1 : 0) : '', onclick: () => {
             // iPhone Display message: a chip sets its own slot (3rd party or OEM) and keeps the other; otherwise one price.
-            if (p.slots) { const slot = isOem(x) ? 1 : 0; price = price.slice(); price[slot] = x.price; c.parentElement.querySelectorAll('.chip[data-slot="' + slot + '"]').forEach((o) => o.classList.toggle('on', o === c)); }
-            else { price = x.price; c.parentElement.querySelectorAll('.chip').forEach((o) => o.classList.toggle('on', o === c)); }
-            if (p.priced && p.item !== p.priced) { p.item = p.priced; sel.value = String(items.indexOf(p.priced)); }
+            const was = p.slots ? price[isOem(x) ? 1 : 0] : price;
+            const mark = (sel2) => c.parentElement.querySelectorAll(sel2).forEach((o) => { o.classList.toggle('on', o === c); o.setAttribute('aria-pressed', String(o === c)); });
+            if (p.slots) { const slot = isOem(x) ? 1 : 0; price = price.slice(); price[slot] = x.price; mark('.chip[data-slot="' + slot + '"]'); }
+            else { price = x.price; mark('.chip'); }
+            if (edited) { swapPrice(was, x.price); return; }
+            if (p.priced && p.item !== p.priced) { p.item = p.priced; sel.value = selAt = String(items.indexOf(p.priced)); }
             setText();
           } }, x.label + ' ' + money(x.price)); return c; }))
         : (typeOf(a) === APPOINTMENT && prices && prices.data ? h('div', { class: 'chips sg-soft' }, "This device isn't on the price sheet.") : null);
-      const second = p.second ? h('input', { type: 'checkbox', checked: true }) : null;
+      const quote = p.second ? h('div', { class: 'quote' }, p.second.texts[0]) : null;
+      const second = p.second ? h('input', { type: 'checkbox', checked: true, onchange: () => quote.classList.toggle('off', !second.checked) }) : null;
       const msg = h('span', { class: 'sg-soft' });
       const btn = h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: go, html: AE.actionIcon('leadReplies', 18) + 'Send and mark contacted' });
       async function go() {
-        const texts = [ta.value.trim()].concat(second && second.checked ? [p.second.texts[0]] : []);
         btn.disabled = true; msg.textContent = 'Sending…';
         try {
-          const r = await send(a, texts, (p.item && p.item.title) || 'Provoke');
+          const r = await send(a, texts(), (p.item && p.item.title) || 'Provoke');
           if (r.blocked) { msg.textContent = r.blocked; btn.disabled = false; return; }
           if (r.already) {
             const by = [r.already.senderGivenName, r.already.senderFamilyName].filter(Boolean).join(' ') || 'Someone';
@@ -215,17 +254,42 @@ AE.shard({
           root.remove();
           AE.toast('Provoke', 'Texted ' + (a.customer.givenName || a.customer.fullName || 'the customer') + ' and marked the arrival contacted.' + (p.call ? ' Remember to call them too.' : ''), 'ok', p.call ? 15000 : undefined);
         } catch (err) {
+          if (err.sent) { half(err); return; } // texted: Send stays off, only the missing step is offered
           msg.innerHTML = "Couldn't send this." + report('Sending lead reply for arrival ' + a.arrivalId, err);
           btn.disabled = false;
         }
       }
+      // Some or all texts went out but a later step failed: say so and offer "Mark contacted" (note + contacted, as far as they got).
+      function half(err) {
+        const done = { sent: err.sent, noted: !!err.noted };
+        const title = (p.item && p.item.title) || 'Provoke';
+        const what = done.sent.length < texts().length ? 'Sent ' + done.sent.length + ' of ' + texts().length + " texts, but couldn't mark contacted." : "Texted, but couldn't mark contacted.";
+        const fix = h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: async () => {
+          fix.disabled = true;
+          try {
+            await finish(a, done, title);
+            AE.track('leadReplies:markContacted');
+            root.remove();
+            AE.toast('Provoke', 'Marked the arrival contacted.', 'ok');
+          } catch (e2) {
+            fix.disabled = false;
+            line.replaceChildren(what, fix);
+            line.insertAdjacentHTML('beforeend', '<span>' + report('Marking arrival ' + a.arrivalId + ' contacted after texting', e2).trim() + '</span>');
+          }
+        } }, 'Mark contacted');
+        const line = h('span', { class: 'half' }, what, fix);
+        msg.replaceChildren(line);
+        locked = true; btn.disabled = true;
+      }
+      const texts = () => [ta.value.trim()].concat(second && second.checked ? [p.second.texts[0]] : []);
       const root = h('div', { id: BOX_ID, class: 'sg' + (p.ready ? '' : ' need'), 'data-id': String(a.arrivalId) },
         h('div', { class: 'hd' }, h('span', { style: 'line-height:0', html: AE.actionIcon('leadReplies', 26) }),
           h('div', { class: 'txt' }, h('b', null, 'Provoke - Reply')),
           h('span', { class: 'pill' }, p.ready ? 'Reply ready' : 'Needs a reply')),
         p.call ? h('div', { class: 'call' }, h('b', null, 'Call this customer too.'), ' ' + (programOf(a) === 6494 ? 'Samsung In-Warranty' : 'Out-of-warranty') + ' leads need a call as well as a text.') : null,
         sel, chips, ta,
-        second ? h('label', { class: 'chk' }, second, h('span', { class: 'hint', title: p.second.texts[0] }, 'Also send the price match message')) : null,
+        reset,
+        second ? h('label', { class: 'chk' }, second, h('span', null, 'Also send the price match message')) : null, quote,
         h('div', { class: 'ft' }, msg, h('span', { class: 'sp' }), btn),
         h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' }, 'From the lead sheet' + edited(leads) +
           (p.prices && p.prices.length ? ' and Price sheet' + edited(prices) : '') + '.'));

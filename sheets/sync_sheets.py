@@ -19,7 +19,7 @@ Key: the SHEETS_KEY Worker secret, read from the macOS Keychain
 (service "aethernet-sheets"). Runs from launchd every 15 minutes; outside
 8 AM-8 PM it does nothing.
 
-Usage: ~/Scripts/ubif-daily-sales/.venv/bin/python3 sync_sheets.py [--force] [--dry-run] [--any-hour]
+Usage: ~/Scripts/ubif-daily-sales/.venv/bin/python3 sync_sheets.py [--force] [--dry-run] [--any-hour] [--check-leads]
 """
 import io
 import json
@@ -99,8 +99,10 @@ def is_message(t, plain=None):
 
 def parse_leads(docx):
     """[{group, title, texts}] in the doc's order. A title with no message under it
-    before the next title is a group heading (INSURANCE LEADS, Misc Partner Leads, ...)."""
-    items, group, title, texts = [], "", None, []
+    before the next title is a group heading (INSURANCE LEADS, Misc Partner Leads, ...).
+    Every line of the doc must end up as a group, a title or a message: anything else (a message above the
+    first title, a title with no message at the end) is listed in "unplaced" so the sync can say so."""
+    items, group, title, texts, unplaced = [], "", None, [], []
 
     def flush():
         if title is not None and texts:
@@ -108,14 +110,34 @@ def parse_leads(docx):
 
     for t, plain in paragraphs(docx):
         if is_message(t, plain):
-            texts.append(t)
+            if title is None:
+                unplaced.append(t)  # a message with no title above it
+            else:
+                texts.append(t)
             continue
         if title is not None and not texts:
             group = title.rstrip(" -:")  # the previous line was a heading
         flush()
         title, texts = tidy_title(plain or t), []
     flush()
-    return {"items": items}
+    if title is not None and not texts:
+        unplaced.append(title)  # a title with no message, last in the doc
+    return {"items": items, "unplaced": unplaced}
+
+
+def check_leads(docx):
+    """Print every message the parser finds, by group, and anything it couldn't place. Returns the unplaced count."""
+    d = parse_leads(docx)
+    group = None
+    for it in d["items"]:
+        if it["group"] != group:
+            group = it["group"]
+            print(f"\n{group or '(no group)'}")
+        print(f"  {it['title']}" + (f"  ({len(it['texts'])} texts)" if len(it["texts"]) > 1 else ""))
+    print(f"\n{len(d['items'])} messages")
+    for t in d["unplaced"]:
+        print(f"NOT PLACED: {t[:120]}", file=sys.stderr)
+    return len(d["unplaced"])
 
 
 # ------------------------------------------------------------------ prices (.xlsx)
@@ -211,6 +233,8 @@ def push(kind, data, key):
 
 
 def main():
+    if "--check-leads" in sys.argv:  # parse the last downloaded lead sheet and list what Provoke gets
+        return 1 if check_leads(LEADS_FILE.read_bytes()) else 0
     force, dry = "--force" in sys.argv, "--dry-run" in sys.argv
     if not force and "--any-hour" not in sys.argv and not (8 <= datetime.now().hour < 20):
         return 0
@@ -230,6 +254,8 @@ def main():
     if "leads" in changed:
         LEADS_FILE.write_bytes(changed["leads"][0])
         data["leads"] = parse_leads(changed["leads"][0])
+        for t in data["leads"]["unplaced"]:
+            print(f"lead sheet: not placed: {t[:120]}", file=sys.stderr)
     if "prices" in changed:
         fps.OUT_FILE.write_bytes(changed["prices"][0])  # also keeps the audit's copy current
         fps.export_text()

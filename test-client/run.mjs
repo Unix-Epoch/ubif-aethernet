@@ -1553,9 +1553,14 @@ await t('Spread: "in status" only for Ready for pickup with Portal\'s rfpWorkord
   assert.equal(card({ workorderStatusId: 9, updatedAt: new Date(SP_NOW + 7200000).toISOString() }).time, 'Updated <1h ago'); // a clock ahead of Portal's never reads negative
   assert.equal(SP.ageText(23), '23h'); assert.equal(SP.ageText(24), '1d 0h'); assert.equal(SP.ageText(120), '5d 0h');
 });
-await t('Spread: a card is "old" from 48 h (a placeholder threshold), not before', () => {
-  assert.equal(SP.OLD_HOURS, 48);
-  assert.equal(SP.cardOf(spRow({ updatedAt: spAgo(47.9) }), SP_NOW).old, false); assert.equal(SP.cardOf(spRow({ updatedAt: spAgo(48) }), SP_NOW).old, true);
+await t('Spread: a card is "old" from 7 days in Waiting and Ready for pickup, 3 days in every other column, not before', () => {
+  assert.deepEqual(plain(SP.COLUMNS.map((c) => c.oldHours)), [72, 72, 72, 168, 168]);
+  for (const [st, h] of [[2, 72], [8, 72], [24, 72], [10, 72], [3, 168], [4, 168], [7, 168], [17, 168]]) { // 17: no column of its own, so Waiting's rule
+    assert.equal(SP.cardOf(spRow({ workorderStatusId: st, updatedAt: spAgo(h - 0.1) }), SP_NOW).old, false, st + ' before');
+    assert.equal(SP.cardOf(spRow({ workorderStatusId: st, updatedAt: spAgo(h) }), SP_NOW).old, true, st + ' at');
+  }
+  assert.equal(SP.cardOf(spRow({ workorderStatusId: 13, rfpWorkorderStatusDate: spAgo(167.9), updatedAt: spAgo(500) }), SP_NOW).old, false); // RFP: time in status, not updatedAt
+  assert.equal(SP.cardOf(spRow({ workorderStatusId: 13, rfpWorkorderStatusDate: spAgo(168) }), SP_NOW).old, true);
   assert.equal(SP.cardOf(spRow({ updatedAt: null }), SP_NOW).old, false);
 });
 await t('Spread: the RFP total shows only in the Ready for pickup header, and only with a real figure', () => {
