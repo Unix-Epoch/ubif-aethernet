@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Today's sales": the small widget (today and yesterday). -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:configure="dev.aethernet.linkpearl.feature.widget.WidgetConfigActivity"
+    android:description="@string/widget_sales"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:minWidth="100dp"
+    android:minHeight="70dp"
+    android:minResizeWidth="100dp"
+    android:minResizeHeight="70dp"
+    android:previewImage="@drawable/ic_launcher_foreground"
+    android:previewLayout="@layout/widget_preview_sales"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen|keyguard"
+    android:widgetFeatures="reconfigurable|configuration_optional" />

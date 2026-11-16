@@ -71,6 +71,8 @@ object LpIcons {
     val Retrace = icon("retrace", "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M15 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M9 6h5a3 3 0 0 1 0 6h-4a3 3 0 0 0 0 6h5")
     val Outbox = icon("outbox", "M4 14v6h16v-6M12 15V4M8 8l4-4 4 4")
     val Tag = icon("tag", "M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z", "M7.5 7.5h.01")
+    val Download = icon("download", "M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4", "M12 4v11M7 10l5 5 5-5")
+    val ArrowRight = icon("arrowRight", "M5 12h14M13 6l6 6-6 6")
     val BellOff = icon("bellOff", "M6 8a6 6 0 0 1 9.5-4.9M18 11c0 5 3 6 3 6H8M10.3 21a1.94 1.94 0 0 0 3.4 0", "M3 3l18 18")
     /** Alerts: the morning digest (a sun rising over the horizon). */
     val Sunrise = icon("sunrise", "M12 2v8M4.9 10.9l1.4 1.4M2 18h2M20 18h2M19.1 10.9l-1.4 1.4M22 22H2M8 6l4-4 4 4M16 18a4 4 0 0 0-8 0")

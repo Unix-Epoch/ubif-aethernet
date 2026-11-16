@@ -140,4 +140,14 @@ class SettingsViewModelTest {
     }
 
     @Test fun lockLabelIsTheFixedTimeout() { assertEquals("30 minutes", lockAfterLabel()) }
+
+    @Test fun prefsMinAppGoesToTheUpdateGate() = runTest {
+        val seen = mutableListOf<dev.aethernet.linkpearl.feature.update.MinVersion>()
+        val json = Json.parseToJsonElement("""{"v":1,"stores":[],"minApp":{"code":5,"name":"1.1.2"}}""")
+        SettingsViewModel(FakeAuth(registered), StubAppLock(), MemoryAppPrefs(), FakeApi(ApiResult.Success(json)), tz = "America/New_York", onMinApp = { seen += it })
+        assertEquals(listOf(dev.aethernet.linkpearl.feature.update.MinVersion(5, "1.1.2")), seen)
+        // An older server without minApp: nothing.
+        vm()
+        assertEquals(1, seen.size)
+    }
 }

@@ -12,9 +12,15 @@ import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
 
-/** The periodic job: everything happens in [AlertChecker]. Never throws; failures are results. */
-class AlertsWorker(context: Context, params: WorkerParameters, private val hub: () -> AlertsHub) : CoroutineWorker(context, params) {
+/**
+ * The periodic job: everything happens in [AlertChecker]. Never throws; failures are results. [alsoRun] rides along on the same
+ * run (the app update check, which itself asks the server at most every few hours); its failures are ignored.
+ */
+class AlertsWorker(
+    context: Context, params: WorkerParameters, private val hub: () -> AlertsHub, private val alsoRun: suspend () -> Unit = {},
+) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = try {
+        try { alsoRun() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
         when (hub().checker.run(runAttemptCount)) {
             CheckOutcome.Done -> Result.success()
             CheckOutcome.Retry -> Result.retry()
@@ -26,9 +32,9 @@ class AlertsWorker(context: Context, params: WorkerParameters, private val hub: 
     }
 }
 
-class AlertsWorkerFactory(private val hub: () -> AlertsHub) : WorkerFactory() {
+class AlertsWorkerFactory(private val hub: () -> AlertsHub, private val alsoRun: suspend () -> Unit = {}) : WorkerFactory() {
     override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
-        if (workerClassName == AlertsWorker::class.java.name) AlertsWorker(appContext, workerParameters, hub) else null
+        if (workerClassName == AlertsWorker::class.java.name) AlertsWorker(appContext, workerParameters, hub, alsoRun) else null
 }
 
 /** The one unique periodic job. WorkManager persists it across reboots and app updates and reschedules it itself. */

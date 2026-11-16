@@ -129,6 +129,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.glance.appwidget) // home-screen widgets (feature/widget)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
@@ -142,6 +143,7 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)
+    testImplementation(libs.glance.appwidget.testing)
 }
 
 // `./gradlew screenshots` renders every screenshot test and writes the PNGs to android/screenshots/ (JVM only, no device).
