@@ -1,5 +1,6 @@
 package dev.aethernet.linkpearl.feature.alerts
 
+import dev.aethernet.linkpearl.core.design.lpSurface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -92,8 +93,8 @@ fun AlertRow(
     val meta = AlertText.meta(alert, names)
     Row(
         modifier.fillMaxWidth().heightIn(min = 72.dp).clip(shape)
-            .background(if (selected) c.accSoft else c.surf)
-            .drawBehind { if (!alert.read) drawRect(c.acc, Offset.Zero, Size(4.dp.toPx(), size.height)) }
+            .background(if (selected) c.accSoft else androidx.compose.ui.graphics.Color.Transparent)
+            .drawBehind { if (!alert.read) drawRoundRect(c.acc, Offset(0f, 14.dp.toPx()), Size(4.dp.toPx(), size.height - 28.dp.toPx()), androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())) }
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) { contentDescription = (if (alert.read) "" else "Unread. ") + "$sentence. $meta" }
             .padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
@@ -175,10 +176,10 @@ fun thresholdText(type: AlertType, v: Int): String = when (type) {
 @Composable
 fun GroupCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val c = Lp.colors
-    Column(modifier.fillMaxWidth().clip(LpShapes.Card).background(c.surf).border(1.dp, c.line, LpShapes.Card)) { content() }
+    Column(modifier.fillMaxWidth().lpSurface(LpShapes.Card)) { content() }
 }
 
 @Composable
 fun Hairline() {
-    Box(Modifier.fillMaxWidth().height(1.dp).background(Lp.colors.line))
+    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(1.dp).background(Lp.colors.fg.copy(alpha = 0.07f)))
 }

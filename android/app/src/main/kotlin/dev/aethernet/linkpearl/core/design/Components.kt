@@ -8,7 +8,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +33,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -59,19 +65,34 @@ import androidx.compose.ui.window.Dialog
 // Shared building blocks. core/design is scaffold-owned: feature agents use these and request additions in their report.
 // ---------------------------------------------------------------------------------------------------------------------------
 
-/** Card surface: surf fill, 1dp line border, 20dp corners, 16dp padding. [description] makes the card one TalkBack stop's label. */
+/**
+ * Card surface: a quiet top-to-bottom gradient, a 1dp light catch along the top edge, a soft shadow, 20dp corners, 16dp padding.
+ * [description] makes the card one TalkBack stop's label. [onClick] makes the whole card tappable (with a small press scale).
+ */
 @Composable
-fun LpCard(modifier: Modifier = Modifier, description: String? = null, padding: Dp = LpSpacing.L, content: @Composable ColumnScope.() -> Unit) {
-    val c = Lp.colors
+fun LpCard(modifier: Modifier = Modifier, description: String? = null, padding: Dp = LpSpacing.L, onClick: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(c.surf, LpShapes.Card)
-            .border(1.dp, c.line, LpShapes.Card)
+            .let { if (onClick != null) it.pressScale(interaction) else it }
+            .lpSurface(LpShapes.Card)
+            .let { if (onClick != null) it.clickable(interaction, LocalIndication.current, role = Role.Button, onClick = onClick) else it }
             .padding(padding)
             .let { if (description != null) it.semantics { contentDescription = description } else it },
         content = content,
     )
+}
+
+/** The card look on any shape: shadow, gradient fill, top-edge highlight, clipped. */
+@Composable
+fun Modifier.lpSurface(shape: Shape = LpShapes.Card, elevation: Dp = 10.dp): Modifier {
+    val c = Lp.colors
+    return this
+        .shadow(elevation, shape, clip = false, ambientColor = c.shadow, spotColor = c.shadow)
+        .clip(shape)
+        .background(Brush.verticalGradient(listOf(c.cardTop, c.cardBottom)))
+        .border(1.dp, Brush.verticalGradient(0f to c.edge, 0.35f to Color.Transparent), shape)
 }
 
 /** Small grey card heading (e.g. "Today's sales") with an optional value on the right. */
@@ -83,10 +104,10 @@ fun CardLabel(text: String, modifier: Modifier = Modifier, trailing: (@Composabl
     }
 }
 
-/** The big figure of a stat ($2,418, 78%). */
+/** The big figure of a stat ($2,418, 78%): digits roll into place, "$" and "%" small and soft. */
 @Composable
 fun BigValue(text: String, modifier: Modifier = Modifier, compact: Boolean = false, color: Color = Lp.colors.fg) {
-    Text(text, modifier, style = if (compact) LpType.BigCompact else LpType.Big, color = color, maxLines = 1)
+    RollingFigure(text, modifier, style = if (compact) LpType.BigCompact else LpType.Big, color = color)
 }
 
 /** Label above a big value, optional supporting content below it. */
@@ -143,13 +164,15 @@ fun LpIconButton(icon: ImageVector, contentDescription: String, onClick: () -> U
     ) { LpIcon(icon, null, Modifier.rotate(rotation), tint = tint) }
 }
 
-/** Filled (coral/purple) or tonal pill button, 48dp high. */
+/** Filled (coral/purple gradient) or tonal pill button, 48dp high, with a press scale. */
 @Composable
 fun PillButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, tonal: Boolean = false, icon: ImageVector? = null) {
     val c = Lp.colors
+    val interaction = remember { MutableInteractionSource() }
+    val fill = if (tonal) Brush.linearGradient(listOf(c.accSoft, c.accSoft)) else Brush.linearGradient(listOf(c.acc, lerp(c.acc, c.peach, 0.35f)))
     Row(
-        modifier.heightIn(min = LpSpacing.Touch).clip(LpShapes.Pill).background(if (tonal) c.accSoft else c.acc)
-            .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 20.dp),
+        modifier.heightIn(min = LpSpacing.Touch).pressScale(interaction).clip(LpShapes.Pill).background(fill)
+            .clickable(interaction, LocalIndication.current, role = Role.Button, onClick = onClick).padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
     ) {
         if (icon != null) LpIcon(icon, null, size = 20.dp, tint = if (tonal) c.onAccSoft else c.onAcc)
@@ -190,10 +213,11 @@ fun LpListRow(
 @Composable
 fun SwitchRow(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit, modifier: Modifier = Modifier, supporting: String? = null) {
     val c = Lp.colors
+    val haptics = rememberHaptics()
     LpListRow(
         title = title, supporting = supporting,
         modifier = modifier.semantics(mergeDescendants = true) { role = Role.Switch; stateDescription = if (checked) "On" else "Off" },
-        onClick = { onCheckedChange(!checked) },
+        onClick = { haptics.toggle(!checked); onCheckedChange(!checked) },
         trailing = {
             Switch(
                 checked = checked, onCheckedChange = null,
@@ -308,7 +332,7 @@ fun ChoiceRow(text: String, selected: Boolean, onClick: () -> Unit, modifier: Mo
 @Composable
 fun LpDialog(onDismiss: () -> Unit, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
-        Column(modifier.background(Lp.colors.surf, LpShapes.Card).border(1.dp, Lp.colors.line, LpShapes.Card).padding(LpSpacing.L), content = content)
+        Column(modifier.lpSurface(LpShapes.Card, 24.dp).padding(LpSpacing.L), content = content)
     }
 }
 

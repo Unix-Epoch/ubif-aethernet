@@ -145,6 +145,19 @@ unfolded Z Fold counts); and `isTabletop` / `tabletopFold` for half-opened with 
 the fold's own width when larger; it measures its offset in the window so the rail does not skew it). `LpListDetail` uses
 `calculatePaneScaffoldDirective(info, HingePolicy.AlwaysAvoid)` for the same effect in list-detail screens. No device numbers anywhere.
 
+## Look and motion (Nov 2026 refresh)
+
+All in `core/design` and `core/nav`; screens use these instead of their own surfaces.
+
+- **Colours** (`Color.kt`): the old tokens plus `cardTop/cardBottom` (card gradient), `edge` (top-edge light), `shadow`, `heroA/B/C` and `glowWarm/Cool/Teal` (hero card), `peach` (top of the highlighted bar, end of chart lines), `washA/B` (page), `navGlass`, `navPillA/B`, `glass`. Dark and light both defined.
+- **Type** (`Type.kt`): Space Grotesk (`LpDisplay`, bundled in `res/font`, SIL OFL in `android/third-party-SpaceGrotesk-OFL.txt`) for figures and screen titles: `LpType.Hero` (56), `Big`, `Value`, `ValueMedium`, `Screen` (screen titles), `Title`, `Number` (work order numbers). Body text stays Roboto.
+- **Surfaces**: `LpCard` (gradient, top edge, shadow; `onClick` adds a press scale), `Modifier.lpSurface(shape)` for custom cards, `LpHeroCard(shineKey = …)` (one per screen: drifting glows, a light sweep when `shineKey` changes), `Modifier.glass()` (search, store pill, filters), `Modifier.pageWash` (drawn by the scaffold), `StoreAvatar` + `storeColor(index)` (index in the approved store list), `Pearl`.
+- **Figures**: `RollingFigure(text, style = LpType.Hero)` rolls each digit into place (from 0 when first shown, from the old digit on a refresh), "$"/"%" small and soft, fits its width; `BigValue` uses it.
+- **Motion** (`Motion.kt`): `Modifier.enter(index)` (rise in, staggered), `Modifier.pressScale(interaction)`, `LpMotion` springs, `motionOn()` (false when the system animations are off, so everything is drawn at rest), `rememberHaptics()` (`tick`, `threshold`, `confirm`, `toggle`).
+- **Charts** (`Charts.kt`): `BarChart` (grows in, today's bar gradient and glow), `LineChart` (draws in, fill, pulsing latest point), `TrendChart` (current vs previous period, drag to read a point), `Sparkline`, `ArcGauge`, `ProgressBar`, `SegmentBar`, `MarkerBar`; `rememberGrow(key)` for your own.
+- **Controls**: `LpSegmented` (sliding thumb), `LpPullToRefresh` (the pearl; buzzes at the threshold and when the refresh lands), `PillButton` (gradient, press scale), `SwitchRow` (buzz on toggle).
+- **Chrome** (`core/nav`): the floating pill nav (`LpNavScaffold`); scrolling screens add `LocalNavInset.current` to their bottom padding. Tabs slide toward the picked tab, details push from the right (`Transitions.kt`). `Modifier.sharedCard(key)` on a list card and on its detail's header (same key) grows the card into the detail inside `LpListDetail`.
+
 ## Rules for screens
 
 No unnecessary text on screens (labels, values, units only); colour is never the only signal; "RFP total" for the dollar figure and "Ready for pickup" for counts;

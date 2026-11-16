@@ -42,7 +42,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import dev.aethernet.linkpearl.core.design.Lp
+import dev.aethernet.linkpearl.core.design.glass
+import dev.aethernet.linkpearl.core.design.rememberGrow
 import dev.aethernet.linkpearl.core.design.LpCard
 import dev.aethernet.linkpearl.core.design.LpIcon
 import dev.aethernet.linkpearl.core.design.LpIcons
@@ -102,15 +108,30 @@ fun StatusChip(status: String?, lane: String?, modifier: Modifier = Modifier) {
     }
 }
 
-/** "5d 0h" with the clock icon; three days or more in bold amber. */
+/** "5d 0h" with five small age bars that fill one per day in status (amber from three days); three days or more in bold amber. */
 @Composable
 fun TimeInStatus(since: String?, nowMs: Long, modifier: Modifier = Modifier) {
     val long = WoFmt.isLong(since, nowMs)
     val color = if (long) Lp.colors.warn else Lp.colors.soft
     val text = WoFmt.inStatus(since, nowMs)
-    Row(modifier.semantics(mergeDescendants = true) { contentDescription = "In status $text" }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        LpIcon(LpIcons.Clock, null, size = 20.dp, tint = color)
+    val days = ((WoFmt.minutesSince(since, nowMs) ?: 0.0) / 1440).toInt().coerceIn(0, 5)
+    Row(modifier.semantics(mergeDescendants = true) { contentDescription = "In status $text" }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AgeBars(days, if (long) Lp.colors.warn else Lp.colors.soft)
         Text(text, style = if (long) LpType.BodyStrong else LpType.Body, color = color, maxLines = 1)
+    }
+}
+
+/** Five short bars, [filled] of them lit, filling in one after another when shown. Decorative (the time is next to it). */
+@Composable
+fun AgeBars(filled: Int, color: Color, modifier: Modifier = Modifier) {
+    val grow = rememberGrow(filled, delayMs = 250)
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        repeat(5) { i ->
+            val p = ((grow * 5f) - i).coerceIn(0f, 1f)
+            Box(Modifier.size(width = 13.dp, height = 5.dp).clip(LpShapes.Pill).background(Lp.colors.surf3)) {
+                if (i < filled) Box(Modifier.fillMaxSize().graphicsLayer { scaleX = p; transformOrigin = TransformOrigin(0f, 0.5f) }.background(color))
+            }
+        }
     }
 }
 
@@ -120,7 +141,7 @@ fun LockControl(unlocked: Boolean, remaining: Duration?, onUnlock: () -> Unit, o
     val c = Lp.colors
     val label = if (unlocked) "Lock · ${WoFmt.countdown(remaining)}" else "Unlock"
     Row(
-        modifier.heightIn(min = LpSpacing.Touch).clip(LpShapes.Pill).background(if (unlocked) c.accSoft else c.surf3)
+        modifier.heightIn(min = LpSpacing.Touch).let { if (unlocked) it.clip(LpShapes.Pill).background(Brush.linearGradient(listOf(c.accSoft, lerp(c.accSoft, c.acc, 0.25f)))) else it.glass() }
             .clickable(role = Role.Button, onClickLabel = if (unlocked) "Lock customer details" else "Unlock customer details", onClick = if (unlocked) onLock else onUnlock)
             .padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
