@@ -10,6 +10,7 @@ import dev.aethernet.linkpearl.core.data.StoreZone
 import dev.aethernet.linkpearl.core.di.AppContainer
 import dev.aethernet.linkpearl.core.di.FeatureModule
 import dev.aethernet.linkpearl.core.nav.NavBadges
+import dev.aethernet.linkpearl.feature.update.UpdateController
 import kotlinx.coroutines.launch
 
 /** Owner: agent C. Alerts: the hub, the background check (WorkManager), notification channels, the nav badge. */
@@ -23,12 +24,13 @@ object AlertsModule : FeatureModule {
 
         // One channel per type: the owner can silence a type in Android's own settings.
         AlertType.configurableTypes.forEach { t ->
-            c.channel(AppContainer.ChannelSpec(t.channelId!!, t.label, NotificationManager.IMPORTANCE_DEFAULT))
+            c.channel(AppContainer.ChannelSpec(t.channelId!!, t.channelName, NotificationManager.IMPORTANCE_DEFAULT))
         }
 
         c.appScope.launch { c.get<StoreZone>().ids.collect { AlertText.TZ = it } }
 
-        c.workerFactory.addFactory(AlertsWorkerFactory { c.get<AlertsHub>() })
+        // The background check also checks for an app update (feature/update; at most every few hours).
+        c.workerFactory.addFactory(AlertsWorkerFactory(hub = { c.get<AlertsHub>() }, alsoRun = { c.get<UpdateController>().checkIfDue() }))
 
         // Schedule when the phone is Registered; cancel (and forget the cursor of the old identity) when it is not.
         c.appScope.launch {

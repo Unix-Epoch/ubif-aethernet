@@ -1,7 +1,6 @@
 package dev.aethernet.linkpearl.feature.settings
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -10,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -21,7 +21,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
 import androidx.navigation.navDeepLink
+import dev.aethernet.linkpearl.BuildConfig
 import dev.aethernet.linkpearl.core.di.LocalAppContainer
+import dev.aethernet.linkpearl.feature.update.UpdateController
 import dev.aethernet.linkpearl.core.nav.Routes
 import kotlinx.coroutines.launch
 
@@ -42,13 +44,15 @@ fun SettingsRoute(navigate: ((String) -> Unit)? = null, modifier: Modifier = Mod
     val vm: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    val updates = remember { container.get<UpdateController>() }
+    val update by updates.state.collectAsStateWithLifecycle()
 
     fun check() = vm.onNotificationsChecked(NotificationManagerCompat.from(context).areNotificationsEnabled())
     val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { check() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { check(); vm.refresh() }
 
     SettingsScreen(
-        state, version = versionOf(context), modifier = modifier,
+        state, version = BuildConfig.VERSION_NAME, modifier = modifier, update = update,
         actions = SettingsActions(
             onToggleLock = vm::toggleLock,
             onNotifications = {
@@ -66,13 +70,9 @@ fun SettingsRoute(navigate: ((String) -> Unit)? = null, modifier: Modifier = Mod
                 else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Routes.deepLink(Routes.ALERT_SETTINGS))).setPackage(context.packageName))
             },
             onAppearance = vm::setAppearance,
+            onUpdate = updates::update,
             onOpenAdmin = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ADMIN_SITE))) },
             onAskForget = vm::askForget, onCancelForget = vm::cancelForget, onConfirmForget = vm::confirmForget,
         ),
     )
 }
-
-private fun versionOf(context: Context): String = try {
-    val p = context.packageManager.getPackageInfo(context.packageName, 0)
-    "${p.versionName} (${p.longVersionCode})"
-} catch (_: Exception) { "—" }

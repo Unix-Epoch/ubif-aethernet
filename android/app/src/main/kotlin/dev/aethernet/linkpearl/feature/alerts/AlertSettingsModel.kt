@@ -10,8 +10,19 @@ import kotlinx.serialization.json.put
 import java.time.DateTimeException
 import java.time.LocalTime
 
-/** A type's switch and its single threshold: days (stuck, pickup), the hour of day (followup), hours (quiet). */
-data class TypeSetting(val on: Boolean, val value: Int)
+/**
+ * A type's switch and its single threshold: days (stuck, pickup), the hour of day (followup, digest), hours (quiet, unlinked).
+ * Coverage has a switch only; its value is 0 and never shown or sent.
+ */
+data class TypeSetting(val on: Boolean, val value: Int = 0)
+
+/** The JSON key of a type's threshold (null: no threshold). */
+fun AlertType.valueKey(): String? = when (this) {
+    AlertType.Stuck, AlertType.Pickup -> "days"
+    AlertType.Followup, AlertType.Digest -> "hour"
+    AlertType.Quiet, AlertType.Unlinked -> "hours"
+    AlertType.Coverage, AlertType.Back -> null
+}
 
 data class QuietHours(val on: Boolean, val from: String, val to: String)
 
@@ -23,17 +34,26 @@ data class AlertSettings(
 )
 
 /** Server ranges (inclusive). */
-data class Ranges(val stuckDays: IntRange, val pickupDays: IntRange, val quietHours: IntRange, val followupHour: IntRange) {
+data class Ranges(
+    val stuckDays: IntRange,
+    val pickupDays: IntRange,
+    val quietHours: IntRange,
+    val followupHour: IntRange,
+    val digestHour: IntRange = 0..23,
+    val unlinkedHours: IntRange = 1..48,
+) {
     fun of(type: AlertType): IntRange = when (type) {
         AlertType.Stuck -> stuckDays
         AlertType.Pickup -> pickupDays
         AlertType.Followup -> followupHour
         AlertType.Quiet -> quietHours
-        AlertType.Back -> 0..0
+        AlertType.Digest -> digestHour
+        AlertType.Unlinked -> unlinkedHours
+        AlertType.Coverage, AlertType.Back -> 0..0
     }
 
     companion object {
-        val Default = Ranges(1..30, 1..30, 1..12, 0..23)
+        val Default = Ranges(1..30, 1..30, 1..12, 0..23, 0..23, 1..48)
     }
 }
 
@@ -56,19 +76,24 @@ fun parseSettings(o: JsonObject): SettingsBundle? {
         val x = t.obj(type.key) ?: return null
         return TypeSetting(x.bool("on") ?: true, x.int(key) ?: return null)
     }
-    val types = mapOf(
-        AlertType.Stuck to (type(AlertType.Stuck, "days") ?: return null),
-        AlertType.Pickup to (type(AlertType.Pickup, "days") ?: return null),
-        AlertType.Followup to (type(AlertType.Followup, "hour") ?: return null),
-        AlertType.Quiet to (type(AlertType.Quiet, "hours") ?: return null),
-    )
+    val types = buildMap {
+        put(AlertType.Stuck, type(AlertType.Stuck, "days") ?: return null)
+        put(AlertType.Pickup, type(AlertType.Pickup, "days") ?: return null)
+        put(AlertType.Followup, type(AlertType.Followup, "hour") ?: return null)
+        put(AlertType.Quiet, type(AlertType.Quiet, "hours") ?: return null)
+        // Newer types: optional (a server without them simply has no row for them).
+        type(AlertType.Digest, "hour")?.let { put(AlertType.Digest, it) }
+        type(AlertType.Unlinked, "hours")?.let { put(AlertType.Unlinked, it) }
+        t.obj(AlertType.Coverage.key)?.let { put(AlertType.Coverage, TypeSetting(it.bool("on") ?: true)) }
+    }
     val q = s.obj("quietHours") ?: return null
     val quiet = QuietHours(q.bool("on") ?: true, q.str("from") ?: return null, q.str("to") ?: return null)
     val stores = s.obj("stores")?.mapNotNull { (k, v) -> k.toIntOrNull()?.let { id -> id to ((v as? JsonPrimitive)?.booleanOrNull ?: true) } }?.toMap() ?: emptyMap()
     val ids = (o["stores"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.intOrNull } ?: stores.keys.toList()
     val r = o.obj("ranges")
     val ranges = Ranges(range(r, "stuckDays", Ranges.Default.stuckDays), range(r, "pickupDays", Ranges.Default.pickupDays),
-        range(r, "quietHours", Ranges.Default.quietHours), range(r, "followupHour", Ranges.Default.followupHour))
+        range(r, "quietHours", Ranges.Default.quietHours), range(r, "followupHour", Ranges.Default.followupHour),
+        range(r, "digestHour", Ranges.Default.digestHour), range(r, "unlinkedHours", Ranges.Default.unlinkedHours))
     return SettingsBundle(AlertSettings(types, quiet, stores), ranges, ids)
 }
 
@@ -98,11 +123,15 @@ sealed interface SettingsEdit {
     data class TypeValue(val type: AlertType, val value: Int) : SettingsEdit {
         override fun apply(s: AlertSettings): AlertSettings = s.copy(types = s.types + (type to (s.types[type] ?: return s).copy(value = value)))
         override fun json() = buildJsonObject {
-            val key = when (type) { AlertType.Followup -> "hour"; AlertType.Quiet -> "hours"; else -> "days" }
+            val key = type.valueKey() ?: "days" // never sent: problem() refuses a type without a threshold
             put("types", buildJsonObject { put(type.key, buildJsonObject { put(key, value) }) })
         }
         override fun inverse(s: AlertSettings) = TypeValue(type, s.types[type]?.value ?: value)
-        override fun problem(s: AlertSettings, r: Ranges) = if (type.configurable && value in r.of(type)) null else "Out of range"
+        override fun problem(s: AlertSettings, r: Ranges) = when {
+            !type.hasThreshold -> "Not configurable"
+            value in r.of(type) -> null
+            else -> "Out of range"
+        }
     }
 
     data class QuietOn(val on: Boolean) : SettingsEdit {

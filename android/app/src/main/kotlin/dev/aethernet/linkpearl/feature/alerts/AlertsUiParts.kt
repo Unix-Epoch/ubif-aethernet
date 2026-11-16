@@ -57,6 +57,9 @@ fun AlertType.icon(): ImageVector = when (this) {
     AlertType.Followup -> LpIcons.Calendar
     AlertType.Quiet -> LpIcons.Clock
     AlertType.Back -> LpIcons.Check
+    AlertType.Digest -> LpIcons.Sunrise
+    AlertType.Unlinked -> LpIcons.Receipt
+    AlertType.Coverage -> LpIcons.Shield
 }
 
 fun AlertType.tone(): Tone = when (this) {
@@ -65,6 +68,9 @@ fun AlertType.tone(): Tone = when (this) {
     AlertType.Followup -> Tone.Info
     AlertType.Quiet -> Tone.Warn
     AlertType.Back -> Tone.Teal
+    AlertType.Digest -> Tone.Accent
+    AlertType.Unlinked -> Tone.Teal
+    AlertType.Coverage -> Tone.Lilac
 }
 
 /** The round per-type icon. The icon shape differs per type, so colour is not the only cue. */
@@ -160,16 +166,16 @@ fun TypeSettingRow(type: AlertType, setting: TypeSetting, onToggle: (Boolean) ->
     ) {
         TypeBadge(type, size = 40.dp)
         Text(type.label, style = LpType.BodyStrong, color = c.fg, modifier = Modifier.weight(1f), maxLines = 2)
-        ValueChip(thresholdText(type, setting.value), onEditValue, "${type.label} threshold, ${thresholdText(type, setting.value)}")
+        if (type.hasThreshold) ValueChip(thresholdText(type, setting.value), onEditValue, "${type.label} threshold, ${thresholdText(type, setting.value)}")
         LpSwitch(setting.on, onToggle, type.label)
     }
 }
 
 fun thresholdText(type: AlertType, v: Int): String = when (type) {
     AlertType.Stuck, AlertType.Pickup -> AlertText.days(v)
-    AlertType.Followup -> AlertText.hourOfDay(v)
-    AlertType.Quiet -> AlertText.hours(v)
-    AlertType.Back -> ""
+    AlertType.Followup, AlertType.Digest -> AlertText.hourOfDay(v)
+    AlertType.Quiet, AlertType.Unlinked -> AlertText.hours(v)
+    AlertType.Back, AlertType.Coverage -> ""
 }
 
 /** A grouped card of rows with hairline dividers between them. */

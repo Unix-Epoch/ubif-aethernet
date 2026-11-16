@@ -74,7 +74,7 @@ tools/  local-server.mjs (the real Worker over HTTP on localhost), run-integrati
 ```
 
 Navigation: one `NavHost` in `core/nav/AppNavHost.kt` with destinations `home`, `alerts`, `alerts/settings`, `workorders`, `workorders/{store}-{wo}`,
-`retrace`, `retrace/item/{store}/{item}`, `retrace/label/{store}/{label}` and `settings`; the bottom bar has five items (Home, Alerts, Work orders, Retrace, Settings). Alerts and Settings open each other's screens through that same NavController, so Back from a work order opened from Alerts returns to
+`retrace`, `retrace/item/{store}/{item}`, `retrace/label/{store}/{label}`, `trends/{store}`, `prices/{store}`, `alerts/digest/{id}` and `settings`; the bottom bar has five items (Home, Alerts, Work orders, Retrace, Settings). Alerts and Settings open each other's screens through that same NavController, so Back from a work order opened from Alerts returns to
 Alerts, and Back from Alert settings returns to Alerts or Settings, whichever opened it. Detail destinations hide the bottom bar on phones (the rail stays on wide
 screens). Notifications and `linkpearl://` links use the same routes (`linkpearl://workorders/914-7000001`); a link arriving while the app runs goes to the
 running activity (launch mode singleTask, `onNewIntent`) and lands on top of the current back stack.
@@ -91,8 +91,8 @@ Sign-in: Onboarding registers the phone (`POST /v1/agents/register`); the owner 
 the store ids and the wrapped store keys. "Forget this phone" calls `POST /v1/agents/m/prefs/forget` first (best effort: offline or refused still
 forgets locally), then wipes the token, state, device key, saved Home answers, alerts cursor and work, and locks. Every request carries `x-aethernet-key` and,
 once registered, the Bearer token; the app also sends `x-linkpearl-version: 1.0.0+1` (name and code) so the server can read it later. The server's `MIN_APP`
-(`tracker-worker/src/mobile-prefs.js`, answered by `GET /v1/agents/m/prefs`) is code 1 / name 1.0.0; raise it only together with a breaking server change. The
-app does not show an update notice yet.
+(`tracker-worker/src/mobile-prefs.js`, answered by `GET /v1/agents/m/prefs` and `GET /v1/agents/m/update`) is code 1 / name 1.0.0; raise it only together with a breaking server change.
+Below it, the app shows the blocking "Update needed" screen (`feature/update/UpdateGate`).
 
 Times: Home reports the stores' time zone (`tz`); `StoreZone` keeps it with the session, and Work orders, Alerts and Settings format times in it (default
 America/New_York until Home has answered once).
@@ -135,6 +135,30 @@ The integration test (`./tools/run-integration.sh`) seeds closed work orders, pa
 closed list with paging, the closed detail, tags and follow-ups with the chip count and the filter, and all four Retrace routes (items, label jump, item, label, purchase orders, a 403 for another store, the
 404 as the generic failure) through the real repositories and the Retrace view model. Not covered there: an older tracker (the local Worker is the new code; that case is unit-tested with canned 400 / 404
 answers), item search paging beyond one page, and the UI itself.
+
+## Trends and Prices
+
+Two detail screens opened from Home with Home's store (`store` = an id or `all`; Prices takes the first approved store for All stores). **Trends**
+(`feature/trends`, `GET /v1/agents/m/trends`, `tracker-worker/MOBILE-API-trends.md`): the "Trends ›" link on Home's sales card (the whole card is the button);
+Week / Month / Year, store, a period pager (calendar periods, week = Sunday to Saturday; back sends the day before `from`, next stops at the current period),
+Sales (running totals, current against the previous period, drag to read), By store (All stores), Sales per labor hour (Home's target rule), Cleaning rate and RFP total.
+**Prices** (`feature/prices`, `GET /v1/agents/m/prices`, `tracker-worker/MOBILE-API-prices.md`): the tag button next to refresh; the device list is filtered on the
+phone as you type, the chosen device is asked with its `key` (debounced), a Fold's two rows become two chips, the row text is the sheet column (`label`), a null price
+shows the cell's own words when they say something, else a dash; Share sends plain text. Parsing is by hand in `PricesModels.kt` (every field optional).
+Screenshots in `screenshots/trends` and `screenshots/prices`.
+
+## Updates, widgets, Waymark edits, aging and the new alerts (1.2.0)
+
+- **In-app updates** (`feature/update`, `GET /v1/agents/m/update` + `/update/apk`, `tracker-worker/MOBILE-API-update.md`): checked at most every 3 hours on resume and in the
+  background alert check. Settings > About shows the new version with Update; the Settings tab gets a dot. Download to `cacheDir/update`, size and sha256 checked, then a
+  PackageInstaller session (`REQUEST_INSTALL_PACKAGES`; the first time Android asks to allow installs from Linkpearl). Below the server's minimum: the blocking "Update needed" screen.
+  Releases live in the R2 bucket `linkpearl-releases`; publish with `android/publish-release.sh <apk>` (`DRY_RUN=1` to print only) after `assembleRelease`.
+- **Widgets** (`feature/widget`, Glance): "Linkpearl" (responsive: 2×2 grid down to the cover screen, full card from 320×200) and "Today's sales". They read the saved Home
+  answer (encrypted), refresh every 30 minutes and on each Home fetch; reconfigure to pick a store or All stores; tap opens Home. Signing out clears them.
+- **Waymark from the phone** (`feature/workorders/WoWaymarkEdit.kt`, `WoWaymarkSheets.kt`; `tracker-worker/MOBILE-API-waymark.md`): "+ Tag" and "Change" on an open work order's
+  detail. Tags save on tap; follow-ups move later only (+1 / +3 / +7 days or a date) or are removed. Portal's device nickname follows at the next Aethernet scan.
+- **Aging** (`feature/workorders/WoAging.kt`): Spread's limits (Waiting and Ready for pickup 7 days, every other status 3 days); "Old N" filter, an amber edge and "Old · 9d 3h".
+- **Alerts** (`tracker-worker/MOBILE-API-alerts.md`): Morning digest (one per phone, its own screen `alerts/digest/{id}`), sales orders without a work order, Retrace coverage check.
 
 ## Fold, hinge, posture
 
@@ -198,7 +222,7 @@ Debug: `./gradlew assembleDebug` (`app/build/outputs/apk/debug/app-debug.apk`). 
 passwords outside the repo, and use the same one for every update, otherwise Android refuses to install an update over the old app. `./gradlew assembleRelease`
 without those properties stops with a message naming the missing ones. The server URL and public app key are Gradle properties `linkpearl.baseUrl` and `linkpearl.appKey`
 (defaults in `app/build.gradle.kts`). Before the app works for real, the server side must be deployed (migrations `2026-11-13-mobile-devices.sql`, `2026-11-13-mobile-alerts.sql`,
-`2026-11-13-mobile-wo-index.sql`, then the tracker Worker; see `tracker-worker/MOBILE-API.md` "Deploy order").
+`2026-11-13-mobile-wo-index.sql`, `2026-11-16-mobile-alerts-items.sql`, then the tracker Worker; see `tracker-worker/MOBILE-API.md` "Deploy order").
 
 ## Alert timing
 

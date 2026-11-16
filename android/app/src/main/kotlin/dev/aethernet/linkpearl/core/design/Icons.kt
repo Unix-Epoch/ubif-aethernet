@@ -35,6 +35,7 @@ object LpIcons {
     val Store = icon("store", "M4 9l1-5h14l1 5M4 9v11h16V9M4 9a3 3 0 0 0 5 0 3 3 0 0 0 6 0 3 3 0 0 0 5 0")
     val ChevronDown = icon("chevronDown", "M6 9l6 6 6-6")
     val ChevronRight = icon("chevronRight", "M9 5l7 7-7 7")
+    val ChevronLeft = icon("chevronLeft", "M15 5l-7 7 7 7")
     val Refresh = icon("refresh", "M20 4v6h-6M4 20v-6h6", "M19 10a8 8 0 0 0-14-3M5 14a8 8 0 0 0 14 3")
     val Clock = icon("clock", "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0", "M12 7v5l3 2")
     val Check = icon("check", "M5 12.5l5 5L19 7")
@@ -55,6 +56,7 @@ object LpIcons {
     val Phone = icon("phone", "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2")
     val Message = icon("message", "M4 5h16v11H9l-5 4z")
     val Edit = icon("edit", "M4 20l1-4L16 5l3 3L8 19zM14 7l3 3")
+    val Trash = icon("trash", "M4 7h16M10 3h4M6 7l1 13h10l1-13", "M10 11v6M14 11v6")
     val Warning = icon("warning", "M12 4l9 16H3z", "M12 10v4M12 17v.01")
     val Hourglass = icon("hourglass", "M7 3h10M7 21h10M8 3v4l4 5-4 5v4M16 3v4l-4 5 4 5v4")
     val External = icon("external", "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6")
@@ -68,7 +70,16 @@ object LpIcons {
     /** Retrace: two stops joined by a winding trail. */
     val Retrace = icon("retrace", "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M15 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M9 6h5a3 3 0 0 1 0 6h-4a3 3 0 0 0 0 6h5")
     val Outbox = icon("outbox", "M4 14v6h16v-6M12 15V4M8 8l4-4 4 4")
+    val Tag = icon("tag", "M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z", "M7.5 7.5h.01")
+    val Download = icon("download", "M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4", "M12 4v11M7 10l5 5 5-5")
+    val ArrowRight = icon("arrowRight", "M5 12h14M13 6l6 6-6 6")
     val BellOff = icon("bellOff", "M6 8a6 6 0 0 1 9.5-4.9M18 11c0 5 3 6 3 6H8M10.3 21a1.94 1.94 0 0 0 3.4 0", "M3 3l18 18")
+    /** Alerts: the morning digest (a sun rising over the horizon). */
+    val Sunrise = icon("sunrise", "M12 2v8M4.9 10.9l1.4 1.4M2 18h2M20 18h2M19.1 10.9l-1.4 1.4M22 22H2M8 6l4-4 4 4M16 18a4 4 0 0 0-8 0")
+    /** Alerts: a sales order (a receipt with a dollar sign). */
+    val Receipt = icon("receipt", "M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z", "M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8M12 17.5v-11")
+    /** Alerts: Retrace's coverage check (a shield with an exclamation mark). */
+    val Shield = icon("shield", "M20 13c0 5-3.5 7.5-7.7 9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z", "M12 8v4M12 16h.01")
 }
 
 /** An icon with a content description (or `null` when the surrounding control already says what it is: then it is hidden from TalkBack). */

@@ -21,8 +21,11 @@ import dev.aethernet.linkpearl.core.di.LocalAppContainer
 import dev.aethernet.linkpearl.feature.alerts.alertsGraph
 import dev.aethernet.linkpearl.feature.home.homeGraph
 import dev.aethernet.linkpearl.feature.onboarding.OnboardingScreen
+import dev.aethernet.linkpearl.feature.prices.pricesGraph
+import dev.aethernet.linkpearl.feature.trends.trendsGraph
 import dev.aethernet.linkpearl.feature.retrace.retraceGraph
 import dev.aethernet.linkpearl.feature.settings.settingsGraph
+import dev.aethernet.linkpearl.feature.update.UpdateGate
 import dev.aethernet.linkpearl.feature.workorders.workOrdersGraph
 
 /**
@@ -36,7 +39,7 @@ fun LinkpearlRoot() {
     val authState by auth.state.collectAsStateWithLifecycle()
     // Onboarding until the phone is registered, approved and has at least one store (Pending and "No stores" live there too).
     val state = authState
-    if (state is AuthState.Registered && state.stores.isNotEmpty()) MainShell() else OnboardingScreen()
+    if (state is AuthState.Registered && state.stores.isNotEmpty()) UpdateGate { MainShell() } else OnboardingScreen()
 }
 
 @Composable
@@ -46,6 +49,7 @@ private fun MainShell() {
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
     val badges by remember { container.get<NavBadges>().counts }.collectAsStateWithLifecycle()
+    val dots by remember { container.get<NavDots>().dots }.collectAsStateWithLifecycle()
     DeepLinksWhileRunning(nav)
     LpNavScaffold(
         selected = TopLevel.of(route),
@@ -57,6 +61,7 @@ private fun MainShell() {
             }
         },
         badges = badges,
+        dots = dots,
         // Phone width: detail screens (alerts/settings, workorders/{id}) are full screen without the bottom bar. They are their own
         // destinations, so Back pops to the screen that opened them.
         showBar = TopLevel.entries.any { it.route == route } || route == null,
@@ -66,7 +71,9 @@ private fun MainShell() {
             enterTransition = { lpEnter() }, exitTransition = { lpExit() },
             popEnterTransition = { lpPopEnter() }, popExitTransition = { lpPopExit() },
         ) {
-            homeGraph()
+            homeGraph(navigate = nav::navigate)
+            trendsGraph()
+            pricesGraph()
             // Alerts and Settings open each other's screens (alert settings, a work order) inside this one back stack, so Back returns to them.
             alertsGraph(navigate = nav::navigate)
             workOrdersGraph(navigate = nav::navigate)

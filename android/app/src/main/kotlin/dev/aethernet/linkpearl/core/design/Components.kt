@@ -156,12 +156,12 @@ fun LpDot(color: Color, modifier: Modifier = Modifier, size: Dp = 10.dp) {
 
 /** A 48dp-minimum tappable icon. [contentDescription] is required: TalkBack reads it. */
 @Composable
-fun LpIconButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit, modifier: Modifier = Modifier, rotation: Float = 0f, tint: Color = Lp.colors.fg) {
+fun LpIconButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit, modifier: Modifier = Modifier, rotation: Float = 0f, tint: Color = Lp.colors.fg, enabled: Boolean = true) {
     Box(
-        modifier.size(LpSpacing.Touch).clip(CircleShape).clickable(role = Role.Button, onClickLabel = null, onClick = onClick)
+        modifier.size(LpSpacing.Touch).clip(CircleShape).clickable(enabled = enabled, role = Role.Button, onClickLabel = null, onClick = onClick)
             .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
-    ) { LpIcon(icon, null, Modifier.rotate(rotation), tint = tint) }
+    ) { LpIcon(icon, null, Modifier.rotate(rotation), tint = if (enabled) tint else Lp.colors.outline) }
 }
 
 /** Filled (coral/purple gradient) or tonal pill button, 48dp high, with a press scale. */

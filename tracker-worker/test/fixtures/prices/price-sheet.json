@@ -1,0 +1,35 @@
+{
+  "_note": "Invented. No sample of the real Price sheet is in the repo: column names and cell texts are built from what sheets/sync_sheets.py parse_prices() emits and what src/23-price-sheet.js tests for (SCREEN / NOT_SCREEN / battery / charge|charging|dock / back glass, N/A, self repair, '$190 (MS)'). Prices are made up.",
+  "tabs": [
+    { "name": "Apple", "raw": [], "rows": [
+      { "name": "iPhone 15 Pro Max", "cells": { "Screen Repair": "$379.99", "OEM": "$429.99", "Battery": "$109.99", "Charging Port": "$149.99", "Back Glass": "$199.99", "Back Camera": "$189.99", "Camera Lens": "$59.99", "Notes": "Inform customer of parts pairing" } },
+      { "name": "iPhone 15 Pro", "cells": { "Screen Repair": "$329.99", "OEM": "N/A", "Battery": "Apple self repair", "Charging Port": "$149.99", "Back Glass": "$190 (MS)" } },
+      { "name": "iPhone 15", "cells": { "Screen Repair": "$249.99", "Battery": "$99.99", "Charging Port": "$129.99", "Back Glass": "$169.99" } },
+      { "name": "iPhone 6/6S", "cells": { "Screen Repair": "$79.99", "Battery": "$59.99", "Charging Port": "$69.99" } },
+      { "name": "iPhone 14 Plus      inform customer: 2-3 day part", "cells": { "Screen Repair": "$269.99", "Battery": "$99.99" } }
+    ] },
+    { "name": "Samsung", "raw": [], "rows": [
+      { "name": "Galaxy S23 Ultra", "cells": { "OLED": "$349.99", "Glass/LCD": "$299.99", "Battery": "$99.99", "Charge Port": "$119.99", "Back Glass": "$89.99", "Camera Glass": "$49.99" } },
+      { "name": "Galaxy S23", "cells": { "OLED": "$229.99", "Battery": "$89.99", "Charge Port": "-" } },
+      { "name": "Galaxy Z Fold 5 Inner", "cells": { "OLED": "$549.99", "Battery": "$129.99" } },
+      { "name": "Galaxy Z Fold 5 Outer", "cells": { "OLED": "$219.99" } }
+    ] },
+    { "name": "Google", "raw": [], "rows": [
+      { "name": "Pixel 8 Pro", "cells": { "LCD": "$299.99", "Battery": "$99.99", "Charging Port": "$109.99" } }
+    ] },
+    { "name": "ipad", "raw": [], "rows": [
+      { "name": "iPad 9th Gen (10.2)", "cells": { "Glass": "$129.99", "LCD": "$179.99", "Battery": "$119.99", "Charge Port": "$109.99" } }
+    ] },
+    { "name": "Game Console", "raw": [], "rows": [
+      { "name": "Sony PS5", "cells": { "HDMI / RETIMER": "$149.99", "HDD 500GB": "$99.99", "Disc Drive": "$129.99", "Fan": "N/A" } },
+      { "name": "Nintendo Switch OLED", "cells": { "Screen Repair": "$149.99", "Dock Port": "$99.99", "Battery": "$89.99" } }
+    ] },
+    { "name": "Refurb", "raw": [], "rows": [
+      { "name": "iPhone 15", "cells": { "Screen Repair": "$1.00" } },
+      { "name": "iPhone 13", "cells": { "Screen Repair": "$2.00" } }
+    ] },
+    { "name": "BER", "raw": [], "rows": [
+      { "name": "Galaxy S10", "cells": { "OLED": "$3.00" } }
+    ] }
+  ]
+}

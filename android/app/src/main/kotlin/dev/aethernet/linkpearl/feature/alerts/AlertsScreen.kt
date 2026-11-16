@@ -79,6 +79,8 @@ data class AlertsActions(
     val onTurnOnNotifications: () -> Unit = {},
     val onOpenWorkOrder: (store: Int, wo: Long) -> Unit = { _, _ -> },
     val onEdit: (SettingsEdit) -> Unit = {},
+    /** A digest row opens the Morning digest screen (by alert id). */
+    val onOpenDigest: (Int) -> Unit = {},
 )
 
 /**
@@ -105,7 +107,11 @@ fun AlertsContent(
                 ui, names, storeIds, notificationsOn, actions, selectedId = null,
                 onTap = { a ->
                     if (!a.read) actions.onMarkRead(a.id)
-                    if (a.wo != null) actions.onOpenWorkOrder(a.store, a.wo) else { selectedId = a.id; select(a.id) }
+                    when {
+                        a.type == AlertType.Digest -> actions.onOpenDigest(a.id)
+                        a.wo != null -> actions.onOpenWorkOrder(a.store, a.wo)
+                        else -> { selectedId = a.id; select(a.id) }
+                    }
                 },
             )
         },
@@ -280,6 +286,21 @@ fun AlertDetail(
                     }
                 }
             }
+            if (alert.type == AlertType.Unlinked && alert.salesOrders.isNotEmpty()) {
+                Text("Sales orders", style = LpType.Label, color = c.soft, modifier = Modifier.padding(start = 8.dp).semantics { heading() })
+                GroupCard {
+                    alert.salesOrders.forEachIndexed { i, so ->
+                        if (i > 0) Hairline()
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = LpSpacing.L, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            LpIcon(LpIcons.Receipt, null, size = 20.dp, tint = c.soft)
+                            Text(so, style = LpType.BodyStrong, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
             if (alert.type.configurable || alert.type == AlertType.Back) {
                 Text("This alert", style = LpType.Label, color = c.soft, modifier = Modifier.padding(start = 8.dp).semantics { heading() })
                 when (settings) {
@@ -292,6 +313,7 @@ fun AlertDetail(
                 }
             }
             if (alert.wo != null) PillButton("Open work order", { actions.onOpenWorkOrder(alert.store, alert.wo) }, Modifier.fillMaxWidth(), icon = LpIcons.External)
+            androidx.compose.foundation.layout.Spacer(Modifier.padding(bottom = LocalNavInset.current))
         }
         val ready = settings as? SettingsUi.Ready
         val cur = ready?.bundle?.settings?.types?.get(settingType)

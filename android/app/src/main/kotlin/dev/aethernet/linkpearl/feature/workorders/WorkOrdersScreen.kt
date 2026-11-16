@@ -156,7 +156,7 @@ fun WorkOrdersScreen(
             SearchField(state.query, state.unlocked, actions.onQuery, actions.onClearQuery, actions.onUnlock)
             if (search == null) {
                 LpSegmented(listOf("Open", "Closed"), if (state.filter == LaneFilter.Closed) 1 else 0, { actions.onPickFilter(if (it == 1) LaneFilter.Closed else LaneFilter.All) })
-                if (state.filter != LaneFilter.Closed) LaneChips(state.lanes, state.filter, actions.onPickFilter, state.followUps)
+                if (state.filter != LaneFilter.Closed) LaneChips(state.lanes, state.filter, actions.onPickFilter, state.followUps, state.old)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StorePill(if (state.store == null) "All stores" else state.storeName(state.store)) { storeMenu = true }
                     Spacer(Modifier.weight(1f))
@@ -278,20 +278,25 @@ private fun EmptyLane() {
 fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showStoreAlways: Boolean = false, onClick: () -> Unit) {
     val c = Lp.colors
     val shape = LpShapes.Card
-    val stripe = laneTone(row.lane).fg()
+    val old = WoAging.isOld(row, nowMs)
+    val stripe = if (old) c.warn else laneTone(row.lane).fg()
     val interaction = remember { MutableInteractionSource() }
     Column(
         Modifier.fillMaxWidth().pressScale(interaction).sharedCard("wo-${row.key.id}").lpSurface(shape)
             .let { if (selected) it.background(c.accSoft.copy(alpha = 0.6f)).border(2.dp, c.acc, shape) else it }
-            // The lane's colour as a stripe down the left edge (the status chip carries it in words).
-            .drawBehind { drawRoundRect(stripe, Offset(0f, 16.dp.toPx()), Size(4.dp.toPx(), size.height - 32.dp.toPx()), CornerRadius(2.dp.toPx())) }
+            // The lane's colour as a stripe down the left edge (the status chip carries it in words); an old card's edge is amber and
+            // full height, with "Old" and the hourglass on its time chip.
+            .drawBehind {
+                if (old) drawRoundRect(stripe, Offset(0f, 10.dp.toPx()), Size(5.dp.toPx(), size.height - 20.dp.toPx()), CornerRadius(2.5.dp.toPx()))
+                else drawRoundRect(stripe, Offset(0f, 16.dp.toPx()), Size(4.dp.toPx(), size.height - 32.dp.toPx()), CornerRadius(2.dp.toPx()))
+            }
             .clickable(interaction, LocalIndication.current, role = Role.Button, onClick = onClick).semantics { this.selected = selected }
             .padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(row.wo.toString(), style = LpType.Number, color = c.fg, modifier = Modifier.weight(1f), maxLines = 1)
-            if (row.open) TimeInStatus(row.statusSince, nowMs) else Text(WoFmt.shortDayTime(row.closedAt, LocalWoClock.current.zone), style = LpType.Small, color = c.soft)
+            if (old) OldChip(row, nowMs) else if (row.open) TimeInStatus(row.statusSince, nowMs) else Text(WoFmt.shortDayTime(row.closedAt, LocalWoClock.current.zone), style = LpType.Small, color = c.soft)
         }
         val issue = row.issues?.takeIf { it.isNotEmpty() }?.joinToString(", ")
         val sub = listOfNotNull(row.device, issue, row.program).joinToString(Fmt.DOT).ifEmpty { Fmt.DASH }
@@ -389,9 +394,11 @@ fun SearchField(query: String, unlocked: Boolean, onQuery: (String) -> Unit, onC
 }
 
 @Composable
-private fun LaneChips(lanes: WoLanes?, filter: LaneFilter, onPick: (LaneFilter) -> Unit, followUps: FollowUpsInfo?) {
+private fun LaneChips(lanes: WoLanes?, filter: LaneFilter, onPick: (LaneFilter) -> Unit, followUps: FollowUpsInfo?, old: Int?) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip("All", lanes?.total, filter == LaneFilter.All) { onPick(LaneFilter.All) }
+        // Counted by the app (WoAging); shown once the count is in, or while its filter is on.
+        if (old != null || filter == LaneFilter.Old) FilterChip("Old", old, filter == LaneFilter.Old) { onPick(LaneFilter.Old) }
         // Next to All so it is on screen. Only a tracker that answers with follow-up counts has the filter.
         if (followUps != null) FilterChip("Follow-ups", followUps.count, filter == LaneFilter.FollowUps) { onPick(LaneFilter.FollowUps) }
         Lane.entries.forEach { l -> FilterChip(l.label, lanes?.count(l), filter == LaneFilter.One(l)) { onPick(LaneFilter.One(l)) } }

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Linkpearl": the large widget. Responsive (feature/widget WidgetSizes): a 2-by-2 grid on narrow or short cells (the Fold's cover
+     screen), the full card from 320x200dp. Placing it skips the store picker (configuration_optional): it shows Home's current store. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:configure="dev.aethernet.linkpearl.feature.widget.WidgetConfigActivity"
+    android:description="@string/widget_linkpearl"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:minWidth="180dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="110dp"
+    android:previewImage="@drawable/ic_launcher_foreground"
+    android:previewLayout="@layout/widget_preview_linkpearl"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen|keyguard"
+    android:widgetFeatures="reconfigurable|configuration_optional" />

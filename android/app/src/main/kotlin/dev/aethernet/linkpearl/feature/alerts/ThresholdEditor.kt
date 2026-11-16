@@ -52,8 +52,13 @@ private fun quickValues(type: AlertType, range: IntRange): List<Int> =
         AlertType.Pickup -> listOf(3, 5, 7, 14, 21)
         AlertType.Followup -> listOf(7, 8, 9, 10, 12)
         AlertType.Quiet -> listOf(1, 2, 3, 4, 6)
-        AlertType.Back -> emptyList()
+        AlertType.Digest -> listOf(6, 7, 8, 9, 10)
+        AlertType.Unlinked -> listOf(1, 2, 4, 8, 24)
+        AlertType.Back, AlertType.Coverage -> emptyList()
     }.filter { it in range }
+
+/** The hour-of-day types (the value is a local hour, shown "9:00 AM"). */
+private val AlertType.isHourOfDay: Boolean get() = this == AlertType.Followup || this == AlertType.Digest
 
 /** "9:00" and "AM" for the big value of the hour-of-day editor. */
 fun hourParts(h: Int): Pair<String, String> = (if (h % 12 == 0) 12 else h % 12).toString() + ":00" to (if (h < 12) "AM" else "PM")
@@ -92,8 +97,8 @@ fun ThresholdContent(type: AlertType, current: Int, range: IntRange, onSave: (In
             RoundStep(LpIcons.Minus, "Decrease", value > range.first, filled = false) { value = (value - 1).coerceAtLeast(range.first) }
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val (big, unit) = when (type) {
-                    AlertType.Followup -> hourParts(value)
-                    AlertType.Quiet -> value.toString() to (if (value == 1) "hour" else "hours")
+                    AlertType.Followup, AlertType.Digest -> hourParts(value)
+                    AlertType.Quiet, AlertType.Unlinked -> value.toString() to (if (value == 1) "hour" else "hours")
                     else -> value.toString() to (if (value == 1) "day" else "days")
                 }
                 Text(big, style = LpType.Big, color = c.fg, maxLines = 1)
@@ -103,7 +108,7 @@ fun ThresholdContent(type: AlertType, current: Int, range: IntRange, onSave: (In
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             quickValues(type, range).forEach { q ->
-                QuickChip(if (type == AlertType.Followup) hourParts(q).let { "${it.first.removeSuffix(":00")} ${it.second}" } else q.toString(), q == value, Modifier.weight(1f)) { value = q }
+                QuickChip(if (type.isHourOfDay) hourParts(q).let { "${it.first.removeSuffix(":00")} ${it.second}" } else q.toString(), q == value, Modifier.weight(1f)) { value = q }
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

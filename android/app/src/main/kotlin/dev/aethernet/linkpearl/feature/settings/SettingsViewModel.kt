@@ -16,6 +16,8 @@ import dev.aethernet.linkpearl.core.lock.AppLock
 import dev.aethernet.linkpearl.core.lock.LOCK_IDLE_TIMEOUT
 import dev.aethernet.linkpearl.core.prefs.AppPrefs
 import dev.aethernet.linkpearl.core.prefs.Appearance
+import dev.aethernet.linkpearl.feature.update.MinVersion
+import dev.aethernet.linkpearl.feature.update.UpdateController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -64,6 +66,8 @@ class SettingsViewModel(
     private val prefs: AppPrefs,
     private val api: ApiClient,
     private val tz: String = STORE_TZ,
+    /** The server's minimum app build from the same `/m/prefs` answer (`minApp`), for the update gate. */
+    private val onMinApp: (MinVersion) -> Unit = {},
 ) : ViewModel() {
     private val local = MutableStateFlow(SettingsUiState())
     private val lastScans = MutableStateFlow<Map<Int, String?>?>(null)
@@ -87,7 +91,10 @@ class SettingsViewModel(
     fun refresh() {
         viewModelScope.launch {
             val r = api.get("/v1/agents/m/prefs")
-            if (r is ApiResult.Success) lastScans.value = parseScans(r.value as? JsonObject)
+            if (r is ApiResult.Success) {
+                lastScans.value = parseScans(r.value as? JsonObject)
+                parseMinApp(r.value as? JsonObject)?.let(onMinApp)
+            }
         }
     }
 
@@ -129,8 +136,15 @@ class SettingsViewModel(
                 id to s["lastScanAt"]?.jsonPrimitive?.contentOrNull
             }.toMap()
 
+        internal fun parseMinApp(o: JsonObject?): MinVersion? = (o?.get("minApp") as? JsonObject)?.let { m ->
+            val code = m["code"]?.jsonPrimitive?.intOrNull ?: return null
+            MinVersion(code, m["name"]?.jsonPrimitive?.contentOrNull ?: code.toString())
+        }
+
         fun factory(c: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { SettingsViewModel(c.get(), c.get(), c.get(), c.get(), tz = runCatching { c.get<StoreZone>().id }.getOrDefault(STORE_TZ)) }
+            initializer { SettingsViewModel(c.get(), c.get(), c.get(), c.get(), tz = runCatching { c.get<StoreZone>().id }.getOrDefault(STORE_TZ),
+                onMinApp = { min -> c.get<UpdateController>().onMinApp(min) },
+            ) }
         }
     }
 }

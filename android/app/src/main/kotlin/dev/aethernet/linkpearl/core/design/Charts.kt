@@ -340,9 +340,10 @@ fun SegmentBar(segments: List<Pair<Color, Int>>, contentDescription: String, mod
 
 /** Track with a filled part, [fraction] 0..1 (values above 1 are capped); the fill grows to its value. Hidden from TalkBack unless [contentDescription] is given. */
 @Composable
-fun ProgressBar(fraction: Float, color: Color, modifier: Modifier = Modifier, contentDescription: String? = null) {
+fun ProgressBar(fraction: Float, color: Color, modifier: Modifier = Modifier, contentDescription: String? = null, growKey: Any? = fraction) {
     val f = fraction.coerceIn(0f, 1f)
-    val grow = rememberGrow(f, delayMs = 120)
+    // [growKey]: when it changes the bar grows in again (default: every new value). A live progress passes a fixed key so it grows once and then follows.
+    val grow = rememberGrow(growKey, delayMs = 120)
     Box(
         modifier.fillMaxWidth().height(14.dp).clip(RoundedCornerShape(7.dp)).background(Lp.colors.surf3)
             .let { if (contentDescription != null) it.semantics { this.contentDescription = contentDescription } else it.clearAndSetSemantics { } },

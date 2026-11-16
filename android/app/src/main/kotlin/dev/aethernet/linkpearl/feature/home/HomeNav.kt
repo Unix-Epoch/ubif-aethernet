@@ -17,12 +17,12 @@ import dev.aethernet.linkpearl.core.nav.Routes
 import kotlinx.coroutines.delay
 
 /** Home's destination, registered by core/nav's NavHost. */
-fun NavGraphBuilder.homeGraph() {
-    composable(Routes.HOME, deepLinks = listOf(navDeepLink { uriPattern = Routes.deepLink(Routes.HOME) })) { HomeRoute() }
+fun NavGraphBuilder.homeGraph(navigate: ((String) -> Unit)? = null) {
+    composable(Routes.HOME, deepLinks = listOf(navDeepLink { uriPattern = Routes.deepLink(Routes.HOME) })) { HomeRoute(navigate = navigate) }
 }
 
 @Composable
-fun HomeRoute(modifier: Modifier = Modifier) {
+fun HomeRoute(modifier: Modifier = Modifier, navigate: ((String) -> Unit)? = null) {
     val container = LocalAppContainer.current
     val vm: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
@@ -34,5 +34,9 @@ fun HomeRoute(modifier: Modifier = Modifier) {
             while (true) { delay(60_000); vm.refreshIfStale() }
         }
     }
-    HomeScreen(state, onPickStore = vm::pick, onRefresh = vm::refresh, modifier = modifier)
+    // Trends and Prices open with Home's store (Prices takes the first store for All stores).
+    HomeScreen(
+        state, onPickStore = vm::pick, onRefresh = vm::refresh, modifier = modifier,
+        onOpenTrends = { navigate?.invoke(Routes.trends(state.scope.key)) }, onOpenPrices = { navigate?.invoke(Routes.prices(state.scope.key)) },
+    )
 }

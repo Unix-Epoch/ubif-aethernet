@@ -90,6 +90,8 @@ fun LpNavScaffold(
     onSelect: (TopLevel) -> Unit,
     modifier: Modifier = Modifier,
     badges: Map<TopLevel, Int> = emptyMap(),
+    /** Items with a dot instead of a count (Settings: an app update is available). */
+    dots: Set<TopLevel> = emptySet(),
     showBar: Boolean = true,
     content: @Composable () -> Unit,
 ) {
@@ -108,14 +110,14 @@ fun LpNavScaffold(
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
         ) {
-            FloatingNav(selected, onSelect, badges, Modifier.windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 16.dp, vertical = NavMargin).widthIn(max = 520.dp).fillMaxWidth())
+            FloatingNav(selected, onSelect, badges, dots, Modifier.windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 16.dp, vertical = NavMargin).widthIn(max = 520.dp).fillMaxWidth())
         }
     }
 }
 
 /** Five round targets on a glass pill; the selected one widens to show its label, and a gradient pill slides under it. */
 @Composable
-private fun FloatingNav(selected: TopLevel?, onSelect: (TopLevel) -> Unit, badges: Map<TopLevel, Int>, modifier: Modifier) {
+private fun FloatingNav(selected: TopLevel?, onSelect: (TopLevel) -> Unit, badges: Map<TopLevel, Int>, dots: Set<TopLevel>, modifier: Modifier) {
     val c = Lp.colors
     val haptics = rememberHaptics()
     val motion = motionOn()
@@ -143,19 +145,22 @@ private fun FloatingNav(selected: TopLevel?, onSelect: (TopLevel) -> Unit, badge
             TopLevel.entries.forEach { dest ->
                 val on = dest == selected
                 val count = badges[dest] ?: 0
+                val dot = count == 0 && dest in dots
                 val interaction = remember { MutableInteractionSource() }
                 val pop by animateFloatAsState(if (on) 1.08f else 1f, if (motion) LpMotion.press() else snap(), label = "pop")
                 Row(
                     Modifier.height(46.dp).clip(LpShapes.Pill)
                         .onPlaced { bounds[dest] = it.positionInParent().x to it.size.width.toFloat() }
                         .clickable(interaction, null, role = Role.Tab) { if (!on) haptics.tick(); onSelect(dest) }
-                        .semantics { this.selected = on; contentDescription = if (count > 0) "${dest.label}, $count unread" else dest.label }
+                        .semantics { this.selected = on; contentDescription = when { count > 0 -> "${dest.label}, $count unread"; dot -> "${dest.label}, update available"; else -> dest.label } }
                         .padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box {
                         LpIcon(dest.icon, null, size = 24.dp, tint = if (on) c.onNavPill else c.soft, modifier = Modifier.graphicsLayer { scaleX = pop; scaleY = pop })
                         Badge(count, Modifier.align(Alignment.TopEnd).offset(x = 8.dp, y = (-6).dp))
+                        // The dot is ringed in the nav's glass colour so it stands out on the selected pill too.
+                        if (dot) Box(Modifier.align(Alignment.TopEnd).offset(x = 5.dp, y = (-4).dp).size(12.dp).clip(CircleShape).background(c.navGlass).padding(2.dp).clip(CircleShape).background(c.acc))
                     }
                     AnimatedVisibility(on, enter = expandHorizontally() + fadeIn(), exit = shrinkHorizontally() + fadeOut()) {
                         Row {

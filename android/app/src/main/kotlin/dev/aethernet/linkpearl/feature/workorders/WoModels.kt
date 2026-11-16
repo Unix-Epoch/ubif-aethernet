@@ -160,6 +160,8 @@ sealed interface LaneFilter {
     data object All : LaneFilter
     data class One(val lane: Lane) : LaneFilter
     data object FollowUps : LaneFilter
+    /** Open work orders past Spread's old-card limit ([WoAging]); counted and listed by the app, not a server filter. */
+    data object Old : LaneFilter
     data object Closed : LaneFilter
     data object Recent : LaneFilter
 }

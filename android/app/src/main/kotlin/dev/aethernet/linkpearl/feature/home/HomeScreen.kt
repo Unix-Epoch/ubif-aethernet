@@ -75,13 +75,15 @@ fun HomeScreen(
     onPickStore: (StoreScope) -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenTrends: () -> Unit = {},
+    onOpenPrices: () -> Unit = {},
 ) {
     var menu by remember { mutableStateOf(false) }
     val wide = LocalAdaptive.current.isTwoPane
     val scopeIndex = (state.scope as? StoreScope.One)?.let { one -> state.stores.indexOfFirst { it.id == one.id } }?.takeIf { it >= 0 }
     val switcher = @Composable { StoreSwitcher(storeLabel(state), onClick = { menu = true }, colorIndex = scopeIndex) }
     val navInset = LocalNavInset.current
-    val refresh = @Composable { RefreshButton(state.busy, onRefresh) }
+    val refresh = @Composable { PricesButton(onOpenPrices); RefreshButton(state.busy, onRefresh) }
     val status = @Composable { Status(state, onRefresh, Modifier) }
     val d = state.data.takeIf { state.view == HomeView.Ok && it?.empty != true }
 
@@ -99,7 +101,7 @@ fun HomeScreen(
                     status()
                     if (state.data?.empty == true) StateMessage("No stores")
                     else if (d != null) {
-                        SalesCard(d, false, Modifier.enter(0)); SplhCard(d, false, Modifier.enter(1)); RfpCard(d, Modifier.enter(2))
+                        SalesCard(d, false, Modifier.enter(0), onOpenTrends); SplhCard(d, false, Modifier.enter(1)); RfpCard(d, Modifier.enter(2))
                         LanesCard(d, false, Modifier.enter(3)); CleaningCard(d, false, Modifier.enter(4))
                     }
                 }
@@ -115,7 +117,7 @@ fun HomeScreen(
                     when (state.view) {
                         HomeView.Loading -> { SkeletonCard(); SkeletonCard(chart = true); SkeletonCard() }
                         HomeView.Error -> StateMessage("Couldn't load", actionLabel = "Retry", onAction = onRefresh)
-                        HomeView.Ok -> if (state.data?.empty == true) StateMessage("No stores") else if (d != null) { SalesCard(d, true, Modifier.enter(0)); SplhCard(d, true, Modifier.enter(1)); RfpCard(d, Modifier.enter(2)) }
+                        HomeView.Ok -> if (state.data?.empty == true) StateMessage("No stores") else if (d != null) { SalesCard(d, true, Modifier.enter(0), onOpenTrends); SplhCard(d, true, Modifier.enter(1)); RfpCard(d, Modifier.enter(2)) }
                     }
                 }
             },
@@ -183,6 +185,12 @@ fun StoreSwitcher(label: String, onClick: () -> Unit, modifier: Modifier = Modif
         Text(label, Modifier.weight(1f, fill = false), style = LpType.Switcher, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
         LpIcon(LpIcons.ChevronDown, null, size = 22.dp, tint = c.soft)
     }
+}
+
+/** The tag button next to refresh: opens Prices for Home's store. */
+@Composable
+private fun PricesButton(onClick: () -> Unit) {
+    LpIconButton(LpIcons.Tag, "Prices", onClick, Modifier.background(Lp.colors.accSoft, CircleShape), tint = Lp.colors.onAccSoft)
 }
 
 @Composable

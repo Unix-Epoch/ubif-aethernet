@@ -24,7 +24,7 @@ class AndroidAlertNotifier(private val context: Context) : AlertNotifier {
         if (!canNotify()) return false
         return try {
             notes.forEach { nm.notify(TAG, it.id, build(it)) }
-            notes.map { it.store }.distinct().forEach { updateSummary(it) }
+            notes.filter { it.type != AlertType.Digest }.map { it.store }.distinct().forEach { updateSummary(it) }
             true
         } catch (_: SecurityException) { false }
     }
@@ -37,18 +37,20 @@ class AndroidAlertNotifier(private val context: Context) : AlertNotifier {
     private fun intentFor(uri: String) = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage(context.packageName)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
-    private fun tap(note: PlannedNote): PendingIntent {
-        val uri = note.workOrder?.let { Routes.deepLink(Routes.workOrder(note.store, it)) } ?: Routes.deepLink(Routes.ALERTS)
-        return PendingIntent.getActivity(context, note.id, NotificationTap.tag(intentFor(uri), note.alertIds), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-    }
+    private fun tap(note: PlannedNote): PendingIntent =
+        PendingIntent.getActivity(context, note.id, NotificationTap.tag(intentFor(Routes.deepLink(note.tapRoute)), note.alertIds), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
     private fun build(note: PlannedNote): Notification {
+        val digest = note.type == AlertType.Digest
         val b = NotificationCompat.Builder(context, note.type.channelId!!)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setContentTitle(note.title).setContentText(note.text)
-            .setGroup(groupKey(note.store)).setAutoCancel(true).setOnlyAlertOnce(true)
+            // The digest covers every store: its own group, never the per-store summary.
+            .setGroup(if (digest) DIGEST_GROUP else groupKey(note.store)).setAutoCancel(true).setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setContentIntent(tap(note))
+        if (note.lines.isNotEmpty()) b.setStyle(NotificationCompat.BigTextStyle().bigText(note.lines.joinToString("\n")).setBigContentTitle(note.title))
+        if (digest) { b.setSubText(AlertType.Digest.label); b.addAction(0, "Open", tap(note)) }
         markReadAction(note.alertIds)?.let { b.addAction(0, "Mark read", it) }
         return b.build()
     }
@@ -86,5 +88,6 @@ class AndroidAlertNotifier(private val context: Context) : AlertNotifier {
         const val TAG = "alert"
         const val SUMMARY_TAG = "alert-summary"
         const val SUMMARY_BASE = 2_000_000
+        const val DIGEST_GROUP = "digest"
     }
 }
