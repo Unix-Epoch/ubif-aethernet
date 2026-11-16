@@ -61,7 +61,11 @@ private fun MainShell() {
         // destinations, so Back pops to the screen that opened them.
         showBar = TopLevel.entries.any { it.route == route } || route == null,
     ) {
-        NavHost(nav, startDestination = Routes.HOME, modifier = Modifier) {
+        NavHost(
+            nav, startDestination = Routes.HOME, modifier = Modifier,
+            enterTransition = { lpEnter() }, exitTransition = { lpExit() },
+            popEnterTransition = { lpPopEnter() }, popExitTransition = { lpPopExit() },
+        ) {
             homeGraph()
             // Alerts and Settings open each other's screens (alert settings, a work order) inside this one back stack, so Back returns to them.
             alertsGraph(navigate = nav::navigate)

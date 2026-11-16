@@ -50,7 +50,19 @@ import dev.aethernet.linkpearl.core.design.LpType
 import dev.aethernet.linkpearl.core.design.NoticeLine
 import dev.aethernet.linkpearl.core.design.Skeleton
 import dev.aethernet.linkpearl.core.design.StateMessage
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import dev.aethernet.linkpearl.core.design.LpPullToRefresh
+import dev.aethernet.linkpearl.core.design.StoreAvatar
+import dev.aethernet.linkpearl.core.design.enter
+import dev.aethernet.linkpearl.core.design.glass
+import dev.aethernet.linkpearl.core.design.pressScale
+import dev.aethernet.linkpearl.core.design.storeColor
 import dev.aethernet.linkpearl.core.nav.HingeTwoPane
+import dev.aethernet.linkpearl.core.nav.LocalNavInset
 import dev.aethernet.linkpearl.core.nav.LocalAdaptive
 
 /**
@@ -66,13 +78,16 @@ fun HomeScreen(
 ) {
     var menu by remember { mutableStateOf(false) }
     val wide = LocalAdaptive.current.isTwoPane
-    val switcher = @Composable { StoreSwitcher(storeLabel(state), onClick = { menu = true }) }
+    val scopeIndex = (state.scope as? StoreScope.One)?.let { one -> state.stores.indexOfFirst { it.id == one.id } }?.takeIf { it >= 0 }
+    val switcher = @Composable { StoreSwitcher(storeLabel(state), onClick = { menu = true }, colorIndex = scopeIndex) }
+    val navInset = LocalNavInset.current
     val refresh = @Composable { RefreshButton(state.busy, onRefresh) }
     val status = @Composable { Status(state, onRefresh, Modifier) }
     val d = state.data.takeIf { state.view == HomeView.Ok && it?.empty != true }
 
     if (!wide) {
-        Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
+        LpPullToRefresh(refreshing = state.busy, onRefresh = onRefresh, modifier = modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp + navInset), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.weight(1f)) { switcher() }
                 refresh()
@@ -84,26 +99,28 @@ fun HomeScreen(
                     status()
                     if (state.data?.empty == true) StateMessage("No stores")
                     else if (d != null) {
-                        SalesCard(d, false); SplhCard(d, false); RfpCard(d); LanesCard(d, false); CleaningCard(d, false)
+                        SalesCard(d, false, Modifier.enter(0)); SplhCard(d, false, Modifier.enter(1)); RfpCard(d, Modifier.enter(2))
+                        LanesCard(d, false, Modifier.enter(3)); CleaningCard(d, false, Modifier.enter(4))
                     }
                 }
             }
+        }
         }
     } else {
         HingeTwoPane(
             modifier = modifier.fillMaxSize(),
             first = {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp + navInset), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
                     Row(Modifier.heightIn(min = LpSpacing.Touch)) { switcher() }
                     when (state.view) {
                         HomeView.Loading -> { SkeletonCard(); SkeletonCard(chart = true); SkeletonCard() }
                         HomeView.Error -> StateMessage("Couldn't load", actionLabel = "Retry", onAction = onRefresh)
-                        HomeView.Ok -> if (state.data?.empty == true) StateMessage("No stores") else if (d != null) { SalesCard(d, true); SplhCard(d, true); RfpCard(d) }
+                        HomeView.Ok -> if (state.data?.empty == true) StateMessage("No stores") else if (d != null) { SalesCard(d, true, Modifier.enter(0)); SplhCard(d, true, Modifier.enter(1)); RfpCard(d, Modifier.enter(2)) }
                     }
                 }
             },
             second = {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(end = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(end = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp + navInset), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
                     Row(Modifier.fillMaxWidth().heightIn(min = LpSpacing.Touch), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.weight(1f)) {
                             if (state.view == HomeView.Loading) Skeleton(width = 120.dp) else if (state.view == HomeView.Ok) status()
@@ -112,7 +129,7 @@ fun HomeScreen(
                     }
                     when (state.view) {
                         HomeView.Loading -> { SkeletonCard(chart = true); SkeletonCard() }
-                        HomeView.Ok -> if (d != null) { LanesCard(d, true); CleaningCard(d, true); ExtraCard(d) }
+                        HomeView.Ok -> if (d != null) { LanesCard(d, true, Modifier.enter(1)); CleaningCard(d, true, Modifier.enter(2)); ExtraCard(d, Modifier.enter(3)) }
                         HomeView.Error -> Unit
                     }
                 }
@@ -150,19 +167,21 @@ private fun Status(state: HomeUiState, onRetry: () -> Unit, modifier: Modifier) 
     }
 }
 
-/** The store switcher: a 48dp pill with the store icon, the name and a chevron. Opens the store sheet. */
+/** The store switcher: a 48dp glass pill with the store's avatar (or the store icon for All stores), the name and a chevron. Opens the store sheet. */
 @Composable
-fun StoreSwitcher(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun StoreSwitcher(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, colorIndex: Int? = null) {
     val c = Lp.colors
+    val interaction = remember { MutableInteractionSource() }
     Row(
-        modifier.heightIn(min = LpSpacing.Touch).widthIn(max = 360.dp).clip(LpShapes.Pill).background(c.surf3).border(1.5.dp, c.outline, LpShapes.Pill)
-            .clickable(role = Role.DropdownList, onClick = onClick).semantics { contentDescription = "Store: $label" }
-            .padding(start = 16.dp, end = 14.dp),
+        modifier.heightIn(min = LpSpacing.Touch).widthIn(max = 360.dp).pressScale(interaction).glass()
+            .clickable(interaction, LocalIndication.current, role = Role.DropdownList, onClick = onClick).semantics { contentDescription = "Store: $label" }
+            .padding(start = 10.dp, end = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        LpIcon(LpIcons.Store, null, size = 22.dp, tint = c.fg)
+        if (colorIndex != null) StoreAvatar(label, storeColor(colorIndex), size = 28.dp)
+        else Box(Modifier.size(28.dp).clip(CircleShape).background(c.accSoft), contentAlignment = Alignment.Center) { LpIcon(LpIcons.Store, null, size = 18.dp, tint = c.onAccSoft) }
         Text(label, Modifier.weight(1f, fill = false), style = LpType.Switcher, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        LpIcon(LpIcons.ChevronDown, null, size = 22.dp, tint = c.fg)
+        LpIcon(LpIcons.ChevronDown, null, size = 22.dp, tint = c.soft)
     }
 }
 

@@ -1,5 +1,8 @@
 package dev.aethernet.linkpearl.feature.retrace
 
+import dev.aethernet.linkpearl.core.nav.LocalNavInset
+import dev.aethernet.linkpearl.core.design.lpSurface
+import dev.aethernet.linkpearl.core.design.LpPullToRefresh
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,7 +22,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -111,7 +113,7 @@ fun RetraceScreen(
     Column(modifier.fillMaxSize().onGloballyPositioned { originX = it.positionInWindow().x }) {
         Column(Modifier.padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Retrace", style = LpType.Title.copy(fontWeight = FontWeight.Bold), color = Lp.colors.fg, modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1)
+                Text("Retrace", style = LpType.Screen, color = Lp.colors.fg, modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1)
             }
             SearchField(state.query, true, actions.onQuery, actions.onClearQuery, {}, placeholder = "Item, name, SKU, label")
             LpSegmented(listOf("Items", "Purchase orders"), if (state.view == RetraceView.Items) 0 else 1, { actions.onPickView(RetraceView.entries[it]) })
@@ -124,10 +126,10 @@ fun RetraceScreen(
         when (state.load) {
             LoadView.Loading -> Column(Modifier.padding(LpSpacing.Gutter), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) { repeat(4) { SkeletonRow() } }
             LoadView.Error -> StateMessage(problemText(state.problem), actionLabel = if (canRetry(state.problem)) "Retry" else null, onAction = actions.onRefresh)
-            LoadView.Ok -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = actions.onRefresh, modifier = Modifier.fillMaxSize()) {
+            LoadView.Ok -> LpPullToRefresh(refreshing = state.refreshing, onRefresh = actions.onRefresh, modifier = Modifier.fillMaxSize()) {
                 LazyVerticalGrid(
                     columns = cells, state = gridState, modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = LpSpacing.Gutter, end = LpSpacing.Gutter, top = LpSpacing.M, bottom = 24.dp),
+                    contentPadding = PaddingValues(start = LpSpacing.Gutter, end = LpSpacing.Gutter, top = LpSpacing.M, bottom = 24.dp + LocalNavInset.current),
                     verticalArrangement = Arrangement.spacedBy(LpSpacing.M), horizontalArrangement = Arrangement.spacedBy(colGap),
                 ) {
                     state.problem?.let { p ->
@@ -211,7 +213,7 @@ fun LabelHitCard(hit: RtLabelHit, onClick: () -> Unit) {
     val shape = LpShapes.Card
     val group = NowGroup.of(hit.group)
     Column(
-        Modifier.fillMaxWidth().clip(shape).background(c.surf).border(1.dp, c.line, shape).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().lpSurface(shape).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(hit.label, style = LpType.ValueMedium, color = c.fg, maxLines = 1)
@@ -226,7 +228,7 @@ fun PoCard(po: RtPoRow) {
     val c = Lp.colors
     val shape = LpShapes.Card
     Column(
-        Modifier.fillMaxWidth().clip(shape).background(c.surf).border(1.dp, c.line, shape).padding(horizontal = 16.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().lpSurface(shape).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

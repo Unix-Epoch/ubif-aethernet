@@ -49,6 +49,8 @@ import dev.aethernet.linkpearl.core.design.AsOfLine
 import dev.aethernet.linkpearl.core.design.CardLabel
 import dev.aethernet.linkpearl.core.design.Fmt
 import dev.aethernet.linkpearl.core.design.Lp
+import dev.aethernet.linkpearl.core.design.LpHeroCard
+import dev.aethernet.linkpearl.core.nav.sharedCard
 import dev.aethernet.linkpearl.core.design.LpCard
 import dev.aethernet.linkpearl.core.design.LpChip
 import dev.aethernet.linkpearl.core.design.LpIcon
@@ -95,7 +97,7 @@ fun WorkOrderDetailScreen(state: WoDetailUi, remaining: Duration?, showBack: Boo
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = if (showBack) 4.dp else LpSpacing.Gutter, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (showBack) LpIconButton(if (closeIcon) LpIcons.Close else LpIcons.Back, if (closeIcon) "Close" else "Back", actions.onBack)
-            Text(key?.wo?.toString() ?: "", style = LpType.Title.copy(fontWeight = FontWeight.Bold), color = Lp.colors.fg, maxLines = 1,
+            Text(key?.wo?.toString() ?: "", style = LpType.Title.copy(fontWeight = FontWeight.Bold, fontSize = LpType.Screen.fontSize, letterSpacing = LpType.Screen.letterSpacing), color = Lp.colors.fg, maxLines = 1,
                 modifier = Modifier.weight(1f).padding(start = if (showBack) 8.dp else 0.dp).semantics { heading() })
             if (key != null) {
                 if (!tabletop) LpIconButton(LpIcons.External, "Open in Portal", { actions.onOpenPortal(key.wo) })
@@ -112,7 +114,7 @@ fun WorkOrderDetailScreen(state: WoDetailUi, remaining: Duration?, showBack: Boo
             else -> {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = LpSpacing.Gutter).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
                     Banner(state, actions)
-                    HeaderCard(state, d, nowMs)
+                    HeaderCard(state, d, nowMs, Modifier.sharedCard("wo-${state.key?.id}"))
                     CustomerBlock(state, actions)
                     if (shown != null && shown.hasSnapshot) NotesCard(shown)
                     TimelineCard(d, nowMs)
@@ -160,7 +162,7 @@ private fun BottomBar(state: WoDetailUi, remaining: Duration?, actions: WoDetail
 private fun HeaderCard(state: WoDetailUi, d: WoDetailResponse, nowMs: Long, modifier: Modifier = Modifier) {
     val w = d.wo
     val c = Lp.colors
-    LpCard(modifier) {
+    LpHeroCard(modifier, padding = 16.dp) {
         Row(verticalAlignment = Alignment.Top) {
             Text(w.device ?: Fmt.DASH, style = LpType.Title.copy(fontWeight = FontWeight.Bold), color = c.fg, modifier = Modifier.weight(1f))
             if (w.open && w.statusSince != null) {
@@ -172,7 +174,7 @@ private fun HeaderCard(state: WoDetailUi, d: WoDetailResponse, nowMs: Long, modi
         Spacer(Modifier.height(10.dp))
         StatusChip(w.status, w.lane)
         if (w.tags.isNotEmpty()) { Spacer(Modifier.height(10.dp)); TagRow(w.tags) }
-        Box(Modifier.fillMaxWidth().padding(vertical = 14.dp).height(1.dp).background(c.line))
+        Box(Modifier.fillMaxWidth().padding(vertical = 14.dp).height(1.dp).background(c.fg.copy(alpha = 0.1f)))
         Row {
             LabelValue("Program", w.program ?: Fmt.DASH, Modifier.weight(1f))
             LabelValue("Bin", w.bin ?: Fmt.DASH, Modifier.weight(1f))
@@ -407,7 +409,7 @@ private fun ColumnScope.TabletopDetail(state: WoDetailUi, d: WoDetailResponse, s
             Row(Modifier.fillMaxWidth().height(topH).padding(horizontal = LpSpacing.Gutter), horizontalArrangement = Arrangement.spacedBy(LpSpacing.L)) {
                 Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
                     Banner(state, actions)
-                    HeaderCard(state, d, nowMs)
+                    HeaderCard(state, d, nowMs, Modifier.sharedCard("wo-${state.key?.id}"))
                     TimelineCard(d, nowMs)
                 }
                 Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {

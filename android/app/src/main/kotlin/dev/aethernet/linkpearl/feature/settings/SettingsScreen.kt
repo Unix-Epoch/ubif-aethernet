@@ -1,5 +1,6 @@
 package dev.aethernet.linkpearl.feature.settings
 
+import dev.aethernet.linkpearl.core.nav.LocalNavInset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -58,7 +59,7 @@ data class SettingsActions(
 @Composable
 fun SettingsScreen(state: SettingsUiState = SettingsUiState(), version: String = "—", modifier: Modifier = Modifier, actions: SettingsActions = SettingsActions()) {
     val wide = LocalAdaptive.current.isTwoPane
-    val title = @Composable { Text("Settings", style = LpType.Title, color = Lp.colors.fg, modifier = Modifier.heightIn(min = LpSpacing.Touch).semantics { heading() }) }
+    val title = @Composable { Text("Settings", style = LpType.Screen, color = Lp.colors.fg, modifier = Modifier.heightIn(min = LpSpacing.Touch).semantics { heading() }) }
     val left = @Composable {
         DeviceSection(state); CustomerSection(state, actions); NotificationsSection(state, actions)
     }
@@ -66,15 +67,16 @@ fun SettingsScreen(state: SettingsUiState = SettingsUiState(), version: String =
         AppearanceSection(state, actions); AboutSection(version, actions); ForgetSection(actions)
     }
     val gap = Arrangement.spacedBy(LpSpacing.Xl)
+    val navInset = LocalNavInset.current
     if (!wide) {
-        Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp), verticalArrangement = gap) {
+        Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp + navInset), verticalArrangement = gap) {
             title(); left(); right()
         }
     } else {
         HingeTwoPane(
             modifier = modifier.fillMaxSize(),
-            first = { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp), verticalArrangement = gap) { title(); left() } },
-            second = { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(end = LpSpacing.Gutter).padding(top = 8.dp + LpSpacing.Touch + LpSpacing.Xl, bottom = 24.dp), verticalArrangement = gap) { right() } },
+            first = { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp + navInset), verticalArrangement = gap) { title(); left() } },
+            second = { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(end = LpSpacing.Gutter).padding(top = 8.dp + LpSpacing.Touch + LpSpacing.Xl, bottom = 24.dp + navInset), verticalArrangement = gap) { right() } },
         )
     }
     if (state.confirmForget) LpDialog(onDismiss = actions.onCancelForget) { ForgetConfirm(actions) }

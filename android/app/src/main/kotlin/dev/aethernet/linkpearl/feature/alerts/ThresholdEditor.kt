@@ -1,5 +1,6 @@
 package dev.aethernet.linkpearl.feature.alerts
 
+import dev.aethernet.linkpearl.core.design.lpSurface
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -74,7 +75,7 @@ fun ThresholdInPane(onDismiss: () -> Unit, content: @Composable () -> Unit) {
     val c = Lp.colors
     Box(Modifier.fillMaxSize().background(c.shade).clickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
         Column(
-            Modifier.padding(LpSpacing.L).widthIn(max = 420.dp).background(c.surf, LpShapes.Card).border(1.dp, c.line, LpShapes.Card)
+            Modifier.padding(LpSpacing.L).widthIn(max = 420.dp).lpSurface(LpShapes.Card, 24.dp)
                 .clickable(enabled = false) {}.padding(LpSpacing.L),
         ) { content() }
     }
