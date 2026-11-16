@@ -53,6 +53,8 @@ The app talks to the **tracker Worker**, not the admin site. Each phone is a reg
 | `/v1/agents/m/retrace…` | built | inventory lookup: items, item, label, purchase orders, see `MOBILE-API-retrace.md` (`src/mobile-retrace.js`) |
 | `/v1/agents/m/waymark…` | built | Waymark writes: the store's tag list, tag on / off, push or remove a follow-up, see `MOBILE-API-waymark.md` (`src/mobile-waymark.js`) |
 | `GET /v1/agents/m/trends?store=<id>\|all&period=week\|month\|year&at=YYYY-MM-DD[&fresh=1]` | built | Trends: sales, sales per labor hour, cleaning and RFP for a calendar week (Sunday–Saturday), month or year against the previous one, see `MOBILE-API-trends.md` (`src/mobile-trends.js`) |
+| `GET /v1/agents/m/prices?store=<id>[&q=<device>]` | built | the store's Price sheet: device list, or one device's prices by repair, see `MOBILE-API-prices.md` (`src/mobile-prices.js`) |
+| `GET /v1/agents/m/update`, `GET /v1/agents/m/update/apk?code=<n>` | built | the latest app build (`{ latest, min }`) and its APK from the `RELEASES` R2 bucket, see `MOBILE-API-update.md` (`src/mobile-update.js`) |
 | `GET /v1/agents/wos?store=<id>&closedDays=<0-14>` | existing (the Mac audit's route; a phone may use it) | open work orders plus ones closed within `closedDays` (default 3, max 14), each with its plain columns, `plain` JSON and latest sealed snapshot; `403 not approved for this store` otherwise |
 
 Other `/v1/agents/m/…` paths are `404`. A Mac agent (not a phone) calling `/m/…` gets `403 not a phone`.
@@ -119,5 +121,6 @@ Dispatch lives in `src/mobile-agent.js`: `woApi / alertsApi / prefsApi (req, env
 ## Deploy order (not done)
 
 1. Apply the migration: `cd tracker-worker && npx wrangler d1 execute aethernet-tracker --remote --file=migrations/2026-11-13-mobile-devices.sql` (idempotent, additive).
-2. Deploy the tracker Worker (this also registers the new 10-minute cron from `wrangler.toml`).
+2. Create the releases bucket before the first deploy that carries the `RELEASES` binding: `cd tracker-worker && npx wrangler r2 bucket create linkpearl-releases` (see `MOBILE-API-update.md`).
+3. Deploy the tracker Worker (this also registers the new 10-minute cron from `wrangler.toml`).
 Before step 1 the Mac agent is unaffected (every agent reads as kind `agent`), and phone registration fails with a generic 500.

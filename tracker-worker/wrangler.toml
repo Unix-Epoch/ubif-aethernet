@@ -21,6 +21,12 @@ database_id = "59394e23-6903-4b1b-bb41-43abf19f3915"
 # binding = "ARCHIVE"
 # bucket_name = "aethernet-tracker-archive"
 
+# Linkpearl (the Android app) releases: linkpearl/latest.json + linkpearl/Linkpearl-<versionName>.apk, written by android/publish-release.sh.
+# Create the bucket before the first deploy with this binding: npx wrangler r2 bucket create linkpearl-releases
+[[r2_buckets]]
+binding = "RELEASES"
+bucket_name = "linkpearl-releases"
+
 [vars]
 APP_KEY = "ae_QFa2DKDy0DrlBd_A3bfZL3BtgM51idh6"   # public: ships inside Aethernet
 # People who may do the first setup (create the master key) on the admin site.
