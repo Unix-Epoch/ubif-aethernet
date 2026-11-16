@@ -67,3 +67,8 @@ export function dueCond(by) {
   for (const [s, wos] of by) { parts.push('(w.store = ? AND w.wo IN (SELECT value FROM json_each(?)))'); args.push(s, JSON.stringify(wos)); }
   return { sql: '(' + parts.join(' OR ') + ')', args };
 }
+
+// Linkpearl: /v1/agents/m/waymark… writes (tags, follow-ups) — stub; being built.
+export async function waymarkApi(req, env, url, device, h) {
+  return h.fail(501, 'not built yet');
+}
