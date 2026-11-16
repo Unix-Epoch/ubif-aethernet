@@ -19,7 +19,7 @@ Aethernet is a Tampermonkey userscript of "shards" (features named after FFXIV a
 - `50-glamour.js` Glamour (`glamour`): appearance; `55-waymark.js` Waymark (`waymark`); `57-row-colors.js` Rainbow Drip (`rowColors`)
 - `58-fixes.js` Master's Mend (`fixes`): Portal fixes, bulletins
 - `59-spread.js` Spread (`spread`): Board (Kanban) view of the Work orders list, read-only (dev-only: `DEV_ONLY_FILES` in `build.py`, `AE_DEV` guards in `00-core.js`/`05-settings.js`); `sandbox/seed_board.py` seeds fake open work orders for it
-- `60-count-check.js` Lay of the Land (`countCheck`); `62-tactician.js` Tactician (`timeSheet`); `63-reassemble.js` Reassemble (`reassemble`): price estimates; `64-decipher.js` Decipher (`decipher`): IMEI to model
+- `60-count-check.js` Lay of the Land (`countCheck`); `62-tactician.js` Tactician (`timeSheet`); `63-reassemble.js` Reassemble (`reassemble`): price estimates; `64-decipher.js` Decipher (`decipher`): IMEI to model; `66-pullbacks.js` Elusive Jump (`pullbacks`): pullback scanning, marks parts in Portal, results .xlsx (dev-only: `DEV_ONLY_FILES`; Linkpearl's `feature/pullbacks` scans on the phone and hands its results file here). Tests: `node test-client/pullbacks.mjs`
 - `src/dev/devtools.js` dev-channel tools tab
 - `worker/` Aethernet API Worker (Cloudflare, D1; `--env dev` is the dev Worker); `tracker-worker/` WO tracker Worker (src, test, migrations); `admin-worker/` admin site (Stores, inbox, tracker UI)
 - `sheets/` `sync_sheets.py` pushes the store's Price sheet to the Worker (launchd plist)

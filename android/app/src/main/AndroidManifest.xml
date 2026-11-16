@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- In-app updates (feature/update): the downloaded APK is installed through PackageInstaller. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Pullbacks: scanning labels with the camera (optional: typing works without one) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <!-- Intents the app sends (dial, text, open Portal in the browser): package visibility is not needed for intent resolution with a chooser. -->
     <queries>
@@ -112,6 +115,14 @@
             android:exported="false"
             tools:node="merge">
             <meta-data android:name="androidx.work.WorkManagerInitializer" android:value="androidx.startup" tools:node="remove" />
+        </provider>
+        <!-- Pullbacks: the results file handed to the share sheet (cache/pullbacks/ only) -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/pullback_paths" />
         </provider>
     </application>
 </manifest>
