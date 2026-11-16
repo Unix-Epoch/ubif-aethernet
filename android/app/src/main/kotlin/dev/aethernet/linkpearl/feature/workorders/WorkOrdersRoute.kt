@@ -102,6 +102,10 @@ fun WorkOrdersRoute(initialId: String? = null, navigate: ((String) -> Unit)? = n
         onRefresh = detailVm::refresh, onUnlock = lock::unlock, onLock = lock::lock,
         onCall = { ctx.dial(it) }, onText = { ctx.text(it) }, onOpenPortal = { ctx.openPortal(it) },
         onOpenLabel = { store, label -> navigate?.invoke(Routes.retraceLabel(store, label)) },
+        onOpenTags = detailVm::openTags, onCloseTags = detailVm::closeTags, onRetryTags = detailVm::openTags,
+        onToggleTag = detailVm::toggleTag, onAddTag = detailVm::addTag,
+        onOpenFollowUp = detailVm::openFollowUp, onCloseFollowUp = detailVm::closeFollowUp, onPickFollowUp = detailVm::pickFollowUp,
+        onSaveFollowUp = detailVm::saveFollowUp, onRemoveFollowUp = detailVm::removeFollowUp, onMessageShown = detailVm::messageShown,
     )
     // Times in the store's zone (from Home), not the phone's.
     val zoneId by remember { runCatching { c.get<StoreZone>().ids }.getOrNull() ?: flowOf(null) }.collectAsStateWithLifecycle(null)

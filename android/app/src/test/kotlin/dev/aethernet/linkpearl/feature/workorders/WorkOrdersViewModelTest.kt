@@ -39,8 +39,10 @@ class WorkOrdersViewModelTest {
         assertEquals(11, s.lanes!!.total)
         assertTrue(s.hasMore)
         assertTrue(s.names.isEmpty())
-        val q = api.calls.single().second
+        val q = api.calls.first().second
         assertEquals(mapOf("store" to "914", "state" to "open", "sort" to "status", "limit" to "25"), q)
+        assertEquals("then the Old count", mapOf("store" to "914", "state" to "open", "sort" to "status", "limit" to "100"), api.calls[1].second)
+        assertEquals(2, api.calls.size)
         assertEquals(listOf(StoreRef(914, "Sandbox"), StoreRef(326, "Lynnhaven")), s.stores)
     }
 
@@ -234,6 +236,64 @@ class WorkOrdersViewModelTest {
         val s = vm(store = 914).state.value
         assertNull(s.followUps)
         assertTrue(s.rows.all { it.tags.isEmpty() && it.followUp == null })
+    }
+
+    // ---- Old (Spread's limits, WoAging) ----------------------------------------------------------------------------------------
+
+    private val nov13 = java.time.Instant.parse("2026-11-13T17:02:25.294Z").toEpochMilli()
+    private fun agedVm(repo: WoRepository = WoRepository(api), store: Int? = 914) =
+        WorkOrdersViewModel(repo, FakeAppLock(), TestAuth(), MemoryWoStorePreference(store), nowMs = { nov13 }, work = main, searchDebounceMs = 0)
+
+    @Test fun oldChipCountsAndTheFilterListsOldOnes() = runTest {
+        // Need to order for 5 days (limit 3: old) and Ready for pickup for 1 day (limit 7: not old); the scan stops at the young row.
+        api.on(isList, WoFixtures.LIST_OPEN)
+        val vm = agedVm()
+        assertEquals(1, vm.state.value.old)
+        val scans = api.calls.filter { it.second["limit"] == "100" }
+        assertEquals("one page: its last row is younger than 3 days", 1, scans.size)
+        assertNull("the count never asks for cards", scans.single().second["cards"])
+        vm.pickFilter(LaneFilter.Old)
+        val s = vm.state.value
+        assertEquals(listOf(7000001L), s.rows.map { it.wo })
+        assertFalse(s.hasMore)
+        assertEquals("open", api.calls.last().second["state"]); assertEquals("status", api.calls.last().second["sort"])
+        vm.loadMore()
+        assertEquals("no paging in Old", LoadView.Ok, vm.state.value.view)
+        vm.pickFilter(LaneFilter.All)
+        assertEquals("25", api.calls.last().second["limit"])
+        assertEquals(1, vm.state.value.old)
+    }
+
+    @Test fun oldScanPagesWhileRowsCanStillBeOld() = runTest {
+        // Every row on the first page is old, so the next page is read too.
+        val oldPage = WoFixtures.LIST_OPEN.replace("2026-11-12T17:02:23.484Z", "2026-11-01T17:02:23.484Z")
+        api.on(isList, oldPage)
+        api.on({ p, q -> p == "/v1/agents/m/wo" && q["after"] != null }, WoFixtures.LIST_RECENT.replace("\"open\":false", "\"open\":true").replace("\"statusSince\":null", "\"statusSince\":\"2026-11-13T10:00:00.000Z\""))
+        val vm = agedVm()
+        assertEquals(2, vm.state.value.old)
+        assertEquals(2, api.calls.count { it.second["limit"] == "100" })
+    }
+
+    @Test fun oldCountFailureShowsNoChip() = runTest {
+        api.on(isList, WoFixtures.LIST_OPEN)
+        api.fail({ p, q -> p == "/v1/agents/m/wo" && q["limit"] == "100" }, ApiResult.Failure(ApiError.Offline))
+        val vm = agedVm()
+        assertEquals(LoadView.Ok, vm.state.value.view)
+        assertNull(vm.state.value.old)
+    }
+
+    @Test fun aChangeFromTheDetailUpdatesTheRow() = runTest {
+        api.on(isList, WoWaymarkFixtures.LIST_WAYMARK)
+        val repo = WoRepository(api)
+        val vm = agedVm(repo)
+        val row = vm.state.value.rows.first { it.wo == 7000003L }
+        val before = api.calls.size
+        api.fail(isList, ApiResult.Failure(ApiError.Offline)) // the re-list fails, so what is shown is the patched row
+        repo.notifyChanged(row.copy(tags = listOf(WoTag("Parts", "blue")), followUp = null))
+        val after = vm.state.value.rows.first { it.wo == 7000003L }
+        assertEquals(listOf("Parts"), after.tags.map { it.tag })
+        assertNull(after.followUp)
+        assertTrue("and the list is read again", api.calls.size > before)
     }
 
     @Test fun theNameIndexUsesTheRecentWindowNotEveryClosedWorkOrder() = runTest {

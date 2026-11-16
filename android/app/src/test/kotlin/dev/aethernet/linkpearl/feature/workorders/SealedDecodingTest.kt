@@ -88,8 +88,6 @@ class SealedDecodingTest {
         assertEquals("5d 0h", WoFmt.inStatus("2026-11-08T17:02:24.673Z", now))
         assertEquals("—", WoFmt.inStatus(null, now))
         assertEquals("5 days", WoFmt.inStatusLong("2026-11-08T17:02:24.673Z", now))
-        assertTrue(WoFmt.isLong("2026-11-08T17:02:24.673Z", now))
-        assertFalse(WoFmt.isLong("2026-11-12T17:02:23.484Z", now))
         assertEquals("1d 0h", WoFmt.seconds(86402))
         assertEquals("(757) 555-0142", WoFmt.phone("7575550142"))
         assertEquals("49•••••••••7518", WoFmt.mask("490154203237518"))

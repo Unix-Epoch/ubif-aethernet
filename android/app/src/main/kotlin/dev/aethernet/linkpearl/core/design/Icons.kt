@@ -56,6 +56,7 @@ object LpIcons {
     val Phone = icon("phone", "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2")
     val Message = icon("message", "M4 5h16v11H9l-5 4z")
     val Edit = icon("edit", "M4 20l1-4L16 5l3 3L8 19zM14 7l3 3")
+    val Trash = icon("trash", "M4 7h16M10 3h4M6 7l1 13h10l1-13", "M10 11v6M14 11v6")
     val Warning = icon("warning", "M12 4l9 16H3z", "M12 10v4M12 17v.01")
     val Hourglass = icon("hourglass", "M7 3h10M7 21h10M8 3v4l4 5-4 5v4M16 3v4l-4 5 4 5v4")
     val External = icon("external", "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6")
