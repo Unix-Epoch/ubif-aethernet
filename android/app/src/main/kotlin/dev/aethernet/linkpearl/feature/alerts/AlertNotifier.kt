@@ -1,5 +1,7 @@
 package dev.aethernet.linkpearl.feature.alerts
 
+import dev.aethernet.linkpearl.core.nav.Routes
+
 /** What to show for a batch of new alerts. Plain data so the grouping rules are tested on the JVM. */
 data class PlannedNote(
     /** Lowest alert id it stands for; with the tag "alert" this is the notification's identity, so posting it twice replaces it. */
@@ -11,7 +13,17 @@ data class PlannedNote(
     val alertIds: List<Int>,
     /** The work order to open on tap (single work-order alerts only); null opens the Alerts screen. */
     val workOrder: Long?,
-)
+    /** Expanded text (BigTextStyle), one line each; empty for a one-sentence note. */
+    val lines: List<String> = emptyList(),
+) {
+    /** Where a tap goes: the Morning digest screen, the work order, or Alerts. */
+    val tapRoute: String
+        get() = when {
+            type == AlertType.Digest -> AlertsRoutes.digest(id)
+            workOrder != null -> Routes.workOrder(store, workOrder)
+            else -> Routes.ALERTS
+        }
+}
 
 object NotificationPlanner {
     /**
@@ -29,10 +41,18 @@ object NotificationPlanner {
                 val text = if (first.type == AlertType.Stuck) "${group.size} work orders stuck in a status" else "${group.size} follow-ups due today"
                 out += PlannedNote(first.id, first.store, first.type, title, text, group.map { it.id }, null)
             } else group.forEach { a ->
-                out += PlannedNote(a.id, a.store, a.type, title, AlertText.sentence(a, names), listOf(a.id), a.wo)
+                out += if (a.type == AlertType.Digest) digestNote(a)
+                else PlannedNote(a.id, a.store, a.type, title, AlertText.sentence(a, names), listOf(a.id), a.wo)
             }
         }
         return out.sortedBy { it.id }
+    }
+
+    /** "Yesterday $2,096 · $168 per labor hour" over the digest's lines (zero lines left out); a tap opens the digest. */
+    fun digestNote(a: Alert): PlannedNote {
+        val d = a.digest ?: DigestFacts()
+        val lines = DigestText.lines(d)
+        return PlannedNote(a.id, a.store, a.type, DigestText.title(d), lines.firstOrNull() ?: AlertType.Digest.label, listOf(a.id), null, lines)
     }
 }
 

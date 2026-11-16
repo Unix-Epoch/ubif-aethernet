@@ -72,6 +72,12 @@ object LpIcons {
     val Outbox = icon("outbox", "M4 14v6h16v-6M12 15V4M8 8l4-4 4 4")
     val Tag = icon("tag", "M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z", "M7.5 7.5h.01")
     val BellOff = icon("bellOff", "M6 8a6 6 0 0 1 9.5-4.9M18 11c0 5 3 6 3 6H8M10.3 21a1.94 1.94 0 0 0 3.4 0", "M3 3l18 18")
+    /** Alerts: the morning digest (a sun rising over the horizon). */
+    val Sunrise = icon("sunrise", "M12 2v8M4.9 10.9l1.4 1.4M2 18h2M20 18h2M19.1 10.9l-1.4 1.4M22 22H2M8 6l4-4 4 4M16 18a4 4 0 0 0-8 0")
+    /** Alerts: a sales order (a receipt with a dollar sign). */
+    val Receipt = icon("receipt", "M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z", "M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8M12 17.5v-11")
+    /** Alerts: Retrace's coverage check (a shield with an exclamation mark). */
+    val Shield = icon("shield", "M20 13c0 5-3.5 7.5-7.7 9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z", "M12 8v4M12 16h.01")
 }
 
 /** An icon with a content description (or `null` when the surrounding control already says what it is: then it is hidden from TalkBack). */

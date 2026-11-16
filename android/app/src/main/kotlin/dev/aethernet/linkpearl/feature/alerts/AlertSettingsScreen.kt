@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import dev.aethernet.linkpearl.core.nav.LocalNavInset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -86,9 +88,9 @@ fun AlertSettingsScreen(
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = LpSpacing.Gutter), verticalArrangement = Arrangement.spacedBy(LpSpacing.L)) {
                     if (ui.error != null) NoticeLine(ui.error, LpIcons.Warning, warn = true)
                     GroupCard {
-                        AlertType.configurableTypes.forEachIndexed { i, t ->
+                        // A server that does not know a type yet has no row for it.
+                        AlertType.configurableTypes.mapNotNull { t -> s.types[t]?.let { t to it } }.forEachIndexed { i, (t, ts) ->
                             if (i > 0) Hairline()
-                            val ts = s.types[t] ?: return@forEachIndexed
                             TypeSettingRow(t, ts, { onEdit(SettingsEdit.TypeOn(t, it)) }, { editing = Editing.Threshold(t) })
                         }
                     }
@@ -115,6 +117,7 @@ fun AlertSettingsScreen(
                             }
                         }
                     }
+                    Spacer(Modifier.height(8.dp + LocalNavInset.current))
                 }
             }
         }
@@ -122,7 +125,7 @@ fun AlertSettingsScreen(
     (ui as? SettingsUi.Ready)?.let { r ->
         val s = r.bundle.settings
         when (val e = editing) {
-            is Editing.Threshold -> s.types[e.type]?.let { cur ->
+            is Editing.Threshold -> s.types[e.type]?.takeIf { e.type.hasThreshold }?.let { cur ->
                 ThresholdEditor(e.type, cur.value, r.bundle.ranges.of(e.type), editorStyle,
                     onSave = { onEdit(SettingsEdit.TypeValue(e.type, it)); editing = null }, onDismiss = { editing = null })
             }

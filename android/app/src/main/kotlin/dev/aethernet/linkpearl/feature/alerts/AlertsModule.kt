@@ -23,7 +23,7 @@ object AlertsModule : FeatureModule {
 
         // One channel per type: the owner can silence a type in Android's own settings.
         AlertType.configurableTypes.forEach { t ->
-            c.channel(AppContainer.ChannelSpec(t.channelId!!, t.label, NotificationManager.IMPORTANCE_DEFAULT))
+            c.channel(AppContainer.ChannelSpec(t.channelId!!, t.channelName, NotificationManager.IMPORTANCE_DEFAULT))
         }
 
         c.appScope.launch { c.get<StoreZone>().ids.collect { AlertText.TZ = it } }

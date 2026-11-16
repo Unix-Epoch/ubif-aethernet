@@ -28,8 +28,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavGraphBuilder
+import androidx.navigation.NavType
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
+import dev.aethernet.linkpearl.core.data.ApiError
+import dev.aethernet.linkpearl.core.data.ApiResult
 import dev.aethernet.linkpearl.core.data.AuthState
 import dev.aethernet.linkpearl.core.di.LocalAppContainer
 import dev.aethernet.linkpearl.core.nav.Routes
@@ -44,6 +48,16 @@ import kotlinx.coroutines.launch
 fun NavGraphBuilder.alertsGraph(navigate: ((route: String) -> Unit)? = null) {
     composable(Routes.ALERTS, deepLinks = listOf(navDeepLink { uriPattern = Routes.deepLink(Routes.ALERTS) })) { AlertsRoute(navigate) }
     composable(Routes.ALERT_SETTINGS, deepLinks = listOf(navDeepLink { uriPattern = Routes.deepLink(Routes.ALERT_SETTINGS) })) { AlertSettingsRoute(onClose = null) }
+    composable(
+        AlertsRoutes.DIGEST, arguments = listOf(navArgument(Routes.ARG_ID) { type = NavType.IntType }),
+        deepLinks = listOf(navDeepLink { uriPattern = Routes.deepLink(AlertsRoutes.DIGEST) }),
+    ) { entry -> DigestRoute(entry.arguments?.getInt(Routes.ARG_ID) ?: -1, navigate) }
+}
+
+/** Alerts' own sub-routes (inside `alerts/`, so the Alerts tab stays selected and the bar hides on phones). */
+object AlertsRoutes {
+    const val DIGEST = "alerts/digest/{${Routes.ARG_ID}}"
+    fun digest(id: Int) = "alerts/digest/$id"
 }
 
 private fun openRoute(context: Context, route: String) {
@@ -110,8 +124,32 @@ fun AlertsRoute(navigate: ((String) -> Unit)? = null, modifier: Modifier = Modif
         onOpenSettings = { navigate?.invoke(Routes.ALERT_SETTINGS) ?: run { showSettings = true } }, onTurnOnNotifications = turnOn,
         onOpenWorkOrder = { store, wo -> val route = Routes.workOrder(store, wo); navigate?.invoke(route) ?: openRoute(context, route) },
         onEdit = { hub.settings.edit(it) },
+        onOpenDigest = { id -> val route = AlertsRoutes.digest(id); navigate?.invoke(route) ?: openRoute(context, route) },
     )
     AlertsContent(feedUi, names, storeIds, notificationsOn, settings, actions, modifier)
+}
+
+/** The Morning digest by alert id: from the feed in memory, else read from the server (a notification tap on a cold start). */
+@Composable
+fun DigestRoute(id: Int, navigate: ((String) -> Unit)? = null, modifier: Modifier = Modifier) {
+    val hub = rememberHub()
+    val context = LocalContext.current
+    val names by hub.storeNames.collectAsStateWithLifecycle()
+    val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    var ui by remember(id) { mutableStateOf<DigestUi>(DigestUi.Loading) }
+    var attempt by remember(id) { mutableStateOf(0) }
+    LaunchedEffect(id, attempt) {
+        ui = DigestUi.Loading
+        ui = when (val r = hub.feed.find(id)) {
+            is ApiResult.Success -> r.value?.takeIf { it.type == AlertType.Digest }?.let { DigestUi.Ready(it) } ?: DigestUi.Missing(offline = false, gone = true)
+            is ApiResult.Failure -> DigestUi.Missing(offline = r.error == ApiError.Offline)
+        }
+    }
+    DigestScreen(
+        ui, names, onBack = { back?.onBackPressed() }, onRetry = { attempt++ },
+        onOpenWorkOrder = { store, wo -> val route = Routes.workOrder(store, wo); navigate?.invoke(route) ?: openRoute(context, route) },
+        modifier = modifier,
+    )
 }
 
 @Composable

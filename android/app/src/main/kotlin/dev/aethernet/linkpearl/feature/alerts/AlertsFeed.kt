@@ -131,6 +131,18 @@ class AlertsFeed(
         }
     }
 
+    /**
+     * One alert by id (the Morning digest screen, opened from a row or a notification): the list in memory first, else the feed page
+     * that starts at it (`before=id+1`, one entry). Success(null) when it is not in this phone's feed (another level, or deleted).
+     */
+    suspend fun find(id: Int): ApiResult<Alert?> {
+        _state.value.alerts.firstOrNull { it.id == id }?.let { return ApiResult.Success(it) }
+        return when (val r = remote.feed(null, before = id + 1, limit = 1)) {
+            is ApiResult.Success -> ApiResult.Success(r.value.alerts.firstOrNull { it.id == id })
+            is ApiResult.Failure -> r
+        }
+    }
+
     /** Optimistic: shown read at once, the badge drops, the notification goes; undone when the server refuses. */
     fun markRead(ids: List<Int>) {
         if (ids.isEmpty()) return
