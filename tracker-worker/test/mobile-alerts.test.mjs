@@ -1,4 +1,4 @@
-// Linkpearl alerts (src/mobile-alerts.js): the 10-minute tick's four rules, the feed / poll / read / settings routes, per-phone thresholds and read state,
+// Linkpearl alerts (src/mobile-alerts.js): the 10-minute tick's rules (stuck, pickup, follow-up, quiet, digest, unlinked, coverage), the feed / poll / read / settings routes, per-phone thresholds and read state,
 // store isolation, privacy, cost and retention. Local D1, everything invented. Routes are called through the Worker for auth, and directly
 // (alertsApi with a fixed clock) for everything that depends on "now".
 import assert from 'node:assert/strict';
@@ -13,7 +13,7 @@ const iso = (ms) => new Date(ms).toISOString();
 const sqlStatements = (file) => readFileSync(file, 'utf8').replace(/--[^\n]*/g, '').split(';').map((s) => s.trim()).filter(Boolean);
 
 // The alerts tables come from the migration file (schema.sql is a shared file this stream does not edit); the migration must be idempotent.
-for (let pass = 0; pass < 2; pass++) for (const s of sqlStatements('migrations/2026-11-13-mobile-alerts.sql')) await TR.prepare(s).run();
+for (let pass = 0; pass < 2; pass++) for (const f of ['2026-11-13-mobile-alerts.sql', '2026-11-16-mobile-alerts-items.sql']) for (const s of sqlStatements('migrations/' + f)) await TR.prepare(s).run();
 await AE.prepare('CREATE TABLE IF NOT EXISTS auto_marks (store INTEGER NOT NULL, wo INTEGER NOT NULL, due TEXT NOT NULL, created_at TEXT NOT NULL, removed_at TEXT, kind TEXT, PRIMARY KEY (store, wo))').run();
 await AE.prepare('CREATE TABLE IF NOT EXISTS wo_closed (store INTEGER NOT NULL, wo INTEGER NOT NULL, closed_at TEXT NOT NULL, PRIMARY KEY (store, wo))').run();
 
@@ -52,11 +52,13 @@ const scan = (store, at) => TR.prepare("INSERT INTO scans (store, at, by_name, o
 const mark = (store, n, due, kind = 'rfp', removed = null) => AE.prepare('INSERT OR REPLACE INTO auto_marks (store, wo, due, created_at, removed_at, kind) VALUES (?, ?, ?, ?, ?, ?)').bind(store, n, due, Z('2026-10-01', 10), removed, kind);
 
 // Clean slate between sections; each phone's state row is created at once (a new phone starts with everything so far read).
-async function reset() {
-  for (const t of ['alerts', 'status_periods', 'rfp_periods', 'scans', 'alert_reads', 'alert_device']) await TR.prepare('DELETE FROM ' + t).run();
+// The sections written before the digest existed switch it off (a digest is made from 8:00 every day for phones that want one).
+const more = []; // phones added later in the file
+async function reset({ digest = false } = {}) {
+  for (const t of ['alerts', 'status_periods', 'rfp_periods', 'scans', 'alert_reads', 'alert_device', 'alert_items', 'inv_so_need', 'inv_so_wo', 'inv_movements', 'inv_verify', 'sales', 'sales_days', 'daily_metrics']) await TR.prepare('DELETE FROM ' + t).run();
   await TR.prepare('DELETE FROM workorders WHERE wo >= 100').run();
   await AE.prepare('DELETE FROM auto_marks').run(); await AE.prepare('DELETE FROM wo_closed').run();
-  for (const p of [A, B, C]) await api(p, '/alerts/settings');
+  for (const p of [A, B, C, ...more]) { await api(p, '/alerts/settings'); if (!digest) await api(p, '/alerts/settings', { method: 'PUT', body: { types: { digest: { on: false } } } }); }
 }
 const section = (s) => console.log('  ' + s);
 const THU = (h, m = 0) => Date.parse(Z('2026-10-15', h, m));       // Thursday, store open 10–19
@@ -96,9 +98,13 @@ section('settings');
 await reset();
 const s0 = await api(A, '/alerts/settings');
 assert.equal(s0.status, 200); assert.deepEqual(s0.j.stores, [914, 326]);
-assert.deepEqual(s0.j.settings, { types: { stuck: { on: true, days: 3 }, pickup: { on: true, days: 7 }, followup: { on: true, hour: 9 }, quiet: { on: true, hours: 2 } },
-  quietHours: { on: true, from: '22:00', to: '07:00' }, stores: { 914: true, 326: true } });
-assert.deepEqual(s0.j.ranges, { stuckDays: [1, 30], pickupDays: [1, 30], quietHours: [1, 12], followupHour: [0, 23] });
+assert.deepEqual(s0.j.settings, { types: { stuck: { on: true, days: 3 }, pickup: { on: true, days: 7 }, followup: { on: true, hour: 9 }, quiet: { on: true, hours: 2 },
+  digest: { on: false, hour: 8 }, unlinked: { on: true, hours: 1 }, coverage: { on: true } },
+  quietHours: { on: true, from: '22:00', to: '07:00' }, stores: { 914: true, 326: true } }, 'reset() switched the digest off');
+assert.deepEqual(normalize({}, [914]).types, { stuck: { on: true, days: 3 }, pickup: { on: true, days: 7 }, followup: { on: true, hour: 9 }, quiet: { on: true, hours: 2 },
+  digest: { on: true, hour: 8 }, unlinked: { on: true, hours: 1 }, coverage: { on: true } }, 'defaults');
+assert.deepEqual(s0.j.ranges, { stuckDays: [1, 30], pickupDays: [1, 30], quietHours: [1, 12], followupHour: [0, 23], digestHour: [0, 23], unlinkedHours: [1, 48] });
+assert.deepEqual(s0.j.defaults.types.digest, { on: true, hour: 8 });
 let r = await put(A, { types: { stuck: { days: 5 }, quiet: { on: false, hours: 4 } }, quietHours: { from: '21:30', to: '06:00' }, stores: { 326: false } });
 assert.equal(r.status, 200); assert.equal(r.j.settings.types.stuck.days, 5); assert.equal(r.j.settings.types.stuck.on, true, 'untouched keys keep their value');
 assert.deepEqual(r.j.settings.types.quiet, { on: false, hours: 4 }); assert.deepEqual(r.j.settings.quietHours, { on: true, from: '21:30', to: '06:00' }); assert.deepEqual(r.j.settings.stores, { 914: true, 326: false });
@@ -110,6 +116,9 @@ for (const [body, status, msg] of [
   [{ types: { pickup: { days: 99 } } }, 400, /types\.pickup\.days/], [{ types: { quiet: { hours: 13 } } }, 400, 'types.quiet.hours: hours of silence must be a whole number from 1 to 12'],
   [{ types: { quiet: { hours: 0 } } }, 400, /from 1 to 12/], [{ types: { followup: { hour: 24 } } }, 400, /from 0 to 23/], [{ types: { stuck: { on: 'yes' } } }, 400, 'types.stuck.on must be true or false'],
   [{ types: { nope: {} } }, 400, 'unknown setting "types.nope"'], [{ types: { stuck: { day: 3 } } }, 400, 'unknown setting "types.stuck.day"'], [{ wat: 1 }, 400, 'unknown setting "wat"'],
+  [{ types: { digest: { hour: 24 } } }, 400, 'types.digest.hour: hour of the day must be a whole number from 0 to 23'], [{ types: { digest: { hour: -1 } } }, 400, /from 0 to 23/],
+  [{ types: { unlinked: { hours: 0 } } }, 400, 'types.unlinked.hours: hours without a work order must be a whole number from 1 to 48'], [{ types: { unlinked: { hours: 49 } } }, 400, /from 1 to 48/],
+  [{ types: { coverage: { hours: 1 } } }, 400, 'unknown setting "types.coverage.hours"'], [{ types: { coverage: { on: 'no' } } }, 400, 'types.coverage.on must be true or false'],
   [{ quietHours: { from: '25:00' } }, 400, /quietHours\.from must be a time/], [{ quietHours: { to: '7am' } }, 400, /quietHours\.to must be a time/], [{ quietHours: { from: '06:00', to: '06:00' } }, 400, /must differ/],
   [{ quietHours: { on: 1 } }, 400, 'quietHours.on must be true or false'], [{ stores: { abc: true } }, 400, /not a store number/], [{ stores: { 914: 'no' } }, 400, 'stores.914 must be true or false'],
   [{ stores: { 536: false } }, 403, 'not your store'], [[], 400, 'body must be a JSON object'], ['x', 400, 'body must be a JSON object'],
@@ -122,6 +131,9 @@ const ps = await authed(A, BASE + '/settings', { method: 'PUT', body: { types: {
 assert.equal(ps.status, 200); assert.equal(ps.j.settings.types.stuck.days, 4, 'PUT through the Worker');
 assert.deepEqual(normalize({ types: { stuck: { days: 99 } }, quietHours: { from: 'x' } }, [914]).types.stuck, { on: true, days: 3 }, 'junk in storage falls back to defaults');
 assert.throws(() => mergeSettings(normalize({}, [914]), { types: { stuck: { days: 0 } } }, [914]), /1 to 30/);
+r = await put(C, { types: { digest: { on: true, hour: 6 }, unlinked: { hours: 48 }, coverage: { on: false } } });
+assert.equal(r.status, 200); assert.deepEqual([r.j.settings.types.digest, r.j.settings.types.unlinked, r.j.settings.types.coverage], [{ on: true, hour: 6 }, { on: true, hours: 48 }, { on: false }]);
+assert.deepEqual(normalize({ types: { digest: { hour: 30 }, unlinked: { hours: 0 } } }, [914]).types.digest, { on: true, hour: 8 }, 'junk digest hour falls back');
 
 // ================================================================ rule: stuck work order
 section('stuck');
@@ -280,7 +292,7 @@ assert.equal((await api(B, '/alerts', { now: now1 })).j.unread, 2, 'mark all on 
 await exec(woRow(914, 414, 9), period(914, 414, 9, iso(now1 - 3 * D - 1000))); await tick(now1 + 10 * MIN);
 assert.equal((await api(A, '/alerts', { now: now1 + 11 * MIN })).j.unread, 1, 'a new alert after mark-all is unread');
 // a phone that first looks later starts with the history read (the first-run cursor handles notifications)
-const Dp = await registerPhone('Pixel D'); await approve(Dp, [914]); Dp.stores = [914];
+const Dp = await registerPhone('Pixel D'); await approve(Dp, [914]); Dp.stores = [914]; more.push(Dp);
 fa = (await api(Dp, '/alerts', { now: now1 + 11 * MIN })).j; assert.equal(fa.unread, 0); assert.ok(fa.alerts.length === 3 && fa.alerts.every((x) => x.read && !x.notify));
 
 // ================================================================ switches and quiet hours are applied on read; the feed stays complete
@@ -334,10 +346,142 @@ await reset(); await put(B, { types: { followup: { hour: 11 } } }); await AE.bat
 await tick(THU(9)); assert.equal((await api(A, '/alerts', { now: THU(10) })).j.alerts.filter((x) => x.type === 'followup').length, 1); assert.equal((await api(B, '/alerts', { now: THU(10) })).j.alerts.filter((x) => x.type === 'followup').length, 0, 'B asked for 11:00');
 await tick(THU(11)); assert.equal((await api(B, '/alerts', { now: THU(12) })).j.alerts.filter((x) => x.type === 'followup').length, 1); assert.equal((await alertRows('type = ?', 'followup')).length, 2, 'one per level');
 
+
+// ================================================================ rule: the morning digest (one per phone scope per day)
+section('digest');
+await reset({ digest: true });                                                            // A (914 + 326), B (914), C (326), D (914): digest on at 8:00
+const D8 = THU(8);
+await exec(TR.prepare("INSERT INTO sales (store, sale_id, wo, sale_day, sale_at, type, total, card, completed_by, source) VALUES (914, 'S1', NULL, '2026-10-14', ?, 'Sale', 2000, 'v1.sealedJaneQCustomer', 'Tech', 'portal'), (914, 'S2', NULL, '2026-10-14', ?, 'Sale', 1400, 'v1.sealedJaneQCustomer', 'Tech', 'portal')").bind(Z('2026-10-14', 12), Z('2026-10-14', 15)),
+  TR.prepare("INSERT INTO sales_days (store, day, source, synced_at) VALUES (914, '2026-10-14', 'portal', ?)").bind(Z('2026-10-15', 7)),
+  TR.prepare("INSERT INTO daily_metrics (store, day, metric, value, source, updated_at) VALUES (914, '2026-10-14', 'labor_hours', 20, 't', 'x')"),
+  rfp(914, 201, iso(D8 - 12 * D)), rfp(914, 202, iso(D8 - 2 * D)), rfp(326, 203, iso(D8 - 5 * D)),
+  woRow(914, 301, 13), woRow(914, 302, 9),
+  woRow(914, 101, 9), period(914, 101, 9, iso(D8 - 5 * D - HR)), woRow(326, 102, 10), period(326, 102, 10, iso(D8 - 4 * D - HR)), woRow(914, 103, 9), period(914, 103, 9, iso(D8 - D)));
+await AE.batch([mark(914, 301, '2026-10-15'), mark(914, 302, '2026-10-15', 'callback'), mark(326, 303, '2026-10-15'), mark(914, 304, '2026-10-16'), mark(914, 305, '2026-10-15'),
+  AE.prepare('INSERT INTO wo_closed (store, wo, closed_at) VALUES (914, 305, ?)').bind(iso(D8 - D))]);
+const digests = (where = '1', ...b) => alertRows(`type = 'digest' AND ${where}`, ...b);
+await tick(THU(7, 50)); assert.equal((await digests()).length, 0, 'before the digest hour');
+await tick(D8); al = await digests();
+assert.deepEqual(al.map((x) => [x.store, x.subject, x.level, x.wo, x.backfill]).sort(), [[326, '326,914|3@2026-10-15', 8, null, 0], [326, '326|3@2026-10-15', 8, null, 0], [914, '914|3@2026-10-15', 8, null, 0]],
+  'one per scope: A (both stores), C (Lynnhaven), and B and D share Newport News');
+const dA = JSON.parse(al.find((x) => x.subject.startsWith('326,914')).data);
+assert.deepEqual(dA, { day: '2026-10-15', yesterday: '2026-10-14', stores: [326, 914], sales: 3400, splh: 170, hours: 20, target: [160, 180],
+  rfp: { total: 300, count: 3, oldestDays: 12 },
+  followups: { count: 3, wos: [{ store: 326, wo: 303, status: null }, { store: 914, wo: 301, status: 'Ready for pickup' }, { store: 914, wo: 302, status: 'Diagnostics' }] },
+  stuck: { days: 3, count: 2, wos: [{ store: 914, wo: 101, status: 'Diagnostics', days: 5 }, { store: 326, wo: 102, status: 'Work in progress', days: 4 }] } });
+const dB = JSON.parse(al.find((x) => x.subject.startsWith('914|')).data);
+assert.deepEqual([dB.stores, dB.sales, dB.rfp.count, dB.followups.count, dB.stuck.count], [[914], 3400, 2, 2, 1], 'a one-store scope counts that store only');
+assert.equal(JSON.parse(al.find((x) => x.subject.startsWith('326|')).data).sales, null, 'no synced day and no sales: a dash, not 0');
+for (let i = 1; i < 30; i++) await tick(D8 + i * 10 * MIN); assert.equal((await digests()).length, 3, 'once a day however many ticks');
+const dg = async (p, q = '', now = THU(8, 5)) => (await api(p, '/alerts' + q, { now })).j.alerts.filter((x) => x.type === 'digest');
+let fd = await dg(A); assert.equal(fd.length, 1); assert.deepEqual(fd[0].stores, [326, 914], 'phone A: one combined digest, not the single-store ones'); assert.equal(fd[0].notify, true); assert.equal(fd[0].wo, null);
+assert.deepEqual((await dg(B))[0].stores, [914]); assert.equal((await dg(B))[0].id, (await dg(Dp))[0].id, 'B and D share one'); assert.deepEqual((await dg(C)).map((x) => x.stores), [[326]]);
+assert.equal((await dg(A, '?store=914')).length + (await dg(A, '?store=326')).length, 0, 'a feed filtered to one store leaves the digest out');
+assert.equal((await dg(C, '?store=326')).length, 1, 'a one-store phone filtered to its store still has it');
+assert.deepEqual((await api(A, '/alerts/new?since=0', { now: THU(8, 5) })).j.alerts.filter((x) => x.type === 'digest').map((x) => x.stores), [[326, 914]], 'digest at 8:00, quiet hours to 7:00: notifies normally');
+await put(A, { stores: { 326: false } }, { now: THU(8, 5) });
+assert.equal((await dg(A))[0].notify, true, 'store switches do not apply to the digest (it covers all stores)');
+assert.equal((await api(A, '/alerts/new?since=0', { now: THU(8, 5) })).j.alerts.filter((x) => x.type === 'digest').length, 1);
+await put(A, { stores: { 326: true }, quietHours: { from: '22:00', to: '09:00' } }, { now: THU(8, 5) });
+assert.equal((await api(A, '/alerts/new?since=0', { now: THU(8, 5) })).j.held, true, 'digest hour inside quiet hours: held');
+assert.equal((await api(A, '/alerts/new?since=0', { now: THU(9) })).j.alerts.filter((x) => x.type === 'digest').length, 1, 'and delivered when they end');
+await put(A, { quietHours: { from: '22:00', to: '07:00' } }, { now: THU(9) });
+// per-phone threshold: B wants 10:00 and stuck after 5 days (its scope changes with its stuck threshold)
+await put(B, { types: { digest: { hour: 10 }, stuck: { days: 5 } } });
+await tick(FRI(8));
+assert.deepEqual((await digests("subject LIKE '%2026-10-16'")).map((x) => x.subject).sort(), ['326,914|3@2026-10-16', '326|3@2026-10-16', '914|3@2026-10-16'], 'B not yet; D still has 914|3 at 8:00');
+assert.equal((await dg(B, '', FRI(9))).length, 0, 'B sees only its own level and scope');
+await tick(FRI(9, 50)); assert.equal((await digests("subject = '914|5@2026-10-16'")).length, 0);
+await tick(FRI(10)); al = await digests("subject = '914|5@2026-10-16'"); assert.equal(al.length, 1); assert.equal(al[0].level, 10);
+assert.deepEqual(JSON.parse(al[0].data).stuck, { days: 5, count: 1, wos: [{ store: 914, wo: 101, status: 'Diagnostics', days: 6 }] }, 'stuck at the phone\'s own threshold');
+assert.deepEqual((await dg(B, '', FRI(10, 5))).map((x) => x.id), [al[0].id]); assert.ok(!(await dg(Dp, '', FRI(10, 5))).some((x) => x.id === al[0].id));
+// switched off: no digest is made for that scope; switched on after the hour: made at the next tick, feed only
+await put(C, { types: { digest: { on: false } } });
+await tick(SAT(8)); assert.equal((await digests("subject = '326|3@2026-10-17'")).length, 0, 'C switched it off');
+assert.equal((await digests("subject = '326,914|3@2026-10-17'")).length, 1);
+await put(C, { types: { digest: { on: true } } });
+await tick(SAT(14)); al = await digests("subject = '326|3@2026-10-17'"); assert.equal(al.length, 1); assert.equal(al[0].backfill, 1, 'over an hour late: feed only');
+assert.equal((await dg(C, '', SAT(14, 5)))[0].notify, false); assert.equal((await api(C, '/alerts/new?since=0', { now: SAT(14, 5) })).j.alerts.filter((x) => x.type === 'digest' && x.day === '2026-10-17').length, 0);
+// a digest hour inside quiet hours (6:00, quiet to 7:00): held, then delivered
+await put(C, { types: { digest: { hour: 6 } } });
+await tick(SUN(5, 50)); await tick(SUN(6)); al = await digests("subject = '326|3@2026-10-18'"); assert.deepEqual(al.map((x) => [x.level, x.backfill]), [[6, 0]]);
+assert.equal((await api(C, '/alerts/new?since=' + (al[0].id - 1), { now: SUN(6, 5) })).j.held, true);
+assert.deepEqual((await api(C, '/alerts/new?since=' + (al[0].id - 1), { now: SUN(7) })).j.alerts.map((x) => x.type), ['digest']);
+
+// ================================================================ rule: Retrace sales orders with no work order
+section('unlinked');
+await reset();
+const U0 = THU(12);
+let mvN = 0;
+const mv = (store, so, at) => TR.prepare("INSERT INTO inv_movements (store, label, item, at, kind, ref_type, ref_id, source, key, recorded_at) VALUES (?, ?, 'P100', ?, 'sold', 'sales_order', ?, 'history', ?, ?)").bind(store, 'L' + (++mvN), at, so, 'k' + mvN, at);
+const need = (store, so) => TR.prepare('INSERT INTO inv_so_need (store, sales_order, none_at) VALUES (?, ?, ?)').bind(store, so, iso(U0 - 10 * MIN));
+const link = (store, so) => TR.prepare("INSERT INTO inv_so_wo (store, sales_order, wo, source, updated_at) VALUES (?, ?, '700000099', 'label', ?)").bind(store, so, iso(U0));
+await exec(mv(914, 'FSO1001', iso(U0 - 3 * HR)), need(914, 'FSO1001'),
+  mv(914, 'FSO1002', iso(U0 - 2 * HR)), mv(914, 'FSO1002', iso(U0 - 30 * MIN)), need(914, 'FSO1002'),     // its age is from the first movement
+  mv(914, 'FSO1003', iso(U0 - 30 * MIN)), need(914, 'FSO1003'),
+  mv(914, 'FSO1004', iso(U0 - 5 * HR)), need(914, 'FSO1004'), link(914, 'FSO1004'),                       // linked: not unlinked
+  need(914, 'FSO1006'),                                                                                    // no movement: no age
+  mv(914, 'FSO1007', iso(U0 - 5 * HR)),                                                                    // not on Retrace's list
+  mv(536, 'FSO1005', iso(U0 - 5 * HR)), need(536, 'FSO1005'));                                             // no approved phone
+await put(B, { types: { unlinked: { hours: 4 } } });
+const unl = (where = '1', ...b) => alertRows(`type = 'unlinked' AND ${where}`, ...b);
+await tick(U0); al = await unl();
+assert.deepEqual(al.map((x) => [x.store, x.level, x.subject, x.wo, x.backfill]), [[914, 1, 'FSO1001', null, 0]], 'one alert per store per tick');
+assert.deepEqual(JSON.parse(al[0].data), { count: 2, hours: 1, oldestHours: 3, salesOrders: ['FSO1001', 'FSO1002'] });
+for (let i = 1; i <= 2; i++) await tick(U0 + i * 10 * MIN); assert.equal((await unl()).length, 1, 'no repeat');
+await tick(U0 + 30 * MIN); assert.equal((await unl()).length, 1, 'exactly 1 hour is not over 1 hour');
+await tick(U0 + 31 * MIN); al = await unl(); assert.equal(al.length, 2); assert.deepEqual(JSON.parse(al[1].data).salesOrders, ['FSO1003'], 'a minute later it is');
+await tick(U0 + 61 * MIN); al = await unl('level = 4'); assert.deepEqual(al.map((x) => JSON.parse(x.data).salesOrders), [['FSO1001']], 'B (4 hours) gets its own alert at its level');
+const fu = async (p, now = U0 + 62 * MIN) => (await api(p, '/alerts', { now })).j.alerts.filter((x) => x.type === 'unlinked');
+assert.deepEqual((await fu(A)).map((x) => [x.hours, x.salesOrders.join()]), [[1, 'FSO1003'], [1, 'FSO1001,FSO1002']]); assert.ok((await fu(A)).every((x) => x.notify && x.wo === null));
+assert.deepEqual((await fu(B)).map((x) => x.salesOrders), [['FSO1001']]); assert.equal((await fu(C)).length, 0, 'Lynnhaven phone: nothing of Newport News');
+assert.equal((await api(A, '/alerts/new?since=0', { now: U0 + 62 * MIN })).j.alerts.filter((x) => x.type === 'unlinked').length, 2);
+await put(A, { types: { unlinked: { on: false } } }, { now: U0 + 62 * MIN });
+assert.ok((await fu(A)).every((x) => !x.notify), 'switched off: in the feed, no notification'); assert.equal((await api(A, '/alerts/new?since=0', { now: U0 + 62 * MIN })).j.alerts.filter((x) => x.type === 'unlinked').length, 0);
+fa = (await api(A, '/alerts', { now: U0 + 62 * MIN })).j; assert.equal(fa.unread, fa.alerts.filter((x) => x.notify).length, 'and no badge');
+await put(A, { types: { unlinked: { on: true } } }, { now: U0 + 62 * MIN });
+assert.equal((await rows("SELECT COUNT(*) AS n FROM alert_items WHERE type = 'unlinked'"))[0].n, 4);
+await TR.prepare("DELETE FROM alerts WHERE type = 'unlinked'").run();                                    // as retention would
+for (let i = 0; i < 3; i++) await tick(U0 + (70 + i * 10) * MIN); assert.equal((await unl()).length, 0, 'a sales order never alerts twice, even after its alert is gone');
+await exec(link(914, 'FSO1002'));
+await tick(THU(15, 0)); assert.deepEqual((await rows('SELECT item, level FROM alert_items ORDER BY level, item')).map((x) => x.item + '@' + x.level), ['FSO1001@1', 'FSO1003@1', 'FSO1001@4'], 'housekeeping forgets a sales order once it has a work order');
+assert.equal((await unl()).length, 0);
+await exec(mv(914, 'FSO1008', iso(THU(15) - 30 * HR)), need(914, 'FSO1008'));                           // first seen long past both thresholds
+await tick(THU(15, 10)); al = await unl(); assert.deepEqual(al.map((x) => [x.level, x.backfill, x.subject]), [[1, 1, 'FSO1008'], [4, 1, 'FSO1008']], 'late: feed only');
+assert.ok(!(await rows('SELECT * FROM alerts WHERE store = 536')).length, 'store with no approved phone: nothing');
+
+// ================================================================ rule: Retrace coverage check with failures
+section('coverage');
+await reset();
+const V0 = THU(12);
+const vres = (cn, mn, qn = 0, sn = 0) => JSON.stringify({ v: 1, by: null, counts: { status: cn ? 'fail' : 'pass', total: 40, ok: 40 - cn, n: cn, rows: [{ item: 'P100', name: 'Screen assembly', portal: 3, have: 1 }] },
+  qty: { status: qn ? 'fail' : 'pass', n: qn, rows: [] }, stale: { status: sn ? 'fail' : 'pass', n: sn, rows: [] }, missed: { status: mn ? 'fail' : 'pass', n: mn, rows: [] }, spot: [], ask: [], asked: {} });
+const verify = (store, at, res) => TR.prepare('INSERT OR REPLACE INTO inv_verify (store, checked_at, result) VALUES (?, ?, ?)').bind(store, at, res);
+await exec(verify(914, iso(V0 - 5 * MIN), vres(3, 2, 1, 4)), verify(326, iso(V0 - 5 * MIN), vres(0, 0, 2, 5)), verify(536, iso(V0 - 5 * MIN), vres(9, 9)));
+const cov = (where = '1', ...b) => alertRows(`type = 'coverage' AND ${where}`, ...b);
+await tick(V0); al = await cov();
+assert.deepEqual(al.map((x) => [x.store, x.subject, x.level, x.wo, x.backfill]), [[914, iso(V0 - 5 * MIN), 0, null, 0]], 'failures at 914 only (326 passes the count and missed checks; 536 has no phone)');
+assert.deepEqual(JSON.parse(al[0].data), { checkedAt: iso(V0 - 5 * MIN), countMisses: 3, countItems: 40, missedItems: 2, qtyMisses: 1, staleLabels: 4 });
+for (let i = 1; i < 10; i++) await tick(V0 + i * 10 * MIN); assert.equal((await cov()).length, 1, 'one alert per result, not per tick');
+await exec(verify(914, iso(V0 + 2 * HR), vres(0, 1)));
+await tick(V0 + 2 * HR + 5 * MIN); al = await cov(); assert.equal(al.length, 2, 'a new result alerts again'); assert.deepEqual([JSON.parse(al[1].data).countMisses, JSON.parse(al[1].data).missedItems], [0, 1]);
+await exec(verify(914, iso(V0 + 3 * HR), vres(0, 0, 3, 3)));
+await tick(V0 + 3 * HR + 5 * MIN); assert.equal((await cov()).length, 2, 'a result without count misses or missed items does not alert');
+await exec(verify(326, iso(V0), vres(1, 0)));
+await tick(V0 + 3 * HR + 15 * MIN); al = await cov('store = 326'); assert.deepEqual(al.map((x) => x.backfill), [1], 'first seen over an hour after its run: feed only');
+await exec(verify(326, iso(V0 - 61 * D), vres(5, 5)));
+await tick(V0 + 3 * HR + 25 * MIN); assert.equal((await cov('store = 326')).length, 1, 'a result older than the retention is left alone');
+const fcv = async (p, now = V0 + 4 * HR) => (await api(p, '/alerts', { now })).j.alerts.filter((x) => x.type === 'coverage');
+assert.deepEqual((await fcv(B)).map((x) => [x.missedItems, x.notify]), [[1, true], [2, true]]); assert.deepEqual((await fcv(C)).map((x) => [x.countMisses, x.notify]), [[1, false]]);
+assert.equal((await api(B, '/alerts/new?since=0', { now: V0 + 4 * HR })).j.alerts.filter((x) => x.type === 'coverage').length, 2);
+await put(B, { types: { coverage: { on: false } } }, { now: V0 + 4 * HR });
+assert.ok((await fcv(B)).every((x) => !x.notify)); assert.equal((await api(B, '/alerts/new?since=0', { now: V0 + 4 * HR })).j.alerts.length, 0); assert.equal((await api(B, '/alerts', { now: V0 + 4 * HR })).j.unread, 0);
+
 // ================================================================ privacy: no names, phones or other details in anything returned
 section('privacy');
 assert.ok(seen.length > 100);
-const allowedKeys = new Set(['id', 'store', 'type', 'wo', 'at', 'read', 'notify', 'cleared', 'statusId', 'status', 'days', 'since', 'count', 'oldestDays', 'due', 'kind', 'hours', 'resumedAt']);
+const allowedKeys = new Set(['id', 'store', 'type', 'wo', 'at', 'read', 'notify', 'cleared', 'statusId', 'status', 'days', 'since', 'count', 'oldestDays', 'due', 'kind', 'hours', 'resumedAt',
+  'day', 'yesterday', 'stores', 'sales', 'splh', 'target', 'rfp', 'followups', 'stuck', 'oldestHours', 'salesOrders', 'checkedAt', 'countMisses', 'countItems', 'missedItems', 'qtyMisses', 'staleLabels']);
 for (const body of seen) {
   for (const bad of ['Jane', 'Customer', '757-555', 'sealedJane', 'iPhone', 'Pixel', 'Retail']) assert.ok(!body.includes(bad), `${bad} leaked: ${body.slice(0, 200)}`);
   const check = (v) => { if (Array.isArray(v)) v.forEach(check); else if (v && typeof v === 'object' && 'type' in v && 'store' in v && 'at' in v) for (const k of Object.keys(v)) assert.ok(allowedKeys.has(k), 'unexpected alert field ' + k); else if (v && typeof v === 'object') Object.values(v).forEach(check); };
@@ -355,15 +499,36 @@ seed.push(scan(914, iso(THU(11, 55))), scan(326, iso(THU(11, 55))));
 await exec(...seed);
 const counted = () => { const c = { prepare: 0, batch: 0 }; const p = new Proxy(TR, { get(t, k) { if (k === 'prepare') return (...a) => { c.prepare++; return t.prepare(...a); }; if (k === 'batch') return (s) => { c.batch++; return t.batch(s); }; const v = t[k]; return typeof v === 'function' ? v.bind(t) : v; } }); return [Object.assign({}, E, { TR: p }), c]; };
 let [E1, c1] = counted(); await alertsTick(E1, THU(12, 20));
-console.log(`    steady-state tick, 2 stores (80 open WOs in one), 3 phones: ${c1.prepare} statements (${c1.batch} batches), no writes`);
-assert.ok(c1.prepare <= 9, 'statements per quiet tick: ' + c1.prepare);
+console.log(`    steady-state tick, 2 stores (80 open WOs in one), 4 phones: ${c1.prepare} statements (${c1.batch} batches), no writes`);
+assert.ok(c1.prepare <= 11, 'statements per quiet tick: ' + c1.prepare);
 assert.equal((await alertRows()).length, 0);
 [E1, c1] = counted(); await alertsTick(E1, THU(13, 0));
-assert.ok(c1.prepare <= 13, 'with the hourly housekeeping: ' + c1.prepare); console.log(`    with the hourly housekeeping: ${c1.prepare} statements`);
+assert.ok(c1.prepare <= 16, 'with the hourly housekeeping: ' + c1.prepare); console.log(`    with the hourly housekeeping: ${c1.prepare} statements`);
 const meta = async (sql, binds) => (await TR.prepare(sql).bind(...binds).run()).meta;
 const ms = await meta(SQL.STUCK_SQL, [iso(THU(12, 20)), '[3]', 914, 25]), mp = await meta(SQL.PICKUP_SQL, [iso(THU(12, 20)), '[7]', 914, '2026-10-15']);
 console.log(`    stuck rule, store with 80 open WOs: rows_read ${ms.rows_read}, rows_written ${ms.rows_written}; pickup rule (20 devices at RFP): rows_read ${mp.rows_read}, rows_written ${mp.rows_written}`);
 if (ms.rows_read != null) { assert.ok(ms.rows_read <= 600, 'stuck rows read ' + ms.rows_read); assert.equal(ms.rows_written, 0); }
+// unlinked and coverage in the steady state: 200 sales orders on Retrace's list (100 linked since, 100 already alerted), a coverage result already alerted
+const so = [];
+for (let i = 0; i < 200; i++) {
+  so.push(TR.prepare('INSERT INTO inv_so_need (store, sales_order, none_at) VALUES (914, ?, ?)').bind('FSO' + (5000 + i), iso(THU(10))),
+    TR.prepare("INSERT INTO inv_movements (store, label, item, at, kind, ref_type, ref_id, source, key, recorded_at) VALUES (914, ?, 'P1', ?, 'sold', 'sales_order', ?, 'history', ?, ?)").bind('C' + i, iso(THU(9)), 'FSO' + (5000 + i), 'c' + i, iso(THU(9))),
+    i % 2 ? TR.prepare("INSERT INTO inv_so_wo (store, sales_order, wo, source, updated_at) VALUES (914, ?, '1', 'label', ?)").bind('FSO' + (5000 + i), iso(THU(10)))
+      : TR.prepare("INSERT INTO alert_items (store, type, level, item, alert_id) VALUES (914, 'unlinked', 1, ?, 1)").bind('FSO' + (5000 + i)));
+}
+so.push(TR.prepare('INSERT INTO inv_verify (store, checked_at, result) VALUES (914, ?, ?)').bind(iso(THU(12)), JSON.stringify({ counts: { n: 1, total: 5 }, missed: { n: 0 } })),
+  TR.prepare("INSERT INTO alerts (store, type, subject, level, wo, created_at, data) VALUES (914, 'coverage', ?, 0, NULL, ?, '{}')").bind(iso(THU(12)), iso(THU(12, 10))));
+await exec(...so);
+const mu = await meta(SQL.UNLINKED_SQL, [iso(THU(12, 20)), '[914,326]', JSON.stringify({ s914: [1], s326: [1] })]), mc = await meta(SQL.COVERAGE_SQL, [iso(THU(12, 20)), '[914,326]', iso(THU(12) - RETENTION_DAYS * D)]);
+console.log(`    unlinked rule, 200 sales orders on Retrace's list: rows_read ${mu.rows_read}; coverage rule: rows_read ${mc.rows_read}, rows_written ${mc.rows_written}`);
+if (mu.rows_read != null) { assert.ok(mu.rows_read <= 800, 'unlinked rows read ' + mu.rows_read); assert.equal(mc.rows_written, 0); }
+[E1, c1] = counted(); const sx = await alertsTick(E1, THU(12, 30)); assert.equal(sx.created, 0, 'nothing new'); assert.ok(c1.prepare <= 11, 'still ' + c1.prepare);
+// with the digest on: one look-up per tick once today's is made (the facts are worked out once a day)
+await put(A, { types: { digest: { on: true } } });
+let s0d = await tick(THU(12, 40)); assert.equal(s0d.created, 1, 'today\'s digest, made late (feed only)');
+[E1, c1] = counted(); await alertsTick(E1, THU(12, 50)); assert.ok(c1.prepare <= 12, 'digest steady state: ' + c1.prepare); console.log(`    steady-state tick with a digest on: ${c1.prepare} statements`);
+[E1, c1] = counted(); await TR.prepare("DELETE FROM alerts WHERE type = 'digest'").run(); await alertsTick(E1, THU(12, 55)); console.log(`    the tick that makes a digest: ${c1.prepare} statements`); assert.ok(c1.prepare <= 40);
+await put(A, { types: { digest: { on: false } } });
 // the cap: 60 stuck work orders in each store, 25 per store per tick
 await reset();
 const many = [];
