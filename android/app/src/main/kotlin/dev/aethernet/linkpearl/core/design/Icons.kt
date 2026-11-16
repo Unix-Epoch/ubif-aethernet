@@ -35,6 +35,7 @@ object LpIcons {
     val Store = icon("store", "M4 9l1-5h14l1 5M4 9v11h16V9M4 9a3 3 0 0 0 5 0 3 3 0 0 0 6 0 3 3 0 0 0 5 0")
     val ChevronDown = icon("chevronDown", "M6 9l6 6 6-6")
     val ChevronRight = icon("chevronRight", "M9 5l7 7-7 7")
+    val ChevronLeft = icon("chevronLeft", "M15 5l-7 7 7 7")
     val Refresh = icon("refresh", "M20 4v6h-6M4 20v-6h6", "M19 10a8 8 0 0 0-14-3M5 14a8 8 0 0 0 14 3")
     val Clock = icon("clock", "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0", "M12 7v5l3 2")
     val Check = icon("check", "M5 12.5l5 5L19 7")
@@ -68,6 +69,7 @@ object LpIcons {
     /** Retrace: two stops joined by a winding trail. */
     val Retrace = icon("retrace", "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M15 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M9 6h5a3 3 0 0 1 0 6h-4a3 3 0 0 0 0 6h5")
     val Outbox = icon("outbox", "M4 14v6h16v-6M12 15V4M8 8l4-4 4 4")
+    val Tag = icon("tag", "M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z", "M7.5 7.5h.01")
     val BellOff = icon("bellOff", "M6 8a6 6 0 0 1 9.5-4.9M18 11c0 5 3 6 3 6H8M10.3 21a1.94 1.94 0 0 0 3.4 0", "M3 3l18 18")
 }
 

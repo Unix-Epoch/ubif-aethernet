@@ -74,7 +74,7 @@ tools/  local-server.mjs (the real Worker over HTTP on localhost), run-integrati
 ```
 
 Navigation: one `NavHost` in `core/nav/AppNavHost.kt` with destinations `home`, `alerts`, `alerts/settings`, `workorders`, `workorders/{store}-{wo}`,
-`retrace`, `retrace/item/{store}/{item}`, `retrace/label/{store}/{label}` and `settings`; the bottom bar has five items (Home, Alerts, Work orders, Retrace, Settings). Alerts and Settings open each other's screens through that same NavController, so Back from a work order opened from Alerts returns to
+`retrace`, `retrace/item/{store}/{item}`, `retrace/label/{store}/{label}`, `trends/{store}`, `prices/{store}` and `settings`; the bottom bar has five items (Home, Alerts, Work orders, Retrace, Settings). Alerts and Settings open each other's screens through that same NavController, so Back from a work order opened from Alerts returns to
 Alerts, and Back from Alert settings returns to Alerts or Settings, whichever opened it. Detail destinations hide the bottom bar on phones (the rail stays on wide
 screens). Notifications and `linkpearl://` links use the same routes (`linkpearl://workorders/914-7000001`); a link arriving while the app runs goes to the
 running activity (launch mode singleTask, `onNewIntent`) and lands on top of the current back stack.
@@ -135,6 +135,17 @@ The integration test (`./tools/run-integration.sh`) seeds closed work orders, pa
 closed list with paging, the closed detail, tags and follow-ups with the chip count and the filter, and all four Retrace routes (items, label jump, item, label, purchase orders, a 403 for another store, the
 404 as the generic failure) through the real repositories and the Retrace view model. Not covered there: an older tracker (the local Worker is the new code; that case is unit-tested with canned 400 / 404
 answers), item search paging beyond one page, and the UI itself.
+
+## Trends and Prices
+
+Two detail screens opened from Home with Home's store (`store` = an id or `all`; Prices takes the first approved store for All stores). **Trends**
+(`feature/trends`, `GET /v1/agents/m/trends`, `tracker-worker/MOBILE-API-trends.md`): the "Trends ›" link on Home's sales card (the whole card is the button);
+Week / Month / Year, store, a period pager (calendar periods, week = Sunday to Saturday; back sends the day before `from`, next stops at the current period),
+Sales (running totals, current against the previous period, drag to read), By store (All stores), Sales per labor hour (Home's target rule), Cleaning rate and RFP total.
+**Prices** (`feature/prices`, `GET /v1/agents/m/prices`, `tracker-worker/MOBILE-API-prices.md`): the tag button next to refresh; the device list is filtered on the
+phone as you type, the chosen device is asked with its `key` (debounced), a Fold's two rows become two chips, the row text is the sheet column (`label`), a null price
+shows the cell's own words when they say something, else a dash; Share sends plain text. Parsing is by hand in `PricesModels.kt` (every field optional).
+Screenshots in `screenshots/trends` and `screenshots/prices`.
 
 ## Fold, hinge, posture
 

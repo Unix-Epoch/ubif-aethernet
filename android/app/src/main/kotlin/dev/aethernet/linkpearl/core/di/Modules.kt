@@ -6,8 +6,10 @@ import dev.aethernet.linkpearl.core.nav.NavModule
 import dev.aethernet.linkpearl.feature.alerts.AlertsModule
 import dev.aethernet.linkpearl.feature.home.HomeModule
 import dev.aethernet.linkpearl.feature.onboarding.OnboardingModule
+import dev.aethernet.linkpearl.feature.prices.PricesModule
 import dev.aethernet.linkpearl.feature.retrace.RetraceModule
 import dev.aethernet.linkpearl.feature.settings.SettingsModule
+import dev.aethernet.linkpearl.feature.trends.TrendsModule
 import dev.aethernet.linkpearl.feature.workorders.WorkOrdersModule
 
 /**
@@ -21,4 +23,5 @@ import dev.aethernet.linkpearl.feature.workorders.WorkOrdersModule
 val AllModules: List<FeatureModule> = listOf(
     NavModule, DataModule, LockModule,
     HomeModule, OnboardingModule, WorkOrdersModule, RetraceModule, AlertsModule, SettingsModule,
+    TrendsModule, PricesModule,
 )

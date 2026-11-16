@@ -57,15 +57,25 @@ private fun weekDescription(prefix: String, days: List<String>, values: List<Dou
     prefix + ": " + values.mapIndexed { i, v -> (days.getOrNull(i)?.let(Fmt::dayName) ?: "") + " " + (v?.let(f) ?: "no data") }.joinToString(", ")
 
 @Composable
-fun SalesCard(d: HomeData, wide: Boolean, modifier: Modifier = Modifier) {
+fun SalesCard(d: HomeData, wide: Boolean, modifier: Modifier = Modifier, onOpenTrends: (() -> Unit)? = null) {
     val desc = weekDescription("Sales, last 7 days", d.days, d.sales.week) { Fmt.money(it) }
-    // The hero: the figure that matters most. A light sweeps across it when a refresh lands (the as-of time changes).
-    LpHeroCard(modifier, shineKey = d.asOf) {
+    // The hero: the figure that matters most. A light sweeps across it when a refresh lands (the as-of time changes). Tapping it opens Trends.
+    LpHeroCard(modifier, shineKey = d.asOf, onClick = onOpenTrends) {
         CardLabel("Today's sales")
         RollingFigure(Fmt.money(d.sales.today), Modifier.padding(top = 6.dp), style = LpType.Hero)
         YesterdayLine(d)
         Spacer(Modifier.height(14.dp))
         BarChart(d.sales.week, d.days, desc, plotHeight = if (wide) 130.dp else 104.dp, showValues = wide, textSize = 12.sp)
+        if (onOpenTrends != null) TrendsLink()
+    }
+}
+
+/** "Trends ›" at the foot of the sales card (the whole card is the button). */
+@Composable
+private fun TrendsLink() {
+    Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+        Text("Trends", style = LpType.BodyStrong, color = Lp.colors.accText)
+        LpIcon(LpIcons.ChevronRight, null, size = 20.dp, tint = Lp.colors.accText)
     }
 }
 

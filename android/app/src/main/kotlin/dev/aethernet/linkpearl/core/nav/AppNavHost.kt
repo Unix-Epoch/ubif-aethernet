@@ -21,6 +21,8 @@ import dev.aethernet.linkpearl.core.di.LocalAppContainer
 import dev.aethernet.linkpearl.feature.alerts.alertsGraph
 import dev.aethernet.linkpearl.feature.home.homeGraph
 import dev.aethernet.linkpearl.feature.onboarding.OnboardingScreen
+import dev.aethernet.linkpearl.feature.prices.pricesGraph
+import dev.aethernet.linkpearl.feature.trends.trendsGraph
 import dev.aethernet.linkpearl.feature.retrace.retraceGraph
 import dev.aethernet.linkpearl.feature.settings.settingsGraph
 import dev.aethernet.linkpearl.feature.workorders.workOrdersGraph
@@ -66,7 +68,9 @@ private fun MainShell() {
             enterTransition = { lpEnter() }, exitTransition = { lpExit() },
             popEnterTransition = { lpPopEnter() }, popExitTransition = { lpPopExit() },
         ) {
-            homeGraph()
+            homeGraph(navigate = nav::navigate)
+            trendsGraph()
+            pricesGraph()
             // Alerts and Settings open each other's screens (alert settings, a work order) inside this one back stack, so Back returns to them.
             alertsGraph(navigate = nav::navigate)
             workOrdersGraph(navigate = nav::navigate)
