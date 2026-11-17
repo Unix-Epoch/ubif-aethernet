@@ -29,6 +29,12 @@
     ANY  /v1/:store/checkins[/...]      TURNED OFF (Nov 11, 2026): every method and path answers 410 before any database call (see CHECKINS OFF
                                         in route()). Return's old routes, kept in checkins() but unreachable:
                                         GET ?arrival=ID, GET /:id, POST { id?, arrivalId?, woId?, step, label, data, by, byId }, POST /:id/remove
+    POST /v1/:store/return              { arrivalId, token, iv, data, by, byId }   Return: save an arrival's intake notes (new, or an update
+                                        with the same token). `data` is AES-GCM ciphertext made in the browser with a key that is only on the
+                                        printed label; this Worker never sees the notes. Only a hash of `token` (also derived from the label) is kept.
+    POST /v1/:store/return/read         { arrivalId, token }                    → { iv, data, by, at, updatedAt } (404 for a wrong token too)
+    POST /v1/:store/return/remove       { arrivalId, token }                    the arrival was checked in to a work order: deleted
+                                        Notes are deleted 3 days after they were first saved (on every Return call, and by the cron).
     GET  /v1/:store/tac/:tac                                     Decipher: what a TAC (an IMEI's first 8 digits) is → { known, models, colors, workOrders, stores }
     POST /v1/:store/tac                 { tac, deviceModelId, modelName, manufacturer, color }  or { items: [up to 50 of those] }   record one
     GET  /v1/:store/sheets/:kind                                 Provoke: the store's synced sheet (leads | prices) → { data, syncedAt }
@@ -321,7 +327,7 @@ async function route(req, env) {
   const cm = url.pathname.match(/^\/v1\/(\d{1,6})\/checkins\/([A-Za-z0-9]{6})(\/remove)?$/);
   const ci = cm ? { id: cm[2].toUpperCase(), remove: !!cm[3] } : null;
   const tm = url.pathname.match(/^\/v1\/(\d{1,6})\/tac(?:\/(\d{8}))?$/);
-  const m = tm ? [null, tm[1], 'tac'] : cm ? [null, cm[1], 'checkin'] : url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|open|auto|feedback|usage|access|links|links\/remove|checkins|assize\/dismissed|assize\/dismiss|assize\/restore)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark|end))?$/);
+  const m = tm ? [null, tm[1], 'tac'] : cm ? [null, cm[1], 'checkin'] : url.pathname.match(/^\/v1\/(\d{1,6})(?:\/(list|closed|open|auto|feedback|usage|access|links|links\/remove|checkins|return|return\/read|return\/remove|assize\/dismissed|assize\/dismiss|assize\/restore)|\/wo\/(\d{5,12})\/(history|tag|untag|push|unmark|end))?$/);
   if (!m) return fail(404, 'not found');
   const store = Number(m[1]);
   const wo = m[3] ? Number(m[3]) : null;
@@ -343,6 +349,9 @@ async function route(req, env) {
 
   // Return: incomplete check-ins.
   if (what === 'checkins' || what === 'checkin') return checkins(req, env, url, store, ci);
+
+  // Return: an arrival's intake notes, sealed in the browser.
+  if (what === 'return' || what === 'return/read' || what === 'return/remove') return returnNotes(req, env, store, what);
 
   if (req.method === 'GET' && what === 'all') {
     const [list, tags, marks, rules, gone, closedRows] = await env.DB.batch([
@@ -549,6 +558,40 @@ async function dismissals(req, env, store, what) {
   return json({ ok: true });
 }
 
+// Return's intake notes. The notes are encrypted in the browser with a key that exists only on the printed label (and in
+// the browsers that saved or scanned it); the label also gives the token, and only the token's hash is kept here. So this
+// Worker can't read the notes, and only someone holding the label can read, change or delete them. They are deleted when
+// the arrival is checked in to a work order (the browser that knows the label says so) or 3 days after they were first saved.
+export const RETURN_DAYS = 3;
+const RETURN_TOKEN_RE = /^[0-9a-f]{64}$/, B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+const sha256hex = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map((b) => b.toString(16).padStart(2, '0')).join('');
+async function returnNotes(req, env, store, what) {
+  if (req.method !== 'POST') return fail(405, 'method not allowed');
+  const b = await body(req, 24000);
+  const arrival = b.arrivalId, token = b.token;
+  if (!Number.isInteger(arrival) || arrival <= 0 || arrival > 999999999999) return fail(400, 'arrivalId required');
+  if (typeof token !== 'string' || !RETURN_TOKEN_RE.test(token)) return fail(400, 'token required');
+  const hash = await sha256hex(token), t = now();
+  await env.DB.prepare('DELETE FROM return_notes WHERE at < ?').bind(new Date(Date.now() - RETURN_DAYS * 86400000).toISOString()).run();
+  const row = await env.DB.prepare('SELECT token_hash, iv, data, by_name AS by, at, updated_at AS updatedAt FROM return_notes WHERE store = ? AND arrival_id = ?').bind(store, arrival).first();
+  const mine = !!row && row.token_hash === hash;
+  if (what === 'return/read') return mine ? json({ iv: row.iv, data: row.data, by: row.by, at: row.at, updatedAt: row.updatedAt }) : fail(404, 'no notes');
+  if (what === 'return/remove') {
+    if (!mine) return fail(404, 'no notes');
+    await env.DB.prepare('DELETE FROM return_notes WHERE store = ? AND arrival_id = ? AND token_hash = ?').bind(store, arrival, hash).run();
+    return json({ ok: true });
+  }
+  if (typeof b.iv !== 'string' || b.iv.length > 32 || !B64_RE.test(b.iv)) return fail(400, 'iv required');
+  if (typeof b.data !== 'string' || !b.data || b.data.length > 20000 || !B64_RE.test(b.data)) return fail(400, 'data required (base64, up to 20,000 characters)');
+  if (row && !mine) return fail(409, 'this arrival already has notes');
+  const by = who(b);
+  if (row) await env.DB.prepare('UPDATE return_notes SET iv = ?, data = ?, by_name = ?, by_id = ?, updated_at = ? WHERE store = ? AND arrival_id = ? AND token_hash = ?')
+    .bind(b.iv, b.data, by.name, by.id, t, store, arrival, hash).run();
+  else await env.DB.prepare('INSERT INTO return_notes (store, arrival_id, token_hash, iv, data, by_name, by_id, at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(store, arrival, hash, b.iv, b.data, by.name, by.id, t, t).run();
+  return json({ ok: true });
+}
+
 async function checkins(req, env, url, store, ci) {
   if (req.method === 'GET' && !ci) {
     const arrival = Number(url.searchParams.get('arrival'));
@@ -645,6 +688,7 @@ async function cleanup(env) {
     env.DB.prepare('DELETE FROM cleaning_links WHERE day < ?').bind(new Date(Date.now() - LINK_DAYS * 86400000).toISOString().slice(0, 10)),
     // Saved check-ins are off (see CHECKINS OFF in route()): nothing should be here, so anything that is gets deleted.
     env.DB.prepare('DELETE FROM checkin_drafts'),
+    env.DB.prepare('DELETE FROM return_notes WHERE at < ?').bind(new Date(Date.now() - RETURN_DAYS * 86400000).toISOString()),
   ]);
 }
 
