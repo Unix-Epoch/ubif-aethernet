@@ -130,8 +130,43 @@ object Pullbacks {
                 backendAt = if (results) text(r, "Backend At") else "",
             )
         }
-        val sorted = if (results) items else items.sortedBy { it.description.trim().lowercase() }
+        val sorted = if (results) items else items.sortedWith(scanOrder)
         return PbList(headers.filter { it.isNotEmpty() && it !in RESULT_HEADERS }, sorted, results)
+    }
+
+    /**
+     * Scan order: by part type (the order shelves are usually kept), then by description in natural order (iPhone 6 before iPhone 11),
+     * so the same SKU and similar parts sit together; then SKU and serial. The same rules as Aethernet's Elusive Jump.
+     */
+    private val CATEGORIES = listOf(
+        "devices" to Regex("renewed|\\b\\d+\\s?gb\\b", RegexOption.IGNORE_CASE),
+        "back glass" to Regex("back glass|housing", RegexOption.IGNORE_CASE),
+        "screens" to Regex("glass|\\blcd\\b|\\boled\\b|screen|display|digitizer", RegexOption.IGNORE_CASE),
+        "batteries" to Regex("battery", RegexOption.IGNORE_CASE),
+        "charging ports" to Regex("charging port|dock connector", RegexOption.IGNORE_CASE),
+        "speakers" to Regex("speaker|earpiece", RegexOption.IGNORE_CASE),
+        "flex" to Regex("sensor/front camera", RegexOption.IGNORE_CASE),
+        "cameras" to Regex("camera", RegexOption.IGNORE_CASE),
+        "flex" to Regex("flex|coil|sensor|nfc", RegexOption.IGNORE_CASE),
+    )
+    private val ORDER = listOf("screens", "batteries", "charging ports", "cameras", "speakers", "flex", "back glass", "devices")
+    fun category(description: String): String = CATEGORIES.firstOrNull { it.second.containsMatchIn(description) }?.first ?: "other"
+    private fun rank(description: String) = ORDER.indexOf(category(description)).let { if (it < 0) ORDER.size else it }
+    private val CHUNK = Regex("\\d+|\\D+")
+    fun natural(a: String, b: String): Int {
+        val x = CHUNK.findAll(a.trim().lowercase()).map { it.value }.toList()
+        val y = CHUNK.findAll(b.trim().lowercase()).map { it.value }.toList()
+        for (i in 0 until minOf(x.size, y.size)) {
+            val p = x[i]; val q = y[i]; val pn = p[0].isDigit(); val qn = q[0].isDigit()
+            if (pn && qn) { val d = p.toBigInteger().compareTo(q.toBigInteger()); if (d != 0) return d }
+            else if (pn != qn) return if (pn) -1 else 1
+            else if (p != q) return p.compareTo(q)
+        }
+        return x.size - y.size
+    }
+    val scanOrder: Comparator<PbItem> = Comparator { a, b ->
+        (rank(a.description) - rank(b.description)).takeIf { it != 0 } ?: natural(a.description, b.description).takeIf { it != 0 }
+            ?: natural(a.skuText, b.skuText).takeIf { it != 0 } ?: natural(a.serial, b.serial)
     }
 
     /** The stores in a list with their item counts, by store number. */

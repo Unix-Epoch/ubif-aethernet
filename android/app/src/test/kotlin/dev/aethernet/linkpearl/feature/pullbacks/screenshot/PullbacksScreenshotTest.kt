@@ -9,6 +9,7 @@ import dev.aethernet.linkpearl.feature.pullbacks.PbSaved
 import dev.aethernet.linkpearl.feature.pullbacks.PbSession
 import dev.aethernet.linkpearl.feature.pullbacks.PbUi
 import dev.aethernet.linkpearl.feature.pullbacks.PullbackScreen
+import dev.aethernet.linkpearl.feature.pullbacks.Pullbacks
 import dev.aethernet.linkpearl.testing.Device
 import dev.aethernet.linkpearl.testing.shoot
 import org.junit.Rule
@@ -34,7 +35,7 @@ class PullbacksScreenshotTest(private val shot: PbShot, private val device: Devi
             val (d, sku) = parts[i % 3]
             PbItem("Sandbox Store #999999", sku, d, "${sku.toLong()}-${(1000 + i).toString().padStart(10, '0')}", 1.0, 12.5)
         }
-        private val list = PbList(listOf("Store", "SKU", "Description", "Serial", "Return Units", "Return Value"), items)
+        private val list = PbList(listOf("Store", "SKU", "Description", "Serial", "Return Units", "Return Value"), items.sortedWith(Pullbacks.scanOrder))
 
         fun ui(shot: PbShot): PbUi {
             var s = PbSession("Pullback Serials.xlsx", "Sandbox Store #999999", list)
@@ -43,7 +44,7 @@ class PullbacksScreenshotTest(private val shot: PbShot, private val device: Devi
                 PbShot.Start -> PbUi.Start(PbSaved("Pullback Serials.xlsx", "Sandbox Store #999999", 112, 180))
                 PbShot.Stores -> PbUi.Stores("Pullback Serials.xlsx", listOf("Sandbox Store #999999" to 180, "Lynnhaven Store #326" to 183, "Windsor Woods Store #707" to 23), "Sandbox Store #999999", 3214.0)
                 PbShot.Scanning -> PbUi.Scanning(s)
-                PbShot.Mismatch -> PbUi.Scanning(s.scan("110295-0000000228"))
+                PbShot.Mismatch -> PbUi.Scanning(s.scan("110295-0000000999"))
                 PbShot.Done -> {
                     repeat(2) { s = s.scan("X").acceptAnyway(now = "2026-11-16T15:00:00") }
                     repeat(5) { s = s.skip() }

@@ -28,6 +28,29 @@ const exportRows = [
   ['Total', null, null, null, 3, 55.75, 2],
 ];
 
+// The scan order (Linkpearl's PullbacksTest.scanOrder holds the same list).
+const ORDER_IN = [
+  'iPhone 12 Back Camera (Non OEM)', 'iPhone 11 Charging Port Flex, Black (Non OEM)', 'Galaxy S22 - 128GB - Black - Renewed 2',
+  'iPhone 11 Pro Glass/LCD, Select LCD Non OEM', 'iPad Air 2 Battery (Non-OEM)', 'iPhone 6 Glass/ LCD, White, Select Non-OEM',
+  'iPhone 12 Wifi Flex', 'iPhone 13 Ear Speaker Sensor Flex', 'Samsung Galaxy S23 Ultra Back Glass, Lavender, GH97-28420D',
+  'iPhone 7 Proximity Sensor/Front Camera/Front Mic Flex (Non OEM)', 'iPhone 7 Dock Connector Flex, Black', 'iPhone 11 Front Camera (Non OEM)',
+];
+const ORDER_OUT = [
+  'iPhone 6 Glass/ LCD, White, Select Non-OEM', 'iPhone 11 Pro Glass/LCD, Select LCD Non OEM', 'iPad Air 2 Battery (Non-OEM)',
+  'iPhone 7 Dock Connector Flex, Black', 'iPhone 11 Charging Port Flex, Black (Non OEM)', 'iPhone 11 Front Camera (Non OEM)',
+  'iPhone 12 Back Camera (Non OEM)', 'iPhone 13 Ear Speaker Sensor Flex', 'iPhone 7 Proximity Sensor/Front Camera/Front Mic Flex (Non OEM)',
+  'iPhone 12 Wifi Flex', 'Samsung Galaxy S23 Ultra Back Glass, Lavender, GH97-28420D', 'Galaxy S22 - 128GB - Black - Renewed 2',
+];
+await test('scan order: part type, then description in natural order, then SKU and serial', async () => {
+  const items = ORDER_IN.map((d, i) => ({ store: 'S #1', sku: 100 + i, description: d, serial: 'X-' + i }));
+  assert.deepEqual(P.forStore(items, 'S #1').map((x) => x.description), ORDER_OUT);
+  const same = [{ store: 'S #1', sku: 2, description: 'iPhone 11 Battery', serial: 'B' }, { store: 'S #1', sku: 2, description: 'iPhone 11 Battery', serial: 'A' },
+    { store: 'S #1', sku: 1, description: 'iPhone 11 Battery', serial: 'C' }];
+  assert.deepEqual(P.forStore(same, 'S #1').map((x) => x.serial), ['C', 'A', 'B']);
+  assert.equal(P.category('iPhone 16 Front Camera Module With Flex (Non OEM)'), 'cameras');
+  assert.equal(P.category('Something else'), 'other');
+});
+
 await test('xlsx round trip keeps strings, numbers and blanks', async () => {
   const bytes = P.writeXlsx([['A', 'B', 'C'], ['x & <y>', 12.422999999999998, null], [true, 0, 'z']], [null, 'ok'], 'S');
   const rows = await P.readXlsx(bytes);

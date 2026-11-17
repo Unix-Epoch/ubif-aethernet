@@ -77,6 +77,26 @@ class PullbacksTest {
         assertEquals("Pullback Serials - 900 - Scan Results.xlsx", Pullbacks.fileName("Pullback Serials - 900 - Scan Results.xlsx", "Test Store #900"))
     }
 
+    @Test fun scanOrder() {
+        // The same list as Aethernet's test-client/pullbacks.mjs "scan order".
+        val input = listOf(
+            "iPhone 12 Back Camera (Non OEM)", "iPhone 11 Charging Port Flex, Black (Non OEM)", "Galaxy S22 - 128GB - Black - Renewed 2",
+            "iPhone 11 Pro Glass/LCD, Select LCD Non OEM", "iPad Air 2 Battery (Non-OEM)", "iPhone 6 Glass/ LCD, White, Select Non-OEM",
+            "iPhone 12 Wifi Flex", "iPhone 13 Ear Speaker Sensor Flex", "Samsung Galaxy S23 Ultra Back Glass, Lavender, GH97-28420D",
+            "iPhone 7 Proximity Sensor/Front Camera/Front Mic Flex (Non OEM)", "iPhone 7 Dock Connector Flex, Black", "iPhone 11 Front Camera (Non OEM)",
+        )
+        val out = listOf(
+            "iPhone 6 Glass/ LCD, White, Select Non-OEM", "iPhone 11 Pro Glass/LCD, Select LCD Non OEM", "iPad Air 2 Battery (Non-OEM)",
+            "iPhone 7 Dock Connector Flex, Black", "iPhone 11 Charging Port Flex, Black (Non OEM)", "iPhone 11 Front Camera (Non OEM)",
+            "iPhone 12 Back Camera (Non OEM)", "iPhone 13 Ear Speaker Sensor Flex", "iPhone 7 Proximity Sensor/Front Camera/Front Mic Flex (Non OEM)",
+            "iPhone 12 Wifi Flex", "Samsung Galaxy S23 Ultra Back Glass, Lavender, GH97-28420D", "Galaxy S22 - 128GB - Black - Renewed 2",
+        )
+        assertEquals(out, input.mapIndexed { i, d -> PbItem("S #1", 100.0 + i, d, "X-$i") }.sortedWith(Pullbacks.scanOrder).map { it.description })
+        val same = listOf(PbItem("S #1", 2.0, "iPhone 11 Battery", "B"), PbItem("S #1", 2.0, "iPhone 11 Battery", "A"), PbItem("S #1", 1.0, "iPhone 11 Battery", "C"))
+        assertEquals(listOf("C", "A", "B"), same.sortedWith(Pullbacks.scanOrder).map { it.serial })
+        assertEquals("cameras", Pullbacks.category("iPhone 16 Front Camera Module With Flex (Non OEM)"))
+    }
+
     @Test fun csv() {
         val list = Pullbacks.parse(Pullbacks.readCsv("Store,SKU,Description,Serial\r\n\"Test Store #900\",1,\"A, b\",S-9\r\n"))
         assertEquals("A, b", list.items[0].description)
