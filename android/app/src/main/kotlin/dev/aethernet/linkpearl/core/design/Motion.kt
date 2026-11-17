@@ -73,6 +73,8 @@ class LpHaptics internal constructor(private val perform: (HapticFeedbackType) -
     fun threshold() = perform(HapticFeedbackType.GestureThresholdActivate)
     /** A refresh landed, a save went through. */
     fun confirm() = perform(HapticFeedbackType.Confirm)
+    /** A scan or entry was refused (a mismatch). */
+    fun reject() = perform(HapticFeedbackType.Reject)
     /** A switch turned on / off. */
     fun toggle(on: Boolean) = perform(if (on) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff)
 }

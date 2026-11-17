@@ -315,7 +315,7 @@ def action_icons(root: Path) -> str:
     return json.dumps(icons)
 
 
-DEV_ONLY_FILES = {"59-spread.js"}  # Spread: dev channel only until released (drop it from here, and the AE_DEV guards, to ship it)
+DEV_ONLY_FILES = {"59-spread.js", "66-pullbacks.js"}  # Spread, Elusive Jump (pullbacks): dev channel only until released (drop them from here, and the AE_DEV guards, to ship them)
 
 
 def build(root: Path, version: str = VERSION) -> Path:

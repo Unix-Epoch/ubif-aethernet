@@ -49,6 +49,7 @@ import dev.aethernet.linkpearl.core.design.Lp
 import dev.aethernet.linkpearl.core.design.LpBottomSheet
 import dev.aethernet.linkpearl.core.design.LpChip
 import dev.aethernet.linkpearl.core.design.LpIcon
+import dev.aethernet.linkpearl.core.design.LpIconButton
 import dev.aethernet.linkpearl.core.design.LpIcons
 import dev.aethernet.linkpearl.core.design.LpSegmented
 import dev.aethernet.linkpearl.core.design.LpShapes
@@ -83,6 +84,7 @@ data class RetraceActions(
     val onLoadMore: () -> Unit = {},
     val onOpenItem: (RtItemRow) -> Unit = {},
     val onOpenLabel: (RtLabelHit) -> Unit = {},
+    val onPullbacks: () -> Unit = {},
 )
 
 /**
@@ -114,6 +116,7 @@ fun RetraceScreen(
         Column(Modifier.padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Retrace", style = LpType.Screen, color = Lp.colors.fg, modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1)
+                LpIconButton(LpIcons.Barcode, "Pullbacks", actions.onPullbacks)
             }
             SearchField(state.query, true, actions.onQuery, actions.onClearQuery, {}, placeholder = "Item, name, SKU, label")
             LpSegmented(listOf("Items", "Purchase orders"), if (state.view == RetraceView.Items) 0 else 1, { actions.onPickView(RetraceView.entries[it]) })

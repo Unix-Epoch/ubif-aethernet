@@ -49,6 +49,7 @@ secret is in the project (`*.jks`, `*.keystore` are ignored). `./gradlew :app:mi
 | OkHttp (HTTP client) | 5.5.1 | Maven Central |
 | Roborazzi (JVM screenshots) | 1.79.0 | Maven Central + project release notes (no AGP/Kotlin matrix published; verified working with the above) |
 | Robolectric / JUnit | 4.18 / 4.13.2 | Maven Central; Robolectric needs JDK 21 for SDK 36+, hence SDK 35 in tests |
+| CameraX (camera2, lifecycle, view, mlkit-vision) / ML Kit barcode-scanning | 1.6.2 / 17.3.0 | Google Maven `maven-metadata.xml` (Nov 16, 2026; CameraX 1.7.0 is rc); barcode-scanning is the bundled model, no Play services download |
 
 Paparazzi was not used (2.0 is alpha). The material3-adaptive-navigation-suite 1.4 API differs from older docs: `NavigationSuiteScaffold(navigationItems = {...})`
 with `NavigationSuiteItem(...)` and a `navigationSuiteType` parameter.
@@ -160,6 +161,17 @@ Screenshots in `screenshots/trends` and `screenshots/prices`.
 - **Aging** (`feature/workorders/WoAging.kt`): Spread's limits (Waiting and Ready for pickup 7 days, every other status 3 days); "Old N" filter, an amber edge and "Old · 9d 3h".
 - **Alerts** (`tracker-worker/MOBILE-API-alerts.md`): Morning digest (one per phone, its own screen `alerts/digest/{id}`), sales orders without a work order, Retrace coverage check.
 
+## Pullbacks
+
+`feature/pullbacks`, route `pullbacks` (`linkpearl://pullbacks`), opened from the barcode button in Retrace's header. The phone version of Aethernet's Elusive Jump
+(`src/66-pullbacks.js`) and the scan_serials.py tool: open the PowerBI "Pullback Serials" export (.xlsx or .csv, through the system file picker), pick the store (the
+phone's own stores first, the first one picked), then scan item by item, sorted by description. Camera scanning (CameraX + ML Kit; asks for the camera the first time;
+a code equal to the expected serial wins, the same code is taken once per 1.5 s), or the keyboard button for typing or a keyboard-style Bluetooth scanner. Mismatch →
+Accept anyway or Skip; Undo puts the last item back. Share results sends the script's "Scan Results" .xlsx (`Pullbacks.results`, same columns, fills and widths) through
+a FileProvider (`cache/pullbacks/`). The phone has no Portal session, so nothing is marked from here: uploading that file on Aethernet's Pullbacks page marks every scanned
+item in Portal. The run is kept in `files/pullbacks/` (the results file + where scanning was) and resumes from Start. The .xlsx reader/writer is our own
+(`PullbackList.kt`, java.util.zip + regex XML; PowerBI's `x:` prefixed sheets included). Screenshots in `screenshots/pullbacks`.
+
 ## Fold, hinge, posture
 
 `AdaptiveProvider` (core/nav) turns material3-adaptive's `WindowAdaptiveInfo` (which reads Jetpack WindowManager's `FoldingFeature`) into
@@ -256,6 +268,8 @@ later after long idle spells in Doze; the server keeps alerts in the feed and th
 than 12 hours is skipped by design (it stays in the feed).
 
 ## Not verified without the owner's phone
+
+Pullbacks: the camera scanning a real label (format, focus, light), the permission prompt, opening the export from Files/Drive/email, and the share sheet.
 
 Added with closed work orders, Auto-Waymark and Retrace (also not verified on a phone): the five-item bottom bar at 412dp with TalkBack, a real tracker answering `state=closed`, `followups=1` and
 `/m/retrace/*` (after the Worker deploy), Retrace deep links from outside the app, Back from a label opened from a part (Work orders detail to Retrace label and back), the Retrace store pill following the

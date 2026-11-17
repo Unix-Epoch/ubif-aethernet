@@ -92,6 +92,7 @@ fun RetraceRoute(initial: RtTarget?, navigate: ((String) -> Unit)?) {
             onRefresh = listVm::refresh, onLoadMore = listVm::loadMore,
             onOpenItem = { go(Routes.retraceItem(ui.store ?: return@RetraceActions, it.item)) },
             onOpenLabel = { go(Routes.retraceLabel(ui.store ?: return@RetraceActions, it.label)) },
+            onPullbacks = { go(Routes.PULLBACKS) },
         )
         if (initial == null) {
             RetraceScreen(ui, actions = actions, twoColumns = wide)

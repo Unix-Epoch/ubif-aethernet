@@ -16,6 +16,7 @@ object Routes {
     const val SETTINGS = "settings"
     const val TRENDS = "trends/{store}"
     const val PRICES = "prices/{store}"
+    const val PULLBACKS = "pullbacks"
     const val ONBOARDING = "onboarding"
 
     const val ARG_ID = "id"
