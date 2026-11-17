@@ -27,6 +27,15 @@ database_id = "59394e23-6903-4b1b-bb41-43abf19f3915"
 binding = "RELEASES"
 bucket_name = "linkpearl-releases"
 
+# Linkshell's live relay: one Durable Object per link (src/linkshell.js LinkshellRoom), SQLite storage, WebSocket hibernation.
+[[durable_objects.bindings]]
+name = "LINKSHELL"
+class_name = "LinkshellRoom"
+
+[[migrations]]
+tag = "linkshell-1"
+new_sqlite_classes = ["LinkshellRoom"]
+
 [vars]
 APP_KEY = "ae_QFa2DKDy0DrlBd_A3bfZL3BtgM51idh6"   # public: ships inside Aethernet
 # People who may do the first setup (create the master key) on the admin site.

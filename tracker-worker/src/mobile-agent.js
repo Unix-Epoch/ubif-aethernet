@@ -10,6 +10,7 @@
     /v1/agents/m/prices…               the store's price sheet             → mobile-prices.js pricesApi
     /v1/agents/m/update…               the latest app build and its APK    → mobile-update.js updateApi
     /v1/agents/m/waymark…              tag and follow-up writes            → mobile-waymark.js waymarkApi
+    /v1/agents/m/linkshell…            pair with a PC, links, unlink       → linkshell.js     linkshellPhone
 
   How a request gets here (index.js agentApi, nothing to change there): the app key header (x-aethernet-key) is checked, then
   `Authorization: Bearer <id>.<token>` against the agents table, then the agent must be a phone (agent_kind row) and approved
@@ -27,6 +28,7 @@ import { trendsApi } from './mobile-trends.js';
 import { pricesApi } from './mobile-prices.js';
 import { updateApi } from './mobile-update.js';
 import { waymarkApi } from './mobile-waymark.js';
+import { linkshellPhone } from './linkshell.js';
 
 // The device as the `me` that homeApi expects: limited to its approved stores, never an owner.
 export const meOf = (device) => ({ owner: false, scope: 'stores', stores: device.stores, email: 'device:' + device.id });
@@ -42,5 +44,6 @@ export async function mobileAgentApi(req, env, url, device, h) {
   if (/^\/prices(\/|$)/.test(path)) return pricesApi(req, env, url, device, h);
   if (/^\/update(\/|$)/.test(path)) return updateApi(req, env, url, device, h);
   if (/^\/waymark(\/|$)/.test(path)) return waymarkApi(req, env, url, device, h);
+  if (/^\/linkshell(\/|$)/.test(path)) return linkshellPhone(req, env, url, device, h);
   return h.fail(404, 'not found');
 }
