@@ -19,7 +19,7 @@
     ]),
     ['autoClose', 'Swiftcast', 'Your new favorite tool: auto-close cleanings in one click, even multiple at once. Click Swiftcast on a cleaning arrival or work order.'],
     ...(AE_DEMO ? [] : [
-    ['checkinDrafts', 'Return', 'Print a label for an arrival and scan it to come back to it. Asks about cleanings before an Asurion Mobility work order is created. Click the Return button on any arrival.'],
+    ['checkinDrafts', 'Return', 'Print a label for an arrival and scan it to come back to it. Asks about cleanings before an Asurion Mobility check-in. Click the Return button on any arrival.'],
     ['leadReplies', 'Provoke', 'Pre-loads your replies to leads, then texts them and marks them contacted in one click. Find it on Arrivals and in a work order\'s customer chat.'],
     ]),
     ...(AE_DEMO ? [] : [
