@@ -1,7 +1,5 @@
 package dev.aethernet.linkpearl.feature.home
 
-import androidx.compose.foundation.text.TextAutoSize
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +36,8 @@ import dev.aethernet.linkpearl.core.design.Fmt
 import dev.aethernet.linkpearl.core.design.LineChart
 import dev.aethernet.linkpearl.core.design.Lp
 import dev.aethernet.linkpearl.core.design.LpCard
+import dev.aethernet.linkpearl.core.design.LpHeroCard
+import dev.aethernet.linkpearl.core.design.RollingFigure
 import dev.aethernet.linkpearl.core.design.LpDot
 import dev.aethernet.linkpearl.core.design.LpIcon
 import dev.aethernet.linkpearl.core.design.LpIcons
@@ -57,21 +57,25 @@ private fun weekDescription(prefix: String, days: List<String>, values: List<Dou
     prefix + ": " + values.mapIndexed { i, v -> (days.getOrNull(i)?.let(Fmt::dayName) ?: "") + " " + (v?.let(f) ?: "no data") }.joinToString(", ")
 
 @Composable
-fun SalesCard(d: HomeData, wide: Boolean, modifier: Modifier = Modifier) {
+fun SalesCard(d: HomeData, wide: Boolean, modifier: Modifier = Modifier, onOpenTrends: (() -> Unit)? = null) {
     val desc = weekDescription("Sales, last 7 days", d.days, d.sales.week) { Fmt.money(it) }
-    LpCard(modifier) {
+    // The hero: the figure that matters most. A light sweeps across it when a refresh lands (the as-of time changes). Tapping it opens Trends.
+    LpHeroCard(modifier, shineKey = d.asOf, onClick = onOpenTrends) {
         CardLabel("Today's sales")
-        if (wide) {
-            BigValue(Fmt.money(d.sales.today))
-            YesterdayLine(d)
-            Spacer(Modifier.height(14.dp))
-            BarChart(d.sales.week, d.days, desc, plotHeight = 130.dp, showValues = true, textSize = 12.sp)
-        } else {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(LpSpacing.M), verticalAlignment = Alignment.Bottom) {
-                Column(Modifier.weight(1f)) { BigValue(Fmt.money(d.sales.today)); YesterdayLine(d) }
-                BarChart(d.sales.week, d.days, desc, Modifier.width(130.dp), plotHeight = 56.dp)
-            }
-        }
+        RollingFigure(Fmt.money(d.sales.today), Modifier.padding(top = 6.dp), style = LpType.Hero)
+        YesterdayLine(d)
+        Spacer(Modifier.height(14.dp))
+        BarChart(d.sales.week, d.days, desc, plotHeight = if (wide) 130.dp else 104.dp, showValues = wide, textSize = 12.sp)
+        if (onOpenTrends != null) TrendsLink()
+    }
+}
+
+/** "Trends ›" at the foot of the sales card (the whole card is the button). */
+@Composable
+private fun TrendsLink() {
+    Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+        Text("Trends", style = LpType.BodyStrong, color = Lp.colors.accText)
+        LpIcon(LpIcons.ChevronRight, null, size = 20.dp, tint = Lp.colors.accText)
     }
 }
 
@@ -123,10 +127,7 @@ fun RfpCard(d: HomeData, modifier: Modifier = Modifier) {
         CardLabel("RFP total")
         // One row at any width: a wide figure steps its size down instead of pushing the counts onto a second line.
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.Bottom) {
-            BasicText(
-                Fmt.money(r.total), Modifier.weight(1f).padding(end = 12.dp), style = LpType.Big.copy(color = Lp.colors.fg), maxLines = 1,
-                autoSize = TextAutoSize.StepBased(minFontSize = 24.sp, maxFontSize = LpType.Big.fontSize, stepSize = 1.sp),
-            )
+            RollingFigure(Fmt.money(r.total), Modifier.weight(1f).padding(end = 12.dp), style = LpType.Big)
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     buildAnnotatedString { withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(Fmt.count(r.count)) }; append(" Ready for pickup") },
@@ -172,7 +173,7 @@ fun LanesCard(d: HomeData, wide: Boolean, modifier: Modifier = Modifier) {
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             LpDot(l.color)
-                            Text(Fmt.count(l.count), style = LpType.Value, color = Lp.colors.fg, maxLines = 1)
+                            RollingFigure(Fmt.count(l.count), style = LpType.Value)
                         }
                         Text(l.name, Modifier.padding(top = 4.dp), style = LpType.Caption.copy(lineHeight = 18.sp), color = Lp.colors.soft)
                     }
@@ -204,7 +205,7 @@ fun CleaningCard(d: HomeData, wide: Boolean, modifier: Modifier = Modifier) {
                 CardLabel("Cleaning rate")
                 Text(Fmt.ordersOf(c.cln, c.am), Modifier.padding(top = 6.dp), style = LpType.Row.copy(fontSize = 17.sp), color = Lp.colors.fg)
             }
-            Text(Fmt.percent(c.rate), style = LpType.Big, color = Lp.colors.fg, maxLines = 1)
+            RollingFigure(Fmt.percent(c.rate), style = LpType.Big)
         }
         Spacer(Modifier.height(12.dp))
         ProgressBar((c.rate ?: 0.0).toFloat(), Lp.colors.teal, contentDescription = "Cleaning rate ${Fmt.percent(c.rate)}")

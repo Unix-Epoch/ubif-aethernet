@@ -1,5 +1,10 @@
 package dev.aethernet.linkpearl.feature.alerts
 
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import dev.aethernet.linkpearl.core.nav.LocalNavInset
+import dev.aethernet.linkpearl.core.design.enter
+import dev.aethernet.linkpearl.core.design.LpPullToRefresh
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,7 +26,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -75,6 +79,8 @@ data class AlertsActions(
     val onTurnOnNotifications: () -> Unit = {},
     val onOpenWorkOrder: (store: Int, wo: Long) -> Unit = { _, _ -> },
     val onEdit: (SettingsEdit) -> Unit = {},
+    /** A digest row opens the Morning digest screen (by alert id). */
+    val onOpenDigest: (Int) -> Unit = {},
 )
 
 /**
@@ -101,7 +107,11 @@ fun AlertsContent(
                 ui, names, storeIds, notificationsOn, actions, selectedId = null,
                 onTap = { a ->
                     if (!a.read) actions.onMarkRead(a.id)
-                    if (a.wo != null) actions.onOpenWorkOrder(a.store, a.wo) else { selectedId = a.id; select(a.id) }
+                    when {
+                        a.type == AlertType.Digest -> actions.onOpenDigest(a.id)
+                        a.wo != null -> actions.onOpenWorkOrder(a.store, a.wo)
+                        else -> { selectedId = a.id; select(a.id) }
+                    }
                 },
             )
         },
@@ -141,7 +151,7 @@ fun AlertsListPane(
     var chooser by remember { mutableStateOf(false) }
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(start = LpSpacing.Gutter, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Alerts", style = LpType.Title, color = c.fg, modifier = Modifier.weight(1f).padding(vertical = 8.dp).semantics { heading() })
+            Text("Alerts", style = LpType.Screen, color = c.fg, modifier = Modifier.weight(1f).padding(vertical = 8.dp).semantics { heading() })
             LpIconButton(LpIcons.Sliders, "Alert settings", actions.onOpenSettings)
         }
         Column(Modifier.padding(horizontal = LpSpacing.Gutter), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -204,9 +214,9 @@ private fun FeedList(ui: FeedUi, names: Map<Int, String>, selectedId: Int?, acti
     LaunchedEffect(state, list.size, ui.more) {
         snapshotFlow { state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }.collect { last -> if (ui.more && last >= list.size - 4) actions.onLoadMore() }
     }
-    PullToRefreshBox(isRefreshing = ui.refreshing, onRefresh = actions.onRefresh, modifier = Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = androidx.compose.foundation.layout.PaddingValues(start = LpSpacing.Gutter, end = LpSpacing.Gutter, bottom = 24.dp)) {
-            list.forEach { item ->
+    LpPullToRefresh(refreshing = ui.refreshing, onRefresh = actions.onRefresh, modifier = Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = androidx.compose.foundation.layout.PaddingValues(start = LpSpacing.Gutter, end = LpSpacing.Gutter, bottom = 24.dp + LocalNavInset.current)) {
+            list.forEachIndexed { index, item ->
                 when (item) {
                     is Item.Header -> item(key = "h-${item.text}") {
                         Text(item.text.uppercase(), style = LpType.Label, color = c.soft, modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 8.dp).semantics { heading() })
@@ -214,7 +224,7 @@ private fun FeedList(ui: FeedUi, names: Map<Int, String>, selectedId: Int?, acti
                     is Item.Entry -> item(key = item.alert.id) {
                         val r = 20.dp
                         val shape = RoundedCornerShape(topStart = if (item.first) r else 0.dp, topEnd = if (item.first) r else 0.dp, bottomStart = if (item.last) r else 0.dp, bottomEnd = if (item.last) r else 0.dp)
-                        Column(Modifier.background(c.surf, shape)) {
+                        Column(Modifier.enter(index.coerceAtMost(9)).shadow(if (item.first || item.last) 6.dp else 0.dp, shape, clip = false, ambientColor = c.shadow, spotColor = c.shadow).background(Brush.verticalGradient(listOf(c.cardTop, c.cardBottom)), shape)) {
                             if (!item.first) Hairline()
                             AlertRow(item.alert, names, shape, selected = item.alert.id == selectedId, onClick = { onTap(item.alert) })
                         }
@@ -276,6 +286,21 @@ fun AlertDetail(
                     }
                 }
             }
+            if (alert.type == AlertType.Unlinked && alert.salesOrders.isNotEmpty()) {
+                Text("Sales orders", style = LpType.Label, color = c.soft, modifier = Modifier.padding(start = 8.dp).semantics { heading() })
+                GroupCard {
+                    alert.salesOrders.forEachIndexed { i, so ->
+                        if (i > 0) Hairline()
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = LpSpacing.L, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            LpIcon(LpIcons.Receipt, null, size = 20.dp, tint = c.soft)
+                            Text(so, style = LpType.BodyStrong, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
             if (alert.type.configurable || alert.type == AlertType.Back) {
                 Text("This alert", style = LpType.Label, color = c.soft, modifier = Modifier.padding(start = 8.dp).semantics { heading() })
                 when (settings) {
@@ -288,6 +313,7 @@ fun AlertDetail(
                 }
             }
             if (alert.wo != null) PillButton("Open work order", { actions.onOpenWorkOrder(alert.store, alert.wo) }, Modifier.fillMaxWidth(), icon = LpIcons.External)
+            androidx.compose.foundation.layout.Spacer(Modifier.padding(bottom = LocalNavInset.current))
         }
         val ready = settings as? SettingsUi.Ready
         val cur = ready?.bundle?.settings?.types?.get(settingType)

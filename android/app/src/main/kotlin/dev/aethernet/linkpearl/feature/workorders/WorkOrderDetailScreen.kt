@@ -49,6 +49,8 @@ import dev.aethernet.linkpearl.core.design.AsOfLine
 import dev.aethernet.linkpearl.core.design.CardLabel
 import dev.aethernet.linkpearl.core.design.Fmt
 import dev.aethernet.linkpearl.core.design.Lp
+import dev.aethernet.linkpearl.core.design.LpHeroCard
+import dev.aethernet.linkpearl.core.nav.sharedCard
 import dev.aethernet.linkpearl.core.design.LpCard
 import dev.aethernet.linkpearl.core.design.LpChip
 import dev.aethernet.linkpearl.core.design.LpIcon
@@ -77,6 +79,18 @@ data class WoDetailActions(
     val onOpenPortal: (Long) -> Unit = {},
     /** A part's label on a closed work order: opens its Retrace page (store, label). */
     val onOpenLabel: (Int, String) -> Unit = { _, _ -> },
+    // Waymark (open work orders only)
+    val onOpenTags: () -> Unit = {},
+    val onCloseTags: () -> Unit = {},
+    val onRetryTags: () -> Unit = {},
+    val onToggleTag: (String, Boolean) -> Unit = { _, _ -> },
+    val onAddTag: (String) -> Unit = {},
+    val onOpenFollowUp: () -> Unit = {},
+    val onCloseFollowUp: () -> Unit = {},
+    val onPickFollowUp: (java.time.LocalDate) -> Unit = {},
+    val onSaveFollowUp: () -> Unit = {},
+    val onRemoveFollowUp: () -> Unit = {},
+    val onMessageShown: () -> Unit = {},
 )
 
 /**
@@ -92,10 +106,11 @@ fun WorkOrderDetailScreen(state: WoDetailUi, remaining: Duration?, showBack: Boo
     val key = state.key
     val tabletop = LocalAdaptive.current.isTabletop
 
-    Column(modifier.fillMaxSize()) {
+    Box(modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = if (showBack) 4.dp else LpSpacing.Gutter, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (showBack) LpIconButton(if (closeIcon) LpIcons.Close else LpIcons.Back, if (closeIcon) "Close" else "Back", actions.onBack)
-            Text(key?.wo?.toString() ?: "", style = LpType.Title.copy(fontWeight = FontWeight.Bold), color = Lp.colors.fg, maxLines = 1,
+            Text(key?.wo?.toString() ?: "", style = LpType.Title.copy(fontWeight = FontWeight.Bold, fontSize = LpType.Screen.fontSize, letterSpacing = LpType.Screen.letterSpacing), color = Lp.colors.fg, maxLines = 1,
                 modifier = Modifier.weight(1f).padding(start = if (showBack) 8.dp else 0.dp).semantics { heading() })
             if (key != null) {
                 if (!tabletop) LpIconButton(LpIcons.External, "Open in Portal", { actions.onOpenPortal(key.wo) })
@@ -112,7 +127,7 @@ fun WorkOrderDetailScreen(state: WoDetailUi, remaining: Duration?, showBack: Boo
             else -> {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = LpSpacing.Gutter).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
                     Banner(state, actions)
-                    HeaderCard(state, d, nowMs)
+                    HeaderCard(state, d, nowMs, actions, Modifier.sharedCard("wo-${state.key?.id}"))
                     CustomerBlock(state, actions)
                     if (shown != null && shown.hasSnapshot) NotesCard(shown)
                     TimelineCard(d, nowMs)
@@ -122,6 +137,12 @@ fun WorkOrderDetailScreen(state: WoDetailUi, remaining: Duration?, showBack: Boo
                 BottomBar(state, remaining, actions)
             }
         }
+    }
+    if (state.editable) {
+        TagsSheet(state, actions)
+        FollowUpSheet(state, java.time.LocalDate.parse(todayLocal(nowMs)), actions)
+    }
+    WoSnackbar(state.message, actions.onMessageShown)
     }
 }
 
@@ -157,22 +178,28 @@ private fun BottomBar(state: WoDetailUi, remaining: Duration?, actions: WoDetail
 }
 
 @Composable
-private fun HeaderCard(state: WoDetailUi, d: WoDetailResponse, nowMs: Long, modifier: Modifier = Modifier) {
+private fun HeaderCard(state: WoDetailUi, d: WoDetailResponse, nowMs: Long, actions: WoDetailActions, modifier: Modifier = Modifier) {
     val w = d.wo
     val c = Lp.colors
-    LpCard(modifier) {
+    val editable = state.editable
+    LpHeroCard(modifier, padding = 16.dp) {
         Row(verticalAlignment = Alignment.Top) {
             Text(w.device ?: Fmt.DASH, style = LpType.Title.copy(fontWeight = FontWeight.Bold), color = c.fg, modifier = Modifier.weight(1f))
             if (w.open && w.statusSince != null) {
-                LpChip(WoFmt.inStatusLong(w.statusSince, nowMs), tone = if (WoFmt.isLong(w.statusSince, nowMs)) Tone.Warn else Tone.Neutral, icon = LpIcons.Hourglass,
-                    modifier = Modifier.semantics { contentDescription = "In status ${WoFmt.inStatusLong(w.statusSince, nowMs)}" })
+                val time = WoFmt.inStatusLong(w.statusSince, nowMs)
+                val old = WoAging.isOld(w, nowMs)
+                LpChip(if (old) "Old" + Fmt.DOT + time else time, tone = if (old) Tone.Warn else Tone.Neutral, icon = LpIcons.Hourglass,
+                    modifier = Modifier.semantics { contentDescription = (if (old) "Old, " else "In status ") + time })
             }
             if (!w.open) LpChip("Closed", tone = Tone.Neutral, icon = LpIcons.Check)
         }
         Spacer(Modifier.height(10.dp))
         StatusChip(w.status, w.lane)
-        if (w.tags.isNotEmpty()) { Spacer(Modifier.height(10.dp)); TagRow(w.tags) }
-        Box(Modifier.fillMaxWidth().padding(vertical = 14.dp).height(1.dp).background(c.line))
+        if (w.tags.isNotEmpty() || editable) {
+            Spacer(Modifier.height(10.dp))
+            TagRow(w.tags, trailing = if (editable) ({ DashedChip("Tag", LpIcons.Plus, actions.onOpenTags, description = "Edit tags") }) else null)
+        }
+        Box(Modifier.fillMaxWidth().padding(vertical = 14.dp).height(1.dp).background(c.fg.copy(alpha = 0.1f)))
         Row {
             LabelValue("Program", w.program ?: Fmt.DASH, Modifier.weight(1f))
             LabelValue("Bin", w.bin ?: Fmt.DASH, Modifier.weight(1f))
@@ -188,7 +215,8 @@ private fun HeaderCard(state: WoDetailUi, d: WoDetailResponse, nowMs: Long, modi
             Spacer(Modifier.height(12.dp))
             Text("Follow-up", style = LpType.Small, color = c.soft)
             Spacer(Modifier.height(4.dp))
-            FollowUpMarker(follow, todayLocal(nowMs), longName = true)
+            FollowUpMarker(follow, todayLocal(nowMs), longName = true,
+                trailing = if (editable) ({ DashedChip("Change", LpIcons.Edit, actions.onOpenFollowUp, description = "Change follow-up") }) else null)
         }
         if (!w.open) {
             Spacer(Modifier.height(12.dp))
@@ -407,7 +435,7 @@ private fun ColumnScope.TabletopDetail(state: WoDetailUi, d: WoDetailResponse, s
             Row(Modifier.fillMaxWidth().height(topH).padding(horizontal = LpSpacing.Gutter), horizontalArrangement = Arrangement.spacedBy(LpSpacing.L)) {
                 Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
                     Banner(state, actions)
-                    HeaderCard(state, d, nowMs)
+                    HeaderCard(state, d, nowMs, actions, Modifier.sharedCard("wo-${state.key?.id}"))
                     TimelineCard(d, nowMs)
                 }
                 Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {

@@ -14,6 +14,8 @@ object Routes {
     const val RETRACE_ITEM = "retrace/item/{store}/{item}"
     const val RETRACE_LABEL = "retrace/label/{store}/{label}"
     const val SETTINGS = "settings"
+    const val TRENDS = "trends/{store}"
+    const val PRICES = "prices/{store}"
     const val ONBOARDING = "onboarding"
 
     const val ARG_ID = "id"
@@ -28,6 +30,9 @@ object Routes {
     private fun pathEnc(s: String) = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
     fun retraceItem(store: Int, item: String) = "retrace/item/$store/${pathEnc(item)}"
     fun retraceLabel(store: Int, label: String) = "retrace/label/$store/${pathEnc(label)}"
+    /** [store] = a store id or "all" (`StoreScope.key`). */
+    fun trends(store: String) = "trends/$store"
+    fun prices(store: String) = "prices/$store"
     fun deepLink(route: String) = "$DEEP_LINK_SCHEME://$route"
 }
 

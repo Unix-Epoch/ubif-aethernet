@@ -1,5 +1,6 @@
 package dev.aethernet.linkpearl.feature.settings
 
+import dev.aethernet.linkpearl.core.nav.LocalNavInset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -41,7 +42,11 @@ import dev.aethernet.linkpearl.core.design.PillButton
 import dev.aethernet.linkpearl.core.design.Tone
 import dev.aethernet.linkpearl.core.nav.HingeTwoPane
 import dev.aethernet.linkpearl.core.nav.LocalAdaptive
+import androidx.compose.ui.text.font.FontWeight
 import dev.aethernet.linkpearl.core.prefs.Appearance
+import dev.aethernet.linkpearl.feature.update.UpdatePhase
+import dev.aethernet.linkpearl.feature.update.UpdateProgress
+import dev.aethernet.linkpearl.feature.update.UpdateState
 
 /** Everything a tap on Settings can do. Defaults do nothing so screenshot tests can leave them out. */
 data class SettingsActions(
@@ -49,6 +54,7 @@ data class SettingsActions(
     val onNotifications: () -> Unit = {},
     val onAlertSettings: () -> Unit = {},
     val onAppearance: (Appearance) -> Unit = {},
+    val onUpdate: () -> Unit = {},
     val onOpenAdmin: () -> Unit = {},
     val onAskForget: () -> Unit = {},
     val onCancelForget: () -> Unit = {},
@@ -56,25 +62,29 @@ data class SettingsActions(
 )
 
 @Composable
-fun SettingsScreen(state: SettingsUiState = SettingsUiState(), version: String = "—", modifier: Modifier = Modifier, actions: SettingsActions = SettingsActions()) {
+fun SettingsScreen(
+    state: SettingsUiState = SettingsUiState(), version: String = "—", modifier: Modifier = Modifier, actions: SettingsActions = SettingsActions(),
+    update: UpdateState? = null,
+) {
     val wide = LocalAdaptive.current.isTwoPane
-    val title = @Composable { Text("Settings", style = LpType.Title, color = Lp.colors.fg, modifier = Modifier.heightIn(min = LpSpacing.Touch).semantics { heading() }) }
+    val title = @Composable { Text("Settings", style = LpType.Screen, color = Lp.colors.fg, modifier = Modifier.heightIn(min = LpSpacing.Touch).semantics { heading() }) }
     val left = @Composable {
         DeviceSection(state); CustomerSection(state, actions); NotificationsSection(state, actions)
     }
     val right = @Composable {
-        AppearanceSection(state, actions); AboutSection(version, actions); ForgetSection(actions)
+        AppearanceSection(state, actions); AboutSection(version, update, actions); ForgetSection(actions)
     }
     val gap = Arrangement.spacedBy(LpSpacing.Xl)
+    val navInset = LocalNavInset.current
     if (!wide) {
-        Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp), verticalArrangement = gap) {
+        Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp + navInset), verticalArrangement = gap) {
             title(); left(); right()
         }
     } else {
         HingeTwoPane(
             modifier = modifier.fillMaxSize(),
-            first = { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp), verticalArrangement = gap) { title(); left() } },
-            second = { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(end = LpSpacing.Gutter).padding(top = 8.dp + LpSpacing.Touch + LpSpacing.Xl, bottom = 24.dp), verticalArrangement = gap) { right() } },
+            first = { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = LpSpacing.Gutter).padding(top = 8.dp, bottom = 24.dp + navInset), verticalArrangement = gap) { title(); left() } },
+            second = { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(end = LpSpacing.Gutter).padding(top = 8.dp + LpSpacing.Touch + LpSpacing.Xl, bottom = 24.dp + navInset), verticalArrangement = gap) { right() } },
         )
     }
     if (state.confirmForget) LpDialog(onDismiss = actions.onCancelForget) { ForgetConfirm(actions) }
@@ -163,10 +173,31 @@ private fun RowScope.Segment(label: String, description: String, selected: Boole
 }
 
 @Composable
-private fun AboutSection(version: String, a: SettingsActions) = Section("About") {
+private fun AboutSection(version: String, update: UpdateState?, a: SettingsActions) = Section("About") {
     LpListRow("Version", trailing = { Value(version) })
     Divider()
+    if (update != null && update.available) {
+        UpdateRow(update, a.onUpdate)
+        Divider()
+    }
     LpListRow("Open admin site", onClick = a.onOpenAdmin, trailing = { LpIcon(LpIcons.External, null, tint = Lp.colors.soft) })
+}
+
+/** The highlighted "new version" row: download icon, the version name, Update; the progress (or the error) below while it runs. */
+@Composable
+private fun UpdateRow(u: UpdateState, onUpdate: () -> Unit) {
+    val c = Lp.colors
+    Column(Modifier.fillMaxWidth().background(c.surf2).padding(horizontal = LpSpacing.L, vertical = LpSpacing.S)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
+            LpIcon(LpIcons.Download, null, tint = c.acc)
+            Text(
+                u.latest?.name ?: "—", style = LpType.Row.copy(fontWeight = FontWeight.Bold), color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).semantics { contentDescription = "Version ${u.latest?.name} available" },
+            )
+            if (!u.busy) PillButton("Update", onUpdate)
+        }
+        if (u.phase !is UpdatePhase.Idle && u.phase != UpdatePhase.NeedsPermission) UpdateProgress(u.phase, Modifier.padding(bottom = LpSpacing.S))
+    }
 }
 
 @Composable

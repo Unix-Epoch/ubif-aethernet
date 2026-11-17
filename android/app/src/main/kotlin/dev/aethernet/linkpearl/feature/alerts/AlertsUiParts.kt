@@ -1,5 +1,6 @@
 package dev.aethernet.linkpearl.feature.alerts
 
+import dev.aethernet.linkpearl.core.design.lpSurface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -56,6 +57,9 @@ fun AlertType.icon(): ImageVector = when (this) {
     AlertType.Followup -> LpIcons.Calendar
     AlertType.Quiet -> LpIcons.Clock
     AlertType.Back -> LpIcons.Check
+    AlertType.Digest -> LpIcons.Sunrise
+    AlertType.Unlinked -> LpIcons.Receipt
+    AlertType.Coverage -> LpIcons.Shield
 }
 
 fun AlertType.tone(): Tone = when (this) {
@@ -64,6 +68,9 @@ fun AlertType.tone(): Tone = when (this) {
     AlertType.Followup -> Tone.Info
     AlertType.Quiet -> Tone.Warn
     AlertType.Back -> Tone.Teal
+    AlertType.Digest -> Tone.Accent
+    AlertType.Unlinked -> Tone.Teal
+    AlertType.Coverage -> Tone.Lilac
 }
 
 /** The round per-type icon. The icon shape differs per type, so colour is not the only cue. */
@@ -92,8 +99,8 @@ fun AlertRow(
     val meta = AlertText.meta(alert, names)
     Row(
         modifier.fillMaxWidth().heightIn(min = 72.dp).clip(shape)
-            .background(if (selected) c.accSoft else c.surf)
-            .drawBehind { if (!alert.read) drawRect(c.acc, Offset.Zero, Size(4.dp.toPx(), size.height)) }
+            .background(if (selected) c.accSoft else androidx.compose.ui.graphics.Color.Transparent)
+            .drawBehind { if (!alert.read) drawRoundRect(c.acc, Offset(0f, 14.dp.toPx()), Size(4.dp.toPx(), size.height - 28.dp.toPx()), androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())) }
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) { contentDescription = (if (alert.read) "" else "Unread. ") + "$sentence. $meta" }
             .padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
@@ -159,26 +166,26 @@ fun TypeSettingRow(type: AlertType, setting: TypeSetting, onToggle: (Boolean) ->
     ) {
         TypeBadge(type, size = 40.dp)
         Text(type.label, style = LpType.BodyStrong, color = c.fg, modifier = Modifier.weight(1f), maxLines = 2)
-        ValueChip(thresholdText(type, setting.value), onEditValue, "${type.label} threshold, ${thresholdText(type, setting.value)}")
+        if (type.hasThreshold) ValueChip(thresholdText(type, setting.value), onEditValue, "${type.label} threshold, ${thresholdText(type, setting.value)}")
         LpSwitch(setting.on, onToggle, type.label)
     }
 }
 
 fun thresholdText(type: AlertType, v: Int): String = when (type) {
     AlertType.Stuck, AlertType.Pickup -> AlertText.days(v)
-    AlertType.Followup -> AlertText.hourOfDay(v)
-    AlertType.Quiet -> AlertText.hours(v)
-    AlertType.Back -> ""
+    AlertType.Followup, AlertType.Digest -> AlertText.hourOfDay(v)
+    AlertType.Quiet, AlertType.Unlinked -> AlertText.hours(v)
+    AlertType.Back, AlertType.Coverage -> ""
 }
 
 /** A grouped card of rows with hairline dividers between them. */
 @Composable
 fun GroupCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val c = Lp.colors
-    Column(modifier.fillMaxWidth().clip(LpShapes.Card).background(c.surf).border(1.dp, c.line, LpShapes.Card)) { content() }
+    Column(modifier.fillMaxWidth().lpSurface(LpShapes.Card)) { content() }
 }
 
 @Composable
 fun Hairline() {
-    Box(Modifier.fillMaxWidth().height(1.dp).background(Lp.colors.line))
+    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(1.dp).background(Lp.colors.fg.copy(alpha = 0.07f)))
 }

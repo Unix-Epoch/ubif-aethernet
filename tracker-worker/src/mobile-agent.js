@@ -5,7 +5,11 @@
     /v1/agents/m/wo…                   work order lookup + unlock          → mobile-wo.js     woApi      (stub, 501)
     /v1/agents/m/alerts…, /push…       alerts, history, Web/FCM push setup → mobile-alerts.js alertsApi  (stub, 501)
     /v1/agents/m/retrace…              Retrace lookup: items, item, label, POs → mobile-retrace.js retraceApi (built)
-    /v1/agents/m/prefs…                thresholds, quiet hours, per-store  → mobile-prefs.js  prefsApi   (stub, 501)
+    /v1/agents/m/prefs…                device details, rename, forget      → mobile-prefs.js  prefsApi
+    /v1/agents/m/trends…               week / month / year series          → mobile-trends.js trendsApi
+    /v1/agents/m/prices…               the store's price sheet             → mobile-prices.js pricesApi
+    /v1/agents/m/update…               the latest app build and its APK    → mobile-update.js updateApi
+    /v1/agents/m/waymark…              tag and follow-up writes            → mobile-waymark.js waymarkApi
 
   How a request gets here (index.js agentApi, nothing to change there): the app key header (x-aethernet-key) is checked, then
   `Authorization: Bearer <id>.<token>` against the agents table, then the agent must be a phone (agent_kind row) and approved
@@ -19,6 +23,10 @@ import { woApi } from './mobile-wo.js';
 import { alertsApi } from './mobile-alerts.js';
 import { prefsApi } from './mobile-prefs.js';
 import { retraceApi } from './mobile-retrace.js';
+import { trendsApi } from './mobile-trends.js';
+import { pricesApi } from './mobile-prices.js';
+import { updateApi } from './mobile-update.js';
+import { waymarkApi } from './mobile-waymark.js';
 
 // The device as the `me` that homeApi expects: limited to its approved stores, never an owner.
 export const meOf = (device) => ({ owner: false, scope: 'stores', stores: device.stores, email: 'device:' + device.id });
@@ -30,5 +38,9 @@ export async function mobileAgentApi(req, env, url, device, h) {
   if (/^\/(alerts|push)(\/|$)/.test(path)) return alertsApi(req, env, url, device, h);
   if (/^\/prefs(\/|$)/.test(path)) return prefsApi(req, env, url, device, h);
   if (/^\/retrace(\/|$)/.test(path)) return retraceApi(req, env, url, device, h);
+  if (/^\/trends(\/|$)/.test(path)) return trendsApi(req, env, url, device, h);
+  if (/^\/prices(\/|$)/.test(path)) return pricesApi(req, env, url, device, h);
+  if (/^\/update(\/|$)/.test(path)) return updateApi(req, env, url, device, h);
+  if (/^\/waymark(\/|$)/.test(path)) return waymarkApi(req, env, url, device, h);
   return h.fail(404, 'not found');
 }

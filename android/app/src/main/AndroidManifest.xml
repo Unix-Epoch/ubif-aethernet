@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- In-app updates (feature/update): the downloaded APK is installed through PackageInstaller. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Intents the app sends (dial, text, open Portal in the browser): package visibility is not needed for intent resolution with a chooser. -->
     <queries>
@@ -68,6 +70,39 @@
 
         <!-- The notification's "Mark read" action. -->
         <receiver android:name=".feature.alerts.AlertActionReceiver" android:exported="false" />
+
+        <!-- PackageInstaller's status for an in-app update (only our own PendingIntent reaches it). -->
+        <receiver android:name=".feature.update.UpdateInstallReceiver" android:exported="false" />
+
+        <!-- Home-screen widgets (feature/widget): "Linkpearl" and "Today's sales". The launcher binds them, so they are exported. -->
+        <receiver
+            android:name=".feature.widget.LinkpearlWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_linkpearl">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_linkpearl_info" />
+        </receiver>
+        <receiver
+            android:name=".feature.widget.SalesWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_sales">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_sales_info" />
+        </receiver>
+        <!-- Which store a widget shows (opened by the launcher when a widget is reconfigured). -->
+        <activity
+            android:name=".feature.widget.WidgetConfigActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:theme="@style/Theme.Linkpearl">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
 
         <!-- LinkpearlApp is WorkManager's Configuration.Provider (its worker factory builds the alert check), so the library's
              automatic start-up initialiser is removed: with it, WorkManager would start with the default factory and the job could not run. -->

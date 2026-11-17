@@ -1,87 +1,68 @@
 /*
-  Return (incomplete check-ins) — save a check-in that can't be finished yet
-  and pick it up later where it left off.
+  Return (arrival labels) - save an arrival to a barcode, and scan it to come
+  back to the arrival. Nothing is stored anywhere: the barcode is the arrival.
 
-  Why: cleanings have to be created within 15 minutes of their work order,
-  and Portal creates the work order when the check-in leaves the Device step.
-  Saved before then, the work order (and its 15 minutes) only start once the
-  device is ready and the check-in is finished.
+  - Return label: the round Return button at the left of an arrival's drawer
+    footer (beside Swiftcast's on a cleaning). Prints a
+    label on the store's DYMO (DYMO Connect at https://127.0.0.1:41951-41960,
+    the same 30330 labels as Portal's WO labels): the Aethernet mark,
+    "Aethernet - Return", customer · device · date and a Code128 barcode
+    "AER" + the arrival number. If it can't print, the message offers Retry
+    print.
+  - Scan: Master's Mend's scan to open sends AER codes here, and the
+    arrival opens in its drawer.
+  - Cleanings gate: on an Asurion Mobility arrival (program 5062), Create
+    work order first asks whether cleanings can be created for the device.
+    Yes, or "Customer account does not have the option": the work order is
+    created. "Unable to use device" or "Customer does not know carrier PIN":
+    a Return ticket (the arrival's label) is printed and the BOH is to create
+    the cleanings with the device before the work order is created (cleanings
+    have to be created within 15 minutes of their work order). If the
+    arrival can't be read, the button works as usual.
 
-  - Save as incomplete: a button in the check-in footer on every step but
-    Device (its boxes don't come back from Portal's state). It
-    reads Portal's own check-in state (the check-in app's Redux slice
-    "checkInSlice", through core's Portal bridge), keeps the parts a person
-    typed or picked (customer, device, IMEI/serial, passcode, items with the
-    device; once the work order exists also the diagnosis, notes and bin) and
-    saves them to the Worker (/v1/:store/checkins). Saving the same check-in
-    again updates it. Then it prints a label on the store's DYMO (DYMO
-    Connect at https://127.0.0.1:41951-41960, the same 30330 labels as
-    Portal's WO labels): the Aethernet mark, "Aethernet - Return", customer ·
-    device · date and a Code128 barcode "AEC" + the 6-character code. If it
-    can't print, the message offers Retry print.
-  - Resume: scanning the label (Master's Mend's scan to open sends AEC codes
-    here) or Resume on the customer's arrival. No work order yet: the
-    check-in opens the way Portal's own Check-in button opens it (router
-    state arrivalIdForCheckin, when it came from an arrival) and the saved
-    fields are dispatched back into the slice, then the step is restored.
-    Work order already made: Portal's own resume (/check-in?workorderId=…)
-    reloads it and the diagnosis, notes and bin it doesn't keep are put back.
-  - The arrival drawer shows a saved check-in with Resume, Reprint label and
-    Discard.
-  - Finished: once the work order the check-in made has left Initial
-    check-in (status 1), the saved copy is deleted. The Worker also deletes
-    them 7 days after saving. They hold the customer's details and passcode.
+  Before Nov 17, 2026 Return saved whole incomplete check-ins (customer
+  details and passcode) to the Worker; that was paused Nov 11 and is gone.
+  The Worker's /checkins routes still answer 410.
 */
 AE.shard({
   id: 'checkinDrafts',
   name: 'Return',
   sites: ['portal.ubreakifix.net'],
   run() {
-    // PAUSED (Nov 11, 2026). Saved check-ins held the customer's details and passcode in plain text on the Worker, so the
-    // Worker now answers 410 to every /checkins route (see CHECKINS OFF in worker/src/index.js). While this is true Return
-    // draws nothing, makes no request and starts no timers; AE.checkinDrafts stays undefined, so a scanned old label
-    // is told "Return is off" by Master's Mend. Turning it back on is two deliberate changes: this constant AND the Worker
-    // gate, only once the Worker note's three conditions hold. Settings lists Return as paused (src/05-settings.js).
-    const SAVING_OFF = true;
-    if (SAVING_OFF) return;
     const { h } = AE;
-    const STEPS = ['Customer', 'Device', 'Diagnosis', 'Parts and services'];
-    const SLICE = 'checkInSlice';
-    const BTN_ID = 'ae-return-save', BOX_ID = 'ae-return-arrival';
-    const INITIAL_CHECKIN = 1; // work order status while the check-in isn't finished
-    const DEVICE_STEP = 1;     // formStep of the Device step: no saving there (see tick)
-    // What a person typed or picked; the rest of the slice is Portal's own bookkeeping.
-    const KEEP = ['formStep', 'activeTab', 'isBusinessCustomerArrivalFlow', 'selectedBusiness', 'authorizedContacts', 'contactFields',
-      'customerInfo', 'isImeiUnavailable', 'isSerialUnavailable', 'isServiceTagUnavailable', 'deviceInfo', 'customerDeviceDetails',
-      'deviceDiagToggles', 'selectedDeviceIssues', 'selectedGoogleDeviceIssues', 'deviceDiagNotes', 'deviceIssuesAdditionalDetails', 'binLocation'];
-    const MAX = 13000; // the Worker takes 14,000 characters of data
+    const BTN_ID = 'ae-return-label';
     const TITLE = 'Aethernet - Return'; // the label's top line
+    const CODE_RE = /^AER(\d{1,12})$/i;
+    const CREATE_WO = /^create work ?order$/i;
+    const REASONS = [
+      { label: 'Unable to use device', value: 'device', ticket: true },
+      { label: 'Customer does not know carrier PIN', value: 'pin', ticket: true },
+      { label: 'Customer account does not have the option', value: 'option', ticket: false },
+    ];
 
     document.head.append(h('style', null, `
-      #${BTN_ID} { display:inline-flex; align-items:center; gap:8px; margin-right:12px; flex:none; }
-      #${BTN_ID} svg { color:var(--aui-primary, #8223d2); }
-      #${BOX_ID} { margin:20px 0 0; padding:12px 14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;
-        border:1.5px dashed var(--aui-primary, #8223d2); border-radius:12px; font-size:14px; line-height:1.4; }
-      #${BOX_ID} .txt { flex:1; min-width:180px; }
-      #${BOX_ID} .sg-btn { height:32px; font-size:13px; }
+      #${BTN_ID} { order:-1; margin-right:auto; align-self:center; overflow:hidden; background:#1a1c1e; }
+      #${BTN_ID} .sg-aicon { border-radius:50%; display:block; width:100%; height:100%; }
+      *:has(> #sg-autoclose-btn) > #${BTN_ID} { margin-right:12px; } /* Swiftcast's button sits next to it and takes the free space */
     `));
 
-    const call = (method, path, body) => AE.waymark.call(method, '/checkins' + path, body);
     const report = (what, e) => ' If you keep seeing this, ' + AE.bugLink('report a bug', { where: 'Return', error: what + ': ' + ((e && e.message) || e) }) + '!';
-    const slice = (key, fresh) => { const r = AE.portal('select', { slice: SLICE, key: key == null ? null : key, fresh: !!fresh }); return r && r.found ? r.value : undefined; };
-    const dispatch = (type, payload) => AE.portal('dispatch', { slice: SLICE, action: { type: 'check-in/' + type, payload } });
-    const fmtWhen = (iso) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     const fmtDay = (d) => d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 
-    // ------------------------------------------------------------ what to save
-    function trim(st) {
-      const data = {};
-      for (const k of KEEP) if (st[k] !== undefined) data[k] = st[k];
-      if (JSON.stringify(data).length > MAX) delete data.customerDeviceDetails; // the biggest part, and Portal reloads it
-      return data;
+    // ------------------------------------------------------------ the arrival
+    const arrivals = new Map(); // arrivalId → promise of the arrival (dropped on failure, so the next look tries again)
+    function arrival(id) {
+      if (!arrivals.has(id)) arrivals.set(id, AE.api('GET', '/api/arrivals/' + id).then((j) => {
+        const a = AE.unwrap(j);
+        if (!a || typeof a !== 'object' || Array.isArray(a)) throw new Error('not an arrival');
+        return a;
+      }).catch((e) => { arrivals.delete(id); throw e; }));
+      return arrivals.get(id);
     }
-    // The device's name, wherever this check-in keeps it.
-    function deviceName(st) {
+    const programOf = (a) => Number((a && a.program && a.program.programId) || (a && a.programId)) || null;
+    const isMobility = (a) => programOf(a) === AE.PARENT_PROGRAM_ID;
+    // The device's name, wherever the arrival keeps it.
+    function deviceName(a) {
       const seen = new Set();
       const find = (o, depth) => {
         if (!o || typeof o !== 'object' || depth > 4 || seen.has(o)) return '';
@@ -90,10 +71,9 @@ AE.shard({
         for (const v of Object.values(o)) { const x = find(v, depth + 1); if (x) return x; }
         return '';
       };
-      return find(st.customerDeviceDetails, 0) || find(st.arrivalDetails, 0) || '';
+      return find(a.customerDevice, 0) || find(a, 0) || (a.customerDevice && typeof a.customerDevice.name === 'string' ? a.customerDevice.name.trim() : '');
     }
-    const customerName = (st) => [st.customerInfo && st.customerInfo.firstName, st.customerInfo && st.customerInfo.lastName].filter(Boolean).join(' ').trim()
-      || (st.selectedBusiness && st.selectedBusiness.name) || '';
+    const labelFor = (a) => ({ code: 'AER' + a.arrivalId, line: [AE.data.nameOf(a), deviceName(a), fmtDay(new Date())].filter(Boolean).join(' · ') });
 
     // ------------------------------------------------------------ label
     const mark = (size, color) => AE.icon('aetheryte', size).replace(/currentColor/g, color);
@@ -170,190 +150,125 @@ AE.shard({
         } }, 'Retry print')));
       add();
     }
-    const labelFor = (draft) => ({ code: 'AEC' + draft.id, line: draft.label || '' });
-
-    // ------------------------------------------------------------ save
-    let current = null; // the saved check-in this page is on: { id, arrivalId, woId }
-    async function save(btn) {
-      const st = slice(null, true);
-      if (!st) { AE.toast('Return', { html: "Couldn't read this check-in." + report('Saving a check-in', 'no check-in state found') }, 'err'); return; }
-      const arrivalId = (st.arrivalDetails && st.arrivalDetails.arrivalId) || (current && current.arrivalId) || null;
-      const woId = (st.workorder && st.workorder.workorderId) || null;
-      const step = Number(st.formStep) || 0;
-      const who = customerName(st), dev = deviceName(st);
-      const line = [who, dev, fmtDay(new Date())].filter(Boolean).join(' · ');
-      btn.disabled = true;
+    // ------------------------------------------------------------ Return label (arrival drawer)
+    async function printFor(id, btn) {
+      if (btn) btn.disabled = true;
       try {
-        const j = await call('POST', '', { id: current && current.id, arrivalId, woId, step, label: line, data: trim(st) });
-        current = { id: j.id, arrivalId, woId };
-        AE.track('checkinDrafts:save');
-        const d = { code: 'AEC' + j.id, line };
-        const printed = await label(d);
-        const text = [who, dev].filter(Boolean).join(' · ') + ', at the ' + STEPS[step] + ' step. Scan the printed label to pick up where you left off.';
-        const t = AE.toast('Saved as incomplete', printed ? text : text + " The label didn't print.", printed ? 'ok' : 'err', printed ? 9000 : 30000);
-        if (!printed) printedOrRetry(t, 'Saved as incomplete', text, d);
+        const d = labelFor(await arrival(id));
+        AE.track('checkinDrafts:label');
+        if (await label(d)) AE.toast('Return', 'Label printed.', 'ok');
+        else printedOrRetry(AE.toast('Return', "The label didn't print.", 'err', 30000), 'Return', 'Label printed.', d);
       } catch (e) {
-        AE.toast('Return', { html: "Couldn't save this check-in." + report('Saving a check-in', e) }, 'err', 12000);
-      } finally { btn.disabled = false; }
+        AE.toast('Return', { html: "Couldn't read this arrival." + report('Return label for arrival ' + id, e) }, 'err', 10000);
+      } finally { if (btn) btn.disabled = false; }
     }
 
-    // ------------------------------------------------------------ resume
-    const goTo = (url, usr) => {
+    // ------------------------------------------------------------ scan to open
+    const goTo = (url) => {
       const idx = ((history.state && history.state.idx) || 0) + 1;
-      history.pushState(usr ? { usr, key: Math.random().toString(36).slice(2, 10), idx } : null, '', url);
+      history.pushState({ usr: null, key: Math.random().toString(36).slice(2, 10), idx }, '', url);
       dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
     };
-    const waitFor = async (test, ms) => { const end = Date.now() + ms; while (Date.now() < end) { const v = test(); if (v) return v; await AE.sleep(250); } return null; };
-    function putBack(data, step) {
-      const has = (k) => data[k] !== undefined && data[k] !== null;
-      if (has('activeTab')) dispatch('setActiveTab', data.activeTab);
-      if (has('isBusinessCustomerArrivalFlow')) dispatch('setBusinessCustomerArrivalFlow', data.isBusinessCustomerArrivalFlow);
-      if (has('selectedBusiness')) dispatch('setSelectedBusiness', data.selectedBusiness);
-      if (has('authorizedContacts')) dispatch('setAuthorizedContacts', data.authorizedContacts);
-      if (has('contactFields')) dispatch('setContactFields', data.contactFields);
-      if (has('customerInfo')) dispatch('updateCustomerInfo', data.customerInfo);
-      if (has('deviceInfo')) dispatch('updateDeviceInfo', data.deviceInfo);
-      if (has('customerDeviceDetails')) dispatch('updateCustomerDeviceDetails', data.customerDeviceDetails);
-      const now = slice(null, false) || {};
-      for (const [k, type] of [['isImeiUnavailable', 'toggleIsImeiUnavailable'], ['isSerialUnavailable', 'toggleIsSerialUnavailable'], ['isServiceTagUnavailable', 'toggleIsServiceTagUnavailable']]) {
-        if (has(k) && !!now[k] !== !!data[k]) dispatch(type);
+    async function open(id) {
+      id = Number(id);
+      if (new RegExp('^/check-in/arrivals/' + id + '/?$').test(location.pathname)) return 'already on arrival ' + id;
+      try { await arrival(id); } catch (e) {
+        if (/HTTP 404/.test((e && e.message) || '')) { AE.toast('Return', 'No arrival has that label.', 'err', 8000); return 'no such arrival'; }
+        AE.toast('Return', { html: "Couldn't open that arrival." + report('Opening arrival ' + id, e) }, 'err', 10000);
+        return 'arrival lookup failed';
       }
-      if (step >= 2) {
-        if (has('selectedDeviceIssues')) dispatch('updateSelectedDeviceIssues', data.selectedDeviceIssues);
-        if (has('selectedGoogleDeviceIssues')) dispatch('updateSelectedGoogleDeviceIssues', data.selectedGoogleDeviceIssues);
-        if (has('deviceDiagNotes')) dispatch('updateDeviceDiagNotes', data.deviceDiagNotes);
-        if (has('deviceIssuesAdditionalDetails')) dispatch('updateDeviceIssuesAdditionalDetails', data.deviceIssuesAdditionalDetails);
-        if (has('deviceDiagToggles')) dispatch('updateDeviceDiagToggles', data.deviceDiagToggles);
-      }
-      if (has('binLocation')) dispatch('setBinLocation', data.binLocation);
-      dispatch('overrideStep', step);
-    }
-    async function resume(id) {
-      let d;
-      try { d = (await call('GET', '/' + id)).checkin; }
-      catch (e) {
-        if (/no saved check-in/.test(e.message || '')) { AE.toast('Return', 'No saved check-in has that code. It may have been finished, discarded, or kept more than 7 days.', 'err', 10000); return 'no such saved check-in'; }
-        AE.toast('Return', { html: "Couldn't load that saved check-in." + report('Loading saved check-in ' + id, e) }, 'err', 10000);
-        return 'load failed';
-      }
-      const data = d.data || {};
-      const step = Math.max(0, Math.min(3, Number(d.step) || 0));
-      document.getElementById(BOX_ID)?.closest('[role="dialog"]')?.querySelector('button[aria-label="close"], button[aria-label="Close"]')?.click();
-      if (d.woId) goTo('/check-in?workorderId=' + d.woId, d.arrivalId ? { arrivalIdForCheckin: d.arrivalId } : null);
-      else {
-        // Portal's check-in only takes the arrival from a page of its own app (as its Check-in button does):
-        // from anywhere else, stop at the arrival first, then open the check-in from there.
-        if (d.arrivalId && !/^\/check-in(\/|$)/.test(location.pathname)) {
-          goTo('/check-in/arrivals/' + d.arrivalId);
-          // until the drawer shows the arrival (Portal's check-in takes its details from what that loaded)
-          await waitFor(() => !!AE.textEl('Preferred contact method'), 10000);
-          await AE.sleep(500);
-        }
-        goTo('/check-in', d.arrivalId ? { arrivalIdForCheckin: d.arrivalId } : null);
-      }
-      // Wait for Portal's check-in to open (and, after a work order, for its own resume to land on Diagnosis).
-      const ready = await waitFor(() => {
-        const st = slice(null, true);
-        if (!st) return null;
-        if (d.woId) return st.workorder && st.isContinuingCheckIn ? st : null;
-        return d.arrivalId ? (st.arrivalDetails && st.arrivalDetails.arrivalId === d.arrivalId ? st : null) : st;
-      }, 15000);
-      if (!ready) { AE.toast('Return', { html: "Portal's check-in didn't open." + report('Resuming saved check-in ' + id, 'check-in not ready after 15 s') }, 'err', 10000); return 'check-in did not open'; }
-      await AE.sleep(1200); // Portal fills in the arrival's own details as it opens: ours go on top
-      putBack(data, step);
-      current = { id: d.id, arrivalId: d.arrivalId, woId: d.woId };
-      AE.track('checkinDrafts:resume');
-      AE.toast('Check-in restored', 'Saved ' + fmtWhen(d.updatedAt || d.at) + ' by ' + (d.by || 'someone') + '. Picking up at the ' + STEPS[step] + ' step.', 'ok', 9000);
-      return 'resumed ' + id;
+      goTo('/check-in/arrivals/' + id);
+      AE.track('checkinDrafts:open');
+      return 'opened arrival ' + id;
     }
 
-    // ------------------------------------------------------------ finished?
-    // The check-in is done once its work order has left Initial check-in; the saved copy then goes.
-    async function checkDone() {
-      if (!current || !current.woId) return;
-      let wo;
-      // Only a real work order (an object with a numeric workorderStatusId) can say it left Initial check-in: a failed call or a malformed 200 changes nothing, and the draft stays.
-      try { wo = AE.shape.workorder(await AE.api('GET', '/api/workorder/' + current.woId)); } catch (_) { return; }
-      if (Number(wo.workorderStatusId) !== INITIAL_CHECKIN) {
-        const done = current; current = null;
-        try { await call('POST', '/' + done.id + '/remove', {}); AE.track('checkinDrafts:finished'); } catch (_) { current = done; }
+    // ------------------------------------------------------------ cleanings gate
+    // The arrival a Create work order button belongs to: the drawer's, or the check-in's (Portal's check-in slice).
+    function arrivalHere() {
+      const m = location.pathname.match(/^\/check-in\/arrivals\/(\d+)\/?$/);
+      if (m) return Number(m[1]);
+      if (location.pathname !== '/check-in') return null;
+      let r = null;
+      try { r = AE.portal('select', { slice: 'checkInSlice', key: 'arrivalDetails', fresh: false }); } catch (_) { /* the route's state still may have it */ }
+      const fromSlice = r && r.found && r.value && Number(r.value.arrivalId);
+      const fromRoute = history.state && history.state.usr && Number(history.state.usr.arrivalIdForCheckin);
+      return fromSlice || fromRoute || null;
+    }
+    const cleared = new Set(); // arrivals answered this page load: their Create work order goes straight through
+    let passing = false, asking = false;
+    // Ask, then: true = create the work order, false = don't.
+    async function ask(a) {
+      const able = await AE.confirm({ icon: 'checkinDrafts', title: 'Are you able to create cleanings for this device?',
+        choices: [{ label: 'Yes', value: 'yes', primary: true }, { label: 'No', value: 'no' }] });
+      if (able === 'yes') { AE.track('checkinDrafts:gateYes'); return true; }
+      if (able !== 'no') return false;
+      const why = await AE.confirm({ icon: 'checkinDrafts', title: 'Why not?', choices: REASONS.map(({ label, value }) => ({ label, value })) });
+      const reason = REASONS.find((r) => r.value === why);
+      if (!reason) return false;
+      AE.track('checkinDrafts:gate:' + reason.value);
+      if (!reason.ticket) return true;
+      const d = labelFor(a);
+      for (let printed = await label(d); ; printed = await label(d)) {
+        const retry = await AE.confirm({ icon: 'checkinDrafts', title: 'Return ticket created',
+          message: AE.esc('Alert the BOH to create the cleanings with the device before creating the work order.'),
+          warning: printed ? null : "The label didn't print.",
+          confirmLabel: printed ? 'OK' : 'Retry print', cancelLabel: printed ? null : 'OK' });
+        if (printed || !retry) return false;
       }
     }
-
-    // ------------------------------------------------------------ arrival drawer
-    const arrivalId = () => { const m = location.pathname.match(/^\/check-in\/arrivals\/(\d+)\/?$/); return m ? Number(m[1]) : null; };
-    let boxFor = null, boxData = null, boxAt = 0;
-    async function arrivalBox() {
-      const id = arrivalId();
-      const old = document.getElementById(BOX_ID);
-      if (!id) { old?.remove(); boxFor = null; return; }
-      // The drawer's contact-method box: ours goes at the end of the column that holds it.
-      const anchor = AE.textEl('Preferred contact method');
-      const column = anchor && anchor.closest('div') && anchor.closest('div').parentElement && anchor.closest('div').parentElement.parentElement;
-      if (!column) return;
-      if (boxFor !== id || Date.now() - boxAt > 60000) {
-        boxFor = id; boxAt = Date.now();
-        try { boxData = (await call('GET', '?arrival=' + id)).checkins || []; } catch (_) { boxData = []; }
-      }
-      const d = (boxData || [])[0];
-      if (!d) { old?.remove(); return; }
-      if (old && old.dataset.id === d.id && old.parentElement === column) return;
-      old?.remove();
-      const box = h('div', { id: BOX_ID, class: 'sg', 'data-id': d.id },
-        h('span', { style: 'line-height:0', html: AE.actionIcon('checkinDrafts', 26) }),
-        h('div', { class: 'txt' }, h('b', { style: 'display:block' }, 'Incomplete check-in'),
-          h('span', { class: 'sg-soft' }, 'Saved ' + fmtWhen(d.updatedAt || d.at) + ' by ' + (d.by || 'someone') + ' · ' + STEPS[Number(d.step) || 0] + ' step')),
-        h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => resume(d.id) }, 'Resume'),
-        h('button', { type: 'button', class: 'sg-btn', onclick: async () => {
-          AE.track('checkinDrafts:reprint');
-          if (!(await label(labelFor(d)))) printedOrRetry(AE.toast('Return', "The label didn't print.", 'err', 30000), 'Return', 'Label printed.', labelFor(d));
-        } }, 'Reprint label'),
-        h('button', { type: 'button', class: 'sg-btn', onclick: async () => {
-          const ok = await AE.confirm({ danger: true, icon: 'checkinDrafts', title: 'Delete this saved check-in?', message: 'The label will cease to function, and all data will be deleted.', confirmLabel: 'Delete' });
-          if (!ok) return;
-          try { await call('POST', '/' + d.id + '/remove', {}); AE.track('checkinDrafts:discard'); boxData = []; box.remove(); }
-          catch (e) { AE.toast('Return', { html: "Couldn't discard it." + report('Discarding saved check-in ' + d.id, e) }, 'err'); }
-        } }, 'Discard'));
-      column.append(box);
+    async function gate(btn, id) {
+      if (asking) return;
+      asking = true;
+      let go = true;
+      try {
+        let a = null;
+        try { a = await arrival(id); } catch (_) { /* can't tell: Portal's button works as usual */ }
+        if (a && isMobility(a)) go = await ask(a);
+      } finally { asking = false; }
+      if (!go) return;
+      cleared.add(id);
+      if (!btn.isConnected || btn.disabled) return;
+      passing = true;
+      try { btn.click(); } finally { passing = false; }
     }
+    // Capture on window: before Portal's own handlers (React listens at its root).
+    window.addEventListener('click', (e) => {
+      if (passing) return;
+      const btn = e.target && e.target.closest && e.target.closest('button');
+      if (!btn || btn.closest('.sg') || !CREATE_WO.test(btn.textContent.trim())) return;
+      const id = arrivalHere();
+      if (!id || cleared.has(id)) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      gate(btn, id);
+    }, true);
 
     // ------------------------------------------------------------ the button
-    const FORWARD = /^(continue|create work ?order|check-?in|next)$/i;
-    let lastPath = location.pathname, lastCheck = 0;
     function tick() {
-      const onCheckin = location.pathname === '/check-in';
-      if (lastPath === '/check-in' && !onCheckin) checkDone().then(() => { if (current && !current.woId) current = null; }); // left the check-in
-      lastPath = location.pathname;
-      arrivalBox();
+      const m = location.pathname.match(/^\/check-in\/arrivals\/(\d+)\/?$/);
       const existing = document.getElementById(BTN_ID);
-      if (!onCheckin) { existing?.remove(); return; }
-      // Not on the Device step: its boxes keep their own values and don't read them back from Portal's state,
-      // so a check-in saved there comes back with nothing filled in (Garrett's live test, Oct 6, 2026).
-      if (slice('formStep', false) === DEVICE_STEP) { existing?.remove(); return; }
-      const woId = slice('workorder', false);
-      if (current && woId && woId.workorderId) current.woId = woId.workorderId;
-      if (current && current.woId && Date.now() - lastCheck > 20000) { lastCheck = Date.now(); checkDone(); }
-      if (existing && existing.isConnected) return;
-      const fwd = AE.findButton((t) => FORWARD.test(t), (b) => !!b.closest('.sg'));
-      if (!fwd) return;
-      let at = fwd;
-      while (at.parentElement && at.parentElement.children.length === 1) at = at.parentElement;
-      const btn = h('button', { id: BTN_ID, type: 'button', class: 'sg sg-btn', style: 'height:' + (fwd.offsetHeight || 48) + 'px',
-        html: AE.icon('aetheryte', 18) + 'Save as incomplete', onclick: () => save(btn) });
-      at.before(btn);
+      if (!m) { existing?.remove(); return; }
+      const id = Number(m[1]);
+      if (existing && existing.isConnected && Number(existing.dataset.id) === id) return;
+      existing?.remove();
+      const checkin = AE.findButton((t) => t === 'Check-in', (b) => !!b.closest('.sg'));
+      if (!checkin) return;
+      // The drawer footer, the full-width row justified to flex-end (where Swiftcast's button goes too): the button sits at its far left.
+      let footer = checkin.parentElement;
+      for (let el = checkin.parentElement; el && el !== document.body; el = el.parentElement) {
+        if (getComputedStyle(el).justifyContent === 'flex-end') { footer = el; break; }
+      }
+      const size = checkin.offsetHeight || 48;
+      const btn = h('button', { id: BTN_ID, type: 'button', class: 'sg-fab', 'data-id': id, 'aria-label': 'Return label', title: 'Return label',
+        style: 'width:' + size + 'px;height:' + size + 'px', html: AE.actionIcon('checkinDrafts', size), onclick: () => printFor(id, btn) });
+      footer.insertBefore(btn, footer.firstChild);
     }
     AE.every(1000, tick);
-    // Same frame as Portal's footer and drawer (2.23). Off the check-in and arrival pages it costs one path check.
-    let stepAt = 0;
+    // Same frame as Portal's drawer footer (2.23). Off arrival pages it costs one path check.
     AE.onDom(() => {
-      const p = location.pathname;
-      if (p !== '/check-in' && !/^\/check-in\/arrivals\/\d+/.test(p)) { if (document.getElementById(BTN_ID) || document.getElementById(BOX_ID)) tick(); return; }
-      const btn = document.getElementById(BTN_ID);
-      if (p === '/check-in' && btn && btn.isConnected && performance.now() - stepAt < 150) return; // the step (a Portal state read) at most every 150 ms
-      stepAt = performance.now();
-      if (p !== '/check-in' || !btn || !btn.isConnected || slice('formStep', false) === DEVICE_STEP) tick();
+      const on = /^\/check-in\/arrivals\/\d+\/?$/.test(location.pathname), b = document.getElementById(BTN_ID);
+      if (on ? !b || !b.isConnected : !!b) tick();
     });
 
-    AE.checkinDrafts = { resume, label, labelFor, CODE_RE: /^AEC([A-HJ-NP-Z2-9]{6})$/i };
+    AE.checkinDrafts = { open, CODE_RE, labelFor, isMobility };
   },
 });

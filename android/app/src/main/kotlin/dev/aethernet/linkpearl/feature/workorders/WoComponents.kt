@@ -42,7 +42,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import dev.aethernet.linkpearl.core.design.Lp
+import dev.aethernet.linkpearl.core.design.glass
+import dev.aethernet.linkpearl.core.design.rememberGrow
 import dev.aethernet.linkpearl.core.design.LpCard
 import dev.aethernet.linkpearl.core.design.LpIcon
 import dev.aethernet.linkpearl.core.design.LpIcons
@@ -51,6 +57,7 @@ import dev.aethernet.linkpearl.core.design.LpSpacing
 import dev.aethernet.linkpearl.core.design.LpType
 import dev.aethernet.linkpearl.core.design.PillButton
 import dev.aethernet.linkpearl.core.design.Tone
+import dev.aethernet.linkpearl.core.design.LpChip
 import dev.aethernet.linkpearl.core.design.bg
 import dev.aethernet.linkpearl.core.design.fg
 import dev.aethernet.linkpearl.core.lock.UnlockAttempt
@@ -102,15 +109,35 @@ fun StatusChip(status: String?, lane: String?, modifier: Modifier = Modifier) {
     }
 }
 
-/** "5d 0h" with the clock icon; three days or more in bold amber. */
+/** "5d 0h" with five small age bars that fill one per day in status. An old card shows [OldChip] instead. */
 @Composable
 fun TimeInStatus(since: String?, nowMs: Long, modifier: Modifier = Modifier) {
-    val long = WoFmt.isLong(since, nowMs)
-    val color = if (long) Lp.colors.warn else Lp.colors.soft
     val text = WoFmt.inStatus(since, nowMs)
-    Row(modifier.semantics(mergeDescendants = true) { contentDescription = "In status $text" }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        LpIcon(LpIcons.Clock, null, size = 20.dp, tint = color)
-        Text(text, style = if (long) LpType.BodyStrong else LpType.Body, color = color, maxLines = 1)
+    val days = ((WoFmt.minutesSince(since, nowMs) ?: 0.0) / 1440).toInt().coerceIn(0, 5)
+    Row(modifier.semantics(mergeDescendants = true) { contentDescription = "In status $text" }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AgeBars(days, Lp.colors.soft)
+        Text(text, style = LpType.Body, color = Lp.colors.soft, maxLines = 1)
+    }
+}
+
+/** An old card's time ([WoAging]): "Old · 9d 3h" with the hourglass, in amber (the word and the icon carry it, not the colour). */
+@Composable
+fun OldChip(row: WoRow, nowMs: Long, modifier: Modifier = Modifier) {
+    val text = WoAging.label(row, nowMs)
+    LpChip(text, modifier.semantics(mergeDescendants = true) { contentDescription = "Old, ${WoFmt.inStatus(row.statusSince, nowMs)} in status" }, Tone.Warn, LpIcons.Hourglass)
+}
+
+/** Five short bars, [filled] of them lit, filling in one after another when shown. Decorative (the time is next to it). */
+@Composable
+fun AgeBars(filled: Int, color: Color, modifier: Modifier = Modifier) {
+    val grow = rememberGrow(filled, delayMs = 250)
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        repeat(5) { i ->
+            val p = ((grow * 5f) - i).coerceIn(0f, 1f)
+            Box(Modifier.size(width = 13.dp, height = 5.dp).clip(LpShapes.Pill).background(Lp.colors.surf3)) {
+                if (i < filled) Box(Modifier.fillMaxSize().graphicsLayer { scaleX = p; transformOrigin = TransformOrigin(0f, 0.5f) }.background(color))
+            }
+        }
     }
 }
 
@@ -120,7 +147,7 @@ fun LockControl(unlocked: Boolean, remaining: Duration?, onUnlock: () -> Unit, o
     val c = Lp.colors
     val label = if (unlocked) "Lock · ${WoFmt.countdown(remaining)}" else "Unlock"
     Row(
-        modifier.heightIn(min = LpSpacing.Touch).clip(LpShapes.Pill).background(if (unlocked) c.accSoft else c.surf3)
+        modifier.heightIn(min = LpSpacing.Touch).let { if (unlocked) it.clip(LpShapes.Pill).background(Brush.linearGradient(listOf(c.accSoft, lerp(c.accSoft, c.acc, 0.25f)))) else it.glass() }
             .clickable(role = Role.Button, onClickLabel = if (unlocked) "Lock customer details" else "Unlock customer details", onClick = if (unlocked) onLock else onUnlock)
             .padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -146,12 +173,12 @@ fun LocksInChip(remaining: Duration?, modifier: Modifier = Modifier) {
 
 /** Outlined pill button (Call, Text, Clear). [tall] = the big tabletop button with the icon above the label. */
 @Composable
-fun OutlineButton(text: String, icon: ImageVector?, onClick: () -> Unit, modifier: Modifier = Modifier, tall: Boolean = false, filled: Boolean = false) {
+fun OutlineButton(text: String, icon: ImageVector?, onClick: () -> Unit, modifier: Modifier = Modifier, tall: Boolean = false, filled: Boolean = false, tint: Color? = null, fill: Color? = null) {
     val c = Lp.colors
-    val fg = if (filled) c.onAcc else c.fg
+    val fg = tint ?: if (filled) c.onAcc else c.fg
     val shape = if (tall) LpShapes.Card else LpShapes.Pill
     val base = modifier.heightIn(min = if (tall) 96.dp else LpSpacing.Touch).clip(shape)
-        .let { if (filled) it.background(c.acc) else it.border(1.5.dp, c.outline, shape) }
+        .let { if (filled) it.background(c.acc) else if (fill != null) it.background(fill) else it.border(1.5.dp, c.outline, shape) }
         .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp)
     if (tall) {
         Column(base, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)) {

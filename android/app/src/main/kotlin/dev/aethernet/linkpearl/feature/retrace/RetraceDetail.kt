@@ -66,7 +66,7 @@ data class RetraceDetailActions(
 private fun DetailBar(title: String, showBack: Boolean, closeIcon: Boolean, onBack: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = if (showBack) 4.dp else LpSpacing.Gutter, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         if (showBack) LpIconButton(if (closeIcon) LpIcons.Close else LpIcons.Back, if (closeIcon) "Close" else "Back", onBack)
-        Text(title, style = LpType.Title.copy(fontWeight = FontWeight.Bold), color = Lp.colors.fg, maxLines = 1,
+        Text(title, style = LpType.Screen, color = Lp.colors.fg, maxLines = 1,
             modifier = Modifier.weight(1f).padding(start = if (showBack) 8.dp else 0.dp).semantics { heading() })
     }
 }

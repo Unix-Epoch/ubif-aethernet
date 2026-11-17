@@ -17,9 +17,19 @@ class FakeNavBadges(initial: Map<TopLevel, Int> = mapOf(TopLevel.Alerts to 3)) :
     override val counts: StateFlow<Map<TopLevel, Int>> = MutableStateFlow(initial)
 }
 
+/** Navigation items that show a small dot without a count (Settings when an app update is available; provided by feature/update). */
+interface NavDots {
+    val dots: StateFlow<Set<TopLevel>>
+}
+
+object NoNavDots : NavDots {
+    override val dots: StateFlow<Set<TopLevel>> = MutableStateFlow(emptySet())
+}
+
 /** Scaffold-owned: registers the default badge source. */
 object NavModule : FeatureModule {
     override fun install(c: AppContainer) {
         c.provide<NavBadges> { FakeNavBadges() }
+        c.provide<NavDots> { NoNavDots }
     }
 }

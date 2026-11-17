@@ -28,9 +28,6 @@ object WoFmt {
         return if (days >= 1) Fmt.days(days) else Fmt.ago(m)
     }
 
-    /** Three days or more in one status is worth the amber emphasis (the time itself is the signal). */
-    fun isLong(sinceIso: String?, nowMs: Long): Boolean = (minutesSince(sinceIso, nowMs) ?: 0.0) >= 3 * 1440
-
     fun seconds(s: Long?): String = if (s == null) Fmt.DASH else Fmt.ago(s / 60.0)
 
     /** "Fri, Nov 8 · 3:58 PM". */

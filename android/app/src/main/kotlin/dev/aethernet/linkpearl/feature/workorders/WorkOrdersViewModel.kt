@@ -58,6 +58,8 @@ data class WoListUi(
     val lanes: WoLanes? = null,
     /** The Follow-ups chip's count and the server's "today"; null from a tracker that predates Auto-Waymark (no chip then). */
     val followUps: FollowUpsInfo? = null,
+    /** The Old chip's count: open work orders past [WoAging]'s limit in the store selection; null until counted (no chip then). */
+    val old: Int? = null,
     val hasMore: Boolean = false,
     val loadingMore: Boolean = false,
     val refreshing: Boolean = false,
@@ -101,15 +103,24 @@ class WorkOrdersViewModel(
     /** Decrypted cards for search; memory only, null while locked or not built yet. */
     private var index: List<IndexEntry>? = null
     private var indexJob: Job? = null
+    private var oldJob: Job? = null
 
     init {
         viewModelScope.launch {
             auth?.state?.collect { s -> if (s is AuthState.Registered) _state.update { it.copy(stores = s.stores) } }
         }
+        // A tag or follow-up changed from the detail: update that row at once, then re-list quietly (counts, the Follow-ups filter).
+        viewModelScope.launch {
+            repo.changed.collect { row ->
+                fun patch(r: WoRow) = if (r.key == row.key) r.copy(tags = row.tags, followUp = row.followUp) else r
+                _state.update { s -> s.copy(rows = s.rows.map(::patch), search = s.search?.copy(results = s.search.results.map(::patch))) }
+                if (_state.value.view == LoadView.Ok) load(manual = false, keepRows = true)
+            }
+        }
         viewModelScope.launch {
             val saved = prefs.store.first()
             _state.update { it.copy(store = saved) }
-            load(manual = false)
+            load(manual = false, rescanOld = true)
             lock.isUnlocked.collect { unlocked ->
                 if (unlocked == _state.value.unlocked) return@collect
                 _state.update { it.copy(unlocked = unlocked) }
@@ -146,7 +157,7 @@ class WorkOrdersViewModel(
         if (store == _state.value.store) return
         viewModelScope.launch { prefs.set(store) }
         _state.update { it.copy(store = store) }
-        load(manual = false)
+        load(manual = false, rescanOld = true)
     }
 
     fun pickFilter(f: LaneFilter) {
@@ -162,12 +173,12 @@ class WorkOrdersViewModel(
     }
 
     /** Pull to refresh and Retry. */
-    fun refresh() = load(manual = true, keepRows = true)
+    fun refresh() = load(manual = true, keepRows = true, rescanOld = true)
 
     /** Screen shown again: re-list, not faster than once a minute. */
     fun refreshIfStale(maxAgeMs: Long = 60_000) {
         if (loadJob?.isActive == true) return
-        if (nowMs() - lastLoadAt >= maxAgeMs) load(manual = false, keepRows = true)
+        if (nowMs() - lastLoadAt >= maxAgeMs) load(manual = false, keepRows = true, rescanOld = true)
     }
 
     private fun query(after: String? = null): ListQuery {
@@ -177,8 +188,10 @@ class WorkOrdersViewModel(
         return ListQuery(store = s.store, filter = s.filter, sort = s.sort, cards = cards, after = after)
     }
 
-    private fun load(manual: Boolean, keepRows: Boolean = false) {
+    /** [rescanOld]: also recount the Old chip (first load, store change, refresh); the Old filter itself always recounts. */
+    private fun load(manual: Boolean, keepRows: Boolean = false, rescanOld: Boolean = false) {
         loadJob?.cancel(); moreJob?.cancel()
+        if (_state.value.filter == LaneFilter.Old) return loadOld(manual, keepRows)
         val q = query()
         val cached = repo.lastGood(q)
         _state.update {
@@ -206,6 +219,7 @@ class WorkOrdersViewModel(
                             names = if (it.unlocked) it.names + names else emptyMap(), noKeyStores = page.noKey.toSet(),
                         )
                     }
+                    if (rescanOld) countOld()
                 }
                 is ApiResult.Failure -> {
                     val p = problemOf(r)
@@ -215,6 +229,53 @@ class WorkOrdersViewModel(
                     }
                 }
             }
+        }
+    }
+
+    /** The Old filter: every old open work order of the store selection at once (no paging), in the chosen order. */
+    private fun loadOld(manual: Boolean, keepRows: Boolean) {
+        oldJob?.cancel()
+        val q = query()
+        _state.update {
+            if (keepRows && it.view == LoadView.Ok) it.copy(refreshing = manual, problem = null)
+            else it.copy(view = LoadView.Loading, rows = emptyList(), hasMore = false, refreshing = false, problem = null)
+        }
+        loadJob = viewModelScope.launch {
+            val at = nowMs()
+            val serverNow = at + _state.value.skewMs
+            var r = repo.oldRows(q.store, q.cards, serverNow)
+            if (r is ApiResult.Failure && q.cards && problemOf(r) == Problem.NoKey) r = repo.oldRows(q.store, false, serverNow)
+            when (r) {
+                is ApiResult.Success -> {
+                    lastLoadAt = at
+                    next = null
+                    val rows = if (q.sort == WoSort.Updated) r.value.sortedByDescending { it.updatedAt.orEmpty() } else r.value
+                    val names = openNames(rows)
+                    _state.update {
+                        it.copy(
+                            view = LoadView.Ok, rows = rows.map { row -> row.copy(card = null) }, old = rows.size, hasMore = false, refreshing = false, problem = null,
+                            receivedAtMs = at, names = if (it.unlocked) it.names + names else emptyMap(),
+                        )
+                    }
+                }
+                is ApiResult.Failure -> {
+                    val p = problemOf(r)
+                    _state.update {
+                        if (it.rows.isNotEmpty()) it.copy(view = LoadView.Ok, refreshing = false, problem = p)
+                        else it.copy(view = LoadView.Error, refreshing = false, problem = p)
+                    }
+                }
+            }
+        }
+    }
+
+    /** The Old chip's count for the current store selection (plain rows, no cards); a failure keeps the last count. */
+    private fun countOld() {
+        oldJob?.cancel()
+        val store = _state.value.store
+        oldJob = viewModelScope.launch {
+            val r = repo.oldRows(store, cards = false, nowMs = nowMs() + _state.value.skewMs)
+            if (r is ApiResult.Success && _state.value.store == store) _state.update { it.copy(old = r.value.size) }
         }
     }
 

@@ -4,4 +4,7 @@
     <!-- The app's page colour (core/design Color.kt) so the window behind the first frame matches the theme: no white flash. -->
     <color name="lp_page_dark">#FF1B0F41</color>
     <color name="lp_page_light">#FFF4F4F4</color>
+    <!-- Widget previews in the launcher's picker (Color.kt: surf and fg light; the night values are in values-night). -->
+    <color name="lp_widget_bg">#FFFFFFFF</color>
+    <color name="lp_widget_fg">#FF1A1C1E</color>
 </resources>

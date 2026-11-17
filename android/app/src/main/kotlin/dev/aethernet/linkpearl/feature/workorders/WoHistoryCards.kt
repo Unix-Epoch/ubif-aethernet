@@ -77,17 +77,21 @@ fun DueChip(f: FollowUp, today: String, modifier: Modifier = Modifier) {
 /** The follow-up marker: the rule, then when it is due. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun FollowUpMarker(f: FollowUp, today: String, modifier: Modifier = Modifier, longName: Boolean = false) {
-    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+fun FollowUpMarker(f: FollowUp, today: String, modifier: Modifier = Modifier, longName: Boolean = false, trailing: (@Composable () -> Unit)? = null) {
+    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) {
         LpChip(if (longName) f.rule.longLabel else f.rule.label, tone = Tone.Accent, icon = LpIcons.Calendar)
         DueChip(f, today)
+        trailing?.invoke()
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun TagRow(tags: List<WoTag>, modifier: Modifier = Modifier) {
-    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { tags.forEach { TagChip(it) } }
+fun TagRow(tags: List<WoTag>, modifier: Modifier = Modifier, trailing: (@Composable () -> Unit)? = null) {
+    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+        tags.forEach { TagChip(it) }
+        trailing?.invoke()
+    }
 }
 
 /** Closed outcome in words with an icon: `service_outcome`, else how it closed (`closed_reason`: the status it closed on). */

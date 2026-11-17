@@ -12,22 +12,38 @@
     pickup    devices at Ready for pickup longer than the threshold (rfp_periods): ONE alert per store per day, from 9:00 on days the store is open
     followup  an Auto-Waymark mark (Waymark database, auto_marks) with due = today, from the follow-up hour on (default 9:00)
     quiet     no scan for longer than the threshold of OPEN-hours time (hoursFor); once per spell; cleared when scans resume (a 'back' entry, feed only)
+    digest    the morning summary, once a day per phone SCOPE (below), from the digest hour on (default 8:00)
+    unlinked  Retrace sales orders still without a work order (inv_so_need, no inv_so_wo row) for longer than the threshold (hours since the sales
+              order's first movement); one alert per store per tick listing them; each sales order alerts once per level (alert_items)
+    coverage  a stored Retrace coverage check result (inv_verify) with failures (count misses or missed items); one alert per result (checked_at)
 
   Thresholds: the rules run once per store, the thresholds are per phone. A phone's threshold is the `level` of the alerts it sees: the tick
   raises an alert for every DISTINCT level among the store's approved phones (normally one), and a phone's reads match only its own level.
   Nothing is lost when a phone has a higher threshold than another (a minimum-threshold-only design would never alert it at its own level).
-  Switches and quiet hours are applied when a phone reads, so the feed stays complete.
+  Switches and quiet hours are applied when a phone reads, so the feed stays complete (one exception: a digest is only made for a scope at least
+  one phone with the digest switched on asks for; switched on after its hour, the next tick makes today's, feed-only when over an hour late).
 
-  No customer or staff names, phones or e-mails anywhere in an alert (facts are status name/id, days, count, times, due date).
+  The digest is not per store: it covers ALL of a phone's approved stores in one entry. Its scope key is the sorted store list plus the
+  phone's stuck threshold ("326,914|3"); phones with the same scope share one digest. The row is filed under the scope's first store, its
+  subject is "<scope key>@<day>", its level the digest hour; a phone's feed matches the subject's scope key to its own (so a phone with
+  914 + 326 gets one combined digest, never the single-store ones of a 914-only phone). Store switches do not apply to it, and a feed
+  filtered to one store leaves digests out.
+
+  No customer or staff names, phones or e-mails anywhere in an alert (facts are status name/id, days, count, times, due date, work order and
+  sales order numbers, money totals).
 */
 import { local, localToUtc, addDays, hoursFor } from './metrics.js';
+import { buildHome, SPLH_TARGET } from './mobile.js';
 
-export const TYPES = ['stuck', 'pickup', 'followup', 'quiet'];
+export const TYPES = ['stuck', 'pickup', 'followup', 'quiet', 'digest', 'unlinked', 'coverage'];
 export const DEFAULTS = {
-  types: { stuck: { on: true, days: 3 }, pickup: { on: true, days: 7 }, followup: { on: true, hour: 9 }, quiet: { on: true, hours: 2 } },
+  types: { stuck: { on: true, days: 3 }, pickup: { on: true, days: 7 }, followup: { on: true, hour: 9 }, quiet: { on: true, hours: 2 },
+    digest: { on: true, hour: 8 }, unlinked: { on: true, hours: 1 }, coverage: { on: true } },
   quietHours: { on: true, from: '22:00', to: '07:00' },
 };
-export const RANGES = { stuckDays: [1, 30], pickupDays: [1, 30], quietHours: [1, 12], followupHour: [0, 23] };
+export const RANGES = { stuckDays: [1, 30], pickupDays: [1, 30], quietHours: [1, 12], followupHour: [0, 23], digestHour: [0, 23], unlinkedHours: [1, 48] };
+export const DIGEST_LIST = 10;        // work orders listed per digest section (follow-ups, stuck); the count covers all
+export const UNLINKED_LIST = 100;     // sales orders per unlinked alert (more wait for the next tick)
 export const CAP_PER_TICK = 25;       // alerts created per store per tick, all rules together (the rest wait for the next tick)
 export const RETENTION_DAYS = 60;
 export const PICKUP_HOUR = 9;         // the daily Ready-for-pickup summary is raised from this local hour
@@ -53,6 +69,9 @@ export function normalize(raw, stores) {
       pickup: { on: on('pickup'), days: pick('pickup', 'days', ...RANGES.pickupDays, DEFAULTS.types.pickup.days) },
       followup: { on: on('followup'), hour: pick('followup', 'hour', ...RANGES.followupHour, DEFAULTS.types.followup.hour) },
       quiet: { on: on('quiet'), hours: pick('quiet', 'hours', ...RANGES.quietHours, DEFAULTS.types.quiet.hours) },
+      digest: { on: on('digest'), hour: pick('digest', 'hour', ...RANGES.digestHour, DEFAULTS.types.digest.hour) },
+      unlinked: { on: on('unlinked'), hours: pick('unlinked', 'hours', ...RANGES.unlinkedHours, DEFAULTS.types.unlinked.hours) },
+      coverage: { on: on('coverage') },
     },
     quietHours: { on: typeof q.on === 'boolean' ? q.on : DEFAULTS.quietHours.on, from: hm(q.from) != null ? q.from : DEFAULTS.quietHours.from, to: hm(q.to) != null ? q.to : DEFAULTS.quietHours.to },
     stores: {},
@@ -60,7 +79,10 @@ export function normalize(raw, stores) {
   for (const s of stores) o.stores[s] = st[s] === false ? false : true;
   return o;
 }
-const levelsOf = (s) => ({ stuck: s.types.stuck.days, pickup: s.types.pickup.days, followup: s.types.followup.hour, quiet: s.types.quiet.hours });
+const levelsOf = (s) => ({ stuck: s.types.stuck.days, pickup: s.types.pickup.days, followup: s.types.followup.hour, quiet: s.types.quiet.hours,
+  digest: s.types.digest.hour, unlinked: s.types.unlinked.hours, coverage: 0 });
+// The digest's scope key: all the phone's approved stores (sorted) and its stuck threshold (the digest lists stuck work orders at it).
+export const scopeKey = (stores, s) => [...stores].map(Number).sort((a, b) => a - b).join(',') + '|' + s.types.stuck.days;
 
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 // Validates a PUT body against the ranges and merges it onto the stored settings. Unknown keys are refused (a typo must not silently do nothing).
@@ -71,16 +93,17 @@ export function mergeSettings(stored, body, stores) {
   known(body, ['types', 'quietHours', 'stores'], '');
   const out = { types: {}, quietHours: Object.assign({}, stored.quietHours), stores: Object.assign({}, stored.stores) };
   for (const k of TYPES) out.types[k] = Object.assign({}, stored.types[k]);
-  const num = { stuck: ['days', RANGES.stuckDays, 'days'], pickup: ['days', RANGES.pickupDays, 'days'], followup: ['hour', RANGES.followupHour, 'hour of the day'], quiet: ['hours', RANGES.quietHours, 'hours of silence'] };
+  const num = { stuck: ['days', RANGES.stuckDays, 'days'], pickup: ['days', RANGES.pickupDays, 'days'], followup: ['hour', RANGES.followupHour, 'hour of the day'], quiet: ['hours', RANGES.quietHours, 'hours of silence'],
+    digest: ['hour', RANGES.digestHour, 'hour of the day'], unlinked: ['hours', RANGES.unlinkedHours, 'hours without a work order'] }; // coverage: a switch only
   if (body.types !== undefined) {
     if (!isObj(body.types)) throw bad('types must be an object');
     known(body.types, TYPES, 'types.');
     for (const [k, v] of Object.entries(body.types)) {
       if (!isObj(v)) throw bad(`types.${k} must be an object`);
-      const [f, [lo, hi], label] = num[k];
-      known(v, ['on', f], `types.${k}.`);
+      const [f, [lo, hi], label] = num[k] || [null, [0, 0], ''];
+      known(v, f ? ['on', f] : ['on'], `types.${k}.`);
       if (v.on !== undefined) { if (typeof v.on !== 'boolean') throw bad(`types.${k}.on must be true or false`); out.types[k].on = v.on; }
-      if (v[f] !== undefined) { if (!isInt(v[f]) || v[f] < lo || v[f] > hi) throw bad(`types.${k}.${f}: ${label} must be a whole number from ${lo} to ${hi}`); out.types[k][f] = v[f]; }
+      if (f && v[f] !== undefined) { if (!isInt(v[f]) || v[f] < lo || v[f] > hi) throw bad(`types.${k}.${f}: ${label} must be a whole number from ${lo} to ${hi}`); out.types[k][f] = v[f]; }
     }
   }
   if (body.quietHours !== undefined) {
@@ -138,7 +161,51 @@ const FOLLOWUP_SQL = `INSERT OR IGNORE INTO alerts (store, type, subject, level,
 const QUIET_SQL = `INSERT OR IGNORE INTO alerts (store, type, subject, level, wo, created_at, data, backfill)
   SELECT ?3, 'quiet', ?4, j.value, NULL, ?1, json_object('since', ?4, 'hours', j.value), 0 FROM json_each(?2) j`;
 
-export const SQL = { STUCK_SQL, PICKUP_SQL, FOLLOWUP_SQL, QUIET_SQL }; // exported for the cost checks in the tests
+// Unlinked: every approved store in one statement. ?2 stores JSON, ?3 { "s<store>": [levels] }. A sales order Retrace still asks about
+// (inv_so_need) with no work order link (inv_so_wo) and not yet alerted at that level (alert_items); its age is from its first movement
+// (inv_mv_ref). The age test runs on the rows that survive the key look-ups, so the steady state reads the store's inv_so_need rows and indexes only.
+const UNLINKED_SQL = `SELECT store, level, sales_order, since FROM (
+    SELECT n.store AS store, j.value AS level, n.sales_order AS sales_order,
+      (SELECT MIN(m.at) FROM inv_movements m WHERE m.store = n.store AND m.ref_type = 'sales_order' AND m.ref_id = n.sales_order) AS since
+    FROM inv_so_need n JOIN json_each(?3, '$.s' || n.store) j
+    WHERE n.store IN (SELECT value FROM json_each(?2))
+      AND NOT EXISTS (SELECT 1 FROM inv_so_wo w WHERE w.store = n.store AND w.sales_order = n.sales_order)
+      AND NOT EXISTS (SELECT 1 FROM alert_items i WHERE i.store = n.store AND i.type = 'unlinked' AND i.level = j.value AND i.item = n.sales_order))
+  WHERE since IS NOT NULL AND ${NOWS} - CAST(strftime('%s', since) AS INTEGER) > level * 3600
+  ORDER BY store, level, since, sales_order LIMIT 2000`;
+// One grouped alert (subject: its first sales order, which never alerts again at that level) and its sales orders remembered, in one batch.
+const UNLINKED_INS = `INSERT OR IGNORE INTO alerts (store, type, subject, level, wo, created_at, data, backfill) VALUES (?1, 'unlinked', ?2, ?3, NULL, ?4, ?5, ?6)`;
+const UNLINKED_ITEMS = `INSERT OR IGNORE INTO alert_items (store, type, level, item, alert_id)
+  SELECT ?1, 'unlinked', ?3, j.value, a.id FROM json_each(?4) j JOIN alerts a ON a.store = ?1 AND a.type = 'unlinked' AND a.subject = ?2 AND a.level = ?3`;
+
+// Coverage: every approved store in one statement; one alert per stored result (subject = its checked_at) that has failures. Results older than
+// the retention are left alone (their alert would be deleted and raised again). A result first seen over an hour after its run is feed-only.
+const COVERAGE_SQL = `INSERT OR IGNORE INTO alerts (store, type, subject, level, wo, created_at, data, backfill)
+  SELECT v.store, 'coverage', v.checked_at, 0, NULL, ?1,
+    json_object('checkedAt', v.checked_at, 'countMisses', COALESCE(json_extract(v.result, '$.counts.n'), 0), 'countItems', json_extract(v.result, '$.counts.total'),
+      'missedItems', COALESCE(json_extract(v.result, '$.missed.n'), 0), 'qtyMisses', COALESCE(json_extract(v.result, '$.qty.n'), 0), 'staleLabels', COALESCE(json_extract(v.result, '$.stale.n'), 0)),
+    CASE WHEN ${NOWS} - CAST(strftime('%s', v.checked_at) AS INTEGER) > ${BACKFILL_SECONDS} THEN 1 ELSE 0 END
+  FROM inv_verify v
+  WHERE v.store IN (SELECT value FROM json_each(?2)) AND v.checked_at > ?3
+    AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.store = v.store AND a.type = 'coverage' AND a.subject = v.checked_at AND a.level = 0)
+    AND (COALESCE(json_extract(v.result, '$.counts.n'), 0) > 0 OR COALESCE(json_extract(v.result, '$.missed.n'), 0) > 0)
+  RETURNING store`;
+
+// Digest: stuck work orders over a scope (count + the oldest DIGEST_LIST), labor hours of the day before, the statuses of today's follow-ups.
+const DIGEST_STUCK_SQL = `SELECT p.store, p.wo, COALESCE(s.name, w.status_name) AS status, (${NOWS} - CAST(strftime('%s', p.start_at) AS INTEGER)) / ${DAY_S} AS days, COUNT(*) OVER () AS n
+  FROM status_periods p
+  JOIN workorders w ON w.store = p.store AND w.wo = p.wo AND w.is_open = 1 AND w.status_id = p.status_id
+  LEFT JOIN statuses s ON s.id = p.status_id
+  WHERE p.store IN (SELECT value FROM json_each(?2)) AND p.end_at IS NULL AND p.status_id != 13
+    AND ${NOWS} - CAST(strftime('%s', p.start_at) AS INTEGER) > ?3 * ${DAY_S}
+  ORDER BY p.start_at, p.store, p.wo LIMIT ${DIGEST_LIST}`;
+const DIGEST_LABOR_SQL = `SELECT SUM(value) AS h, COUNT(*) AS n FROM daily_metrics WHERE store IN (SELECT value FROM json_each(?1)) AND day = ?2 AND metric = 'labor_hours'`;
+const DIGEST_STATUS_SQL = `SELECT w.store, w.wo, COALESCE(s.name, w.status_name) AS status FROM json_each(?1) j
+  JOIN workorders w ON w.store = json_extract(j.value, '$[0]') AND w.wo = json_extract(j.value, '$[1]') LEFT JOIN statuses s ON s.id = w.status_id`;
+const DIGEST_HAVE_SQL = `SELECT subject, level FROM alerts WHERE type = 'digest' AND store IN (SELECT value FROM json_each(?1)) AND subject IN (SELECT value FROM json_each(?2))`;
+const DIGEST_INS = `INSERT OR IGNORE INTO alerts (store, type, subject, level, wo, created_at, data, backfill) VALUES (?1, 'digest', ?2, ?3, NULL, ?4, ?5, ?6)`;
+
+export const SQL = { STUCK_SQL, PICKUP_SQL, FOLLOWUP_SQL, QUIET_SQL, UNLINKED_SQL, COVERAGE_SQL, DIGEST_STUCK_SQL }; // exported for the cost checks in the tests
 
 // Open-hours time between two instants for a store (hoursFor): a night or a closed day is not silence.
 export function openMsBetween(store, fromMs, toMs, tz) {
@@ -175,17 +242,26 @@ async function run(env, nowMs, stats) {
       T.prepare('DELETE FROM alert_device WHERE device_id NOT IN (SELECT id FROM agents)'),
       T.prepare('DELETE FROM alert_reads WHERE device_id NOT IN (SELECT device_id FROM alert_device)'),
     ]);
+    // Remembered sales orders that got a work order or left Retrace's list (own statement: the table comes with a later migration).
+    await T.prepare(`DELETE FROM alert_items WHERE type = 'unlinked' AND (EXISTS (SELECT 1 FROM inv_so_wo w WHERE w.store = alert_items.store AND w.sales_order = alert_items.item)
+        OR NOT EXISTS (SELECT 1 FROM inv_so_need n WHERE n.store = alert_items.store AND n.sales_order = alert_items.item))`).run()
+      .catch((e) => console.error('alerts: alert_items housekeeping failed:', e && e.message));
   }
 
   // The levels (distinct thresholds) each store needs, over its approved phones. A store with no approved phone is not touched.
-  const plan = new Map();
+  // Digests: one per distinct scope (all of a phone's stores + its stuck threshold), at each digest hour asked for.
+  const plan = new Map(), digests = new Map();
   for (const d of devs) {
-    const stores = parse(d.stores, []).map(Number), lv = levelsOf(normalize(parse(d.settings, {}), stores));
+    const stores = parse(d.stores, []).map(Number), set = normalize(parse(d.settings, {}), stores), lv = levelsOf(set);
     for (const s of stores) {
-      const p = plan.get(s) || { stuck: new Set(), pickup: new Set(), followup: new Set(), quiet: new Set() };
+      const p = plan.get(s) || Object.fromEntries(TYPES.map((k) => [k, new Set()]));
       for (const k of TYPES) p[k].add(lv[k]);
       plan.set(s, p);
     }
+    if (!stores.length || !set.types.digest.on) continue; // digests are worked out for phones that want one (the one rule whose facts cost reads)
+    const key = scopeKey(stores, set), g = digests.get(key) || { stores: [...stores].sort((a, b) => a - b), stuck: set.types.stuck.days, hours: new Set() };
+    g.hours.add(lv.digest);
+    digests.set(key, g);
   }
   const budget = new Map();
   const left = (st) => (budget.has(st) ? budget.get(st) : CAP_PER_TICK);
@@ -238,12 +314,94 @@ async function run(env, nowMs, stats) {
       if (left(store) > 0 && lv.length) await ins(store, FOLLOWUP_SQL, [now, JSON.stringify(list), store, JSON.stringify(lv), left(store)]);
     }
   }
+
+  const stores = JSON.stringify([...plan.keys()]);
+  // Unlinked sales orders (Retrace): one read for every store; per store and level one alert listing the new ones, written in one batch.
+  if (plan.size) {
+    try {
+      const lv = Object.fromEntries([...plan].map(([s, p]) => ['s' + s, [...p.unlinked]]));
+      const found = (await T.prepare(UNLINKED_SQL).bind(now, stores, JSON.stringify(lv)).all()).results;
+      const groups = new Map();
+      for (const r of found) { const k = r.store + '|' + r.level; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
+      const stmts = [], made = [];
+      for (const list of groups.values()) {
+        const { store, level } = list[0];
+        if (left(store) <= 0) continue;
+        const some = list.slice(0, UNLINKED_LIST), sos = some.map((r) => r.sales_order), ages = some.map((r) => (nowMs - Date.parse(r.since)) / 1000);
+        const late = ages.every((a) => a - level * 3600 > BACKFILL_SECONDS) ? 1 : 0;
+        const data = JSON.stringify({ count: sos.length, hours: level, oldestHours: Math.floor(Math.max(...ages) / 3600), salesOrders: sos });
+        stmts.push(T.prepare(UNLINKED_INS).bind(store, sos[0], level, now, data, late), T.prepare(UNLINKED_ITEMS).bind(store, sos[0], level, JSON.stringify(sos)));
+        made.push(store); budget.set(store, left(store) - 1);
+      }
+      if (stmts.length) {
+        const res = await T.batch(stmts);
+        made.forEach((st, i) => { const n = (res[i * 2].meta && res[i * 2].meta.changes) || 0; stats.created += n; if (!n) budget.set(st, left(st) + 1); });
+      }
+    } catch (e) { console.error('alerts: unlinked rule failed:', e && e.message); }
+
+    // Coverage check results with failures: one statement for every store.
+    try {
+      const got = (await T.prepare(COVERAGE_SQL).bind(now, stores, new Date(nowMs - RETENTION_DAYS * 86400000).toISOString()).all()).results;
+      for (const r of got) { budget.set(r.store, left(r.store) - 1); stats.created++; }
+    } catch (e) { console.error('alerts: coverage rule failed:', e && e.message); }
+  }
+
+  // The morning digest: one per scope and digest hour per day, from that hour on. One look-up for every scope; the facts are worked out
+  // only for a scope that still needs today's digest (so once a day).
+  const due = [...digests].filter(([, g]) => Math.min(...g.hours) <= l.hour);
+  if (due.length) {
+    try {
+      const subj = (key) => key + '@' + l.day;
+      const have = new Set((await T.prepare(DIGEST_HAVE_SQL).bind(JSON.stringify([...new Set(due.map(([, g]) => g.stores[0]))]), JSON.stringify(due.map(([k]) => subj(k)))).all())
+        .results.map((r) => r.subject + '#' + r.level));
+      for (const [key, g] of due) {
+        const want = [...g.hours].filter((hh) => hh <= l.hour && !have.has(subj(key) + '#' + hh)).sort((a, b) => a - b);
+        if (!want.length) continue;
+        const data = JSON.stringify(await digestFacts(env, g, nowMs, now, l));
+        const mins = new Date(nowMs).getUTCMinutes(), stmts = want.map((hh) => T.prepare(DIGEST_INS).bind(g.stores[0], subj(key), hh, now, data, (l.hour - hh) * 60 + mins > BACKFILL_SECONDS / 60 ? 1 : 0));
+        const res = await T.batch(stmts);
+        for (const x of res) stats.created += (x.meta && x.meta.changes) || 0;
+      }
+    } catch (e) { console.error('alerts: digest failed:', e && e.message); }
+  }
   for (const [, b] of budget) if (b <= 0) stats.capped++;
+}
+
+// The digest's facts for a scope (g.stores, g.stuck). Home's own numbers (buildHome: sales, sales per labor hour by the Metrics rule, the
+// target band, the RFP total) for "yesterday" and now; the store day's follow-ups (Waymark's database) and stuck work orders at the phone's
+// threshold. Numbers only: work order numbers, status names, days, money.
+async function digestFacts(env, g, nowMs, now, l) {
+  const T = env.TR, yesterday = addDays(l.day, -1), S = JSON.stringify(g.stores);
+  const home = await buildHome(env, g.stores, new Map(), nowMs);
+  let marks = [];
+  if (env.AE) {
+    try {
+      marks = (await env.AE.prepare(`SELECT m.store, m.wo FROM auto_marks m WHERE m.store IN (SELECT value FROM json_each(?1)) AND m.due = ?2 AND m.removed_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM wo_closed c WHERE c.store = m.store AND c.wo = m.wo) ORDER BY m.store, m.wo`).bind(S, l.day).all()).results;
+    } catch (e) { console.error('alerts: digest follow-up read failed:', e && e.message); }
+  }
+  const fuList = marks.slice(0, DIGEST_LIST);
+  const [stuck, labor, fuSt] = await T.batch([
+    T.prepare(DIGEST_STUCK_SQL).bind(now, S, g.stuck),
+    T.prepare(DIGEST_LABOR_SQL).bind(S, yesterday),
+    T.prepare(DIGEST_STATUS_SQL).bind(JSON.stringify(fuList.map((m) => [m.store, m.wo]))),
+  ]);
+  const st = new Map(fuSt.results.map((r) => [r.store + '|' + r.wo, r.status]));
+  const lab = labor.results[0] || {}, i = home.days.indexOf(yesterday);
+  const r2 = (v) => (v == null ? null : Math.round(v * 100) / 100);
+  return {
+    day: l.day, yesterday, stores: g.stores,
+    sales: i < 0 ? null : r2(home.sales.week[i]), splh: i < 0 ? null : home.splh.week[i], hours: lab.n ? r2(lab.h) : null, target: home.splh.target || SPLH_TARGET,
+    rfp: { total: home.rfp.total, count: home.rfp.count, oldestDays: home.rfp.oldestDays },
+    followups: { count: marks.length, wos: fuList.map((m) => ({ store: m.store, wo: m.wo, status: st.get(m.store + '|' + m.wo) || null })) },
+    stuck: { days: g.stuck, count: stuck.results.length ? stuck.results[0].n : 0, wos: stuck.results.map((r) => ({ store: r.store, wo: r.wo, status: r.status, days: r.days })) },
+  };
 }
 
 // ---------------------------------------------------------------- routes
 // Entry as the app gets it: id, store, type, wo, at + the facts of its type (stuck: statusId, status, days, since | pickup: count, days, oldestDays |
-// followup: due, kind | quiet: since, hours | back: since, resumedAt).
+// followup: due, kind | quiet: since, hours | back: since, resumedAt | digest: day, yesterday, stores, sales, splh, hours, target, rfp, followups, stuck |
+// unlinked: count, hours, oldestHours, salesOrders | coverage: checkedAt, countMisses, countItems, missedItems, qtyMisses, staleLabels).
 function entry(row) {
   const o = { id: row.id, store: row.store, type: row.type, wo: row.wo == null ? null : row.wo, at: row.created_at };
   return Object.assign(o, parse(row.data, {}));
@@ -259,20 +417,26 @@ async function state(T, device, h) {
   return { settings: normalize(parse(r.settings, {}), device.stores), readUpto: r.read_upto };
 }
 
-// SQL shared by the feed, the poll and the unread count. Binds ?1 device id, ?2 stores JSON, ?3 read cursor, ?4..?7 the phone's levels.
+// SQL shared by the feed, the poll and the unread count. Binds ?1 device id, ?2 stores JSON, ?3 read cursor, ?4..?9 the phone's levels,
+// ?10 the phone's digest scope key ('' leaves digests out: a feed filtered to one store). Callers' own binds start at ?11.
 const FEED_FROM = `FROM alerts a LEFT JOIN alert_reads r ON r.device_id = ?1 AND r.alert_id = a.id
   WHERE a.store IN (SELECT value FROM json_each(?2))
-    AND a.level = CASE a.type WHEN 'stuck' THEN ?4 WHEN 'pickup' THEN ?5 WHEN 'followup' THEN ?6 WHEN 'quiet' THEN ?7 ELSE 0 END`;
-const feedBinds = (stores, id, st) => { const lv = levelsOf(st.settings); return [id, JSON.stringify(stores), st.readUpto, lv.stuck, lv.pickup, lv.followup, lv.quiet]; };
+    AND a.level = CASE a.type WHEN 'stuck' THEN ?4 WHEN 'pickup' THEN ?5 WHEN 'followup' THEN ?6 WHEN 'quiet' THEN ?7 WHEN 'digest' THEN ?8 WHEN 'unlinked' THEN ?9 ELSE 0 END
+    AND (a.type != 'digest' OR substr(a.subject, 1, length(?10) + 1) = ?10 || '@')`;
+const feedBinds = (stores, id, st, scope) => {
+  const lv = levelsOf(st.settings);
+  return [id, JSON.stringify(stores), st.readUpto, lv.stuck, lv.pickup, lv.followup, lv.quiet, lv.digest, lv.unlinked, scope === undefined ? scopeKey(stores, st.settings) : scope];
+};
 
 const switches = (st) => ({
   type: (t) => (t === 'back' ? st.settings.types.quiet.on : st.settings.types[t] ? st.settings.types[t].on : true),
   store: (s) => st.settings.stores[s] !== false,
+  row: (r) => r.type === 'digest' || st.settings.stores[r.store] !== false, // the digest covers all the phone's stores: no store switch
 });
 const unreadOf = async (T, device, st) => {
   const sw = switches(st), offT = TYPES.concat('back').filter((t) => !sw.type(t)), offS = device.stores.filter((s) => !sw.store(s));
   return (await T.prepare(`SELECT COUNT(*) AS n ${FEED_FROM} AND a.id > ?3 AND r.alert_id IS NULL
-      AND a.type NOT IN (SELECT value FROM json_each(?8)) AND a.store NOT IN (SELECT value FROM json_each(?9))`).bind(...feedBinds(device.stores, device.id, st), JSON.stringify(offT), JSON.stringify(offS)).first()).n;
+      AND a.type NOT IN (SELECT value FROM json_each(?11)) AND (a.type = 'digest' OR a.store NOT IN (SELECT value FROM json_each(?12)))`).bind(...feedBinds(device.stores, device.id, st), JSON.stringify(offT), JSON.stringify(offS)).first()).n;
 };
 
 async function listApi(req, env, url, device, h) {
@@ -287,7 +451,7 @@ async function listApi(req, env, url, device, h) {
   const opt = (k) => { const v = q.get(k); if (v == null || v === '') return null; if (!/^\d{1,12}$/.test(v)) throw Object.assign(new Error(`${k}: a cursor number from an earlier answer`), { status: 400 }); return Number(v); };
   const after = opt('after'), before = opt('before');
   const rows = (await T.prepare(`SELECT a.id, a.store, a.type, a.wo, a.created_at, a.data, a.backfill, a.cleared_at, (a.id <= ?3 OR r.alert_id IS NOT NULL) AS read ${FEED_FROM}
-      AND a.id > ?8 AND a.id < ?9 ORDER BY a.id DESC LIMIT ?10`).bind(...feedBinds(stores, device.id, st), after == null ? 0 : after, before == null ? 9007199254740991 : before, lim + 1).all()).results;
+      AND a.id > ?11 AND a.id < ?12 ORDER BY a.id DESC LIMIT ?13`).bind(...feedBinds(stores, device.id, st, stores.length === device.stores.length ? undefined : ''), after == null ? 0 : after, before == null ? 9007199254740991 : before, lim + 1).all()).results;
   const more = rows.length > lim;
   if (more) rows.pop();
   const unread = await unreadOf(T, device, st);
@@ -295,7 +459,7 @@ async function listApi(req, env, url, device, h) {
   const alerts = rows.map((row) => {
     const e = entry(row), read = !!row.read;
     e.read = read;
-    e.notify = !read && !row.backfill && row.type !== 'back' && sw.type(row.type) && sw.store(row.store);
+    e.notify = !read && !row.backfill && row.type !== 'back' && sw.type(row.type) && sw.row(row);
     if (row.type === 'quiet') e.cleared = row.cleared_at || null;
     return e;
   });
@@ -314,9 +478,9 @@ async function newApi(req, env, url, device, h) {
     const m = minuteOfDay(nowMs, tz), a = hm(qh.from), b = hm(qh.to);
     if (a < b ? m >= a && m < b : m >= a || m < b) return h.json({ v: 1, cursor: since, alerts: [], held: true });
   }
-  const rows = (await T.prepare(`SELECT a.id, a.store, a.type, a.wo, a.created_at, a.data, a.backfill ${FEED_FROM} AND a.id > ?8 AND a.id > ?3 AND r.alert_id IS NULL ORDER BY a.id LIMIT ?9`)
+  const rows = (await T.prepare(`SELECT a.id, a.store, a.type, a.wo, a.created_at, a.data, a.backfill ${FEED_FROM} AND a.id > ?11 AND a.id > ?3 AND r.alert_id IS NULL ORDER BY a.id LIMIT ?12`)
     .bind(...feedBinds(device.stores, device.id, st), since, MAX_NEW).all()).results;
-  const out = rows.filter((r) => !r.backfill && r.type !== 'back' && sw.type(r.type) && sw.store(r.store) && nowMs - Date.parse(r.created_at) <= MAX_AGE_MS).map(entry);
+  const out = rows.filter((r) => !r.backfill && r.type !== 'back' && sw.type(r.type) && sw.row(r) && nowMs - Date.parse(r.created_at) <= MAX_AGE_MS).map(entry);
   const body = { v: 1, cursor: rows.length ? rows[rows.length - 1].id : since, alerts: out };
   if (rows.length === MAX_NEW) body.more = true; // poll again right away
   return h.json(body);

@@ -48,6 +48,36 @@ object Contract {
     val pickup = j("""{ "id": 414, "store": 914, "type": "pickup", "wo": null, "at": "2026-10-15T13:00:00.000Z", "count": 3, "days": 7, "oldestDays": 11 }""")
     val followup = j("""{ "id": 415, "store": 914, "type": "followup", "wo": 700000003, "at": "2026-10-15T13:00:00.000Z", "due": "2026-10-15", "kind": "rfp" }""")
     val back = j("""{ "id": 416, "store": 326, "type": "back", "wo": null, "at": "2026-10-15T22:40:00.000Z", "since": "2026-10-15T17:40:00.000Z", "resumedAt": "2026-10-15T22:40:00.000Z" }""")
+
+    /** The digest example from "### Digest", verbatim. */
+    val digest = j("""
+        { "id": 530, "store": 326, "type": "digest", "wo": null, "at": "2026-10-15T12:00:00.000Z",
+          "day": "2026-10-15", "yesterday": "2026-10-14", "stores": [326, 914],
+          "sales": 3400, "splh": 170, "hours": 20, "target": [160, 180],
+          "rfp": { "total": 300, "count": 3, "oldestDays": 12 },
+          "followups": { "count": 3, "wos": [ { "store": 326, "wo": 303, "status": null }, { "store": 914, "wo": 301, "status": "Ready for pickup" },
+                                              { "store": 914, "wo": 302, "status": "Diagnostics" } ] },
+          "stuck": { "days": 3, "count": 2, "wos": [ { "store": 914, "wo": 101, "status": "Diagnostics", "days": 5 },
+                                                     { "store": 326, "wo": 102, "status": "Work in progress", "days": 4 } ] } }
+    """.trimIndent())
+
+    /** The `unlinked` and `coverage` examples, verbatim. */
+    val unlinked = j("""{ "id": 531, "store": 914, "type": "unlinked", "wo": null, "at": "2026-10-15T16:00:00.000Z", "count": 2, "hours": 1, "oldestHours": 3, "salesOrders": ["FSO1001", "FSO1002"] }""")
+    val coverage = j("""
+        { "id": 532, "store": 914, "type": "coverage", "wo": null, "at": "2026-10-15T16:00:00.000Z", "checkedAt": "2026-10-15T15:55:00.000Z",
+          "countMisses": 3, "countItems": 40, "missedItems": 2, "qtyMisses": 1, "staleLabels": 4 }
+    """.trimIndent())
+
+    /** The settings example with every type, as the current contract gives it. */
+    val settingsAll = j("""
+        { "v": 1,
+          "settings": { "types": { "stuck": { "on": true, "days": 3 }, "pickup": { "on": true, "days": 7 }, "followup": { "on": true, "hour": 9 }, "quiet": { "on": true, "hours": 2 },
+                                   "digest": { "on": true, "hour": 8 }, "unlinked": { "on": true, "hours": 1 }, "coverage": { "on": true } },
+                        "quietHours": { "on": true, "from": "22:00", "to": "07:00" },
+                        "stores": { "914": true, "326": true } },
+          "stores": [914, 326],
+          "ranges": { "stuckDays": [1, 30], "pickupDays": [1, 30], "quietHours": [1, 12], "followupHour": [0, 23], "digestHour": [0, 23], "unlinkedHours": [1, 48] } }
+    """.trimIndent())
 }
 
 fun alertOf(o: JsonObject): Alert = parseAlert(o)!!

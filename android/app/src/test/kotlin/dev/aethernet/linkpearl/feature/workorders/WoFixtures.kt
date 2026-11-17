@@ -62,7 +62,16 @@ class FakeApi : ApiClient {
         calls += path to query
         return routes.firstOrNull { it.first(path, query) }?.second ?: ApiResult.Failure(ApiError.NotFound, 404, "no such route in the test")
     }
-    override suspend fun post(path: String, body: JsonElement?) = ApiResult.Failure(ApiError.NotFound)
+    /** POSTs as sent (path, body) and their answers by a matcher over path and body. */
+    val posts = mutableListOf<Pair<String, JsonElement?>>()
+    val postRoutes = mutableListOf<Pair<(String, JsonElement?) -> Boolean, ApiResult<JsonElement>>>()
+    fun onPost(match: (String, JsonElement?) -> Boolean, json: String) { postRoutes.add(0, match to ApiResult.Success(WoFixtures.json(json))) }
+    fun failPost(match: (String, JsonElement?) -> Boolean, f: ApiResult.Failure) { postRoutes.add(0, match to f) }
+
+    override suspend fun post(path: String, body: JsonElement?): ApiResult<JsonElement> {
+        posts += path to body
+        return postRoutes.firstOrNull { it.first(path, body) }?.second ?: ApiResult.Failure(ApiError.NotFound, 404, "no such route in the test")
+    }
     override suspend fun put(path: String, body: JsonElement?) = ApiResult.Failure(ApiError.NotFound)
     override suspend fun delete(path: String) = ApiResult.Failure(ApiError.NotFound)
 }

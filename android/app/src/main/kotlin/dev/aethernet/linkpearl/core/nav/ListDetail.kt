@@ -7,7 +7,10 @@ import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffold
 import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
 import androidx.compose.material3.adaptive.layout.calculatePaneScaffoldDirective
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.launch
@@ -21,6 +24,7 @@ import kotlinx.coroutines.launch
  *
  * Deep links such as `workorders/{id}` should call `select` from a LaunchedEffect.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun <T : Any> LpListDetail(
     list: @Composable (select: (T) -> Unit) -> Unit,
@@ -36,16 +40,27 @@ fun <T : Any> LpListDetail(
     val scope = rememberCoroutineScope()
     androidx.compose.runtime.LaunchedEffect(initialSelection) { initialSelection?.let { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, it) } }
     BackHandler(enabled = navigator.canNavigateBack()) { scope.launch { navigator.navigateBack() } }
-    ListDetailPaneScaffold(
-        directive = navigator.scaffoldDirective,
-        scaffoldState = navigator.scaffoldState,
-        modifier = modifier,
-        listPane = { AnimatedPane { list { item -> scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, item) } } } },
-        detailPane = {
-            AnimatedPane {
-                val item = navigator.currentDestination?.contentKey
-                if (item != null) detail(item) else emptyDetail()
-            }
-        },
-    )
+    // A shared scope so a list card can grow into its detail's header (Modifier.sharedCard with the same key on both).
+    SharedTransitionLayout(modifier) {
+        val shared = this
+        ListDetailPaneScaffold(
+            directive = navigator.scaffoldDirective,
+            scaffoldState = navigator.scaffoldState,
+            listPane = {
+                AnimatedPane {
+                    CompositionLocalProvider(LocalSharedScope provides shared, LocalPaneScope provides this) {
+                        list { item -> scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, item) } }
+                    }
+                }
+            },
+            detailPane = {
+                AnimatedPane {
+                    CompositionLocalProvider(LocalSharedScope provides shared, LocalPaneScope provides this) {
+                        val item = navigator.currentDestination?.contentKey
+                        if (item != null) detail(item) else emptyDetail()
+                    }
+                }
+            },
+        )
+    }
 }

@@ -39,7 +39,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -65,7 +64,28 @@ import androidx.compose.ui.unit.dp
 import dev.aethernet.linkpearl.core.design.AsOfLine
 import dev.aethernet.linkpearl.core.design.ChoiceRow
 import dev.aethernet.linkpearl.core.design.Fmt
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import dev.aethernet.linkpearl.core.design.Lp
+import dev.aethernet.linkpearl.core.design.LpDisplay
+import dev.aethernet.linkpearl.core.design.LpDot
+import dev.aethernet.linkpearl.core.design.LpPullToRefresh
+import dev.aethernet.linkpearl.core.design.enter
+import dev.aethernet.linkpearl.core.design.fg
+import dev.aethernet.linkpearl.core.design.glass
+import dev.aethernet.linkpearl.core.design.lpSurface
+import dev.aethernet.linkpearl.core.design.pressScale
+import dev.aethernet.linkpearl.core.design.rememberHaptics
+import dev.aethernet.linkpearl.core.design.storeColor
+import dev.aethernet.linkpearl.core.nav.LocalNavInset
+import dev.aethernet.linkpearl.core.nav.sharedCard
 import dev.aethernet.linkpearl.core.design.LpBottomSheet
 import dev.aethernet.linkpearl.core.design.LpIcon
 import dev.aethernet.linkpearl.core.design.LpIconButton
@@ -130,13 +150,13 @@ fun WorkOrdersScreen(
     Column(modifier.fillMaxSize().onGloballyPositioned { originX = it.positionInWindow().x }) {
         Column(Modifier.padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Work orders", style = LpType.Title.copy(fontWeight = FontWeight.Bold), color = Lp.colors.fg, modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1)
+                Text("Work orders", style = LpType.Screen, color = Lp.colors.fg, modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1)
                 LockControl(state.unlocked, remaining, actions.onUnlock, actions.onLock)
             }
             SearchField(state.query, state.unlocked, actions.onQuery, actions.onClearQuery, actions.onUnlock)
             if (search == null) {
                 LpSegmented(listOf("Open", "Closed"), if (state.filter == LaneFilter.Closed) 1 else 0, { actions.onPickFilter(if (it == 1) LaneFilter.Closed else LaneFilter.All) })
-                if (state.filter != LaneFilter.Closed) LaneChips(state.lanes, state.filter, actions.onPickFilter, state.followUps)
+                if (state.filter != LaneFilter.Closed) LaneChips(state.lanes, state.filter, actions.onPickFilter, state.followUps, state.old)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StorePill(if (state.store == null) "All stores" else state.storeName(state.store)) { storeMenu = true }
                     Spacer(Modifier.weight(1f))
@@ -151,10 +171,10 @@ fun WorkOrdersScreen(
             when (state.view) {
                 LoadView.Loading -> Column(Modifier.padding(LpSpacing.Gutter), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) { repeat(4) { SkeletonRow() } }
                 LoadView.Error -> StateMessage(problemText(state.problem), actionLabel = if (canRetry(state.problem)) "Retry" else null, onAction = actions.onRefresh)
-                LoadView.Ok -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = actions.onRefresh, modifier = Modifier.fillMaxSize()) {
+                LoadView.Ok -> LpPullToRefresh(refreshing = state.refreshing, onRefresh = actions.onRefresh, modifier = Modifier.fillMaxSize()) {
                     LazyVerticalGrid(
                         columns = cells, state = listState, modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = LpSpacing.Gutter, end = LpSpacing.Gutter, top = LpSpacing.M, bottom = 24.dp),
+                        contentPadding = PaddingValues(start = LpSpacing.Gutter, end = LpSpacing.Gutter, top = LpSpacing.M, bottom = 24.dp + LocalNavInset.current),
                         verticalArrangement = Arrangement.spacedBy(LpSpacing.M), horizontalArrangement = Arrangement.spacedBy(colGap),
                     ) {
                         state.problem?.let { p ->
@@ -168,9 +188,12 @@ fun WorkOrdersScreen(
                             }
                         }
                         if (state.rows.isEmpty()) item(key = "empty", span = { GridItemSpan(maxLineSpan) }) { EmptyLane() }
-                        items(state.rows, key = { it.key.id }) { row ->
-                            if (state.filter == LaneFilter.Closed) ClosedWoCard(row, state, selected == row.key) { actions.onOpen(row) }
-                            else WoRowCard(row, state, nowMs, selected == row.key) { actions.onOpen(row) }
+                        itemsIndexed(state.rows, key = { _, r -> r.key.id }) { i, row ->
+                            // The first screenful rises in one after another; rows scrolled to later just rise in.
+                            Box(Modifier.enter(if (i < 8) i else 0)) {
+                                if (state.filter == LaneFilter.Closed) ClosedWoCard(row, state, selected == row.key) { actions.onOpen(row) }
+                                else WoRowCard(row, state, nowMs, selected == row.key) { actions.onOpen(row) }
+                            }
                         }
                         if (state.loadingMore) item(key = "more", span = { GridItemSpan(maxLineSpan) }) { SkeletonRow() }
                     }
@@ -218,7 +241,7 @@ private fun SearchResults(state: WoListUi, search: SearchUi, nowMs: Long, select
     when {
         search.busy -> Column(Modifier.padding(LpSpacing.Gutter), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) { repeat(2) { SkeletonRow() } }
         search.results.isNotEmpty() -> LazyVerticalGrid(
-            cells, Modifier.fillMaxSize(), contentPadding = PaddingValues(start = LpSpacing.Gutter, end = LpSpacing.Gutter, top = LpSpacing.M, bottom = 24.dp),
+            cells, Modifier.fillMaxSize(), contentPadding = PaddingValues(start = LpSpacing.Gutter, end = LpSpacing.Gutter, top = LpSpacing.M, bottom = 24.dp + LocalNavInset.current),
             verticalArrangement = Arrangement.spacedBy(LpSpacing.M), horizontalArrangement = Arrangement.spacedBy(colGap),
         ) {
             items(search.results, key = { "s" + it.key.id }) { row -> WoRowCard(row, state, nowMs, selected == row.key, showStoreAlways = true) { actions.onOpen(row) } }
@@ -255,15 +278,25 @@ private fun EmptyLane() {
 fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showStoreAlways: Boolean = false, onClick: () -> Unit) {
     val c = Lp.colors
     val shape = LpShapes.Card
+    val old = WoAging.isOld(row, nowMs)
+    val stripe = if (old) c.warn else laneTone(row.lane).fg()
+    val interaction = remember { MutableInteractionSource() }
     Column(
-        Modifier.fillMaxWidth().clip(shape).background(if (selected) c.accSoft else c.surf).border(if (selected) 2.dp else 1.dp, if (selected) c.acc else c.line, shape)
-            .clickable(role = Role.Button, onClick = onClick).semantics { this.selected = selected }
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().pressScale(interaction).sharedCard("wo-${row.key.id}").lpSurface(shape)
+            .let { if (selected) it.background(c.accSoft.copy(alpha = 0.6f)).border(2.dp, c.acc, shape) else it }
+            // The lane's colour as a stripe down the left edge (the status chip carries it in words); an old card's edge is amber and
+            // full height, with "Old" and the hourglass on its time chip.
+            .drawBehind {
+                if (old) drawRoundRect(stripe, Offset(0f, 10.dp.toPx()), Size(5.dp.toPx(), size.height - 20.dp.toPx()), CornerRadius(2.5.dp.toPx()))
+                else drawRoundRect(stripe, Offset(0f, 16.dp.toPx()), Size(4.dp.toPx(), size.height - 32.dp.toPx()), CornerRadius(2.dp.toPx()))
+            }
+            .clickable(interaction, LocalIndication.current, role = Role.Button, onClick = onClick).semantics { this.selected = selected }
+            .padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(row.wo.toString(), style = LpType.ValueMedium, color = c.fg, modifier = Modifier.weight(1f), maxLines = 1)
-            if (row.open) TimeInStatus(row.statusSince, nowMs) else Text(WoFmt.shortDayTime(row.closedAt, LocalWoClock.current.zone), style = LpType.Small, color = c.soft)
+            Text(row.wo.toString(), style = LpType.Number, color = c.fg, modifier = Modifier.weight(1f), maxLines = 1)
+            if (old) OldChip(row, nowMs) else if (row.open) TimeInStatus(row.statusSince, nowMs) else Text(WoFmt.shortDayTime(row.closedAt, LocalWoClock.current.zone), style = LpType.Small, color = c.soft)
         }
         val issue = row.issues?.takeIf { it.isNotEmpty() }?.joinToString(", ")
         val sub = listOfNotNull(row.device, issue, row.program).joinToString(Fmt.DOT).ifEmpty { Fmt.DASH }
@@ -273,13 +306,18 @@ fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showS
                 StatusChip(row.status, row.lane)
                 if (row.urgent) LpChip("Urgent", tone = Tone.Warn, icon = LpIcons.Warning)
             }
-            if (state.showStore || showStoreAlways) Text(state.storeName(row.store), style = LpType.Small, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.weight(1f, fill = false).padding(start = 8.dp))
+            if (state.showStore || showStoreAlways) {
+                val idx = state.stores.indexOfFirst { it.id == row.store }
+                Row(Modifier.weight(1f, fill = false).padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (idx >= 0) LpDot(storeColor(idx), size = 8.dp)
+                    Text(state.storeName(row.store), style = LpType.Small, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                }
+            }
         }
         if (row.tags.isNotEmpty()) TagRow(row.tags)
         val follow = row.followUp?.takeIf { it.valid }
         if (follow != null) FollowUpMarker(follow, state.followUps?.today ?: todayLocal(nowMs))
-        Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(c.line))
+        Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(c.fg.copy(alpha = 0.07f)))
         CustomerLine(row, state)
     }
 }
@@ -314,7 +352,7 @@ internal fun CustomerLine(row: WoRow, state: WoListUi) {
 @Composable
 internal fun SkeletonRow() {
     Column(
-        Modifier.fillMaxWidth().background(Lp.colors.surf, LpShapes.Card).border(1.dp, Lp.colors.line, LpShapes.Card).padding(16.dp),
+        Modifier.fillMaxWidth().lpSurface(LpShapes.Card).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row { Skeleton(width = 130.dp, height = 20.dp); Spacer(Modifier.weight(1f)); Skeleton(width = 60.dp) }
@@ -328,10 +366,10 @@ internal fun SkeletonRow() {
 fun SearchField(query: String, unlocked: Boolean, onQuery: (String) -> Unit, onClear: () -> Unit, onUnlock: () -> Unit, modifier: Modifier = Modifier, placeholder: String? = null) {
     val c = Lp.colors
     Row(
-        modifier.fillMaxWidth().heightIn(min = 56.dp).clip(LpShapes.Pill).background(c.surf3).border(1.5.dp, c.outline, LpShapes.Pill).padding(start = 18.dp, end = 6.dp),
+        modifier.fillMaxWidth().heightIn(min = 56.dp).glass().padding(start = 18.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        LpIcon(LpIcons.Search, null, tint = c.fg)
+        LpIcon(LpIcons.Search, null, tint = c.soft)
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             if (query.isEmpty()) Text(placeholder ?: if (unlocked) "Number, name, phone, IMEI" else "Number", style = LpType.Row, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
             BasicTextField(
@@ -356,9 +394,11 @@ fun SearchField(query: String, unlocked: Boolean, onQuery: (String) -> Unit, onC
 }
 
 @Composable
-private fun LaneChips(lanes: WoLanes?, filter: LaneFilter, onPick: (LaneFilter) -> Unit, followUps: FollowUpsInfo?) {
+private fun LaneChips(lanes: WoLanes?, filter: LaneFilter, onPick: (LaneFilter) -> Unit, followUps: FollowUpsInfo?, old: Int?) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip("All", lanes?.total, filter == LaneFilter.All) { onPick(LaneFilter.All) }
+        // Counted by the app (WoAging); shown once the count is in, or while its filter is on.
+        if (old != null || filter == LaneFilter.Old) FilterChip("Old", old, filter == LaneFilter.Old) { onPick(LaneFilter.Old) }
         // Next to All so it is on screen. Only a tracker that answers with follow-up counts has the filter.
         if (followUps != null) FilterChip("Follow-ups", followUps.count, filter == LaneFilter.FollowUps) { onPick(LaneFilter.FollowUps) }
         Lane.entries.forEach { l -> FilterChip(l.label, lanes?.count(l), filter == LaneFilter.One(l)) { onPick(LaneFilter.One(l)) } }
@@ -368,13 +408,18 @@ private fun LaneChips(lanes: WoLanes?, filter: LaneFilter, onPick: (LaneFilter) 
 @Composable
 internal fun FilterChip(label: String, count: Int?, selected: Boolean, onClick: () -> Unit) {
     val c = Lp.colors
+    val haptics = rememberHaptics()
+    val interaction = remember { MutableInteractionSource() }
+    val fill by animateColorAsState(if (selected) (if (c.isDark) c.fg else c.acc) else Color.Transparent, label = "chip")
+    val ink by animateColorAsState(if (selected) (if (c.isDark) c.page else c.onAcc) else c.fg, label = "ink")
     Row(
-        Modifier.heightIn(min = LpSpacing.Touch).clip(LpShapes.Row).let { if (selected) it.background(c.accSoft) else it.border(1.5.dp, c.outline, LpShapes.Row) }
-            .clickable(role = Role.Tab, onClick = onClick).semantics { this.selected = selected }.padding(horizontal = 14.dp),
+        Modifier.heightIn(min = LpSpacing.Touch).pressScale(interaction).glass().background(fill, LpShapes.Pill)
+            .clickable(interaction, LocalIndication.current, role = Role.Tab) { if (!selected) haptics.tick(); onClick() }
+            .semantics { this.selected = selected }.padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (selected) LpIcon(LpIcons.Check, null, size = 18.dp, tint = c.onAccSoft)
-        Text(if (count != null) "$label $count" else label, style = LpType.Row.copy(fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal), color = if (selected) c.onAccSoft else c.fg, maxLines = 1)
+        Text(label, style = LpType.Row.copy(fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal), color = ink, maxLines = 1)
+        if (count != null) Text(count.toString(), style = LpType.Row.copy(fontFamily = LpDisplay, fontWeight = FontWeight.Bold), color = if (selected) ink else c.soft, maxLines = 1)
     }
 }
 
@@ -382,13 +427,13 @@ internal fun FilterChip(label: String, count: Int?, selected: Boolean, onClick: 
 internal fun StorePill(label: String, onClick: () -> Unit) {
     val c = Lp.colors
     Row(
-        Modifier.heightIn(min = LpSpacing.Touch).widthIn(max = 260.dp).clip(LpShapes.Row).border(1.5.dp, c.line, LpShapes.Row)
+        Modifier.heightIn(min = LpSpacing.Touch).widthIn(max = 260.dp).glass()
             .clickable(role = Role.DropdownList, onClick = onClick).semantics { contentDescription = "Store: $label" }.padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         LpIcon(LpIcons.Store, null, size = 20.dp, tint = c.fg)
         Text(label, style = LpType.Body, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-        LpIcon(LpIcons.ChevronDown, null, size = 20.dp, tint = c.fg)
+        LpIcon(LpIcons.ChevronDown, null, size = 20.dp, tint = c.soft)
     }
 }
 

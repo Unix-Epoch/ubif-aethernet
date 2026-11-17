@@ -1,0 +1,5 @@
+<resources>
+    <!-- Widget previews, dark (Color.kt: page and fg). -->
+    <color name="lp_widget_bg">#FF1B0F41</color>
+    <color name="lp_widget_fg">#FFF6ECD9</color>
+</resources>

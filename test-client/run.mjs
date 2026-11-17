@@ -366,70 +366,94 @@ await t('health (virtual clock, real loops): loops that check down() and return 
   assert.equal(AE.health.state().mode, 'recovering');
 });
 
-// ================================================================== Return: checkDone
-const checkDoneSrc = extractFn('22-checkin-drafts.js', 'async function checkDone()');
-async function returnCheckDone(answer) {
-  const env = load(['00-core.js'], { fetch: router([['GET', /^\/api\/workorder\/123$/, answer]]) });
-  const removed = [];
-  const factory = vm.runInContext('(function (AE, call, INITIAL_CHECKIN, state) { let current = state.current;\n' + checkDoneSrc + '\n return async () => { current = state.current; await checkDone(); state.after = current; }; })', env.ctx);
-  const state = { current: { id: 'draft-1', woId: 123 } };
-  await factory(env.AE, async (method, path) => { removed.push(method + ' ' + path); return {}; }, 1, state)();
-  return { removed, kept: state.after !== null };
+// ================================================================== Return: arrival labels and the cleanings gate
+// SYNTHETIC arrivals: only program.programId (read the same way by Swiftcast in production), customer and arrivalId.
+const R_MOBILITY = { arrivalId: 50, program: { programId: 5062 }, customer: { firstName: 'Avery', lastName: 'Stone' } };
+const R_CLEANING = { arrivalId: 51, program: { programId: 9470 }, customer: { firstName: 'Avery', lastName: 'Stone' } };
+async function returnEnv({ pathname = '/check-in/arrivals/50', answers = [], routes = [] } = {}) {
+  const env = load(['00-core.js', '22-checkin-drafts.js'], { pathname, fetch: router([
+    ['GET', /^\/api\/arrivals\/50$/, ok(R_MOBILITY)], ['GET', /^\/api\/arrivals\/51$/, ok(R_CLEANING)], ...routes]) });
+  const { AE, ctx } = env;
+  const clicks = []; let onClick = null;
+  ctx.addEventListener = (n, fn, cap) => { if (n === 'click' && cap) onClick = fn; };
+  ctx.history = { state: null, pushState(st, _, url) { this.state = st; ctx.location.pathname = url; } };
+  ctx.PopStateEvent = class { constructor(type) { this.type = type; } }; ctx.dispatchEvent = () => true;
+  const asked = [];
+  AE.confirm = async (o) => { asked.push(o.title); return answers.shift() ?? null; };
+  await AE.shards.find((x) => x.id === 'checkinDrafts').run();
+  const btn = { textContent: 'Create work order', isConnected: true, disabled: false, closest: () => null,
+    click() { clicks.push(1); onClick(event(btn)); } };
+  const event = (target) => ({ target: { closest: () => target }, prevented: false, preventDefault() { this.prevented = true; }, stopImmediatePropagation() {} });
+  const press = async () => { const e = event(btn); onClick(e); for (let i = 0; i < 40; i++) await new Promise((r) => setImmediate(r)); return e.prevented; };
+  return { env, AE, ctx, asked, clicks, press, btn };
 }
-await t('Return: a malformed 200 never deletes the draft ({}, wrong object, no status, plain text, JSON string, null)', async () => {
-  // SYNTHETIC bad answers: none of these is something Portal is known to send
-  for (const body of [{}, { ok: true }, { workorder: {} }, { workorder: { workorderStatusId: null } }, 'OK', '"fine"', 'null', [], '<!doctype html><html></html>']) {
-    const r = await returnCheckDone({ status: 200, body });
-    assert.deepEqual(r.removed, [], 'kept for ' + JSON.stringify(body));
-    assert.equal(r.kept, true);
+await t('Return: Asurion Mobility, "Yes" creates the work order', async () => {
+  const r = await returnEnv({ answers: ['yes'] });
+  assert.equal(await r.press(), true, "Portal's click held back while asking");
+  assert.deepEqual(r.asked, ['Are you able to create cleanings for this device?']);
+  assert.equal(r.clicks.length, 1, 'the button clicked again once answered');
+});
+for (const why of ['device', 'pin']) {
+  await t('Return: Asurion Mobility, "No" + ' + why + ' makes a Return ticket and no work order', async () => {
+    const r = await returnEnv({ answers: ['no', why, false] });
+    assert.equal(await r.press(), true);
+    assert.deepEqual(r.asked, ['Are you able to create cleanings for this device?', 'Why not?', 'Return ticket created']);
+    assert.equal(r.clicks.length, 0, 'no work order');
+    assert.ok(r.env.requests(/DYMO\/DLS\/Printing/).length > 0, 'the label was sent to DYMO');
+  });
+}
+await t('Return: Asurion Mobility, "No" + no option on the account creates the work order', async () => {
+  const r = await returnEnv({ answers: ['no', 'option'] });
+  await r.press();
+  assert.deepEqual(r.asked, ['Are you able to create cleanings for this device?', 'Why not?']);
+  assert.equal(r.clicks.length, 1);
+});
+await t('Return: closing either question creates nothing', async () => {
+  for (const answers of [[null], ['no', null]]) {
+    const r = await returnEnv({ answers });
+    await r.press();
+    assert.equal(r.clicks.length, 0);
   }
 });
-await t('Return: a failed call (5xx, 404) keeps the draft', async () => {
-  for (const status of [500, 504, 404, 401]) assert.deepEqual((await returnCheckDone({ status, body: 'x' })).removed, []);
+await t('Return: once answered, the same arrival is not asked again', async () => {
+  const r = await returnEnv({ answers: ['yes'] });
+  await r.press();
+  assert.equal(await r.press(), false, 'second click goes straight to Portal');
+  assert.equal(r.asked.length, 1);
 });
-await t('Return: a work order still at Initial check-in (status 1) keeps the draft', async () => {
-  const r = await returnCheckDone(ok(withStatus(1)));
-  assert.deepEqual(r.removed, []); assert.equal(r.kept, true);
+await t('Return: other programs and unreadable arrivals are never asked', async () => {
+  const r = await returnEnv({ pathname: '/check-in/arrivals/51' });
+  await r.press();
+  assert.deepEqual(r.asked, []); assert.equal(r.clicks.length, 1);
+  const r2 = await returnEnv({ pathname: '/check-in/arrivals/52', routes: [['GET', /^\/api\/arrivals\/52$/, { status: 500, body: 'x' }]] });
+  await r2.press();
+  assert.deepEqual(r2.asked, []); assert.equal(r2.clicks.length, 1, "Portal's button still works");
 });
-await t('Return: a real work order past Initial check-in removes the draft', async () => {
-  const r = await returnCheckDone(ok(WO_ANSWER)); // captured shape, status 14
-  assert.deepEqual(r.removed, ['POST /draft-1/remove']); assert.equal(r.kept, false);
-  const r2 = await returnCheckDone(ok(withStatus(9)));
-  assert.deepEqual(r2.removed, ['POST /draft-1/remove']);
+await t('Return: a check-in with no arrival is left alone', async () => {
+  const r = await returnEnv({ pathname: '/check-in' });
+  assert.equal(await r.press(), false);
+  assert.deepEqual(r.asked, []);
 });
-
-// ================================================================== Return: paused while saved check-ins are off
-async function returnPaused(path) {
-  const env = load(['00-core.js', '22-checkin-drafts.js'], { timers: 'fake', fetch: router([]) });
-  const { AE } = env;
-  let every = 0, onDom = 0, appended = 0;
-  const e0 = AE.every, d0 = AE.onDom;
-  AE.every = (...a) => { every++; return e0.apply(AE, a); }; AE.onDom = (...a) => { onDom++; return d0.apply(AE, a); };
-  const head = env.ctx.document.head, ap = head.append; try { head.append = (...a) => { appended++; return ap.apply(head, a); }; } catch (_) {}
-  const def = AE.shards.find((x) => x.id === 'checkinDrafts');
-  await def.run();
-  await env.advance(10000);
-  return { env, AE, every, onDom, appended };
-}
-await t('Return: while saving is off it makes no request, draws nothing and starts nothing', async () => {
-  const r = await returnPaused();
-  assert.equal(r.env.requests(/checkins/).length, 0, 'no call to any /checkins route');
-  assert.equal(r.env.requests(/./).length, 0, 'no call at all');
-  assert.equal(r.every, 0, 'no timer loop'); assert.equal(r.onDom, 0, 'no DOM watcher'); assert.equal(r.appended, 0, 'no styles added');
-  assert.equal(r.env.toasts.length, 0, 'no toast');
+await t('Return: never calls the Worker', async () => {
+  const r = await returnEnv({ answers: ['no', 'device', false] });
+  await r.press();
+  await r.AE.checkinDrafts.open(51);
+  assert.equal(r.env.requests(/checkins/).length, 0);
 });
-await t('Return: while saving is off AE.checkinDrafts stays undefined (a scanned label is told Return is off)', async () => {
-  const r = await returnPaused();
-  assert.equal(r.AE.checkinDrafts, undefined);
+await t('Return: a label code opens its arrival; an unknown one does not', async () => {
+  const r = await returnEnv({ pathname: '/', routes: [['GET', /^\/api\/arrivals\/99$/, { status: 404, body: { message: 'Arrival not found' } }]] });
+  const m = 'AER51'.match(r.AE.checkinDrafts.CODE_RE);
+  assert.equal(m[1], '51');
+  assert.equal('AECT5M7YM'.match(r.AE.checkinDrafts.CODE_RE), null);
+  assert.equal(await r.AE.checkinDrafts.open(m[1]), 'opened arrival 51');
+  assert.equal(r.ctx.location.pathname, '/check-in/arrivals/51');
+  assert.equal(await r.AE.checkinDrafts.open(99), 'no such arrival');
+  assert.equal(r.ctx.location.pathname, '/check-in/arrivals/51');
 });
-await t('Return: Settings says plainly that it is paused', () => {
-  const src = readFileSync(path.join(ROOT, 'src/05-settings.js'), 'utf8');
-  assert.match(src, /\['checkinDrafts', 'Return', 'Paused: saved check-ins are off while their storage is being made private\./);
-});
-await t('Return: the paused switch is a single constant set to true', () => {
-  const src = readFileSync(path.join(ROOT, 'src/22-checkin-drafts.js'), 'utf8');
-  assert.equal((src.match(/const SAVING_OFF = true;/g) || []).length, 1);
-  assert.equal((src.match(/if \(SAVING_OFF\) return;/g) || []).length, 1);
+await t('Return: the label is the arrival (AER + its number)', async () => {
+  const r = await returnEnv();
+  const d = r.AE.checkinDrafts.labelFor(R_MOBILITY);
+  assert.equal(d.code, 'AER50'); assert.match(d.line, /^Avery Stone · /);
 });
 
 // ================================================================== Waymark
