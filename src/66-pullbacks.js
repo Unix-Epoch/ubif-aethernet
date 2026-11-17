@@ -337,6 +337,7 @@ AE.shard({
       #${DLG} .hd h2 { margin:0; font-size:22px; font-weight:700; }
       #${DLG} .hd .chip { height:24px; padding:0 10px; border-radius:12px; font-size:12px; font-weight:700; display:inline-flex; align-items:center;
         background:var(--aui-primary-soft, #faecff); color:var(--aui-primary, #8223d2); }
+      #${DLG} .hd .chip[hidden] { display:none; }
       #${DLG} .hd .sg-x { margin-left:auto; }
       #${DLG} .box { border:1px solid var(--aui-outline, #d9d9de); border-radius:12px; padding:16px; margin-bottom:12px; }
       #${DLG} .drop { display:block; border:2px dashed var(--aui-outline, #c6c6ca); border-radius:12px; padding:30px 16px; text-align:center; cursor:pointer;
@@ -393,11 +394,12 @@ AE.shard({
     function open() {
       if (document.getElementById(DLG)) return;
       AE.track('pullbacks');
+      AE.ensureModalCss(); // the dialog styles live with Settings' dialogs
       const body = h('div');
       const chip = h('span', { class: 'chip', hidden: true });
       const hd = h('div', { class: 'hd' }, icon(32), h('h2', null, 'Pullbacks'), chip, h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕'));
       const card = h('div', { class: 'sg sg-card sg-about pb', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Pullbacks' }, hd, body);
-      const scrim = h('div', { class: 'sg sg-about-scrim', id: DLG }, card);
+      const scrim = h('div', { class: 'sg sg-about-scrim', id: DLG, onclick: (e) => { if (e.target === scrim && !busy) close(); } }, card);
       const onKey = (e) => { if (e.key === 'Escape' && !busy) { e.stopPropagation(); close(); } };
       function close() { run++; scrim.remove(); document.removeEventListener('keydown', onKey, true); ui = null; }
       document.addEventListener('keydown', onKey, true);
