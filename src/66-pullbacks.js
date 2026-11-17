@@ -651,17 +651,17 @@ AE.shard({
     const phoneState = (it) => (it.status === 'pending' ? (it.backend_status === 'failed' ? 'failed' : 'pending') : it.status === 'skipped' ? 'skipped' : !it.backend_status ? 'queued'
       : it.backend_status === 'failed' ? 'failed' : it.backend_status === 'skipped-already-marked' ? 'already' : 'marked');
     const RUN_PART = 40;
-    function sendRun() {
+    function sendRun(wake) {
       const L = link();
       if (!L || !S || !S.phone) return;
       const rows = S.items.map((it, i) => [i, String(it.sku), String(it.description), String(it.serial), phoneState(it)]);
       const parts = Math.max(1, Math.ceil(rows.length / RUN_PART));
-      for (let p = 0; p < parts; p++) L.send('pullbacks.run', { run: S.phone, file: S.file, store: P.storeNum(S.store) || String(S.store), part: p, parts, items: rows.slice(p * RUN_PART, (p + 1) * RUN_PART) });
+      for (let p = 0; p < parts; p++) L.send('pullbacks.run', { run: S.phone, file: S.file, store: P.storeNum(S.store) || String(S.store), part: p, parts, items: rows.slice(p * RUN_PART, (p + 1) * RUN_PART) }, { wake: wake && p === 0 });
     }
     function phoneStart() {
       if (!S || !link()) return;
       S.phone = [...crypto.getRandomValues(new Uint8Array(8))].map((x) => x.toString(16).padStart(2, '0')).join('');
-      save(S); sendRun(); setChip();
+      save(S); sendRun(true); setChip();
     }
     function phoneEnd() {
       if (!S || !S.phone) return;

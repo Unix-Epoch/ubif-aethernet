@@ -120,6 +120,17 @@ await test('linked: connects with the link token in the protocol, sends what wai
   assert.deepEqual(gm.get('ae_linkshell_out'), []);
 });
 
+await test('wake: true rides on the frame (live and on resend) so the relay pushes the phone; plain sends carry no flag', async () => {
+  ws.sent.length = 0;
+  const a = L.send('pullbacks.run', { part: 0 }, { wake: true }), b = L.send('pullbacks.run', { part: 1 });
+  await settle();
+  assert.deepEqual(ws.frames().map((f) => [f.id, f.wake]), [[a, true], [b, undefined]]);
+  ws.push({ t: 'hello', peer: false, seen: null }); await settle();
+  assert.deepEqual(ws.frames().slice(2).map((f) => [f.id, f.wake]), [[a, true], [b, undefined]], 'resent with the flag');
+  ws.push({ t: 'ack', ids: [a, b] }); await settle();
+  assert.deepEqual(gm.get('ae_linkshell_out'), []);
+});
+
 await test('a phone message is applied once and acked every time; one that does not open is dropped (and acked)', async () => {
   const got = [];
   L.on('pullbacks.scan', (body, meta) => { got.push([body, meta.id]); });

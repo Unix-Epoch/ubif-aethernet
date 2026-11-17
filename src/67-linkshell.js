@@ -22,7 +22,8 @@
     AE.linkshell.linked()             → { linkId, store, phoneName } | null
     AE.linkshell.state()              → { linked, online, peer, seen }  (online: this browser is connected; peer: the phone is)
     AE.linkshell.on(kind, fn)         fn(body, { id, kind }) for each new message of that kind; one handler per kind
-    AE.linkshell.send(kind, body)     queue a sealed message for the phone (returns its id)
+    AE.linkshell.send(kind, body, { wake })  queue a sealed message for the phone (returns its id); wake: true also pushes a
+                                      notification to the phone, for a message that asks it to start something
     AE.linkshell.onState(fn)          fn(state) on every change; returns an unsubscribe function
     AE.linkshell.wake()               connect now if linked (a shard that is about to need the phone)
     AE.linkshell.open()               the Linkshell dialog (link a phone, or the linked phone)
@@ -147,16 +148,18 @@ AE.linkshell = (() => {
     for (const m of outbox()) {
       if (!ws || ws.readyState !== 1) return;
       const s = await seal(key, l.linkId, 'pc', m.id, m.kind, m.body);
-      ws.send(JSON.stringify({ t: 'msg', id: m.id, kind: m.kind, iv: s.iv, ct: s.ct }));
+      ws.send(JSON.stringify(frame(m, s)));
     }
   }
-  function send(kind, body) {
-    const id = newId();
-    const o = outbox(); o.push({ id, kind, body, at: Date.now() }); setOutbox(o);
+  const frame = (m, s) => Object.assign({ t: 'msg', id: m.id, kind: m.kind, iv: s.iv, ct: s.ct }, m.wake ? { wake: true } : {});
+  function send(kind, body, opts) {
+    const id = newId(), m = { id, kind, body, at: Date.now() };
+    if (opts && opts.wake) m.wake = true;
+    const o = outbox(); o.push(m); setOutbox(o);
     if (ws && ws.readyState === 1) {
       idle();
       const l = getLink();
-      if (l) keyOf(l).then((key) => seal(key, l.linkId, 'pc', id, kind, body)).then((s) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'msg', id, kind, iv: s.iv, ct: s.ct })); })
+      if (l) keyOf(l).then((key) => seal(key, l.linkId, 'pc', id, kind, body)).then((s) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(frame(m, s))); })
         .catch((e) => console.error('[Linkshell]', e));
     } else wake(true);
     return id;

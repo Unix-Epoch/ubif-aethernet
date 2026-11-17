@@ -48,7 +48,8 @@ The app talks to the **tracker Worker**, not the admin site. Each phone is a reg
 | `GET /v1/agents/me` | built | above; also the approval poll |
 | `GET /v1/agents/m/home?store=<id>\|all[&fresh=1]` | built | Home's numbers, below |
 | `/v1/agents/m/wo…` | built | work order lookup and sealed detail, see `MOBILE-API-wo.md` (`src/mobile-wo.js`) |
-| `/v1/agents/m/alerts…` | built | feed, poll, read marks, settings, see `MOBILE-API-alerts.md` (`src/mobile-alerts.js`); there is no push service (`/push…` is 404) |
+| `/v1/agents/m/alerts…` | built | feed, poll, read marks, settings, see `MOBILE-API-alerts.md` (`src/mobile-alerts.js`); alerts are polled, not pushed |
+| `/v1/agents/m/push` | built | `POST { token, platform }` saves this phone's FCM token, `DELETE` clears it (`src/push.js`); used for Linkshell wakes |
 | `/v1/agents/m/prefs…` | built | device details, rename, forget this phone, see `MOBILE-API-prefs.md` (`src/mobile-prefs.js`) |
 | `/v1/agents/m/retrace…` | built | inventory lookup: items, item, label, purchase orders, see `MOBILE-API-retrace.md` (`src/mobile-retrace.js`) |
 | `/v1/agents/m/waymark…` | built | Waymark writes: the store's tag list, tag on / off, push or remove a follow-up, see `MOBILE-API-waymark.md` (`src/mobile-waymark.js`) |
