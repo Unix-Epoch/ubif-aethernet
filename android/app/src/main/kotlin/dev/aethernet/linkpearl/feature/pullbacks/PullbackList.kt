@@ -14,7 +14,7 @@ import java.util.zip.ZipOutputStream
  *
  * Input: the PowerBI "Pullback Serials" export (.xlsx or .csv): Store, SKU, Description, Serial, Return Units, Return Value,
  * Consignment Status (Monty Flag when present). The header row is the first of the first 15 with a Serial column (`'Unique Serials'[Serial]`
- * counts), rows without a serial are dropped (Total, "Applied filters"), HTML entities are decoded, items are sorted by Description.
+ * counts), rows without a serial are dropped (Total, "Applied filters"), HTML entities are decoded, items are put in scan order ([scanOrder]).
  * Output: the script's "Scan Results" sheet: the input columns + Scanned Serial, Match, Status, Scanned At, Backend Status, Backend Message,
  * Backend At, rows filled green (matched), red (mismatch), yellow (overridden, skipped, already marked).
  *

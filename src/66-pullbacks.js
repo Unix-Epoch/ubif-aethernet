@@ -5,7 +5,7 @@
   Monty Flag when present). The header row is found in the first 15 rows (the first one with a Serial column; headers like
   'Unique Serials'[Serial] match Serial), rows with no serial are dropped (the Total and "Applied filters" rows), HTML entities are
   decoded (&quot;), and only the rows for Portal's current store are kept (the "#914" in the Store text). Items are sorted by
-  Description so a model's parts sit together. When the file has no rows for this store, a store list shows instead.
+  part type, then description and SKU (byDesc), so similar parts sit together. When the file has no rows for this store, a store list shows instead.
 
   Scanning: one item at a time. A scan that matches the expected serial (trimmed, case-insensitive) marks it in Portal right away:
     POST /api/boh/inventory/<scanned serial>/mark-defective-broken
