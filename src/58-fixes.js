@@ -973,10 +973,10 @@ AE.shard({
         const go = (url) => { history.pushState(null, '', url); dispatchEvent(new PopStateEvent('popstate', { state: null })); };
 
         async function act(scan, why, devTools) {
-          // A Return label (AEC + 6): reopens a saved incomplete check-in, from any page (it can't be data entry).
+          // A Return label (AER + the arrival number): opens the arrival, from any page (it can't be data entry).
           const aec = AE.checkinDrafts && scan.match(AE.checkinDrafts.CODE_RE);
           const wo = !aec && scan.match(WO_RE), item = !aec && scan.match(ITEM_RE);
-          if (!aec && /^AEC[A-Z0-9]{6}$/i.test(scan)) return 'a Return label, but Return is off';
+          if (!aec && /^AER\d+$/i.test(scan)) return 'a Return label, but Return is off';
           // A 15-digit IMEI that passes the check digit, or a 16-digit IMEI/SV, opens Decipher (not on check-in, where a scan is data entry).
           const imei = !aec && !wo && !item && AE.decipher && AE.decipher.open && AE.decipher.scannable(scan);
           if (!aec && !wo && !item && !imei) return 'not a WO or item label';
@@ -988,7 +988,7 @@ AE.shard({
             AE.decipher.open({ imei: scan, from: 'scan' });
             return 'opened Decipher';
           }
-          if (aec) { AE.track('fixes:scanReturn'); return AE.checkinDrafts.resume(aec[1].toUpperCase()); }
+          if (aec) { AE.track('fixes:scanReturn'); return AE.checkinDrafts.open(aec[1]); }
           if (wo) {
             if (scanPage()) return 'scans are data entry on this page';
             const id = wo[1];
