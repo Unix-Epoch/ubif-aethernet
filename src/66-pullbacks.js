@@ -397,7 +397,7 @@ AE.shard({
       AE.ensureModalCss(); // the dialog styles live with Settings' dialogs
       const body = h('div');
       const chip = h('span', { class: 'chip', hidden: true });
-      const hd = h('div', { class: 'hd' }, icon(32), h('h2', null, 'Pullbacks'), chip, h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕'));
+      const hd = h('div', { class: 'hd ae-head' }, icon(32), h('h2', null, 'Pullbacks'), chip, h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕'));
       const card = h('div', { class: 'sg sg-card sg-about pb', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Pullbacks' }, hd, body);
       const scrim = h('div', { class: 'sg sg-about-scrim', id: DLG, onclick: (e) => { if (e.target === scrim && !busy) close(); } }, card);
       const onKey = (e) => { if (e.key === 'Escape' && !busy) { e.stopPropagation(); close(); } };

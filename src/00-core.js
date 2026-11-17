@@ -39,7 +39,7 @@ const AE = (() => {
     // Swiftcast: offer Dualcast (all of a device's cleanings at once); refreshLabor: null = follow
     // AE.REFRESH_LABOR_DEFAULT (only a user's own choice is stored, so the default can change in a release).
     autoClose: { dualcast: true, refreshLabor: null },
-    glamour: { theme: 'portal', custom: [], // custom: [{ id, name, bg, fg, accent, custom: true }]
+    glamour: { theme: 'portal', custom: [], headers: true, // custom: [{ id, name, bg, fg, accent, custom: true }]; headers: header bands follow the theme
       login: { image: '', blank: false, fill: false, mark: true } }, // login page (01b-login.js); image = data URL; blank = no picture
     ...(AE_DEMO ? {} : {
       printLabels: { delayMs: 900 },
@@ -611,13 +611,32 @@ const AE = (() => {
   .sg-btn.sg-lg { height:48px; padding:0 24px; font-size:16px; }
   .sg-btn.sg-primary { background:var(--aui-primary, #8223d2); border-color:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); }
   .sg-btn.sg-primary:hover { filter: brightness(.92); }
-  .sg-btn.sg-danger { background:var(--aui-status-error, #b91a24); border-color:var(--aui-status-error, #b91a24); color:#fff; }
+  .sg-btn.sg-danger { background:var(--aui-status-error, #b91a24); border-color:var(--aui-status-error, #b91a24); color:var(--aui-status-on-error, #fff); }
   .sg-btn.sg-danger:hover { filter: brightness(.92); }
   .sg-fab { display:inline-flex; align-items:center; justify-content:center; flex:none; padding:0; border:0; border-radius:50%;
     background:var(--aui-primary, #8223d2); cursor:pointer; }
   .sg-fab:hover { filter: brightness(.92); } .sg-fab:disabled { opacity:.5; cursor:default; }
-  .sg-card { background:var(--aui-surface, #fff); border:1px solid var(--aui-outline, #c6c6ca); border-radius:16px;
-    box-shadow:0 8px 28px rgba(12,14,17,.18); }
+  /*
+    Surfaces. Header bands (.ae-head) use the fill of Portal's Quick actions tiles: the pastel wash in light mode,
+    the dark brand gradient in dark mode (with a gold rule and gold-rimmed icons). Glamour overrides the --ae-* values
+    from its theme when "Headers follow the theme" is on (50-glamour.js headTokens).
+  */
+  :root { --ae-head:linear-gradient(105.7deg, #faecff -0.59%, #effcff 100%); --ae-head-fg:var(--aui-on-surface, #1a1c1e); --ae-head-soft:var(--aui-on-surface-soft, #5d5e61);
+    --ae-head-rule:rgba(130,35,210,.08); --ae-edge:rgba(130,35,210,.10); --ae-card:var(--aui-surface, #fff);
+    --ae-lift:0 1px 2px rgba(12,14,17,.06), 0 14px 36px rgba(56,20,110,.14);
+    --ae-icon-ring:0 0 0 1px rgba(0,0,0,.25), 0 4px 12px rgba(130,35,210,.30); --ae-glow:0 4px 14px rgba(130,35,210,.28); }
+  body.asurion-dark, body.partner-dark { --ae-head:linear-gradient(105.7deg, #370f5b 0%, #001a42 100%); --ae-head-fg:#fff; --ae-head-soft:#d9cdf5;
+    --ae-head-rule:rgba(201,167,90,.55); --ae-edge:var(--aui-outline-soft, #4a454e); --ae-card:var(--aui-surface, #130f17);
+    --ae-lift:0 2px 6px rgba(0,0,0,.4), 0 18px 40px rgba(0,0,0,.55);
+    --ae-icon-ring:0 0 0 1px #1a1a1f, 0 0 0 2px #c9a75a; --ae-glow:0 4px 16px rgba(221,183,255,.22); }
+  .sg-card { background:var(--ae-card); border:1px solid var(--ae-edge); border-radius:12px; box-shadow:var(--ae-lift); }
+  /* A card's header row, filled edge to edge (fitHeads sets the bleed from the card's padding). */
+  .ae-head { background:var(--ae-head); color:var(--ae-head-fg); box-shadow:inset 0 -1px 0 var(--ae-head-rule); }
+  .ae-head .sg-soft, .ae-head .sg-clock, .ae-head .sg-x { color:var(--ae-head-soft); }
+  .ae-head .sg-wordmark { color:var(--ae-head-fg); }
+  .sg-card .sg-btn:not(.sg-lg):not(.sg-primary):not(.sg-danger) { border-color:transparent; background:var(--aui-primary-soft, #faecff); color:var(--aui-on-primary-soft, #590099); font-weight:700; }
+  .sg-card .sg-btn:not(.sg-lg):not(.sg-primary):not(.sg-danger):hover { filter:brightness(.97); }
+  .sg-btn.sg-primary { box-shadow:var(--ae-glow); }
   .sg-panel { position:fixed; right:20px; bottom:20px; z-index:2147483646; width:340px; padding:16px; font-size:14px; line-height:1.4; }
   .sg-panel-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
   .sg-panel-title { flex:1; font-size:16px; font-weight:700; }
@@ -654,7 +673,10 @@ const AE = (() => {
   .sg-orb.done:hover .dismiss { display:block; }
   @media (prefers-reduced-motion: reduce) { .sg-spell.ready, .sg-spell.ready .glint, .sg-spell .ants .run { animation:none; } }
   .sg-soft { color: var(--aui-on-surface-soft, #5d5e61); font-size:12px; }
-  .sg-x { background:none; border:0; padding:4px; cursor:pointer; color:var(--aui-on-surface-soft, #5d5e61); font-size:18px; line-height:1; }
+  .sg-x { display:inline-flex; align-items:center; justify-content:center; flex:none; width:32px; height:32px; background:none; border:0; border-radius:50%; padding:0; cursor:pointer;
+    color:var(--aui-on-surface-soft, #5d5e61); font-size:18px; line-height:1; }
+  .sg-x:hover { background:color-mix(in srgb, currentColor 12%, transparent); }
+  .sg-x:focus-visible { outline:2px solid var(--aui-primary, #8223d2); outline-offset:1px; }
   .sg-steps { list-style:none; margin:0 0 12px; padding:0; max-height:240px; overflow:auto; }
   .sg-steps li { display:flex; gap:8px; align-items:baseline; padding:3px 0; animation: sg-in .2s ease-out; }
   .sg-steps li::before { content:"✓"; color:var(--aui-status-success, #136d31); font-weight:700; flex:none; }
@@ -680,6 +702,7 @@ const AE = (() => {
   .sg-menu-ic { display:inline-flex; flex:none; align-items:center; justify-content:center; line-height:0; color:var(--aui-primary, #8223d2); }
   .sg-menu-ic svg, .sg-menu-ic img { width:100%; height:100%; }
   .sg-aicon { display:inline-block; flex:none; border-radius:22%; vertical-align:middle; box-shadow:0 0 0 1px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.25); }
+  .sg-card .sg-aicon { box-shadow:var(--ae-icon-ring); }
   @keyframes sg-spin { to { transform: rotate(360deg); } }
   @keyframes sg-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
   .sg-hold { display:flex; gap:6px; align-items:flex-start; margin:0 0 10px; padding:6px 9px; border-radius:8px; font-size:12px;
@@ -712,6 +735,29 @@ const AE = (() => {
     s.id = 'sg-core-css';
     s.textContent = CSS;
     addEarly(s);
+    Promise.resolve().then(() => onDom(fitHeads)); // after the core has finished loading
+  }
+
+  /*
+    Header bands: a card's first child with .ae-head is stretched to the card's edges, whatever padding that card
+    has, keeping its own spacing inside. Runs from the DOM watcher, which fires before the next paint.
+  */
+  function fitHeads() {
+    for (const el of document.querySelectorAll('.sg-card > .ae-head:first-child:not([data-ae-fit])')) {
+      const card = el.parentElement;
+      if (!card.isConnected) continue;
+      el.setAttribute('data-ae-fit', '');
+      const c = getComputedStyle(card), e = getComputedStyle(el);
+      const pt = parseFloat(c.paddingTop) || 0, pr = parseFloat(c.paddingRight) || 0, pl = parseFloat(c.paddingLeft) || 0;
+      const bw = parseFloat(c.borderTopWidth) || 0, rl = Math.max(0, (parseFloat(c.borderTopLeftRadius) || 0) - bw), rr = Math.max(0, (parseFloat(c.borderTopRightRadius) || 0) - bw);
+      const below = Math.max(parseFloat(e.marginBottom) || 0, 12);
+      Object.assign(el.style, {
+        marginTop: -pt + 'px', marginLeft: -pl + 'px', marginRight: -pr + 'px', marginBottom: below + 'px',
+        paddingTop: Math.max(pt, 12) + (parseFloat(e.paddingTop) || 0) + 'px', paddingBottom: Math.max(12, parseFloat(e.paddingBottom) || 0) + 'px',
+        paddingLeft: pl + (parseFloat(e.paddingLeft) || 0) + 'px', paddingRight: pr + (parseFloat(e.paddingRight) || 0) + 'px',
+        borderRadius: rl + 'px ' + rr + 'px 0 0',
+      });
+    }
   }
 
   // Minimal element builder: h('div', {class:'x', onclick}, child, 'text')
@@ -847,7 +893,7 @@ const AE = (() => {
     const msg = h('div', { class: 'sg-msg', style: 'display:none' });
     const actions = h('div', { class: 'sg-actions' });
     const panel = h('div', { class: 'sg sg-card sg-panel' + (iconId ? ' sg-spellbox' : ''), 'data-sg-title': title },
-      h('div', { class: 'sg-panel-head' }, head, titleEl, clk, shrink && (tip ? h('span', { class: 'sg-min-wrap' }, shrink, tip) : shrink), close),
+      h('div', { class: 'sg-panel-head ae-head' }, head, titleEl, clk, shrink && (tip ? h('span', { class: 'sg-min-wrap' }, shrink, tip) : shrink), close),
       holdNote, body, steps, msg, actions);
     document.body.appendChild(panel);
     const release = hold ? holdPage(() => {
@@ -954,7 +1000,7 @@ const AE = (() => {
       const ok = choices ? null : h('button', { type: 'button', class: 'sg-btn sg-lg ' + (danger ? 'sg-danger' : 'sg-primary'), onclick: () => done(true) }, confirmLabel);
       const cancel = cancelLabel === null ? null : h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => done(no) }, cancelLabel);
       const card = h('div', { class: 'sg sg-card sg-confirm', role: 'alertdialog', 'aria-modal': 'true' },
-        iconId ? h('h2', { style: 'display:flex;align-items:center;gap:10px' }, h('span', { html: actionIcon(iconId, 28), style: 'line-height:0;flex:none' }), title) : h('h2', null, title),
+        iconId ? h('h2', { class: 'ae-head', style: 'display:flex;align-items:center;gap:10px' }, h('span', { html: actionIcon(iconId, 28), style: 'line-height:0;flex:none' }), title) : h('h2', { class: 'ae-head' }, title),
         message ? h('div', { html: message }) : null,
         warning ? h('div', { class: 'sg-warn' }, warning) : null,
         choices ? h('div', { class: 'sg-actions sg-choices' }, ...picks, cancel) : h('div', { class: 'sg-actions' }, cancel, ok));

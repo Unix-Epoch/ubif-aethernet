@@ -221,7 +221,7 @@ AE.feedback = (() => {
       }
     } }, 'Send');
     const card = h('div', { class: 'sg sg-card sg-fb', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Send feedback' },
-      h('div', { class: 'head' }, h('span', { style: 'color:var(--aui-primary,#8223d2);line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Send feedback'),
+      h('div', { class: 'head ae-head' }, h('span', { style: 'color:var(--aui-primary,#8223d2);line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Send feedback'),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
       h('div', { class: 'kinds' },
         h('button', { type: 'button', 'data-k': 'bug', class: 'on', onclick: () => setKind('bug') }, '🐞 Report a bug'),
@@ -247,7 +247,7 @@ AE.feedback = (() => {
     const body = h('div', { class: 'body' });
     const tabs = h('div', { class: 'tabs', role: 'tablist' });
     const card = h('div', { class: 'sg sg-card sg-adm', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' admin' },
-      h('div', { class: 'head' }, h('span', { style: 'color:var(--aui-primary,#8223d2);line-height:0', html: icon('aetheryte', 28) }), h('h2', null, AE_NAME + ' admin'),
+      h('div', { class: 'head ae-head' }, h('span', { style: 'color:var(--aui-primary,#8223d2);line-height:0', html: icon('aetheryte', 28) }), h('h2', null, AE_NAME + ' admin'),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
       tabs, body);
     const close = modal('sg-admin', card);

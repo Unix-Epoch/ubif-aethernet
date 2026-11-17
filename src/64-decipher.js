@@ -235,7 +235,7 @@ AE.shard({
       const pop = h('div', { class: 'sg sg-card pop', role: 'note' },
         'Guess from the Osmocom TAC database (CC BY-SA 3.0, © Harald Welte and contributors). ', h('a', { href: 'https://tacdb.osmocom.org/', target: '_blank', rel: 'noopener noreferrer' }, 'tacdb.osmocom.org'));
       pop.hidden = true; infoBtn.hidden = true;
-      const hd = h('div', { class: 'hd' }, icon(32), h('h2', null, 'Decipher'), infoBtn, h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕'));
+      const hd = h('div', { class: 'hd ae-head' }, icon(32), h('h2', null, 'Decipher'), infoBtn, h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕'));
       const card = h('div', { class: 'sg sg-card sg-about dc', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Decipher', onclick: () => { if (st.popup) { st.popup = false; drawPop(); } } },
         hd, pop, h('div', { class: 'sg-soft' }, "Got an IMEI? Type it or scan it and we'll tell you what it is."),
         h('label', { class: 'f' }, 'IMEI'),

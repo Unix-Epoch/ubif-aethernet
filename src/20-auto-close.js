@@ -380,7 +380,7 @@ AE.shard({
       const [iconId, name] = castOf(items.length);
       const names = items.map((it) => AE.CLEANING_PROGRAMS[it.programId] || 'Cleaning');
       const bubble = h('div', { id: INTRO_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': name },
-        h('div', { class: 'hd' }, h('span', { html: AE.actionIcon(iconId, 28), style: 'line-height:0' }), h('b', null, name)),
+        h('div', { class: 'hd ae-head' }, h('span', { html: AE.actionIcon(iconId, 28), style: 'line-height:0' }), h('b', null, name)),
         h('p', null, 'This device has ' + items.length + ' cleanings waiting (' + names.join(' + ') + '). Click to create them all, one after the other, after one confirmation.'),
         h('p', null, h('b', null, 'Right-click'), ' to close ', h('b', null, 'only this cleaning'), ' instead.'),
         h('p', { class: 'sg-soft' }, 'With one cleaning waiting, this button is Swiftcast; with three or more, Triplecast.'),

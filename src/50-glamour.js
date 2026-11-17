@@ -66,6 +66,22 @@ AE.glamour = (() => {
     };
   }
 
+  /*
+    Aethernet's header bands and card depth (core --ae-* tokens), built from the theme so a tinted page doesn't get
+    Portal's purple headers. Light: the accent tint fading into the page colour. Dark: the accent over the page colour,
+    with the rule and icon rings in the accent where Portal's dark mode uses gold. Off ("Headers follow the theme"
+    unticked): the core's Portal colours stay.
+  */
+  function headTokens({ bg, fg, accent }) {
+    const dark = lum(bg) < 0.18, soft = mix(bg, accent, dark ? 0.28 : 0.12);
+    const common = { 'head-fg': fg, 'head-soft': mix(fg, bg, 0.32) };
+    if (!dark) return { ...common, head: 'linear-gradient(105.7deg, ' + soft + ' 0%, ' + mix(soft, bg, 0.65) + ' 100%)',
+      'head-rule': accent + '1f', edge: accent + '1f', lift: '0 1px 2px rgba(12,14,17,.06), 0 14px 36px ' + accent + '29',
+      'icon-ring': '0 0 0 1px rgba(0,0,0,.25), 0 4px 12px ' + accent + '52', glow: '0 4px 14px ' + accent + '4d' };
+    return { ...common, head: 'linear-gradient(105.7deg, ' + mix(bg, accent, 0.34) + ' 0%, ' + mix(mix(bg, '#000000', 0.45), accent, 0.10) + ' 100%)',
+      'head-rule': accent + '8c', 'icon-ring': '0 0 0 1px #000, 0 0 0 2px ' + accent + 'bf', glow: '0 4px 16px ' + accent + '40' };
+  }
+
   const find = (cfg, id) => PRESETS.find((p) => p.id === id) || (cfg.custom || []).find((c) => c.id === id);
 
   /*
@@ -180,7 +196,9 @@ AE.glamour = (() => {
     // Portal sets its tokens on :root and on .asurion-light/.asurion-dark
     // (the <body> class), so override on all three.
     const css = ':root, .asurion-light, .asurion-dark, .partner-light, .partner-dark {' + vars + '}'
-      + 'body { background:var(--aui-sub-surface) !important; color-scheme:' + (lum(t.bg) < 0.18 ? 'dark' : 'light') + '; }';
+      + 'body { background:var(--aui-sub-surface) !important; color-scheme:' + (lum(t.bg) < 0.18 ? 'dark' : 'light') + '; }'
+      + (cfg.headers === false ? '' : 'body, body.asurion-light, body.asurion-dark, body.partner-light, body.partner-dark {'
+        + Object.entries(headTokens(t)).map(([k, v]) => '--ae-' + k + ':' + v + ' !important;').join('') + '}');
     const style = el || h('style', { id: STYLE_ID });
     style.textContent = css;
     GM_setValue(EARLY_KEY, css); // painted at page start next time (AE.loginPage.early, 01b-login.js)
@@ -213,6 +231,7 @@ AE.glamour = (() => {
     color:#fff; font-size:10px; padding-bottom:4px; text-align:center; }
   .sg-glam-login .btns { display:flex; flex-wrap:wrap; gap:6px; }
   .sg-glam-login .btns .sg-btn { flex:none; height:30px; font-size:13px; }
+  .sg-glam-chk { display:flex; gap:8px; align-items:center; margin:10px 0 4px; font-size:13px; cursor:pointer; }
   .sg-glam-login label.chk { display:flex; gap:8px; align-items:center; margin-top:8px; font-size:13px; cursor:pointer; }
   `;
 
@@ -351,7 +370,8 @@ AE.glamour = (() => {
         ...(editingTheme ? [edit(editingTheme)] : []));
     }
     render();
-    return h('div', null, root, loginEditor(s, repaint));
+    const headers = h('input', { type: 'checkbox', checked: s.glamour.headers !== false, onchange: (e) => { s.glamour.headers = e.target.checked; apply(s.glamour); repaint(); } });
+    return h('div', null, root, h('label', { class: 'sg-glam-chk' }, headers, 'Headers follow the theme'), loginEditor(s, repaint));
   }
 
   const summary = (cfg) => (find(cfg, cfg.theme) || PRESETS[0]).name;
