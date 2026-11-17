@@ -81,6 +81,13 @@ Identical to the admin site's `/api/m/home` (same code, `src/mobile.js`), limite
 - Money is dollars (numbers, 2 decimals). Times are ISO-8601 UTC strings. "Today" and every `days` entry are **store days** in `tz` (not the phone's zone and not UTC; the day changes at local midnight, 25 h on the DST day). Format "As of 4:12 PM" in `tz`.
 - No stores approved: `200 {"v":1,"stores":[],"empty":true}`.
 
+## Linkshell (phone ↔ one Aethernet browser)
+Full description, frames and limits: top of `src/linkshell.js`. Phone routes (Bearer as usual):
+- `POST /v1/agents/m/linkshell/pair` `{ pairId, code, publicJwk }` (from the browser's QR `LS1.<store>.<pairId>.<code>`) → `{ linkId, store, pcName, pcJwk }`; 404 expired, 403 no access to the store, 409 scanned by another phone. The link exists once the browser presses Link: it then shows in `links`.
+- `GET /v1/agents/m/linkshell/links` → `{ links: [{ id, store, pcName, createdAt, usedAt }] }`
+- `POST /v1/agents/m/linkshell/unlink` `{ linkId }`
+- `GET /v1/linkshell/connect?link=<id>` WebSocket, `Sec-WebSocket-Protocol: linkshell, ph.<agent id>.<agent token>` (no app key). Bodies are sealed end to end with the link key (ECDH P-256 + HKDF-SHA256, AES-256-GCM); Linkpearl's side is `feature/linkshell`.
+
 ## Sealed data and wrapped store keys (exact crypto, from `src/crypto.js`)
 
 Everything customer-related is sealed on the server side of the wire: the server never holds a readable copy. A phone opens it in two hops.

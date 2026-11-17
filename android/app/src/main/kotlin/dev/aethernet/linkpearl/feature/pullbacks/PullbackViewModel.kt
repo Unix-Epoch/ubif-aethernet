@@ -19,8 +19,9 @@ sealed interface PbUi {
     data class Start(val saved: PbSaved? = null, val error: String? = null) : PbUi
     /** A file is open: pick the store. [stores] = (store text, items), the phone's own stores first. */
     data class Stores(val file: String, val stores: List<Pair<String, Int>>, val selected: String?, val value: Double?) : PbUi
-    data class Scanning(val s: PbSession) : PbUi
-    data class Done(val s: PbSession) : PbUi
+    /** [pc]: on a run joined from Aethernet, whether the browser is connected now; null otherwise. */
+    data class Scanning(val s: PbSession, val pc: Boolean? = null) : PbUi
+    data class Done(val s: PbSession, val pc: Boolean? = null) : PbUi
 }
 
 /** The run saved on this phone, for the Start screen's Resume. */
@@ -46,13 +47,15 @@ class FilePbStore(private val dir: File) : PbStore {
         val h = m.optJSONArray("history") ?: JSONArray()
         val s = PbSession(m.getString("file"), m.getString("store"), list)
         val idx = if (m.has("idx") && !m.isNull("idx")) m.getInt("idx").takeIf { it in list.items.indices && list.items[it].status == PbStatus.Pending } else null
-        s.copy(idx = idx ?: s.idx, history = (0 until h.length()).map { h.getInt(it) }.filter { it in list.items.indices })
+        val link = if (m.has("link") && !m.isNull("link")) m.getString("link") else null
+        s.copy(idx = idx ?: s.idx, history = (0 until h.length()).map { h.getInt(it) }.filter { it in list.items.indices }, link = link)
     }.getOrNull()
     override fun save(s: PbSession) {
         dir.mkdirs()
         File(dir, "session.xlsx.tmp").apply { writeBytes(Pullbacks.results(s.list)); renameTo(xlsx) }
         File(dir, "session.json.tmp").apply {
-            writeText(JSONObject().put("file", s.file).put("store", s.store).put("idx", s.idx ?: JSONObject.NULL).put("history", JSONArray(s.history.takeLast(200))).toString())
+            writeText(JSONObject().put("file", s.file).put("store", s.store).put("idx", s.idx ?: JSONObject.NULL).put("history", JSONArray(s.history.takeLast(200)))
+                .put("link", s.link ?: JSONObject.NULL).toString())
             renameTo(meta)
         }
     }
@@ -65,18 +68,39 @@ class MemoryPbStore(var saved: PbSession? = null) : PbStore {
     override fun clear() { saved = null }
 }
 
-/** [myStores] = the store numbers this phone is approved for (their rows come first and the first is picked). */
+/**
+ * [myStores] = the store numbers this phone is approved for (their rows come first and the first is picked). [link] = Pullbacks over
+ * Linkshell: a run joined on the Linkshell screen opens here, and on such a run each scan, skip and undo also goes to the browser.
+ */
 class PullbackViewModel(
     private val store: PbStore,
     private val myStores: List<Int>,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val link: PullbackLink? = null,
 ) : ViewModel() {
     private val saver = io.limitedParallelism(1) // saves land in order
     private val _state = MutableStateFlow<PbUi>(PbUi.Start())
     val state: StateFlow<PbUi> = _state.asStateFlow()
     private var opened: Pair<String, PbList>? = null
 
-    init { viewModelScope.launch { _state.value = PbUi.Start(withContext(io) { store.load() }?.let(::savedOf)) } }
+    init {
+        viewModelScope.launch {
+            val joined = link?.takeJoin()
+            if (joined != null) { link?.wake(); begin(PbSession.fromRun(joined)); return@launch }
+            _state.value = PbUi.Start(withContext(io) { store.load() }?.let(::savedOf))
+        }
+        link?.let { l ->
+            viewModelScope.launch { l.results.collect { r -> session()?.takeIf { it.link == r.run }?.let { set(it.pcResult(r.i, r.state, r.message)) } } }
+            viewModelScope.launch { l.ended.collect { run -> session()?.takeIf { it.link == run }?.let { set(it.copy(link = null)) } } }
+            viewModelScope.launch { l.offer.collect { run -> if (run != null) session()?.takeIf { it.link == run.run }?.let { set(it.reconcile(run)) } } }
+            viewModelScope.launch { l.state.collect { session()?.let { s -> _state.value = ui(s) } } }
+        }
+    }
+
+    private fun ui(s: PbSession): PbUi {
+        val pc = if (s.link != null && link != null) link.state.value.peer else null
+        return if (s.complete) PbUi.Done(s, pc) else PbUi.Scanning(s, pc)
+    }
 
     private fun savedOf(s: PbSession) = PbSaved(s.file, s.store, s.total - s.pending, s.total)
 
@@ -117,17 +141,41 @@ class PullbackViewModel(
     private fun begin(s: PbSession) { opened = null; set(s) }
 
     private fun set(s: PbSession) {
-        _state.value = if (s.complete) PbUi.Done(s) else PbUi.Scanning(s)
+        _state.value = ui(s)
         viewModelScope.launch(saver) { store.save(s) }
     }
     private fun session(): PbSession? = when (val u = _state.value) { is PbUi.Scanning -> u.s; is PbUi.Done -> u.s; else -> null }
 
-    fun scan(v: String) { val s = (_state.value as? PbUi.Scanning)?.s ?: return; set(s.scan(v)) }
-    fun acceptAnyway() { val s = (_state.value as? PbUi.Scanning)?.s ?: return; set(s.acceptAnyway()) }
-    fun skip() { val s = (_state.value as? PbUi.Scanning)?.s ?: return; set(s.skip()) }
-    fun undo() { val s = session() ?: return; if (s.history.isNotEmpty()) set(s.undo()) }
+    fun scan(v: String) { val s = (_state.value as? PbUi.Scanning)?.s ?: return; tell(s, s.scan(v), override = false) }
+    fun acceptAnyway() { val s = (_state.value as? PbUi.Scanning)?.s ?: return; tell(s, s.acceptAnyway(), override = true) }
+    fun skip() {
+        val s = (_state.value as? PbUi.Scanning)?.s ?: return
+        val i = s.idx ?: return
+        s.link?.let { link?.skip(it, i) }
+        set(s.skip())
+    }
+    fun undo() {
+        val s = session() ?: return
+        val j = s.history.lastOrNull() ?: return
+        s.link?.let { link?.undo(it, j) }
+        set(s.undo())
+    }
+
+    /** A scan that moved on: on a linked run it goes to the browser too. */
+    private fun tell(before: PbSession, after: PbSession, override: Boolean) {
+        val run = before.link
+        if (run == null || link == null || after.history.size <= before.history.size) return set(after)
+        val i = after.history.last()
+        link.scan(run, i, after.items[i].scanned, override)
+        set(after.sent(i))
+    }
     fun scanSkipped() { val s = session() ?: return; set(s.scanSkipped()) }
-    fun resume() = viewModelScope.launch { withContext(io) { store.load() }?.let { _state.value = if (it.complete) PbUi.Done(it) else PbUi.Scanning(it) } }
+    fun resume() = viewModelScope.launch {
+        withContext(io) { store.load() }?.let { s ->
+            s.link?.let { run -> link?.rejoin(run) } // the browser sends the list again, and its answers
+            _state.value = ui(s)
+        }
+    }
     fun discard() { viewModelScope.launch(saver) { store.clear() }; _state.value = PbUi.Start() }
     fun changeFile() = viewModelScope.launch { opened = null; _state.value = PbUi.Start(withContext(io) { store.load() }?.let(::savedOf)) }
     fun newFile() = discard()

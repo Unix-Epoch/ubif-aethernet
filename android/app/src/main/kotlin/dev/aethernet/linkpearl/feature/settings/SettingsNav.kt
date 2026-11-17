@@ -72,6 +72,10 @@ fun SettingsRoute(navigate: ((String) -> Unit)? = null, modifier: Modifier = Mod
             onAppearance = vm::setAppearance,
             onUpdate = updates::update,
             onOpenAdmin = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ADMIN_SITE))) },
+            onLinkshell = {
+                if (navigate != null) navigate(Routes.LINKSHELL)
+                else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Routes.deepLink(Routes.LINKSHELL))).setPackage(context.packageName))
+            },
             onAskForget = vm::askForget, onCancelForget = vm::cancelForget, onConfirmForget = vm::confirmForget,
         ),
     )

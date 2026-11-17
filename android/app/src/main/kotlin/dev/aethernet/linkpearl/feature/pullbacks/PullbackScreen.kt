@@ -103,7 +103,7 @@ fun PullbackScreen(
             when (state) {
                 is PbUi.Start -> StartBody(state, actions)
                 is PbUi.Stores -> StoresBody(state, actions)
-                is PbUi.Scanning -> ScanBody(state.s, actions, camera)
+                is PbUi.Scanning -> ScanBody(state.s, actions, camera, state.pc)
                 is PbUi.Done -> DoneBody(state.s)
             }
         }
@@ -143,13 +143,15 @@ fun PullbackScreen(
 @Composable
 private fun Header(state: PbUi, onBack: () -> Unit) {
     val s = (state as? PbUi.Scanning)?.s ?: (state as? PbUi.Done)?.s
+    val pc = (state as? PbUi.Scanning)?.pc ?: (state as? PbUi.Done)?.pc
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = LpSpacing.Gutter - 4.dp, end = LpSpacing.Gutter, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         LpIconButton(LpIcons.Back, "Back", onBack, Modifier.padding(end = 4.dp))
         Text("Pullbacks", style = LpType.Screen, color = Lp.colors.fg, maxLines = 1, modifier = Modifier.weight(1f).semantics { heading() })
         if (s != null) {
             val n = Pullbacks.storeNum(s.store)
             Row(Modifier.glass().padding(start = 6.dp, end = 12.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (n.isNotEmpty()) StoreNumber(n, storeColor(0))
+                if (s.link != null) PcBadge(pc == true)
+                else if (n.isNotEmpty()) StoreNumber(n, storeColor(0))
                 Text(if (s.complete) "Done" else "${(s.idx ?: 0) + 1} / ${s.total}", style = LpType.Chip, color = Lp.colors.fg, maxLines = 1)
             }
         }
@@ -160,6 +162,17 @@ private fun Header(state: PbUi, onBack: () -> Unit) {
 private fun StoreNumber(n: String, color: androidx.compose.ui.graphics.Color) {
     Box(Modifier.clip(RoundedCornerShape(50)).background(color).padding(horizontal = 7.dp, vertical = 2.dp)) {
         Text(n, style = LpType.Chip.copy(fontFamily = LpDisplay, fontWeight = FontWeight.Bold), color = if (Lp.colors.isDark) Lp.colors.page else androidx.compose.ui.graphics.Color.White)
+    }
+}
+
+/** "PC" on a run joined from Aethernet: accent while the browser is connected, soft while it is away. */
+@Composable
+private fun PcBadge(online: Boolean) {
+    val c = Lp.colors
+    Box(Modifier.clip(RoundedCornerShape(50)).background(if (online) c.acc else c.surf3).padding(horizontal = 7.dp, vertical = 2.dp)
+        .semantics { contentDescription = if (online) "PC connected" else "PC away" }) {
+        Text("PC", style = LpType.Chip.copy(fontFamily = LpDisplay, fontWeight = FontWeight.Bold),
+            color = if (!online) c.soft else if (c.isDark) c.page else androidx.compose.ui.graphics.Color.White)
     }
 }
 
@@ -212,7 +225,7 @@ private fun ColumnScope.StoresBody(state: PbUi.Stores, actions: PullbackActions)
 
 // ---------------------------------------------------------------- scanning
 @Composable
-private fun ColumnScope.ScanBody(s: PbSession, actions: PullbackActions, camera: (@Composable (String, (String) -> Unit) -> Unit)?) {
+private fun ColumnScope.ScanBody(s: PbSession, actions: PullbackActions, camera: (@Composable (String, (String) -> Unit) -> Unit)?, pc: Boolean? = null) {
     val c = Lp.colors
     val it = s.current ?: return
     val haptics = rememberHaptics()
@@ -243,12 +256,37 @@ private fun ColumnScope.ScanBody(s: PbSession, actions: PullbackActions, camera:
         null -> {}
     }
     if (typing || camera == null) ScanField(s.history.size to s.msg, actions.onScan)
+    if (s.link != null) SentList(s, pc == true)
     s.next?.let { nx ->
         Text("Next ${nx.skuText} · ${nx.description} · …${nx.serial.takeLast(6)}", style = LpType.Caption, color = c.soft, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
     if (camera != null) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             LpIconButton(if (typing) LpIcons.Camera else LpIcons.Keyboard, if (typing) "Camera" else "Type", { typing = !typing })
+        }
+    }
+}
+
+/** A run joined from Aethernet: the last scans and what the browser said about each. */
+@Composable
+private fun SentList(s: PbSession, online: Boolean) {
+    val c = Lp.colors
+    val waiting = s.sending
+    if (!online && waiting > 0) Message("PC offline · ${Fmt.count(waiting)} waiting", null, bad = true)
+    s.history.takeLast(3).reversed().forEach { i ->
+        val it = s.items.getOrNull(i) ?: return@forEach
+        val (label, tone) = when {
+            it.status == PbStatus.Skipped -> "Skipped" to Tone.Neutral
+            it.backendStatus == PbSession.SENDING -> (if (online) "Sending" else "Waiting") to Tone.Warn
+            it.backendStatus == PbSession.QUEUED -> "Waiting" to Tone.Warn
+            it.backendStatus == "success" -> "Marked" to Tone.Good
+            it.backendStatus == "skipped-already-marked" -> "Already marked" to Tone.Accent
+            it.backendStatus == "failed" -> "Failed" to Tone.Warn
+            else -> "Sending" to Tone.Warn
+        }
+        Row(Modifier.fillMaxWidth().clip(LpShapes.Card).background(c.surf).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("…" + it.serial.takeLast(6), style = LpType.BodyStrong.copy(fontFamily = LpDisplay), color = c.fg, modifier = Modifier.weight(1f))
+            LpChip(label, tone = tone)
         }
     }
 }

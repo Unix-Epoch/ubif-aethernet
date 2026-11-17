@@ -621,7 +621,7 @@ AE.shard({
     */
     const link = () => (AE.linkshell && AE.settings.crystals.linkshell !== false && AE.linkshell.linked() ? AE.linkshell : null);
     const queued = (it) => (it.status === 'matched' || it.status === 'overridden') && !it.backend_status;
-    const phoneState = (it) => (it.status === 'pending' ? 'pending' : it.status === 'skipped' ? 'skipped' : !it.backend_status ? 'queued'
+    const phoneState = (it) => (it.status === 'pending' ? (it.backend_status === 'failed' ? 'failed' : 'pending') : it.status === 'skipped' ? 'skipped' : !it.backend_status ? 'queued'
       : it.backend_status === 'failed' ? 'failed' : it.backend_status === 'skipped-already-marked' ? 'already' : 'marked');
     const RUN_PART = 40;
     function sendRun() {
