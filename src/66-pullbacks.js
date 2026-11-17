@@ -329,7 +329,7 @@ AE.shard({
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h } = AE, P = AE.pullbacks;
-    const DLG = 'ae-pullbacks', MENU = 'option-aethernet-pullbacks', TILE = 'ae-pullbacks-tile', KEY = 'ae_pullback_session';
+    const DLG = 'ae-pullbacks', TILE = 'ae-pullbacks-tile', KEY = 'ae_pullback_session';
     const icon = (size) => h('span', { html: AE.actionIcon('pullbacks', size), style: 'line-height:0;flex:none' });
     document.head.append(h('style', null, `
       #${DLG} .sg-about.pb { width:min(640px, 100%); padding:22px 26px 18px; max-height:calc(100vh - 32px); overflow:auto; }
@@ -590,7 +590,6 @@ AE.shard({
     }
 
     // ---------------------------------------------------------- entry points
-    const menuItem = () => AE.avatarItem({ testid: MENU, label: 'Pullbacks', order: 35, icon: (s) => AE.actionIcon('pullbacks', s), onClick: () => open() });
     // A Pullbacks tile on the Inventory hub, copied from Portal's own Inventory count tile (its text swapped, its link dropped).
     function placeTile() {
       if (location.pathname.replace(/\/+$/, '') !== '/boh/inventory' || document.getElementById(TILE)) return;
@@ -611,7 +610,7 @@ AE.shard({
       copy.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); open(); }, true);
       tile.parentElement.append(copy);
     }
-    AE.onDom(() => { menuItem(); placeTile(); });
-    AE.every(1500, () => { menuItem(); placeTile(); });
+    AE.onDom(placeTile);
+    AE.every(1500, placeTile);
   },
 });

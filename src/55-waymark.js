@@ -912,7 +912,7 @@ AE.shard({
     let wmIcon = null;
     function renderButton() {
       if (!AE.headerAnchor()) { wmIcon?.remove(); wmIcon = null; return; }
-      wmIcon = wmIcon || AE.headerIcon({ id: 'waymark', elId: BTN_ID, icon: 'waymark', order: 20, headerOnly: true, label: 'Waymark', onClick: (e) => { e.stopPropagation(); toggleBoard(); } });
+      wmIcon = wmIcon || AE.headerIcon({ id: 'waymark', elId: BTN_ID, icon: 'waymark', order: 20, headerOnly: true, panel: BOARD_ID, label: 'Waymark', onClick: (e) => { e.stopPropagation(); toggleBoard(); } });
       const due = demoBadge != null ? [] : W.dueMarks(); // demoBadge: dev tools
       const n = demoBadge != null ? demoBadge : due.length;
       const overdue = demoBadge != null ? n : due.filter(([, m]) => m.due < W.today()).length;
@@ -972,6 +972,7 @@ AE.shard({
     let boardManager = false; // managers clear tags right from the board
     async function toggleBoard() {
       if (document.getElementById(BOARD_ID)) { document.getElementById(BOARD_ID).remove(); return; }
+      AE.headerPanelOpening('waymark');
       const board = h('div', { id: BOARD_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': 'Waymark board' },
         h('div', { class: 'head ae-head' }, h('span', { html: AE.actionIcon('waymark', 26) }), h('b', null, 'Waymark'),
           h('button', { type: 'button', class: 'sg-x', title: 'Close', onclick: () => board.remove() }, '✕')),
