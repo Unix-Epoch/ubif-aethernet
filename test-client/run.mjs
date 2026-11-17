@@ -381,20 +381,20 @@ async function returnEnv({ pathname = '/check-in/arrivals/50', answers = [], rou
   const asked = [];
   AE.confirm = async (o) => { asked.push(o.title); return answers.shift() ?? null; };
   await AE.shards.find((x) => x.id === 'checkinDrafts').run();
-  const btn = { textContent: 'Create work order', isConnected: true, disabled: false, closest: () => null,
+  const btn = { textContent: 'Check-in', isConnected: true, disabled: false, closest: () => null,
     click() { clicks.push(1); onClick(event(btn)); } };
   const event = (target) => ({ target: { closest: () => target }, prevented: false, preventDefault() { this.prevented = true; }, stopImmediatePropagation() {} });
   const press = async () => { const e = event(btn); onClick(e); for (let i = 0; i < 40; i++) await new Promise((r) => setImmediate(r)); return e.prevented; };
   return { env, AE, ctx, asked, clicks, press, btn };
 }
-await t('Return: Asurion Mobility, "Yes" creates the work order', async () => {
+await t('Return: Asurion Mobility, "Yes" opens the check-in', async () => {
   const r = await returnEnv({ answers: ['yes'] });
   assert.equal(await r.press(), true, "Portal's click held back while asking");
   assert.deepEqual(r.asked, ['Are you able to create cleanings for this device?']);
   assert.equal(r.clicks.length, 1, 'the button clicked again once answered');
 });
 for (const why of ['device', 'pin']) {
-  await t('Return: Asurion Mobility, "No" + ' + why + ' makes a Return ticket and no work order', async () => {
+  await t('Return: Asurion Mobility, "No" + ' + why + ' makes a Return ticket and no check-in', async () => {
     const r = await returnEnv({ answers: ['no', why, false] });
     assert.equal(await r.press(), true);
     assert.deepEqual(r.asked, ['Are you able to create cleanings for this device?', 'Why not?', 'Return ticket created']);
@@ -402,7 +402,7 @@ for (const why of ['device', 'pin']) {
     assert.ok(r.env.requests(/DYMO\/DLS\/Printing/).length > 0, 'the label was sent to DYMO');
   });
 }
-await t('Return: Asurion Mobility, "No" + no option on the account creates the work order', async () => {
+await t('Return: Asurion Mobility, "No" + no option on the account opens the check-in', async () => {
   const r = await returnEnv({ answers: ['no', 'option'] });
   await r.press();
   assert.deepEqual(r.asked, ['Are you able to create cleanings for this device?', 'Why not?']);
@@ -429,7 +429,7 @@ await t('Return: other programs and unreadable arrivals are never asked', async 
   await r2.press();
   assert.deepEqual(r2.asked, []); assert.equal(r2.clicks.length, 1, "Portal's button still works");
 });
-await t('Return: a check-in with no arrival is left alone', async () => {
+await t('Return: only the arrival drawer asks (the check-in steps are left alone)', async () => {
   const r = await returnEnv({ pathname: '/check-in' });
   assert.equal(await r.press(), false);
   assert.deepEqual(r.asked, []);

@@ -11,10 +11,10 @@
     print.
   - Scan: Master's Mend's scan to open sends AER codes here, and the
     arrival opens in its drawer.
-  - Cleanings gate: on an Asurion Mobility arrival (program 5062), Create
-    work order first asks whether cleanings can be created for the device.
-    Yes, or "Customer account does not have the option": the work order is
-    created. "Unable to use device" or "Customer does not know carrier PIN":
+  - Cleanings gate: on an Asurion Mobility arrival (program 5062), the
+    drawer's Check-in first asks whether cleanings can be created for the
+    device. Yes, or "Customer account does not have the option": the
+    check-in opens. "Unable to use device" or "Customer does not know carrier PIN":
     a Return ticket (the arrival's label) is printed and the BOH is to create
     the cleanings with the device before the work order is created (cleanings
     have to be created within 15 minutes of their work order). If the
@@ -33,7 +33,7 @@ AE.shard({
     const BTN_ID = 'ae-return-label';
     const TITLE = 'Aethernet - Return'; // the label's top line
     const CODE_RE = /^AER(\d{1,12})$/i;
-    const CREATE_WO = /^create work ?order$/i;
+    const CHECK_IN = /^check-?in$/i; // the arrival drawer's button that starts the check-in
     const REASONS = [
       { label: 'Unable to use device', value: 'device', ticket: true },
       { label: 'Customer does not know carrier PIN', value: 'pin', ticket: true },
@@ -183,20 +183,14 @@ AE.shard({
     }
 
     // ------------------------------------------------------------ cleanings gate
-    // The arrival a Create work order button belongs to: the drawer's, or the check-in's (Portal's check-in slice).
+    // The arrival whose drawer is open.
     function arrivalHere() {
       const m = location.pathname.match(/^\/check-in\/arrivals\/(\d+)\/?$/);
-      if (m) return Number(m[1]);
-      if (location.pathname !== '/check-in') return null;
-      let r = null;
-      try { r = AE.portal('select', { slice: 'checkInSlice', key: 'arrivalDetails', fresh: false }); } catch (_) { /* the route's state still may have it */ }
-      const fromSlice = r && r.found && r.value && Number(r.value.arrivalId);
-      const fromRoute = history.state && history.state.usr && Number(history.state.usr.arrivalIdForCheckin);
-      return fromSlice || fromRoute || null;
+      return m ? Number(m[1]) : null;
     }
-    const cleared = new Set(); // arrivals answered this page load: their Create work order goes straight through
+    const cleared = new Set(); // arrivals answered this page load: their Check-in goes straight through
     let passing = false, asking = false;
-    // Ask, then: true = create the work order, false = don't.
+    // Ask, then: true = go on with the check-in, false = don't.
     async function ask(a) {
       const able = await AE.confirm({ icon: 'checkinDrafts', title: 'Are you able to create cleanings for this device?',
         choices: [{ label: 'Yes', value: 'yes', primary: true }, { label: 'No', value: 'no' }] });
@@ -235,7 +229,7 @@ AE.shard({
     window.addEventListener('click', (e) => {
       if (passing) return;
       const btn = e.target && e.target.closest && e.target.closest('button');
-      if (!btn || btn.closest('.sg') || !CREATE_WO.test(btn.textContent.trim())) return;
+      if (!btn || btn.closest('.sg') || !CHECK_IN.test(btn.textContent.trim())) return;
       const id = arrivalHere();
       if (!id || cleared.has(id)) return;
       e.preventDefault(); e.stopImmediatePropagation();
