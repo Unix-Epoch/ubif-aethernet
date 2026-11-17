@@ -4,7 +4,8 @@
 
   - The round Return button at the left of an arrival's drawer footer opens
     the intake form (IMEI last digit, password, callback number, device
-    nickname, issue, items with device, initial notes). Save and print label
+    nickname, issue, items with device, initial notes; Password and Items
+    with device have a "None" box). Save and print label
     seals the notes in this browser and prints the label (the store's DYMO,
     DYMO Connect at https://127.0.0.1:41951-41960, Portal's 30330 labels):
     the Aethernet mark, "Aethernet - Return", customer · device · date and a
@@ -21,6 +22,8 @@
     check-in step for that arrival. Both fold away. On a check-in step, Fill
     types the notes into the boxes on that step the way a person would
     (Portal's state isn't touched: restoring it never showed in the boxes).
+    The notes box (Additional details) gets the initial notes, then the items
+    with the device; the issue is not copied there.
   - Deleted: once the arrival's check-in has made a work order that has left
     Initial check-in (status 1), the browser that knows the label removes the
     notes. The Worker deletes anything older than 3 days.
@@ -28,7 +31,8 @@
     drawer's Check-in first asks whether cleanings can be created for the
     device. Yes, or "Customer account does not have the option": the
     check-in opens. "Unable to use device" or "Customer does not know carrier
-    PIN": a Return ticket (the arrival's label) is printed and the BOH is to
+    PIN": the intake form opens, then a Return ticket (the arrival's label,
+    carrying the notes) is printed and the BOH is to
     create the cleanings with the device before the work order is created
     (cleanings have to be created within 15 minutes of their work order). If
     the arrival can't be read, the button works as usual.
@@ -54,14 +58,14 @@ AE.shard({
       { label: 'Customer does not know carrier PIN', value: 'pin', ticket: true },
       { label: 'Customer account does not have the option', value: 'option', ticket: false },
     ];
-    // The intake fields, in form order. long: a wide box; area: several lines.
+    // The intake fields, in form order. long: a wide box; area: several lines; none: a "None" box (saved in notes.none, never filled).
     const FIELDS = [
       { k: 'imei', label: 'IMEI last digit', max: 1 },
-      { k: 'password', label: 'Password', max: 60 },
+      { k: 'password', label: 'Password', max: 60, none: true },
       { k: 'callback', label: 'Callback number', max: 30 },
       { k: 'nickname', label: 'Device nickname', max: 60 },
       { k: 'issue', label: 'Issue', max: 300, long: true },
-      { k: 'items', label: 'Items with device', max: 200, long: true },
+      { k: 'items', label: 'Items with device', max: 200, long: true, none: true },
       { k: 'notes', label: 'Initial notes', max: 2000, long: true, area: true },
     ];
 
@@ -73,7 +77,11 @@ AE.shard({
       #${FORM_ID} .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
       #${FORM_ID} .f { display:flex; flex-direction:column; gap:4px; min-width:0; } #${FORM_ID} .f.long { grid-column:1/-1; }
       #${FORM_ID} label { font-size:13px; color:var(--aui-on-surface-variant, #5d5e61); }
-      #${FORM_ID} input, #${FORM_ID} textarea { border:1px solid var(--aui-outline, #8b8b8f); border-radius:8px; padding:12px; font:inherit;
+      #${FORM_ID} .lh { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+      #${FORM_ID} .none { display:flex; align-items:center; gap:4px; cursor:pointer; }
+      #${FORM_ID} .none input { width:16px; height:16px; margin:0; accent-color:var(--aui-primary, #c41230); }
+      #${FORM_ID} input:disabled, #${FORM_ID} textarea:disabled { opacity:.45; }
+      #${FORM_ID} input:not([type=checkbox]), #${FORM_ID} textarea { border:1px solid var(--aui-outline, #8b8b8f); border-radius:8px; padding:12px; font:inherit;
         background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); }
       #${FORM_ID} textarea { min-height:72px; resize:vertical; }
       #${FORM_ID} .sg-actions { margin-top:20px; }
@@ -268,30 +276,42 @@ AE.shard({
       add();
     }
     // ------------------------------------------------------------ intake form (the Return button)
-    async function intake(id) {
-      if (document.getElementById(FORM_ID)) return;
+    // Resolves the saved label (or null if closed). opts.print false leaves printing to the caller.
+    function intake(id, opts) {
+      return new Promise((resolve) => intakeForm(id, opts || {}, resolve));
+    }
+    async function intakeForm(id, opts, resolve) {
+      if (document.getElementById(FORM_ID)) return resolve(null);
       let a, cur = null;
       try { a = await arrival(id); } catch (e) {
-        AE.toast('Return', { html: "Couldn't read this arrival." + report('Return intake for arrival ' + id, e) }, 'err', 10000); return;
+        AE.toast('Return', { html: "Couldn't read this arrival." + report('Return intake for arrival ' + id, e) }, 'err', 10000); return resolve(null);
       }
       if (keyFor(id)) {
         try { cur = await readNotes(id, true); } catch (e) {
-          AE.toast('Return', { html: "Couldn't load the saved notes." + report('Loading Return notes for arrival ' + id, e) }, 'err', 10000); return;
+          AE.toast('Return', { html: "Couldn't load the saved notes." + report('Loading Return notes for arrival ' + id, e) }, 'err', 10000); return resolve(null);
         }
       }
       const vals = (cur && cur.notes) || {};
-      const inputs = {};
+      const inputs = {}, nones = {};
       const field = (f) => {
         const el = f.area ? h('textarea', { id: 'ae-return-f-' + f.k, maxlength: f.max }) : h('input', { id: 'ae-return-f-' + f.k, maxlength: f.max, autocomplete: 'off',
           inputmode: f.k === 'imei' ? 'numeric' : f.k === 'callback' ? 'tel' : null });
         el.value = typeof vals[f.k] === 'string' ? vals[f.k] : '';
         inputs[f.k] = el;
-        return h('div', { class: 'f' + (f.long ? ' long' : '') }, h('label', { for: 'ae-return-f-' + f.k }, f.label), el);
+        const name = h('label', { for: 'ae-return-f-' + f.k }, f.label);
+        if (!f.none) return h('div', { class: 'f' + (f.long ? ' long' : '') }, name, el);
+        const box = h('input', { type: 'checkbox', id: 'ae-return-f-' + f.k + '-none', onchange: () => { el.disabled = box.checked; } });
+        box.checked = el.disabled = Array.isArray(vals.none) && vals.none.includes(f.k);
+        nones[f.k] = box;
+        return h('div', { class: 'f' + (f.long ? ' long' : '') }, h('div', { class: 'lh' }, name, h('label', { class: 'none' }, box, 'None')), el);
       };
-      const done = () => { scrim.remove(); document.removeEventListener('keydown', onKey, true); };
+      const close = () => { scrim.remove(); document.removeEventListener('keydown', onKey, true); };
+      const done = () => { close(); resolve(null); };
       const save = h('button', { type: 'button', class: 'sg-btn sg-lg sg-primary', onclick: async () => {
         const notes = {};
-        for (const f of FIELDS) { const v = inputs[f.k].value.trim().slice(0, f.max); if (v) notes[f.k] = v; }
+        const none = FIELDS.filter((f) => nones[f.k] && nones[f.k].checked).map((f) => f.k);
+        for (const f of FIELDS) { const v = inputs[f.k].value.trim().slice(0, f.max); if (v && !none.includes(f.k)) notes[f.k] = v; }
+        if (none.length) notes.none = none;
         save.disabled = true;
         let secret = null;
         if (Object.keys(notes).length || cur) {
@@ -305,9 +325,11 @@ AE.shard({
           }
           AE.track('checkinDrafts:save');
         }
-        done();
+        close();
         drawBox(id, true);
         const d = labelFor(a, secret);
+        resolve(d);
+        if (opts.print === false) return;
         AE.track('checkinDrafts:label');
         if (await label(d)) AE.toast('Return', 'Label printed.', 'ok');
         else printedOrRetry(AE.toast('Return', "The label didn't print.", 'err', 30000), 'Return', 'Label printed.', d);
@@ -329,7 +351,8 @@ AE.shard({
     function notesCard(el, id, v, actions) {
       el.className = 'sg ae-return-notes' + (GM_getValue(FOLD, false) ? ' closed' : '') + (el.id === PANEL_ID ? ' sg-card' : '');
       el.dataset.id = id; el.dataset.at = v.updatedAt || '';
-      const rows = FIELDS.filter((f) => v.notes[f.k]).flatMap((f) => [h('dt', null, f.label), h('dd', null, v.notes[f.k])]);
+      const none = Array.isArray(v.notes.none) ? v.notes.none : [];
+      const rows = FIELDS.filter((f) => v.notes[f.k] || none.includes(f.k)).flatMap((f) => [h('dt', null, f.label), h('dd', null, v.notes[f.k] || 'None')]);
       el.replaceChildren(
         h('div', { class: 'hd', role: 'button', tabindex: '0', 'aria-expanded': String(!GM_getValue(FOLD, false)), onclick: () => {
           const closed = !el.classList.contains('closed');
@@ -421,7 +444,7 @@ AE.shard({
       const boxes = [...document.querySelectorAll('input, textarea')].filter((el) => !el.closest('.sg') && el.offsetParent && !el.disabled && !el.readOnly
         && (el.tagName === 'TEXTAREA' || /^(text|tel|password|number|search|)$/i.test(el.getAttribute('type') || '')));
       const used = new Set();
-      let filled = 0, issueBox = false;
+      let filled = 0;
       for (const t of TARGETS) {
         if (t.k === 'notes') continue;
         const v = notes[t.k];
@@ -429,12 +452,12 @@ AE.shard({
         const el = boxes.find((b) => !used.has(b) && t.re.test(nameOf(b)) && (!t.area || b.tagName === 'TEXTAREA'));
         if (!el) continue;
         used.add(el);
-        if (t.k === 'issue') issueBox = true;
         if (el.value.trim()) continue; // never over what someone typed
         setValue(el, v); filled++;
       }
-      // Notes: the step's notes box gets the initial notes, the items with the device, and the issue if it had no box of its own.
-      const text = [!issueBox && notes.issue, notes.items && 'Items with device: ' + notes.items, notes.notes].filter(Boolean).join('\n');
+      // Notes: the step's notes box gets the initial notes first, then the items with the device. The issue is never copied here.
+      const items = typeof notes.items === 'string' && notes.items;
+      const text = [typeof notes.notes === 'string' && notes.notes, items && 'Items with device: ' + items].filter(Boolean).join('\n');
       const area = text && boxes.find((b) => !used.has(b) && b.tagName === 'TEXTAREA' && TARGETS[5].re.test(nameOf(b)));
       if (area && !area.value.trim()) { setValue(area, text); filled++; }
       AE.track('checkinDrafts:fill');
@@ -510,7 +533,10 @@ AE.shard({
       if (!reason) return false;
       AE.track('checkinDrafts:gate:' + reason.value);
       if (!reason.ticket) return true;
-      const k = keyFor(a.arrivalId), d = labelFor(a, k && k.s);
+      // The intake form comes first, so the label carries the notes.
+      const d = await AE.checkinDrafts.intake(a.arrivalId, { print: false });
+      if (!d) return false;
+      AE.track('checkinDrafts:label');
       for (let printed = await label(d); ; printed = await label(d)) {
         const retry = await AE.confirm({ icon: 'checkinDrafts', title: 'Return ticket created',
           message: AE.esc('Alert the BOH to create the cleanings with the device before creating the work order.'),
@@ -577,6 +603,6 @@ AE.shard({
     // Finished check-ins: their notes are removed (only labels this browser knows, and only once one has a work order).
     AE.every(60000, () => { if (Object.values(keys()).some((k) => k.woId) && !(AE.health && AE.health.down && AE.health.down())) sweep(); });
 
-    AE.checkinDrafts = { open, CODE_RE, labelFor, isMobility, seal, unseal, tokenOf, newSecret, fill, sweep, keys };
+    AE.checkinDrafts = { open, intake, CODE_RE, labelFor, isMobility, seal, unseal, tokenOf, newSecret, fill, sweep, keys };
   },
 });
