@@ -303,11 +303,12 @@ AE.shard({
       .${ROW} .sum { margin-left:auto; color:var(--aui-on-surface-soft, #5d5e61); font-size:13px; }
       .${ROW} button.tog { border-color:transparent; padding:0 10px; color:var(--aui-primary, #8223d2); font-weight:600; }
       .${ROW} button.tog svg { transition:transform .15s; } .${ROW} button.tog[aria-expanded="true"] svg { transform:rotate(180deg); }
-      .${BOX} { border:1px solid var(--aui-outline-soft, #e4e2e8); border-radius:12px; margin:0 0 16px; background:var(--aui-surface, #fff); }
+      .${BOX} { margin:0 0 16px; }
       .${BOX}[hidden] { display:none; }
-      .${BOX} .hd { padding:12px 18px; font-size:15px; }
+      .${BOX} .hd { padding:0 18px; font-size:15px; }
       .${BOX} { max-width:100%; box-sizing:border-box; overflow-x:auto; }
       .${BOX} .wrap { overflow-x:auto; }
+      .${BOX} .hd + .wrap tr:first-child th { border-top:0; }
       .${BOX}.two th, .${BOX}.two td { padding-left:7px; padding-right:7px; }
       .${BOX}.two td:first-child { white-space:normal; min-width:150px; }
       .${BOX}.two td:first-child, .${BOX}.two th:first-child { padding-left:18px; }
@@ -386,7 +387,7 @@ AE.shard({
       const bar = anchor.parentElement; // Portal's controls row; Tactician goes right under it, above the first store card
       let row = document.getElementById(ROW), box = document.getElementById(BOX);
       if (!row) row = h('div', { id: ROW, class: ROW });
-      if (!box) box = h('div', { id: BOX, class: BOX });
+      if (!box) box = h('div', { id: BOX, class: 'sg sg-card ' + BOX });
       const open = !!GM_getValue(OPEN_KEY, false); // collapsed unless you opened it (keeps room for Portal's cards)
       const mounted = row.previousElementSibling === bar && box.previousElementSibling === row;
       const waiting = v.status === 'unreadable' && Date.now() - v.since < GRACE;
@@ -418,7 +419,7 @@ AE.shard({
       const elseNote = (m) => m.size ? h('div', { class: 'else' }, [...m].map(([n, x]) => '+ ' + fmt(x) + ' at ' + n).join(' · ')) : null;
       const note = h('div', { class: 'note' }, 'Overtime = hours over 40 in a 7-day week, counting every store the person worked at (Portal\'s OT tag counts one store at a time). Same punches as Portal\'s cards above; nothing is changed.');
       box.classList.toggle('two', span > 7);
-      const hd = h('div', { class: 'hd' }, h('b', null, 'Weekly breakdown'), ' · ' + name + ' · ' + rangeText(start, end));
+      const hd = h('div', { class: 'hd ae-head' }, h('b', null, 'Weekly breakdown'), ' · ' + name + ' · ' + rangeText(start, end));
       if (!people.length) { box.replaceChildren(hd, h('div', { class: 'note' }, 'Nobody clocked in at ' + name + ' in this period.'), note); return; }
       if (span <= 7) { // one week: unchanged
         box.replaceChildren(hd, h('div', { class: 'wrap' }, h('table', null,
@@ -469,7 +470,7 @@ AE.shard({
       const f = new Date(t); f.setDate(f.getDate() - Number(r) + 1); return [f, t];
     };
     document.head.append(h('style', null, `
-      #${RP} { margin-top:24px; padding:20px 24px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:16px; background:var(--aui-surface, #fff); }
+      #${RP} { margin-top:24px; padding:20px 24px; }
       #${RP} .hd { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
       #${RP} .hd b { font-size:20px; } #${RP} .hd .who { margin-left:auto; font-size:13px; }
       #${RP} .ranges { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -565,10 +566,10 @@ AE.shard({
     const yTicks = (max) => { const raw = max / 4, mag = 10 ** Math.floor(Math.log10(raw)), step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= raw); const out = []; for (let v = 0; v <= max; v += step) out.push(v); return out; };
     function splhCard() {
       const leaveOut = !!GM_getValue(GM_KEY, false);
-      const card = h('div', { id: RP, class: 'sg' });
+      const card = h('div', { id: RP, class: 'sg sg-card' });
       const refresh = h('button', { type: 'button', class: 'sg-btn', style: 'height:28px;font-size:12px;padding:0 10px;margin-left:auto', title: 'Read sales and the time sheet again (after fixing a punch)', disabled: !!busy || null,
         onclick: () => { fresh = true; dataFor = null; data = null; AE.track('timeSheet:splhRefresh'); showSplh(); } }, busy ? 'Refreshing…' : 'Refresh');
-      const head = h('div', { class: 'hd' }, h('span', { style: 'line-height:0', html: AE.actionIcon('timeSheet', 32) }), h('b', null, 'Sales per labor hour'), refresh, h('span', { class: 'sg-soft', style: 'font-size:13px' }, 'Tactician · ' + AE_NAME));
+      const head = h('div', { class: 'hd ae-head' }, h('span', { style: 'line-height:0', html: AE.actionIcon('timeSheet', 32) }), h('b', null, 'Sales per labor hour'), refresh, h('span', { class: 'sg-soft', style: 'font-size:13px' }, 'Tactician · ' + AE_NAME));
       const gmToggle = h('label', { class: 'gm' }, h('input', { type: 'checkbox', class: 'sw', role: 'switch', checked: leaveOut || null, onchange: (e) => { GM_setValue(GM_KEY, e.target.checked); AE.track('timeSheet:splhGm'); showSplh(); } }), 'Leave out general managers');
       const ranges = h('div', { class: 'ranges' }, ...RANGES.map(([k, l]) => h('button', { type: 'button', class: 'sg-btn' + (k === range ? ' sg-primary' : ''), onclick: () => { range = k; GM_setValue(RANGE_KEY, k); dataFor = null; data = null; showSplh(); } }, l)), gmToggle); // no old numbers under a new range
       card.append(head, ranges);

@@ -496,7 +496,7 @@ AE.shard({
     // ------------------------------------------------------------ header icon
     let icon = null;
     function renderIcon() {
-      icon = icon || AE.headerIcon({ id: 'assize', icon: 'assize', order: 5, label: 'Assize', onClick: (e) => togglePanel(e) });
+      icon = icon || AE.headerIcon({ id: 'assize', icon: 'assize', order: 5, panel: PANEL_ID, label: 'Assize', onClick: (e) => togglePanel(e) });
       const s = result && result.sum;
       if (!s) {
         icon.update({ label: lastError ? "Assize couldn't check orders" : 'Assize', detail: lastError ? 'click for details' : 'Checking orders…', badge: lastError ? '?' : '', count: 0, severity: lastError ? 'red' : 'grey', busy });
@@ -577,6 +577,7 @@ AE.shard({
       e && e.stopPropagation();
       const p = document.getElementById(PANEL_ID);
       if (p) { p.remove(); return; }
+      AE.headerPanelOpening('assize');
       document.body.append(h('div', { id: PANEL_ID, class: 'sg sg-card ae-as', role: 'dialog', 'aria-label': 'Assize' }));
       renderPanel();
       AE.track('assize:open');
