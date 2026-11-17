@@ -374,11 +374,13 @@ AE.shard({
       #${PANEL_ID} .hd, #${POP_ID} .hd { display:flex; align-items:center; gap:10px; }
       #${PANEL_ID} .hd b, #${POP_ID} .hd b { font-size:16px; flex:1; }
       #${PANEL_ID} .sum { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:12px 0 10px; }
-      .ae-as-tile { border-radius:12px; padding:8px 10px; display:flex; flex-direction:column; }
-      .ae-as-tile .n { font-size:24px; font-weight:700; line-height:1.1; font-variant-numeric:tabular-nums; } .ae-as-tile .l { font-size:12px; }
+      .ae-as-tile { position:relative; overflow:hidden; border-radius:12px; padding:10px 12px; display:flex; flex-direction:column; }
+      .ae-as-tile::after { content:""; position:absolute; inset:0; background:linear-gradient(160deg, rgba(255,255,255,.55), rgba(255,255,255,0) 60%); pointer-events:none; }
+      body.asurion-dark .ae-as-tile::after, body.partner-dark .ae-as-tile::after { background:linear-gradient(160deg, rgba(255,255,255,.08), rgba(255,255,255,0) 60%); }
+      .ae-as-tile .n { font-size:28px; font-weight:700; line-height:1.1; letter-spacing:-.02em; font-variant-numeric:tabular-nums; } .ae-as-tile .l { font-size:12px; }
       .ae-as-tile.fail { background:var(--as-fail-soft); color:var(--as-fail-on); } .ae-as-tile.flag { background:var(--as-flag-soft); color:var(--as-flag-on); }
       .ae-as-tile.note { background:var(--as-note-soft); color:var(--as-note-on); } .ae-as-tile.remind { background:var(--as-rem-soft); color:var(--as-rem-on); }
-      .ae-as-tile.zero { opacity:.55; }
+      .ae-as-tile.zero { filter:saturate(.25); } .ae-as-tile.zero .n { opacity:.45; }
       #${PANEL_ID} .flt { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
       .ae-as-f { display:inline-flex; align-items:center; gap:5px; height:26px; padding:0 11px; border-radius:10000rem; border:1px solid var(--aui-outline,#c6c6ca); cursor:pointer;
         font:400 13px/1 Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; background:transparent; color:var(--aui-on-surface,#1a1c1e); }
@@ -387,7 +389,7 @@ AE.shard({
       .ae-as-f.on i { color:inherit; }
       .ae-as-f:focus-visible { outline:2px solid var(--aui-primary,#8223d2); outline-offset:1px; }
       #${PANEL_ID} .list { overflow:auto; margin:0 -4px; padding:0 4px; min-height:0; }
-      .ae-as-g { margin:10px 0 2px; font-size:12px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft,#5d5e61); }
+      .ae-as-g { margin:10px 0 2px; font-size:14px; font-weight:700; color:var(--aui-on-surface,#1a1c1e); }
       .ae-as-g:first-child { margin-top:2px; }
       .ae-as-r { display:grid; grid-template-columns:4px 1fr auto; gap:0 10px; padding:7px 2px 7px 0; border-top:1px solid var(--aui-outline-soft,#eeedf1); }
       .ae-as-g + .ae-as-r { border-top:0; }
@@ -521,7 +523,7 @@ AE.shard({
       const scroll = p.querySelector('.list') ? p.querySelector('.list').scrollTop : 0;
       const close = h('button', { type: 'button', class: 'sg-x', title: 'Close', 'aria-label': 'Close', onclick: () => p.remove() }, '✕');
       const sub = result ? 'Checked ' + fmtTime(result.at) + ' · ' + orders(result.open) : '';
-      const head = h('div', { class: 'hd' }, h('span', { html: AE.actionIcon('assize', 26), style: 'line-height:0' }), h('b', null, 'Assize'), h('span', { class: 'sg-soft' }, busy ? (progress && progress.total ? 'Checking ' + Math.min(progress.done + 1, progress.total) + ' of ' + progress.total + '…' : 'Checking orders…') : sub), close);
+      const head = h('div', { class: 'hd ae-head' }, h('span', { html: AE.actionIcon('assize', 26), style: 'line-height:0' }), h('b', null, 'Assize'), h('span', { class: 'sg-soft' }, busy ? (progress && progress.total ? 'Checking ' + Math.min(progress.done + 1, progress.total) + ' of ' + progress.total + '…' : 'Checking orders…') : sub), close);
       const refresh = h('button', { type: 'button', class: 'sg-btn', disabled: busy || null, onclick: (e) => { e.stopPropagation(); AE.track('assize:refresh'); loadRules(true); pass(true, true); } }, 'Refresh');
       const nGone = result ? result.dismissed.length : 0;
       const toggle = canDismiss() ? h('button', { type: 'button', class: 'sg-btn', 'aria-pressed': String(showDismissed), 'data-fk': 'dt', title: 'Findings dismissed at this store',
@@ -616,7 +618,7 @@ AE.shard({
       pop.style.top = (r.bottom + 8) + 'px';
       pop.style.left = Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8)) + 'px';
       pop.replaceChildren(
-        h('div', { class: 'hd' }, h('span', { html: AE.actionIcon('assize', 22), style: 'line-height:0' }), h('b', null, 'Assize · this order'),
+        h('div', { class: 'hd ae-head' }, h('span', { html: AE.actionIcon('assize', 22), style: 'line-height:0' }), h('b', null, 'Assize · this order'),
           h('button', { type: 'button', class: 'sg-x', title: 'Close', 'aria-label': 'Close', onclick: () => pop.remove() }, '✕')),
         ...list.map((x) => rowEl(x, true)),
         h('div', { class: 'ft' }, h('span', { class: 'sg-soft' }, 'Check notes: a note may explain these, so give them a look.')));

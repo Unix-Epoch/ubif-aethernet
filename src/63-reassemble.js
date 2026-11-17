@@ -165,7 +165,7 @@ AE.shard({
       const fields = h('div', { class: 'grid' }), result = h('div'), copyBtn = h('button', { type: 'button', class: 'sg-btn sg-primary', disabled: true }, 'Copy');
       const footNote = h('span', { class: 'sp' });
       const card = h('div', { class: 'sg sg-card sg-about ra', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Price estimate' },
-        h('div', { class: 'hd' }, icon(32), h('h2', null, 'Price estimate'), h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
+        h('div', { class: 'hd ae-head' }, icon(32), h('h2', null, 'Price estimate'), h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
         h('div', { class: 'sg-soft' }, "Enter a device and part; if it's on our price sheet, it'll auto-populate."),
         fields, result, h('div', { class: 'foot' }, footNote, copyBtn));
       const scrim = h('div', { class: 'sg sg-about-scrim', id: DLG, onclick: (e) => { if (e.target === scrim) close(); } }, card);

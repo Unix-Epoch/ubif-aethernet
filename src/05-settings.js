@@ -224,9 +224,9 @@
   .sg-grp { border-top:1px solid var(--aui-outline-soft, #eeedf1); }
   .sg-grp:first-of-type { border-top:0; }
   .sg-grp-head { display:flex; align-items:center; gap:8px; width:100%; padding:11px 0 8px; border:0; background:none; cursor:pointer;
-    color:var(--aui-on-surface-soft, #5d5e61); font:700 12px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing:.04em; text-transform:uppercase; text-align:left; }
+    color:var(--aui-on-surface, #1a1c1e); font:700 14px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:left; }
   .sg-grp-head .name { flex:1; }
-  .sg-grp-head .sum { font-weight:400; font-size:12px; letter-spacing:0; text-transform:none; }
+  .sg-grp-head .sum { font-weight:400; font-size:12px; color:var(--aui-on-surface-soft, #5d5e61); }
   .sg-grp-head .chev { display:block; width:16px; height:16px; flex:none; transition:transform .2s; }
   .sg-grp.closed .sg-grp-head .chev { transform:rotate(-90deg); }
   .sg-grp-head:hover { color:var(--aui-on-surface, #1a1c1e); }
@@ -380,7 +380,7 @@
       return panel;
     });
     const card = h('div', { class: 'sg sg-card sg-notes', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' patch notes' },
-      h('div', { class: 'head' },
+      h('div', { class: 'head ae-head' },
         h('span', { style: 'color:var(--aui-primary,#8223d2);line-height:0', html: icon('aetheryte', 28) }),
         h('h2', null, 'Patch notes'),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
@@ -568,7 +568,7 @@
     }
 
     const sheet = h('div', { class: 'sg sg-card sg-sheet', role: 'dialog', 'aria-label': AE_NAME + ' settings' },
-      h('div', { style: 'display:flex;align-items:center;gap:12px' },
+      h('div', { class: 'ae-head', style: 'display:flex;align-items:center;gap:12px' },
         // Hidden way in: ten quick clicks on the shard open the admin panel (key entry first time).
         h('span', { style: 'color:var(--aui-primary,#8223d2);cursor:default;user-select:none', html: icon('aetheryte', 36), onclick: AE_DEMO ? null : (() => {
           let n = 0, last = 0;

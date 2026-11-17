@@ -255,7 +255,7 @@ AE.shard({
         if (k >= 0) anchor = { keys: entries.slice(k).map((el) => el.dataset.key), offset: entries[k].getBoundingClientRect().top - top, scroll: oldList.scrollTop };
       }
       const focused = document.activeElement && p.contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
-      const head = h('div', { class: 'head' }, h('span', { html: AE.actionIcon('countCheck', 26) }),
+      const head = h('div', { class: 'head ae-head' }, h('span', { html: AE.actionIcon('countCheck', 26) }),
         h('b', null, 'Lay of the Land ', h('span', { class: 'sub' }, id + (s.at ? ' · updated ' + new Date(s.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''))),
         h('button', { type: 'button', class: 'sg-btn', style: 'height:30px;font-size:13px', onclick: () => load(id, false, true) }, 'Refresh'),
         h('button', { type: 'button', class: 'sg-x', title: 'Close', onclick: () => { giveBackFocus(); p.remove(); } }, '✕'));

@@ -361,7 +361,7 @@ AE.shard({
       };
       const busy = !!histBusy;
       return h('div', { id: HIST_ID, class: 'sg sg-card' },
-        h('div', { class: 'hd' }, h('span', { html: AE.actionIcon('cleaningRate', 28) }), h('b', null, 'Cleaning rate history'),
+        h('div', { class: 'hd ae-head' }, h('span', { html: AE.actionIcon('cleaningRate', 28) }), h('b', null, 'Cleaning rate history'),
           h('span', { class: 'sg-soft' }, 'Divination · ' + AE_NAME)),
         h('div', { class: 'ranges' }, RANGES.map(([id, label]) => h('button', { type: 'button', class: 'sg-btn' + (id === histRange ? ' sg-primary' : ''), 'aria-pressed': String(id === histRange),
           onclick: () => { histRange = id; AE.track('cleaningRate:history'); showHistory(); } }, label))),
