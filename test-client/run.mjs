@@ -370,7 +370,7 @@ await t('health (virtual clock, real loops): loops that check down() and return 
 // SYNTHETIC arrivals: only program.programId (read the same way by Swiftcast in production), customer and arrivalId.
 const R_MOBILITY = { arrivalId: 50, program: { programId: 5062 }, customer: { firstName: 'Avery', lastName: 'Stone' } };
 const R_CLEANING = { arrivalId: 51, program: { programId: 9470 }, customer: { firstName: 'Avery', lastName: 'Stone' } };
-async function returnEnv({ pathname = '/check-in/arrivals/50', answers = [], routes = [] } = {}) {
+async function returnEnv({ pathname = '/check-in/arrivals/50', answers = [], routes = [], form = 'save' } = {}) {
   const env = load(['00-core.js', '22-checkin-drafts.js'], { pathname, fetch: router([
     ['GET', /^\/api\/arrivals\/50$/, ok(R_MOBILITY)], ['GET', /^\/api\/arrivals\/51$/, ok(R_CLEANING)], ...routes]) });
   const { AE, ctx } = env;
@@ -381,11 +381,15 @@ async function returnEnv({ pathname = '/check-in/arrivals/50', answers = [], rou
   const asked = [];
   AE.confirm = async (o) => { asked.push(o.title); return answers.shift() ?? null; };
   await AE.shards.find((x) => x.id === 'checkinDrafts').run();
+  // The intake form: 'save' = saved with notes (label carries a secret), null = closed.
+  const forms = [];
+  AE.checkinDrafts.intake = async (id, opts) => { forms.push({ id, opts }); asked.push('form');
+    return form === 'save' ? AE.checkinDrafts.labelFor(R_MOBILITY, '1234567890123456') : null; };
   const btn = { textContent: 'Check-in', isConnected: true, disabled: false, closest: () => null,
     click() { clicks.push(1); onClick(event(btn)); } };
   const event = (target) => ({ target: { closest: () => target }, prevented: false, preventDefault() { this.prevented = true; }, stopImmediatePropagation() {} });
   const press = async () => { const e = event(btn); onClick(e); for (let i = 0; i < 40; i++) await new Promise((r) => setImmediate(r)); return e.prevented; };
-  return { env, AE, ctx, asked, clicks, press, btn };
+  return { env, AE, ctx, asked, clicks, press, btn, forms };
 }
 await t('Return: Asurion Mobility, "Yes" opens the check-in', async () => {
   const r = await returnEnv({ answers: ['yes'] });
@@ -397,15 +401,24 @@ for (const why of ['device', 'pin']) {
   await t('Return: Asurion Mobility, "No" + ' + why + ' makes a Return ticket and no check-in', async () => {
     const r = await returnEnv({ answers: ['no', why, false] });
     assert.equal(await r.press(), true);
-    assert.deepEqual(r.asked, ['Are you able to create cleanings for this device?', 'Why not?', 'Return ticket created']);
+    assert.deepEqual(r.asked, ['Are you able to create cleanings for this device?', 'Why not?', 'form', 'Return ticket created']);
+    assert.deepEqual(r.forms.map((f) => [f.id, f.opts.print]), [[50, false]], 'the intake form comes before the label, and leaves printing to the question');
     assert.equal(r.clicks.length, 0, 'no work order');
     assert.ok(r.env.requests(/DYMO\/DLS\/Printing/).length > 0, 'the label was sent to DYMO');
   });
 }
+await t('Return: closing the intake form after "No" prints nothing and opens no check-in', async () => {
+  const r = await returnEnv({ answers: ['no', 'pin'], form: null });
+  await r.press();
+  assert.deepEqual(r.asked, ['Are you able to create cleanings for this device?', 'Why not?', 'form']);
+  assert.equal(r.clicks.length, 0);
+  assert.equal(r.env.requests(/DYMO\/DLS\/Printing/).length, 0);
+});
 await t('Return: Asurion Mobility, "No" + no option on the account opens the check-in', async () => {
   const r = await returnEnv({ answers: ['no', 'option'] });
   await r.press();
   assert.deepEqual(r.asked, ['Are you able to create cleanings for this device?', 'Why not?']);
+  assert.equal(r.forms.length, 0, 'no form when the check-in goes on');
   assert.equal(r.clicks.length, 1);
 });
 await t('Return: closing either question creates nothing', async () => {
