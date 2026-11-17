@@ -149,8 +149,9 @@ AE.shard({
       #sg-galaxy-btn.dragging .mname, #sg-galaxy-btn.intro .mname { opacity:0; } /* the explainer sits where the name would */
       /* First-time explainer, pointing at the button */
       #sg-galaxy-intro { position:fixed; z-index:2147483646; width:300px; padding:16px 16px 14px; font-size:14px; line-height:1.45; animation:sg-in .2s ease-out; }
-      #sg-galaxy-intro .ae { position:absolute; top:10px; right:10px; color:var(--aui-primary, #8223d2); line-height:0; }
-      #sg-galaxy-intro b { display:block; margin:0 28px 6px 0; font-size:15px; }
+      #sg-galaxy-intro .hd { display:flex; align-items:center; gap:8px; }
+      #sg-galaxy-intro .hd .ae { line-height:0; color:var(--aui-primary, #8223d2); }
+      #sg-galaxy-intro .hd b { flex:1; font-size:15px; }
       #sg-galaxy-intro a { color:var(--aui-primary, #8223d2); font-weight:700; cursor:pointer; text-decoration:underline; }
       #sg-galaxy-intro .sg-actions { margin-top:12px; justify-content:flex-end; }
       #sg-galaxy-intro .sg-actions .sg-btn { flex:none; }
@@ -170,14 +171,14 @@ AE.shard({
         tail.style.left = Math.min(Math.max(12, b.left + b.width / 2 - left - 7), pw - 26) + 'px';
         tail.style.top = above ? (ph - 8) + 'px' : '-8px';
         tail.style.transform = above ? 'rotate(45deg)' : 'rotate(225deg)';
+        tail.style.background = above ? '' : 'var(--ae-head)'; // below the button the tail meets the header band
       }
       function dismissIntro() { GM_setValue(INTRO_KEY, true); document.getElementById('sg-galaxy-intro')?.remove(); document.getElementById('sg-galaxy-btn')?.classList.remove('intro'); }
       function showIntro() {
         if (GM_getValue(INTRO_KEY, false) || document.getElementById('sg-galaxy-intro')) return;
         const link = h('a', { role: 'button', tabindex: '0', onclick: () => { dismissIntro(); AE.openSettings('galaxy'); } }, 'click here');
         const pop = h('div', { id: 'sg-galaxy-intro', class: 'sg sg-card', role: 'dialog', 'aria-label': 'About the Macrocosmos button' },
-          h('span', { class: 'ae', title: AE_NAME, html: icon('aetheryte', 22) }),
-          h('b', null, 'Macrocosmos'),
+          h('div', { class: 'hd ae-head' }, h('span', { class: 'ae', title: AE_NAME, html: icon('aetheryte', 22) }), h('b', null, 'Macrocosmos')),
           h('div', null, 'Click this button to automatically file the Galaxy Diagnostics exception for this device. If you need to change the values used in the form, ', link, ' to change them.'),
           h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: dismissIntro }, 'Got it')),
           h('span', { class: 'tail' }));

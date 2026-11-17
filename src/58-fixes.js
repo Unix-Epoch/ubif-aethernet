@@ -1052,7 +1052,7 @@ AE.shard({
           const box = AE.h('div', { id: ID, class: 'sg sg-card' });
           const paint = () => {
             if (!box.isConnected) document.body.append(box);
-            box.replaceChildren(AE.h('div', { class: 'hd' }, AE.h('span', null, 'Scan debugging'),
+            box.replaceChildren(AE.h('div', { class: 'hd ae-head' }, AE.h('span', null, 'Scan debugging'),
               AE.h('button', { type: 'button', class: 'sg-btn', style: 'height:24px;font-size:12px', onclick: () => { rows.length = 0; paint(); } }, 'Clear'),
               AE.h('button', { type: 'button', class: 'sg-btn', style: 'height:24px;font-size:12px', title: 'Copy the log (to paste in a bug report)',
                 onclick: () => navigator.clipboard.writeText(rows.map((r) => r.text).join('\n')).then(() => AE.toast('Scan debugging', 'Log copied.', 'ok')) }, 'Copy')),

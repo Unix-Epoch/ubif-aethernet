@@ -127,7 +127,7 @@ AE.shard({
       #${DLG} .tile { display:flex; flex-direction:column; justify-content:flex-start; align-items:flex-start; text-align:left; font:inherit; border:1px solid var(--aui-outline, #d9d9de); border-radius:10px; padding:10px 12px; cursor:pointer;
         background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); }
       #${DLG} .tile.on { border:2px solid var(--aui-primary, #8223d2); background:var(--aui-primary-soft, #faf5ff); padding:9px 11px; }
-      #${DLG} .tile .l { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; opacity:.7; }
+      #${DLG} .tile .l { font-size:13px; font-weight:700; opacity:.7; }
       #${DLG} .tile .p { font-size:24px; font-weight:800; margin:2px 0; }
       #${DLG} .tile.on .p { color:var(--aui-primary, #8223d2); }
       #${DLG} .tiles.muted .tile .p { opacity:.5; }

@@ -456,7 +456,7 @@ AE.waymark = (() => {
   .sg-auto.ae-chip svg { width:14px; height:14px; }
   .sg-auto.ae-chip.mini { padding:0 5px; } .sg-auto.ae-chip.mini svg { width:11px; height:11px; }
   #sg-wm-pop { position:fixed; z-index:2147483646; width:360px; max-height:70vh; overflow:auto; padding:14px 16px; font-size:14px; line-height:1.4; }
-  #sg-wm-pop h4 { margin:12px 0 6px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+  #sg-wm-pop h4 { margin:12px 0 6px; font-size:14px; font-weight:700; color:var(--aui-on-surface, #1a1c1e); }
   #sg-wm-pop h4:first-child { margin-top:0; }
   #sg-wm-pop .chips { display:flex; flex-wrap:wrap; gap:6px; }
   #sg-wm-pop input[type=text] { width:100%; height:34px; padding:0 10px; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px;
@@ -498,7 +498,7 @@ AE.waymark = (() => {
   .sg-auto button { border:0; background:none; padding:0 2px; margin:0; color:inherit; cursor:pointer; font-size:13px; line-height:1; opacity:.75; }
   .sg-auto button:hover { opacity:1; }
   #sg-wm-push { position:fixed; z-index:2147483647; width:230px; padding:8px; font-size:13px; }
-  #sg-wm-push .ttl { padding:4px 8px 6px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+  #sg-wm-push .ttl { padding:4px 8px 6px; font-size:14px; font-weight:700; color:var(--aui-on-surface, #1a1c1e); }
   #sg-wm-push .opt { display:flex; justify-content:space-between; width:100%; padding:7px 8px; border:0; border-radius:6px; background:none; cursor:pointer;
     color:var(--aui-on-surface, #1a1c1e); font:400 13px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:left; }
   #sg-wm-push .opt.def { background:var(--aui-primary-soft, #faecff); font-weight:700; }
@@ -765,7 +765,7 @@ AE.shard({
       tr:hover .${LI}.edit .add, tr:hover .${LI}.edit .sg-tag button, tr:hover .${LI}.edit .sg-auto button,
       .${LI}.edit:focus-within .add, .${LI}.edit:focus-within button { visibility:visible; }
       #${ALL_ID} { position:fixed; z-index:2147483646; width:260px; padding:10px 12px; font-size:13px; }
-      #${ALL_ID} h4 { margin:0 0 8px; font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+      #${ALL_ID} h4 { margin:0 0 8px; font-size:14px; font-weight:700; color:var(--aui-on-surface, #1a1c1e); }
       #${ALL_ID} .r { margin:6px 0; display:flex; }
       #${ALL_ID} .add { height:22px; padding:0 9px; border-radius:10000rem; border:1px dashed var(--aui-primary, #8223d2); background:transparent; cursor:pointer;
         color:var(--aui-primary, #8223d2); font:700 12px/1 Apercu, "Helvetica Neue", Arial, sans-serif; }

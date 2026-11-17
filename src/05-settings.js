@@ -127,7 +127,7 @@
   .sg-flair b { color:var(--aui-primary, #8223d2); }
   @keyframes sg-flair { 0%, 100% { background-position:0 0, 100% 0; } 50% { background-position:0 0, 0% 0; } }
   .sg-fixed { margin:10px 0 2px; }
-  .sg-fixed .hd { font-size:12px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); margin-bottom:6px; }
+  .sg-fixed .hd { font-size:14px; font-weight:700; color:var(--aui-on-surface, #1a1c1e); margin-bottom:6px; }
   .sg-fixed figure { position:relative; margin:0 0 8px; padding:10px 12px 10px 14px; border-radius:12px; border-left:4px solid var(--aui-status-success, #136d31);
     background:var(--aui-neutral-soft, #f1f0f4); }
   .sg-fixed blockquote { margin:0 70px 4px 0; font-style:italic; overflow-wrap:anywhere; }
@@ -141,7 +141,7 @@
   .sg-about { width:min(460px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:28px 24px 20px; font-size:14px; line-height:1.45; }
   .sg-about .hero { display:flex; flex-direction:column; align-items:center; text-align:center; gap:4px; margin-bottom:18px; }
   .sg-about .hero h2 { margin:6px 0 0; font-size:24px; font-weight:700; }
-  .sg-about h4 { margin:18px 0 6px; font-size:12px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-about h4 { margin:18px 0 6px; font-size:14px; font-weight:700; color:var(--aui-on-surface, #1a1c1e); }
   .sg-about .sg-kv { grid-template-columns:110px 1fr; }
   .sg-about code { font:12px ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--aui-neutral-soft, #f1f0f4); padding:1px 5px; border-radius:4px; }
   .sg-about .chips { display:flex; flex-wrap:wrap; gap:6px; }
@@ -305,7 +305,7 @@
 
     // The demo build's About is the bare minimum: name, version, author, icon credit.
     const card = AE_DEMO ? h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
-      h('div', { class: 'hero' },
+      h('div', { class: 'hero ae-head' },
         h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
         h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
         h('div', { class: 'sg-soft' }, 'v' + AE_VERSION)),
@@ -314,7 +314,7 @@
       h('div', { class: 'fine' }, 'Shard icons are FINAL FANTASY XIV action icons. © SQUARE ENIX.'),
       h('div', { class: 'sg-actions', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: () => close() }, 'Close')))
     : h('div', { class: 'sg sg-card sg-about', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'About ' + AE_NAME },
-      h('div', { class: 'hero' },
+      h('div', { class: 'hero ae-head' },
         h('span', { style: 'color:var(--aui-primary,#8223d2)', html: icon('aetheryte', 56) }),
         h('h2', { class: 'sg-wordmark', html: AE.wordmark(40) }),
         h('div', { class: 'sg-soft', html: 'Restoring the <span class="sg-flow">flow</span> of NextGen' })),

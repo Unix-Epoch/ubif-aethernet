@@ -70,7 +70,7 @@
   .sg-dev .tag { padding:2px 8px; border-radius:10000rem; background:#e0761a; color:#fff; font-size:11px; font-weight:800; letter-spacing:.08em; }
   .sg-dev .scroll { overflow:auto; padding-right:4px; }
   .sg-dev section { border-top:1px solid var(--aui-outline-soft, #eeedf1); padding:10px 0; }
-  .sg-dev h3 { margin:0 0 8px; font-size:12px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-dev h3 { margin:0 0 8px; font-size:14px; font-weight:700; color:var(--aui-on-surface, #1a1c1e); }
   .sg-dev .btns { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
   .sg-dev .btns .sg-btn { height:30px; padding:0 12px; font-size:13px; }
   .sg-dev .btns .sg-btn.write { border-color:var(--aui-status-error, #b91a24); color:var(--aui-status-error, #b91a24); }
@@ -450,7 +450,7 @@
         btn('Reset', () => { AE.health.reset(); healthNote.textContent = healthText(); })));
 
     const card = h('div', { class: 'sg sg-card sg-dev', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' dev tools' },
-      h('div', { class: 'head' }, h('span', { style: 'color:#e0761a;line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Dev tools'), h('span', { class: 'tag' }, 'DEV v' + AE_VERSION),
+      h('div', { class: 'head ae-head' }, h('span', { style: 'color:#e0761a;line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Dev tools'), h('span', { class: 'tag' }, 'DEV v' + AE_VERSION),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
       h('div', { class: 'scroll' }, portalHealth, updates, tracker, retrace, assizeGraphs, sharepoint, notices, access, settings, macro, waymark, rows, scans, recorder, perf, general));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-dev', onclick: (e) => { if (e.target === scrim) close(); } }, card);
