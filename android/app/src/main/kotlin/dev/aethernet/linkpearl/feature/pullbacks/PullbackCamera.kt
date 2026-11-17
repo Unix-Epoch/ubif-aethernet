@@ -13,6 +13,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -44,13 +46,15 @@ import dev.aethernet.linkpearl.core.design.LpShapes
 import dev.aethernet.linkpearl.core.design.StateMessage
 
 /**
- * The camera viewfinder for Pullbacks: CameraX preview + ML Kit's bundled barcode model, reading [formats] only (serial labels). Every frame's codes are read;
+ * The camera viewfinder for Pullbacks: CameraX preview + ML Kit's bundled barcode model, reading [formats] only (serial labels by default; Linkshell passes QR). Every frame's codes are read;
  * only codes whose centre is inside the scan frame count (the rest of the view is ignored); of those, the one that matches [expected]
  * wins, else the first. The same value is passed on at most once every 1.5 s, so holding the label in
  * view doesn't scan it again. Asks for the camera permission the first time; without it, a line and a retry.
  */
 /** Serial labels are 1D codes (Code 128, sometimes Code 39 or 93). Product codes (UPC/EAN), QR and Data Matrix are left out unless a caller asks. */
 val SERIAL_FORMATS = listOf(Barcode.FORMAT_CODE_128, Barcode.FORMAT_CODE_39, Barcode.FORMAT_CODE_93)
+/** QR only: Aethernet's Linkshell pairing code. */
+val QR_FORMATS = listOf(Barcode.FORMAT_QR_CODE)
 
 @Composable
 fun PullbackCamera(expected: String, onCode: (String) -> Unit, formats: List<Int> = SERIAL_FORMATS) {
@@ -100,10 +104,12 @@ fun PullbackCamera(expected: String, onCode: (String) -> Unit, formats: List<Int
         onDispose { controller.unbind(); controller.clearImageAnalysisAnalyzer() }
     }
     DisposableEffect(scanner) { onDispose { scanner.close() } }
+    // A wide strip for 1D labels; a square when QR is read.
+    val square = Barcode.FORMAT_QR_CODE in formats
     Box(Modifier.fillMaxSize()) {
         AndroidView({ ctx -> PreviewView(ctx).apply { this.controller = controller; scaleType = PreviewView.ScaleType.FILL_CENTER } }, Modifier.fillMaxSize())
         Box(
-            Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 28.dp).height(72.dp).border(2.dp, Lp.colors.fg, LpShapes.Card)
+            (if (square) Modifier.align(Alignment.Center).fillMaxHeight(0.75f).aspectRatio(1f) else Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 28.dp).height(72.dp)).border(2.dp, Lp.colors.fg, LpShapes.Card)
                 .onGloballyPositioned { frame = Rect(it.positionInParent(), it.size.toSize()) },
         )
     }

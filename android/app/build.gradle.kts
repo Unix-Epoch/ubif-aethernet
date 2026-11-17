@@ -35,8 +35,8 @@ android {
         applicationId = "dev.aethernet.linkpearl"
         minSdk = 31 // hardware-backed ECDH in the Android Keystore needs API 31
         targetSdk = 37
-        versionCode = 13
-        versionName = "1.2.8"
+        versionCode = 14
+        versionName = "1.2.9"
 
         // Server base URL and the public app key (one place: android/gradle.properties).
         fun prop(name: String) = providers.gradleProperty(name).get().replace("\\", "\\\\").replace("\"", "\\\"")
