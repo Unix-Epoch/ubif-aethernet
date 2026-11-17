@@ -7,7 +7,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -274,7 +273,6 @@ private fun ColumnScope.ScanBody(s: PbSession, actions: PullbackActions, camera:
         state = list,
         flingBehavior = rememberSnapFlingBehavior(list, SnapPosition.Start),
         verticalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(bottom = 400.dp),
     ) {
         itemsIndexed(s.items, key = { k, _ -> k }) { k, item ->
             if (k == i) CurrentRow(item) else ItemRow(item)
