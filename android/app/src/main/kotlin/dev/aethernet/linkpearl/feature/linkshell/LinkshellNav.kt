@@ -27,6 +27,7 @@ import dev.aethernet.linkpearl.core.di.LocalAppContainer
 import dev.aethernet.linkpearl.core.nav.Routes
 import dev.aethernet.linkpearl.feature.pullbacks.PullbackCamera
 import dev.aethernet.linkpearl.feature.pullbacks.PullbackLink
+import dev.aethernet.linkpearl.feature.pullbacks.QR_FORMATS
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -74,6 +75,6 @@ fun LinkshellRoute(navigate: (String) -> Unit) {
             onJoin = { if (vm.join()) navigate(Routes.PULLBACKS) },
         ),
         storeName = { id -> stores.firstOrNull { it.id == id }?.name?.takeIf { it.isNotBlank() } },
-        camera = { onCode -> PullbackCamera("", onCode) },
+        camera = { onCode -> PullbackCamera("", onCode, QR_FORMATS) },
     )
 }
