@@ -415,7 +415,7 @@ AE.shard({
     // ---------------------------------------------------------- upload
     function showStart(error) {
       const input = h('input', { type: 'file', accept: '.xlsx,.csv', hidden: true, onchange: () => { const f = input.files[0]; input.value = ''; if (f) take(f); } });
-      const zone = h('label', { class: 'drop' }, 'Upload PowerBI export', input);
+      const zone = h('label', { class: 'drop' }, 'Drop a PowerBI or Linkpearl export', input);
       zone.ondragover = (e) => { e.preventDefault(); zone.classList.add('over'); };
       zone.ondragleave = () => zone.classList.remove('over');
       zone.ondrop = (e) => { e.preventDefault(); zone.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) take(f); };
@@ -590,24 +590,32 @@ AE.shard({
     }
 
     // ---------------------------------------------------------- entry points
-    // A Pullbacks tile on the Inventory hub, copied from Portal's own Inventory count tile (its text swapped, its link dropped).
+    // A Pullbacks tile on the Inventory hub: a copy of Portal's Inventory Count tile (<a class="cards-link"> around a simple-card),
+    // its text swapped, its link dropped, added after the hub's last tile.
     function placeTile() {
       if (location.pathname.replace(/\/+$/, '') !== '/boh/inventory' || document.getElementById(TILE)) return;
-      const label = [...document.querySelectorAll('main a, main button, main [role="button"], main div, main p, main span, main h3, main h4')]
+      const label = [...document.querySelectorAll('main [data-aui="text"], main span, main p, main h3, main h4')]
         .find((el) => el.children.length === 0 && /^inventory count$/i.test(el.textContent.trim()));
       if (!label) return;
-      let tile = label;
-      while (tile.parentElement && tile.parentElement.children.length < 3 && tile.parentElement !== document.body) tile = tile.parentElement;
+      let tile = label.closest('a.cards-link, a[href]');
+      if (!tile) { tile = label; while (tile.parentElement && tile.parentElement.children.length < 3 && tile.parentElement !== document.body) tile = tile.parentElement; }
       if (!tile.parentElement || tile.parentElement === document.body) return;
       const copy = tile.cloneNode(true);
       copy.id = TILE;
+      copy.removeAttribute('href');
       copy.querySelectorAll('[href]').forEach((a) => a.removeAttribute('href'));
-      if (copy.hasAttribute('href')) copy.removeAttribute('href');
+      copy.setAttribute('role', 'button');
+      copy.tabIndex = 0;
       const text = [...copy.querySelectorAll('*')].concat(copy).find((el) => el.children.length === 0 && /^inventory count$/i.test(el.textContent.trim()));
       if (text) text.textContent = 'Pullbacks';
-      copy.querySelectorAll('img, svg').forEach((el, i) => { if (i === 0) el.replaceWith(icon(28)); else el.remove(); });
+      // Portal's barcode icon stays until the shard has its own.
+      const art = AE.actionIcon('pullbacks', 28);
+      const own = copy.querySelector('[data-aui="icon"].icon, svg');
+      if (art && own) own.replaceWith(icon(28));
       copy.style.cursor = 'pointer';
-      copy.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); open(); }, true);
+      const go = (e) => { e.preventDefault(); e.stopPropagation(); open(); };
+      copy.addEventListener('click', go, true);
+      copy.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); });
       tile.parentElement.append(copy);
     }
     AE.onDom(placeTile);
