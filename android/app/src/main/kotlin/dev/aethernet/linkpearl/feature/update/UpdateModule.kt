@@ -1,5 +1,6 @@
 package dev.aethernet.linkpearl.feature.update
 
+import android.app.NotificationManager
 import dev.aethernet.linkpearl.BuildConfig
 import dev.aethernet.linkpearl.core.data.ApiClient
 import dev.aethernet.linkpearl.core.data.SessionStore
@@ -7,8 +8,10 @@ import dev.aethernet.linkpearl.core.di.AppContainer
 import dev.aethernet.linkpearl.core.di.FeatureModule
 import dev.aethernet.linkpearl.core.nav.NavDots
 import dev.aethernet.linkpearl.core.nav.TopLevel
+import dev.aethernet.linkpearl.core.prefs.AppPrefs
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import java.io.File
@@ -17,6 +20,8 @@ import java.io.File
 object UpdateModule : FeatureModule {
     override fun install(c: AppContainer) {
         val app = c.application
+        c.channel(AppContainer.ChannelSpec(UpdateNotice.CHANNEL, "Updates", NotificationManager.IMPORTANCE_DEFAULT))
+        UpdateNotice.clearInstalled(app, BuildConfig.VERSION_CODE)
         c.provide<UpdateController> {
             UpdateController(
                 current = AppVersion(BuildConfig.VERSION_CODE, BuildConfig.VERSION_NAME),
@@ -31,6 +36,7 @@ object UpdateModule : FeatureModule {
                 store = DataStoreUpdateStore(app),
                 dir = File(app.cacheDir, "update"),
                 scope = c.appScope,
+                autoUpdate = { c.get<AppPrefs>().autoUpdate.first() },
             )
         }
         c.provide<NavDots> {

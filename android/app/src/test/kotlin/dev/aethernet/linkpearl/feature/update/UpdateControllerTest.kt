@@ -29,7 +29,64 @@ class UpdateControllerTest {
         installer: FakeInstaller = FakeInstaller(),
         store: MemoryUpdateStore = MemoryUpdateStore(),
         dir: File = File(tmp.root, "update"),
-    ) = UpdateController(Current, source, downloader, installer, store, dir, this, nowMs = { now }, minInterval = 3 * hours, io = StandardTestDispatcher(testScheduler))
+        auto: Boolean = false,
+    ) = UpdateController(
+        Current, source, downloader, installer, store, dir, this, nowMs = { now }, minInterval = 3 * hours,
+        io = StandardTestDispatcher(testScheduler), autoUpdate = { auto },
+    )
+
+    @Test fun autoUpdateDownloadsAndInstallsOnADueCheck() = runTest {
+        val downloader = FakeDownloader(ApkBytes)
+        val installer = FakeInstaller()
+        val c = controller(downloader = downloader, installer = installer, auto = true)
+        assertTrue(c.checkIfDue())
+        assertEquals(1, downloader.calls)
+        assertEquals(1, installer.installed.size)
+        assertEquals(UpdatePhase.Installing, c.state.value.phase)
+    }
+
+    @Test fun autoUpdateOffOnlyChecks() = runTest {
+        val downloader = FakeDownloader(ApkBytes)
+        val installer = FakeInstaller()
+        val c = controller(downloader = downloader, installer = installer, auto = false)
+        assertTrue(c.checkIfDue())
+        advanceUntilIdle()
+        assertTrue(c.state.value.available)
+        assertEquals(0, downloader.calls)
+        assertTrue(installer.installed.isEmpty())
+    }
+
+    @Test fun autoUpdateNeverOpensTheInstallPermissionPage() = runTest {
+        val downloader = FakeDownloader(ApkBytes)
+        val c = controller(downloader = downloader, installer = FakeInstaller(allowed = false), auto = true)
+        val requests = mutableListOf<Unit>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { c.permissionRequests.collect { requests += it } }
+        assertTrue(c.checkIfDue())
+        advanceUntilIdle()
+        assertEquals(0, downloader.calls)
+        assertTrue(requests.isEmpty())
+        assertEquals(UpdatePhase.Idle, c.state.value.phase)
+    }
+
+    @Test fun autoUpdateSkipsWhenNothingNewer() = runTest {
+        val downloader = FakeDownloader(ApkBytes)
+        val c = controller(source = FakeUpdateSource(UpdateAnswer(Release120.copy(code = 4, name = "1.1.1"), MinVersion(1, "1.0.0"))), downloader = downloader, auto = true)
+        assertTrue(c.checkIfDue())
+        assertEquals(0, downloader.calls)
+    }
+
+    @Test fun autoUpdateRunsOnlyWithADueCheck() = runTest {
+        val downloader = FakeDownloader(ApkBytes, ok = false)
+        val c = controller(downloader = downloader, auto = true)
+        assertTrue(c.checkIfDue())
+        assertEquals(UpdatePhase.Failed(UpdatePhase.DOWNLOAD_FAILED), c.state.value.phase)
+        now += hours
+        assertFalse(c.checkIfDue())
+        assertEquals(1, downloader.calls)
+        now += 3 * hours
+        assertTrue(c.checkIfDue())
+        assertEquals(2, downloader.calls)
+    }
 
     @Test fun newerBuildIsAvailableNotRequired() = runTest {
         val c = controller()

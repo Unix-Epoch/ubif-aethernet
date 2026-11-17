@@ -54,6 +54,7 @@ data class SettingsUiState(
     val lockAfter: String = lockAfterLabel(),
     val notificationsOn: Boolean = false,
     val appearance: Appearance = Appearance.Dark,
+    val autoUpdate: Boolean = true,
     val confirmForget: Boolean = false,
     val forgetting: Boolean = false,
 )
@@ -83,6 +84,7 @@ class SettingsViewModel(
             unlocked = unlocked, notificationsOn = notif, appearance = appearance,
         )
     }.combine(local) { s, l -> s.copy(confirmForget = l.confirmForget, forgetting = l.forgetting) }
+        .combine(prefs.autoUpdate) { s, auto -> s.copy(autoUpdate = auto) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsUiState())
 
     init { refresh() }
@@ -113,6 +115,8 @@ class SettingsViewModel(
     suspend fun notificationsAsked(): Boolean = prefs.notificationsAsked.first()
 
     fun setAppearance(value: Appearance) { viewModelScope.launch { prefs.setAppearance(value) } }
+
+    fun setAutoUpdate(value: Boolean) { viewModelScope.launch { prefs.setAutoUpdate(value) } }
 
     fun askForget() = local.update { it.copy(confirmForget = true) }
     fun cancelForget() = local.update { it.copy(confirmForget = false) }

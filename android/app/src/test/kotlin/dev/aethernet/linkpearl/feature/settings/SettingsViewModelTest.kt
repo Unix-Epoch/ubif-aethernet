@@ -106,6 +106,15 @@ class SettingsViewModelTest {
         assertEquals(Appearance.System, prefs.appearance.first())
     }
 
+    @Test fun autoUpdateIsOnByDefaultAndRemembered() = runTest {
+        val prefs = MemoryAppPrefs()
+        val vm = vm(prefs = prefs)
+        assertEquals(true, vm.state.value.autoUpdate)
+        vm.setAutoUpdate(false)
+        assertEquals(false, vm.state.value.autoUpdate)
+        assertEquals(false, prefs.autoUpdate.first())
+    }
+
     @Test fun forgetNeedsConfirmationAndCancelDoesNothing() = runTest {
         val auth = FakeAuth(registered)
         val vm = vm(auth = auth)
