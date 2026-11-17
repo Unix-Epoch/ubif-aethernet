@@ -17,3 +17,14 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
+
+# ML Kit barcode scanning (Pullbacks camera): with R8's full mode the scanner's internals lose fields that ML Kit fills by
+# reflection, and BarcodeScanning.getClient throws a NullPointerException in the release build. Keep ML Kit whole.
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_barcode_bundled.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_common.** { *; }
+-keep class com.google.android.gms.internal.mlkit_common.** { *; }
+-keep class com.google.android.gms.internal.mlkit_code_scanner.** { *; }
+-dontwarn com.google.mlkit.**
+-dontwarn com.google.android.gms.internal.mlkit_**

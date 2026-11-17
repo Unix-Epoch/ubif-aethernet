@@ -1,5 +1,18 @@
 package dev.aethernet.linkpearl.feature.pullbacks
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.snapping.SnapPosition
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.Icon
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -96,14 +109,18 @@ fun PullbackScreen(
     val navInset = LocalNavInset.current
     Column(modifier.fillMaxSize()) {
         Header(state, actions.onBack)
-        Column(
+        if (state is PbUi.Scanning) {
+            Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = LpSpacing.Gutter), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
+                ScanBody(state.s, actions, camera, state.pc)
+            }
+        } else Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = LpSpacing.Gutter).padding(bottom = LpSpacing.M),
             verticalArrangement = Arrangement.spacedBy(LpSpacing.M),
         ) {
             when (state) {
                 is PbUi.Start -> StartBody(state, actions)
                 is PbUi.Stores -> StoresBody(state, actions)
-                is PbUi.Scanning -> ScanBody(state.s, actions, camera, state.pc)
+                is PbUi.Scanning -> {}
                 is PbUi.Done -> DoneBody(state.s)
             }
         }
@@ -224,70 +241,99 @@ private fun ColumnScope.StoresBody(state: PbUi.Stores, actions: PullbackActions)
 }
 
 // ---------------------------------------------------------------- scanning
+/** After a good scan the camera rests this long while the row ticks and the list moves on. */
+internal const val SCAN_REST_MS = 250L
+
+/**
+ * The run as a list in file order, snapping row by row: the current item is the large row at the top, the next ones below it, and
+ * pulling down shows the ones already scanned. After each scan the list scrolls smoothly to the new current item.
+ */
 @Composable
 private fun ColumnScope.ScanBody(s: PbSession, actions: PullbackActions, camera: (@Composable (String, (String) -> Unit) -> Unit)?, pc: Boolean? = null) {
     val c = Lp.colors
-    val it = s.current ?: return
+    val cur = s.current ?: return
+    val i = s.idx ?: return
     val haptics = rememberHaptics()
     var typing by remember { mutableStateOf(camera == null) }
+    var restUntil by remember { mutableStateOf(0L) }
     LaunchedEffect(s.history.size, s.msg) {
         when {
             s.msg == PbMsg.Mismatch -> haptics.reject()
-            s.lastOk -> haptics.confirm()
+            s.lastOk -> { haptics.confirm(); restUntil = System.currentTimeMillis() + SCAN_REST_MS }
         }
     }
     if (camera != null && !typing) {
-        Box(Modifier.fillMaxWidth().height(210.dp).clip(LpShapes.Card)) { camera(it.serial, actions.onScan) }
-    }
-    LpCard {
-        Text(listOf(it.skuText, it.description).filter { t -> t.isNotBlank() }.joinToString(" · "), style = LpType.Label, color = c.soft, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text(it.serial, style = LpType.ValueMedium, color = c.accText, modifier = Modifier.padding(top = 4.dp).semantics { contentDescription = "Expected serial ${it.serial}" })
-        ProgressBar((s.total - s.pending).toFloat() / s.total.coerceAtLeast(1), c.acc, Modifier.fillMaxWidth().padding(top = 10.dp))
-        FlowRow(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            LpChip("${Fmt.count(s.done)} done", tone = Tone.Good)
-            LpChip("${Fmt.count(s.pending)} left", tone = Tone.Accent)
-            if (s.count(PbStatus.Skipped) > 0) LpChip("${Fmt.count(s.count(PbStatus.Skipped))} skipped", tone = Tone.Warn)
+        Box(Modifier.fillMaxWidth().height(180.dp).clip(LpShapes.Card)) {
+            camera(cur.serial) { code -> if (System.currentTimeMillis() >= restUntil) actions.onScan(code) }
         }
     }
+    if (typing || camera == null) ScanField(s.history.size to s.msg, actions.onScan)
     when (s.msg) {
         PbMsg.Mismatch -> Message("Mismatch", s.last, bad = true)
         PbMsg.Empty -> Message("Empty scan", null)
         PbMsg.Reverted -> Message("Reverted", null)
         null -> {}
     }
-    if (typing || camera == null) ScanField(s.history.size to s.msg, actions.onScan)
-    if (s.link != null) SentList(s, pc == true)
-    s.next?.let { nx ->
-        Text("Next ${nx.skuText} · ${nx.description} · …${nx.serial.takeLast(6)}", style = LpType.Caption, color = c.soft, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    if (s.link != null && pc == false && s.sending > 0) Message("PC offline · ${Fmt.count(s.sending)} waiting", null, bad = true)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ProgressBar((s.total - s.pending).toFloat() / s.total.coerceAtLeast(1), c.acc, Modifier.weight(1f))
+        if (s.count(PbStatus.Skipped) > 0) LpChip("${Fmt.count(s.count(PbStatus.Skipped))} skipped", tone = Tone.Warn)
+        if (camera != null) LpIconButton(if (typing) LpIcons.Camera else LpIcons.Keyboard, if (typing) "Camera" else "Type", { typing = !typing })
     }
-    if (camera != null) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            LpIconButton(if (typing) LpIcons.Camera else LpIcons.Keyboard, if (typing) "Camera" else "Type", { typing = !typing })
+    val list = rememberLazyListState(initialFirstVisibleItemIndex = i)
+    LaunchedEffect(i) { list.animateScrollToItem(i) }
+    LazyColumn(
+        Modifier.weight(1f).fillMaxWidth(),
+        state = list,
+        flingBehavior = rememberSnapFlingBehavior(list, SnapPosition.Start),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        itemsIndexed(s.items, key = { k, _ -> k }) { k, item ->
+            if (k == i) CurrentRow(item) else ItemRow(item, if (s.link != null) sync(item, pc == true) else null)
         }
     }
 }
 
-/** A run joined from Aethernet: the last scans and what the browser said about each. */
 @Composable
-private fun SentList(s: PbSession, online: Boolean) {
+private fun CurrentRow(it: PbItem) {
     val c = Lp.colors
-    val waiting = s.sending
-    if (!online && waiting > 0) Message("PC offline · ${Fmt.count(waiting)} waiting", null, bad = true)
-    s.history.takeLast(3).reversed().forEach { i ->
-        val it = s.items.getOrNull(i) ?: return@forEach
-        val (label, tone) = when {
-            it.status == PbStatus.Skipped -> "Skipped" to Tone.Neutral
-            it.backendStatus == PbSession.SENDING -> (if (online) "Sending" else "Waiting") to Tone.Warn
-            it.backendStatus == PbSession.QUEUED -> "Waiting" to Tone.Warn
-            it.backendStatus == "success" -> "Marked" to Tone.Good
-            it.backendStatus == "skipped-already-marked" -> "Already marked" to Tone.Accent
-            it.backendStatus == "failed" -> "Failed" to Tone.Warn
-            else -> "Sending" to Tone.Warn
+    LpCard {
+        Text(listOf(it.skuText, it.description).filter { t -> t.isNotBlank() }.joinToString(" · "), style = LpType.Label, color = c.soft, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(it.serial, style = LpType.Value, color = c.accText, modifier = Modifier.padding(top = 4.dp).semantics { contentDescription = "Expected serial ${it.serial}" })
+    }
+}
+
+/** On a run joined from Aethernet: what the browser said about a scanned row (null while not scanned). */
+private fun sync(it: PbItem, online: Boolean): Pair<String, Tone>? = when {
+    it.status == PbStatus.Pending || it.status == PbStatus.Skipped -> null
+    it.backendStatus == PbSession.SENDING -> (if (online) "Sending" else "Waiting") to Tone.Warn
+    it.backendStatus == PbSession.QUEUED -> "Waiting" to Tone.Warn
+    it.backendStatus == "success" -> "Marked" to Tone.Good
+    it.backendStatus == "skipped-already-marked" -> "Already marked" to Tone.Accent
+    it.backendStatus == "failed" -> "Failed" to Tone.Warn
+    else -> "Sending" to Tone.Warn
+}
+
+/** A row that isn't the current one; a scanned row turns green with a tick that springs in ([sync]: the browser's word instead of the tick). */
+@Composable
+private fun ItemRow(it: PbItem, sync: Pair<String, Tone>? = null) {
+    val c = Lp.colors
+    val done = it.status == PbStatus.Matched || it.status == PbStatus.Overridden
+    val bg by animateColorAsState(
+        when { done -> c.goodBg; it.status == PbStatus.Skipped -> c.warnBg; else -> c.surf3 }, tween(SCAN_REST_MS.toInt()), label = "row",
+    )
+    val tick by animateFloatAsState(if (done) 1f else 0f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium), label = "tick")
+    Row(
+        Modifier.fillMaxWidth().clip(LpShapes.Card).background(bg).padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(it.description, style = LpType.Small, color = if (done) c.soft else c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(it.serial, style = LpType.Caption.copy(fontFamily = FontFamily.Monospace), color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Row(Modifier.fillMaxWidth().clip(LpShapes.Card).background(c.surf).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("…" + it.serial.takeLast(6), style = LpType.BodyStrong.copy(fontFamily = LpDisplay), color = c.fg, modifier = Modifier.weight(1f))
-            LpChip(label, tone = tone)
-        }
+        if (sync != null) LpChip(sync.first, tone = sync.second)
+        else if (tick > 0.01f) Icon(LpIcons.Check, "Scanned", tint = c.good, modifier = Modifier.size(22.dp).graphicsLayer { scaleX = tick; scaleY = tick })
+        else if (it.status == PbStatus.Skipped) Text("Skipped", style = LpType.Label, color = c.warn)
     }
 }
 

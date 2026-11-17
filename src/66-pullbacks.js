@@ -5,7 +5,7 @@
   Monty Flag when present). The header row is found in the first 15 rows (the first one with a Serial column; headers like
   'Unique Serials'[Serial] match Serial), rows with no serial are dropped (the Total and "Applied filters" rows), HTML entities are
   decoded (&quot;), and only the rows for Portal's current store are kept (the "#914" in the Store text). Items are sorted by
-  Description so a model's parts sit together. When the file has no rows for this store, a store list shows instead.
+  part type, then description and SKU (byDesc), so similar parts sit together. When the file has no rows for this store, a store list shows instead.
 
   Scanning: one item at a time. A scan that matches the expected serial (trimmed, case-insensitive) marks it in Portal right away:
     POST /api/boh/inventory/<scanned serial>/mark-defective-broken
@@ -221,7 +221,34 @@ AE.pullbacks = (() => {
   const storeNum = (s) => (/#\s*(\d+)/.exec(String(s)) || /(\d+)\s*$/.exec(String(s)) || [])[1] || '';
   const stamp = (d = new Date()) => { const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); };
   const blank = (it) => Object.assign(it, { scanned_serial: '', match: '', status: 'pending', scanned_at: '', backend_status: '', backend_message: '', backend_at: '' });
-  const byDesc = (a, b) => { const x = String(a.description || '').trim().toLowerCase(), y = String(b.description || '').trim().toLowerCase(); return x < y ? -1 : x > y ? 1 : 0; };
+  // Scan order: by part type (the order shelves are usually kept), then by description in natural order (iPhone 6 before iPhone 11), so
+  // the same SKU and similar parts sit together; then SKU and serial. Linkpearl's Pullbacks.category / order are the same rules.
+  const CATEGORIES = [
+    ['devices', /renewed|\b\d+\s?gb\b/i],
+    ['back glass', /back glass|housing/i],
+    ['screens', /glass|\blcd\b|\boled\b|screen|display|digitizer/i],
+    ['batteries', /battery/i],
+    ['charging ports', /charging port|dock connector/i],
+    ['speakers', /speaker|earpiece/i],
+    ['flex', /sensor\/front camera/i],
+    ['cameras', /camera/i],
+    ['flex', /flex|coil|sensor|nfc/i],
+  ];
+  const ORDER = ['screens', 'batteries', 'charging ports', 'cameras', 'speakers', 'flex', 'back glass', 'devices'];
+  const category = (desc) => { const d = String(desc || ''); const hit = CATEGORIES.find(([, re]) => re.test(d)); return hit ? hit[0] : 'other'; };
+  const rank = (desc) => { const i = ORDER.indexOf(category(desc)); return i < 0 ? ORDER.length : i; };
+  const chunks = (t) => String(t || '').trim().toLowerCase().match(/\d+|\D+/g) || [];
+  function natural(a, b) {
+    const x = chunks(a), y = chunks(b);
+    for (let i = 0; i < Math.min(x.length, y.length); i++) {
+      const p = x[i], q = y[i], pn = /^\d/.test(p), qn = /^\d/.test(q);
+      if (pn && qn) { const d = Number(p) - Number(q); if (d) return d; } else if (pn !== qn) return pn ? -1 : 1;
+      else if (p !== q) return p < q ? -1 : 1;
+    }
+    return x.length - y.length;
+  }
+  const byDesc = (a, b) => rank(a.description) - rank(b.description) || natural(a.description, b.description)
+    || natural(a.sku, b.sku) || natural(a.serial, b.serial);
 
   // rows → { kind: 'export' | 'results', headers, items } (items not yet filtered by store for an export)
   function parse(rows) {
@@ -320,7 +347,7 @@ AE.pullbacks = (() => {
     return { ok: false, message: 'status ' + r.status + (r.text ? ': ' + String(r.text).slice(0, 200) : '') };
   }
 
-  return { RESULT_HEADERS, readXlsx, readCsv, writeXlsx, unzip, parse, stores, forStore, results, fileName, unmarked, counts, mark, norm, storeNum, stamp, blank, fillOf };
+  return { RESULT_HEADERS, category, readXlsx, readCsv, writeXlsx, unzip, parse, stores, forStore, results, fileName, unmarked, counts, mark, norm, storeNum, stamp, blank, fillOf };
 })();
 
 AE.shard({

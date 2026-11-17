@@ -165,7 +165,7 @@ Screenshots in `screenshots/trends` and `screenshots/prices`.
 
 `feature/pullbacks`, route `pullbacks` (`linkpearl://pullbacks`), opened from the barcode button in Retrace's header. The phone version of Aethernet's Elusive Jump
 (`src/66-pullbacks.js`) and the scan_serials.py tool: open the PowerBI "Pullback Serials" export (.xlsx or .csv, through the system file picker), pick the store (the
-phone's own stores first, the first one picked), then scan item by item, sorted by description. Camera scanning (CameraX + ML Kit; asks for the camera the first time;
+phone's own stores first, the first one picked), then scan item by item, sorted by part type, then item and SKU. Camera scanning (CameraX + ML Kit; asks for the camera the first time;
 a code equal to the expected serial wins, the same code is taken once per 1.5 s), or the keyboard button for typing or a keyboard-style Bluetooth scanner. Mismatch →
 Accept anyway or Skip; Undo puts the last item back. Share results sends the script's "Scan Results" .xlsx (`Pullbacks.results`, same columns, fills and widths) through
 a FileProvider (`cache/pullbacks/`). The phone has no Portal session, so nothing is marked from here: uploading that file on Aethernet's Pullbacks page marks every scanned
