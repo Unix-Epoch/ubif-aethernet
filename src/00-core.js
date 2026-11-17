@@ -743,10 +743,12 @@ const AE = (() => {
     has, keeping its own spacing inside. Runs from the DOM watcher, which fires before the next paint.
   */
   function fitHeads() {
-    for (const el of document.querySelectorAll('.sg-card > .ae-head:first-child:not([data-ae-fit])')) {
+    for (const el of document.querySelectorAll('.sg-card > .ae-head:first-child:not([data-ae-head])')) {
       const card = el.parentElement;
       if (!card.isConnected) continue;
-      el.setAttribute('data-ae-fit', '');
+      el.setAttribute('data-ae-head', '');
+      // Measure from the stylesheet, not from an earlier fit, so fitting again never adds up.
+      Object.assign(el.style, { marginTop: '', marginLeft: '', marginRight: '', marginBottom: '', paddingTop: '', paddingBottom: '', paddingLeft: '', paddingRight: '', borderRadius: '' });
       const c = getComputedStyle(card), e = getComputedStyle(el);
       const pt = parseFloat(c.paddingTop) || 0, pr = parseFloat(c.paddingRight) || 0, pl = parseFloat(c.paddingLeft) || 0;
       const bw = parseFloat(c.borderTopWidth) || 0, rl = Math.max(0, (parseFloat(c.borderTopLeftRadius) || 0) - bw), rr = Math.max(0, (parseFloat(c.borderTopRightRadius) || 0) - bw);
@@ -759,6 +761,7 @@ const AE = (() => {
       });
     }
   }
+
 
   // Minimal element builder: h('div', {class:'x', onclick}, child, 'text')
   // Each shard's FFXIV action icon, plus a few FFXIV UI pieces under "ui/<name>"
