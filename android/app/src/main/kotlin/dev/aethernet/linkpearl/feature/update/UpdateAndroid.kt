@@ -1,12 +1,17 @@
 package dev.aethernet.linkpearl.feature.update
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.os.Build
+import android.os.Bundle
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.IntentCompat
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -15,6 +20,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dev.aethernet.linkpearl.LinkpearlApp
+import dev.aethernet.linkpearl.R
 import dev.aethernet.linkpearl.core.data.ApiClient
 import dev.aethernet.linkpearl.core.data.ApiResult
 import dev.aethernet.linkpearl.core.data.Credentials
@@ -135,13 +141,22 @@ class UpdateInstallReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION) return
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        val app = context.applicationContext as? LinkpearlApp
+        val controller = app?.let { runCatching { it.container.get<UpdateController>() }.getOrNull() }
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             val confirm = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java) ?: return
-            runCatching { context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            // On screen: the confirm screen opens now. In the background (Auto-update) Android blocks that, so a notification opens it.
+            val shown = inForeground() && runCatching { context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+            if (!shown) UpdateNotice.post(context, confirm, controller?.state?.value?.latest)
             return
         }
-        val app = context.applicationContext as? LinkpearlApp ?: return
-        runCatching { app.container.get<UpdateController>() }.getOrNull()?.onInstallStatus(installStatus(status))
+        controller?.onInstallStatus(installStatus(status))
+    }
+
+    private fun inForeground(): Boolean {
+        val info = ActivityManager.RunningAppProcessInfo()
+        ActivityManager.getMyMemoryState(info)
+        return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
     companion object {
@@ -151,6 +166,37 @@ class UpdateInstallReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_SUCCESS -> InstallStatus.Success
             PackageInstaller.STATUS_FAILURE_ABORTED -> InstallStatus.Aborted
             else -> InstallStatus.Failure
+        }
+    }
+}
+
+/** "Linkpearl 1.2.8 / Tap to install": shown when an Auto-update needs the owner's confirmation while the app is in the background. */
+object UpdateNotice {
+    const val CHANNEL = "updates"
+    private const val ID = 7001
+    private const val EXTRA_CODE = "dev.aethernet.linkpearl.UPDATE_CODE"
+
+    @SuppressLint("MissingPermission") // checked: areNotificationsEnabled
+    fun post(context: Context, confirm: Intent, release: Release?) {
+        val nm = NotificationManagerCompat.from(context)
+        if (!nm.areNotificationsEnabled()) return
+        val tap = PendingIntent.getActivity(context, ID, confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val n = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setContentTitle(release?.name?.let { "Linkpearl $it" } ?: "Linkpearl update")
+            .setContentText("Tap to install")
+            .setContentIntent(tap).setAutoCancel(true)
+            .setExtras(Bundle().apply { putInt(EXTRA_CODE, release?.code ?: Int.MAX_VALUE) })
+            .build()
+        runCatching { nm.notify(ID, n) }
+    }
+
+    /** At launch: drop a notice for a version that is now installed (or older). */
+    fun clearInstalled(context: Context, currentCode: Int) {
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        runCatching {
+            nm.activeNotifications.filter { it.id == ID && it.notification.extras.getInt(EXTRA_CODE, Int.MAX_VALUE) <= currentCode }
+                .forEach { nm.cancel(it.id) }
         }
     }
 }

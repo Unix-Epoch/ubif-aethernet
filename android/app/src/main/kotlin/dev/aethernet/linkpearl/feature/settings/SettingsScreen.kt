@@ -39,6 +39,7 @@ import dev.aethernet.linkpearl.core.design.LpShapes
 import dev.aethernet.linkpearl.core.design.LpSpacing
 import dev.aethernet.linkpearl.core.design.LpType
 import dev.aethernet.linkpearl.core.design.PillButton
+import dev.aethernet.linkpearl.core.design.SwitchRow
 import dev.aethernet.linkpearl.core.design.Tone
 import dev.aethernet.linkpearl.core.nav.HingeTwoPane
 import dev.aethernet.linkpearl.core.nav.LocalAdaptive
@@ -55,6 +56,7 @@ data class SettingsActions(
     val onAlertSettings: () -> Unit = {},
     val onAppearance: (Appearance) -> Unit = {},
     val onUpdate: () -> Unit = {},
+    val onAutoUpdate: (Boolean) -> Unit = {},
     val onOpenAdmin: () -> Unit = {},
     val onLinkshell: () -> Unit = {},
     val onAskForget: () -> Unit = {},
@@ -73,7 +75,7 @@ fun SettingsScreen(
         DeviceSection(state, actions); CustomerSection(state, actions); NotificationsSection(state, actions)
     }
     val right = @Composable {
-        AppearanceSection(state, actions); AboutSection(version, update, actions); ForgetSection(actions)
+        AppearanceSection(state, actions); AboutSection(version, state.autoUpdate, update, actions); ForgetSection(actions)
     }
     val gap = Arrangement.spacedBy(LpSpacing.Xl)
     val navInset = LocalNavInset.current
@@ -176,8 +178,10 @@ private fun RowScope.Segment(label: String, description: String, selected: Boole
 }
 
 @Composable
-private fun AboutSection(version: String, update: UpdateState?, a: SettingsActions) = Section("About") {
+private fun AboutSection(version: String, autoUpdate: Boolean, update: UpdateState?, a: SettingsActions) = Section("About") {
     LpListRow("Version", trailing = { Value(version) })
+    Divider()
+    SwitchRow("Auto-update", autoUpdate, a.onAutoUpdate)
     Divider()
     if (update != null && update.available) {
         UpdateRow(update, a.onUpdate)

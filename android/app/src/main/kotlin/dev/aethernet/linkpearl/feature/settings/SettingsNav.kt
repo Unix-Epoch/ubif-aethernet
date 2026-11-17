@@ -71,6 +71,7 @@ fun SettingsRoute(navigate: ((String) -> Unit)? = null, modifier: Modifier = Mod
             },
             onAppearance = vm::setAppearance,
             onUpdate = updates::update,
+            onAutoUpdate = vm::setAutoUpdate,
             onOpenAdmin = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ADMIN_SITE))) },
             onLinkshell = {
                 if (navigate != null) navigate(Routes.LINKSHELL)

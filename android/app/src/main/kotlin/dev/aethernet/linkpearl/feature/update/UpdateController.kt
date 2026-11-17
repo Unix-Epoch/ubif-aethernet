@@ -61,6 +61,8 @@ class UpdateController(
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val minInterval: Long = 3.hours.inWholeMilliseconds,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** The Auto-update switch: when on, a check that finds a new version downloads and installs it without a tap. */
+    private val autoUpdate: suspend () -> Boolean = { false },
 ) {
     private val _state = MutableStateFlow(UpdateState(current))
     val state: StateFlow<UpdateState> = _state.asStateFlow()
@@ -81,11 +83,29 @@ class UpdateController(
         withContext(io) { cleanOld() }
     }
 
-    /** On launch, resume and the background check: asks the server unless it was asked less than [minInterval] ago. */
+    /**
+     * On launch, resume and the background check: asks the server unless it was asked less than [minInterval] ago. When it did ask
+     * and Auto-update is on, a new version is downloaded and installed before this returns (so the background job waits for it).
+     */
     suspend fun checkIfDue(): Boolean {
         restored.join()
         if (nowMs() - lastCheckMs < minInterval) return false
-        return check()
+        val checked = check()
+        if (checked) autoInstall()
+        return checked
+    }
+
+    /**
+     * Auto-update: at most once per check, never while one is running, and only when Android already lets Linkpearl install
+     * (it never opens the "Install unknown apps" page on its own; the Update button does that).
+     */
+    private suspend fun autoInstall() {
+        val s = _state.value
+        if (!s.available || s.busy || s.phase == UpdatePhase.NeedsPermission || job?.isActive == true) return
+        if (!runCatching { autoUpdate() }.getOrDefault(false) || !runCatching { installer.canInstall() }.getOrDefault(false)) return
+        val j = scope.launch { run() }
+        job = j
+        j.join()
     }
 
     /** Asks the server now. False when it could not be reached (the last answer stays). */
