@@ -129,7 +129,7 @@ AE.shard({
         ? '<button type="button" class="sg-btn sg-primary" data-dualcast style="width:100%;justify-content:center;margin:0 0 8px">' + AE.actionIcon(waiting.length >= 3 ? 'triplecast' : 'dualcast', 18) +
           (waiting.length >= 3 ? 'Triplecast' : 'Dualcast') + ' this</button>'
         : '';
-      pop.innerHTML = '<div class="hd">' + AE.actionIcon('woCleanings', 24) + 'Esuna</div>' +
+      pop.innerHTML = '<div class="hd ae-head">' + AE.actionIcon('woCleanings', 24) + 'Esuna</div>' +
         '<div class="sg-soft" style="margin:2px 0 8px">Quickly clear out this WO\'s cleanings</div>' + dual +
         (rows || '<p class="sg-soft">There\'s nothing here! Check Divination at the top to see if there are unlinked cleanings!</p>');
       const db = pop.querySelector('[data-dualcast]');

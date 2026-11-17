@@ -699,6 +699,7 @@ const AE = (() => {
   .sg-chip .sg-mk { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border:0; padding:0; border-radius:50%;
     background:var(--aui-primary,#8223d2); color:var(--aui-on-primary,#fff); cursor:pointer; }
   .sg-chip .sg-mk:hover { filter:brightness(.9); }
+  button[data-testid][data-ae-order] { display:flex; align-items:center; gap:10px; text-align:left; }
   .sg-menu-ic { display:inline-flex; flex:none; align-items:center; justify-content:center; line-height:0; color:var(--aui-primary, #8223d2); }
   .sg-menu-ic svg, .sg-menu-ic img { width:100%; height:100%; }
   .sg-aicon { display:inline-block; flex:none; border-radius:22%; vertical-align:middle; box-shadow:0 0 0 1px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.25); }
@@ -1552,7 +1553,7 @@ const AE = (() => {
       d = { id: opts.id, order: 100, severity: 'grey', badge: '', count: 0, label: opts.id, detail: '', busy: false, headerOnly: false, onClick() {}, sig: null };
       d.el = h('button', { type: 'button', id: opts.elId || 'ae-hi-' + opts.id, class: 'sg ae-hi',
         html: (opts.icon && ACTION_ICONS[opts.icon] ? actionIcon(opts.icon, 26) : icon('aetheryte', 26)) + '<span class="n"></span>',
-        onclick: (e) => { hdrHideTip(); try { d.onClick(e); } catch (err) { noteError('header-icon', err); } } });
+        onclick: (e) => { hdrHideTip(); headerPanelOpening(d.id); try { d.onClick(e); } catch (err) { noteError('header-icon', err); } } });
       d.icon = opts.icon;
       hdrWire(d.el, () => d);
       headerIcons.set(opts.id, d);
@@ -1560,7 +1561,7 @@ const AE = (() => {
     const handle = {
       update(patch) {
         let changed = false;
-        for (const k of ['label', 'detail', 'badge', 'count', 'severity', 'busy', 'order', 'headerOnly', 'onClick']) {
+        for (const k of ['label', 'detail', 'badge', 'count', 'severity', 'busy', 'order', 'headerOnly', 'onClick', 'panel']) {
           if (k in patch && d[k] !== patch[k]) { d[k] = patch[k]; changed = true; }
         }
         if (changed) hdrQueue();
@@ -1572,6 +1573,10 @@ const AE = (() => {
     handle.update(opts);
     hdrQueue();
     return handle;
+  }
+  // One header panel at a time: a panel opening closes the other icons' panels (their `panel` ids).
+  function headerPanelOpening(id) {
+    for (const o of headerIcons.values()) if (o.id !== id && o.panel) document.getElementById(o.panel)?.remove();
   }
   // Where an icon is on screen right now (the AeN icon while the icons are folded), for panels that hang off it.
   function headerIconBox(id) {
@@ -1712,7 +1717,7 @@ const AE = (() => {
   }
 
   return {
-    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, woHeading, woHeadingRow, woChip, textEl, findButton, avatarItem,
+    settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, headerPanelOpening, woHeading, woHeadingRow, woChip, textEl, findButton, avatarItem,
     api, unwrap, Stopped, ApiError, BadShape, shape, health, workerCall, timedFetch, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every,
     api, unwrap, Stopped, portal, sameStore, assertSameStore, halt, halted: () => !!halted, localCache, signedOut, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,

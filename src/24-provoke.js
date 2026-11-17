@@ -282,8 +282,8 @@ AE.shard({
         locked = true; btn.disabled = true;
       }
       const texts = () => [ta.value.trim()].concat(second && second.checked ? [p.second.texts[0]] : []);
-      const root = h('div', { id: BOX_ID, class: 'sg' + (p.ready ? '' : ' need'), 'data-id': String(a.arrivalId) },
-        h('div', { class: 'hd' }, h('span', { style: 'line-height:0', html: AE.actionIcon('leadReplies', 26) }),
+      const root = h('div', { id: BOX_ID, class: 'sg sg-card' + (p.ready ? '' : ' need'), 'data-id': String(a.arrivalId) },
+        h('div', { class: 'hd ae-head' }, h('span', { style: 'line-height:0', html: AE.actionIcon('leadReplies', 26) }),
           h('div', { class: 'txt' }, h('b', null, 'Provoke - Reply')),
           h('span', { class: 'pill' }, p.ready ? 'Reply ready' : 'Needs a reply')),
         p.call ? h('div', { class: 'call' }, h('b', null, 'Call this customer too.'), ' ' + (programOf(a) === 6494 ? 'Samsung In-Warranty' : 'Out-of-warranty') + ' leads need a call as well as a text.') : null,
@@ -335,7 +335,7 @@ AE.shard({
         background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1b1b1f); border:1px solid var(--aui-outline, #c6c6ca); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.3); }
       #${CHAT_ID} .menu button { display:block; width:100%; text-align:left; font:inherit; font-size:14px; padding:7px 14px; border:0; background:transparent; color:inherit; cursor:pointer; }
       #${CHAT_ID} .menu button:hover { background:var(--aui-primary-soft, #f3e8fc); }
-      #${CHAT_ID} .menu .g { font-size:11.5px; text-transform:uppercase; letter-spacing:.6px; padding:8px 14px 4px; opacity:.7; }
+      #${CHAT_ID} .menu .g { font-size:14px; font-weight:700; padding:8px 14px 4px; }
     `));
 
     // Put text in Portal's (React) message box the way typing would.
@@ -443,8 +443,8 @@ AE.shard({
         addEventListener('click', off, true);
       } }, 'More ▾') : null;
       const cs = h('div', { class: 'cs' }, order.map((k) => chip(named[k], k === top)), more);
-      const root = h('div', { id: CHAT_ID, class: 'sg', 'data-wo': woId },
-        h('div', { class: 'hd' }, h('span', { style: 'line-height:0', html: AE.actionIcon('leadReplies', 22) }), h('span', null, 'Provoke'),
+      const root = h('div', { id: CHAT_ID, class: 'sg sg-card', 'data-wo': woId },
+        h('div', { class: 'hd ae-head' }, h('span', { style: 'line-height:0', html: AE.actionIcon('leadReplies', 22) }), h('span', null, 'Provoke'),
           h('span', { class: 'sp' }), h('span', { class: 'sg-soft', style: 'font-weight:400' }, 'Lead sheet' + edited(leads))),
         cs);
       return root;

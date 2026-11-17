@@ -335,7 +335,7 @@ AE.shard({
         else printedOrRetry(AE.toast('Return', "The label didn't print.", 'err', 30000), 'Return', 'Label printed.', d);
       } }, 'Save and print label');
       const card = h('div', { class: 'sg sg-card sg-confirm', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Return' },
-        h('h2', { style: 'display:flex;align-items:center;gap:10px' }, h('span', { html: AE.actionIcon('checkinDrafts', 28), style: 'line-height:0;flex:none' }), 'Return'),
+        h('h2', { class: 'ae-head', style: 'display:flex;align-items:center;gap:10px' }, h('span', { html: AE.actionIcon('checkinDrafts', 28), style: 'line-height:0;flex:none' }), 'Return'),
         h('div', { class: 'grid' }, FIELDS.map(field)),
         h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: done }, 'Cancel'), save));
       const scrim = h('div', { id: FORM_ID, class: 'sg sg-confirm-scrim' }, card);
@@ -354,7 +354,7 @@ AE.shard({
       const none = Array.isArray(v.notes.none) ? v.notes.none : [];
       const rows = FIELDS.filter((f) => v.notes[f.k] || none.includes(f.k)).flatMap((f) => [h('dt', null, f.label), h('dd', null, v.notes[f.k] || 'None')]);
       el.replaceChildren(
-        h('div', { class: 'hd', role: 'button', tabindex: '0', 'aria-expanded': String(!GM_getValue(FOLD, false)), onclick: () => {
+        h('div', { class: 'hd' + (el.id === PANEL_ID ? ' ae-head' : ''), role: 'button', tabindex: '0', 'aria-expanded': String(!GM_getValue(FOLD, false)), onclick: () => {
           const closed = !el.classList.contains('closed');
           GM_setValue(FOLD, closed);
           for (const x of document.querySelectorAll('.ae-return-notes')) { x.classList.toggle('closed', closed); x.firstChild.setAttribute('aria-expanded', String(!closed)); }

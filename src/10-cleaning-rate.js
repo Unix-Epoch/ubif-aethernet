@@ -50,7 +50,14 @@ AE.shard({
     })(), loading = false, lastError = null;
 
     document.head.append(h('style', null, `
-      #${PANEL_ID} { position:fixed; z-index:2147483646; width:460px; max-height:70vh; overflow:auto; padding:16px; font-size:14px; line-height:1.4; }
+      #${PANEL_ID} { position:fixed; z-index:2147483646; width:min(540px, calc(100vw - 16px)); max-height:calc(100vh - 90px); display:flex; flex-direction:column; padding:16px 16px 12px; font-size:14px; line-height:1.4; }
+      @media (prefers-reduced-motion: no-preference) { #${PANEL_ID} { animation:sg-in .15s ease-out; } }
+      #${PANEL_ID} .hd { display:flex; align-items:center; gap:10px; }
+      #${PANEL_ID} .hd b { font-size:16px; flex:1; }
+      #${PANEL_ID} .rate { font-size:16px; font-weight:700; }
+      #${PANEL_ID} .list { overflow:auto; min-height:0; margin:0 -4px; padding:0 4px; }
+      #${PANEL_ID} .ft { margin-top:8px; padding-top:8px; border-top:1px solid var(--aui-outline-soft,#eeedf1); display:flex; gap:8px; align-items:center; }
+      #${PANEL_ID} .ft .sg-soft { flex:1; }
       #${PANEL_ID} table { width:100%; border-collapse:collapse; margin-top:10px; }
       #${PANEL_ID} td { padding:8px 4px; border-top:1px solid var(--aui-outline-soft,#eeedf1); vertical-align:top; }
       #${PANEL_ID} td:first-child { width:44%; }
@@ -129,7 +136,7 @@ AE.shard({
 
     // The header icon (core's AE.headerIcon): the badge shows the rate, colored by its bands.
     let rateIcon = null; // made on first use, so nothing is drawn on the login page
-    const makeIcon = () => AE.headerIcon({ id: 'cleaningRate', elId: BADGE_ID, icon: 'cleaningRate', order: 10, label: 'Cleanings', onClick: (e) => togglePanel(e) });
+    const makeIcon = () => AE.headerIcon({ id: 'cleaningRate', elId: BADGE_ID, icon: 'cleaningRate', order: 10, panel: PANEL_ID, label: 'Cleanings', onClick: (e) => togglePanel(e) });
     function renderBadge() {
       rateIcon = rateIcon || makeIcon();
       const failed = lastError && !last;
@@ -176,11 +183,20 @@ AE.shard({
     };
     function renderPanel() {
       let p = document.getElementById(PANEL_ID);
-      if (!p) { p = h('div', { id: PANEL_ID, class: 'sg sg-card' }); document.body.appendChild(p); }
+      if (!p) { p = h('div', { id: PANEL_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': 'Divination' }); document.body.appendChild(p); }
       const box = AE.headerIconBox('cleaningRate'), r = box && box.rect;
-      if (r && !box.floating) { p.style.top = (r.bottom + 8) + 'px'; p.style.left = Math.max(8, Math.min(r.left, innerWidth - 476)) + 'px'; p.style.bottom = ''; }
+      const w = Math.min(540, innerWidth - 16);
+      if (r && !box.floating) { p.style.top = (r.bottom + 8) + 'px'; p.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px'; p.style.bottom = ''; }
       else { p.style.left = '16px'; p.style.bottom = '60px'; p.style.top = ''; }
-      if (!last || last.cached) { p.innerHTML = lastError && !last ? '<span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '<span class="sg-soft">Divining…</span>'; return; } // cached: numbers only, the list comes with the fresh count
+      const head = '<div class="hd ae-head"><span style="line-height:0">' + AE.actionIcon('cleaningRate', 26) + '</span><b>Divination</b>' +
+        '<span class="sg-soft">' + (loading ? 'Divining…' : last ? 'Updated ' + fmtTime(last.at) : '') + '</span>' +
+        '<button type="button" class="sg-x" title="Close" aria-label="Close" data-close>✕</button></div>';
+      const wire = () => { p.querySelector('[data-close]').onclick = (e) => { e.stopPropagation(); p.remove(); }; };
+      if (!last || last.cached) { // cached: numbers only, the list comes with the fresh count
+        p.innerHTML = head + (lastError && !last ? '<span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '<p class="sg-soft" style="margin:0">Divining…</p>');
+        wire();
+        return;
+      }
 
       const linkTo = (c) => c.pending
         ? '<a href="/check-in/arrivals/' + c.arrivalId + '">arrival ' + c.arrivalId + '</a>'
@@ -213,18 +229,18 @@ AE.shard({
           (linksError ? '<div class="miss" style="font-size:12px">Manual links couldn\'t be loaded. If this is in error, please ' +
             AE.bugLink('report a bug', { where: 'Divination', error: 'Manual links couldn\'t be loaded: ' + linksError }) + '!</div>' : '') + '</div>';
       }
-      const scroll = p.scrollTop;
-      p.innerHTML =
-        '<div style="display:flex;align-items:center;gap:8px">' + AE.actionIcon('cleaningRate', 26) + '<b style="flex:1;font-size:16px">Today\'s cleaning rate: <span style="color:' + levelColor(last.pct) + '">' +
-        (last.pct == null ? 'none!' : last.pct + '%') + '</span></b><button type="button" class="sg-btn" data-refresh>Re-divine</button></div>' +
-        '<div class="sg-soft" style="margin-top:4px">' + last.linked + ' cleanings' + (last.pending ? ' (' + last.pending + ' pending in Arrivals)' : '') +
-        ' ÷ ' + last.parents + ' Asurion Mobility orders created today · updated ' + fmtTime(last.at) +
+      const scroll = p.querySelector('.list') ? p.querySelector('.list').scrollTop : 0;
+      p.innerHTML = head +
+        '<div class="rate">Today\'s cleaning rate: <span style="color:' + levelColor(last.pct) + '">' + (last.pct == null ? 'none!' : last.pct + '%') + '</span></div>' +
+        '<div class="sg-soft" style="margin-top:2px">' + last.linked + ' cleanings' + (last.pending ? ' (' + last.pending + ' pending in Arrivals)' : '') +
+        ' ÷ ' + last.parents + ' Asurion Mobility orders created today' +
         (lastError ? '<br><span class="miss">Last divination failed: ' + esc(lastError) + '</span>' : '') +
         (linkError ? '<br><span class="miss">Couldn\'t link this! Try again, and if it keeps failing, ' +
           AE.bugLink('report a bug', { where: 'Divination', error: 'Couldn\'t save a manual link: ' + linkError }) + '!</span>' : '') + '</div>' +
-        table + extra +
-        '<p class="sg-soft" style="margin:10px 0 0"><a href="/reporting/metrics">Past days: Reports → Cleaning rate history</a></p>';
-      p.scrollTop = scroll;
+        '<div class="list">' + table + extra + '</div>' +
+        '<div class="ft"><span class="sg-soft"><a href="/reporting/metrics">Past days: Reports → Cleaning rate history</a></span><button type="button" class="sg-btn" data-refresh>Re-divine</button></div>';
+      p.querySelector('.list').scrollTop = scroll;
+      wire();
       p.querySelector('[data-refresh]').onclick = (e) => { e.stopPropagation(); refresh(); };
       const linkFail = (e) => { linkError = e.message || String(e); renderPanel(); };
       p.querySelectorAll('select[data-link]').forEach((sel) => {
@@ -253,8 +269,9 @@ AE.shard({
     function togglePanel(e) {
       e.stopPropagation();
       const p = document.getElementById(PANEL_ID);
-      if (p) p.remove(); else { renderPanel(); AE.track('cleaningRate:open'); }
+      if (p) p.remove(); else { AE.headerPanelOpening('cleaningRate'); renderPanel(); AE.track('cleaningRate:open'); }
     }
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.getElementById(PANEL_ID)?.remove(); });
     document.addEventListener('click', (e) => {
       const p = document.getElementById(PANEL_ID), b = document.getElementById(BADGE_ID);
       if (p && !p.contains(e.target) && !(b && b.contains(e.target))) p.remove();

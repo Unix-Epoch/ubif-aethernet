@@ -80,7 +80,7 @@ AE.feedback = (() => {
   .sg-fb .sg-actions { margin-top:14px; }
   .sg-fb .ctx { margin:0 0 10px; padding:8px 10px; border-radius:10px; font-size:13px; overflow-wrap:anywhere;
     background:var(--aui-status-error-soft, #ffdad7); color:var(--aui-status-on-error-soft, #410004); }
-  .sg-fb .ctx b { display:block; font-size:11px; letter-spacing:.04em; text-transform:uppercase; opacity:.8; }
+  .sg-fb .ctx b { display:block; font-size:13px; opacity:.8; }
   .sg-adm { width:min(980px, 100%); height:min(760px, calc(100vh - 32px)); display:flex; flex-direction:column; padding:18px 20px 14px; font-size:14px; line-height:1.4; }
   .sg-adm .head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
   .sg-adm .head h2 { flex:1; margin:0; font-size:20px; font-weight:700; }
@@ -103,7 +103,7 @@ AE.feedback = (() => {
   .sg-adm .st { font-size:11px; font-weight:700; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
   .sg-adm .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(290px, 1fr)); gap:14px; }
   .sg-adm .card { border:1px solid var(--aui-outline-soft, #eeedf1); border-radius:12px; padding:10px 12px; }
-  .sg-adm .card h3 { margin:0 0 8px; font-size:13px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+  .sg-adm .card h3 { margin:0 0 8px; font-size:14px; font-weight:700; color:var(--aui-on-surface, #1a1c1e); }
   .sg-adm .row { display:grid; grid-template-columns:minmax(0, 1.3fr) minmax(0, 1fr) auto; gap:8px; align-items:center; padding:3px 0; font-size:13px; }
   .sg-adm .row .name { display:flex; gap:6px; align-items:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .sg-adm .row .track { height:8px; border-radius:4px; background:var(--aui-neutral-soft, #f1f0f4); overflow:hidden; }
@@ -469,9 +469,9 @@ AE.feedback = (() => {
         h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => grant(w.store, w.name) }, 'Give access')));
       body.replaceChildren(
         h('div', { class: 'bar' }, input, h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: add }, 'Add store')), out,
-        h('h3', { style: 'margin:14px 0 6px;font-size:13px;letter-spacing:.03em;text-transform:uppercase;color:var(--aui-on-surface-soft,#5d5e61)' }, 'Have access (' + j.allowed.length + ')'),
+        h('h3', { style: 'margin:14px 0 6px;font-size:14px;font-weight:700;color:var(--aui-on-surface, #1a1c1e)' }, 'Have access (' + j.allowed.length + ')'),
         ...(allowed.length ? allowed : [h('div', { class: 'sub' }, 'No stores yet.')]),
-        h('h3', { style: 'margin:14px 0 6px;font-size:13px;letter-spacing:.03em;text-transform:uppercase;color:var(--aui-on-surface-soft,#5d5e61)' }, 'Waiting for access (' + j.waiting.length + ')'),
+        h('h3', { style: 'margin:14px 0 6px;font-size:14px;font-weight:700;color:var(--aui-on-surface, #1a1c1e)' }, 'Waiting for access (' + j.waiting.length + ')'),
         ...(waiting.length ? waiting : [h('div', { class: 'sub' }, 'No other stores have opened Portal with ' + AE_NAME + '.')]));
     }
 

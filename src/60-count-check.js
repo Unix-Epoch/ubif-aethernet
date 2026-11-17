@@ -50,7 +50,7 @@ AE.shard({
       #${PANEL_ID} .stats { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin-bottom:10px; }
       #${PANEL_ID} .stat { border:1px solid var(--aui-outline-soft, #eeedf1); border-radius:10px; padding:6px 10px; }
       #${PANEL_ID} .stat .v { font-size:20px; font-weight:700; font-variant-numeric:tabular-nums; }
-      #${PANEL_ID} .stat .k { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+      #${PANEL_ID} .stat .k { font-size:13px; font-weight:700; color:var(--aui-on-surface-soft, #5d5e61); }
       #${PANEL_ID} .stat.bad .v { color:var(--aui-status-error, #b91a24); }
       #${PANEL_ID} .tabs { display:flex; gap:2px; border-bottom:1px solid var(--aui-outline-soft, #eeedf1); margin-bottom:8px; }
       #${PANEL_ID} .tab { padding:6px 10px 7px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px; background:none; cursor:pointer;
@@ -68,7 +68,7 @@ AE.shard({
       #${PANEL_ID} .cats select { height:26px; margin-left:auto; border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; background:var(--aui-surface, #fff);
         color:var(--aui-on-surface, #1a1c1e); font:12px Apercu, "Helvetica Neue", Helvetica, Arial, sans-serif; }
       #${PANEL_ID} .cats .sg-btn { height:26px; padding:0 10px; font-size:12px; }
-      #${PANEL_ID} .section { margin:10px 0 2px; font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--aui-on-surface-soft, #5d5e61); }
+      #${PANEL_ID} .section { margin:10px 0 2px; font-size:14px; font-weight:700; color:var(--aui-on-surface, #1a1c1e); }
       #${PANEL_ID} .item .t { cursor:pointer; user-select:none; }
       #${PANEL_ID} .item .t .chev { width:14px; height:14px; flex:none; align-self:center; color:var(--aui-on-surface-soft, #5d5e61); transition:transform .15s; transform:rotate(-90deg); }
       #${PANEL_ID} .item.open .t .chev { transform:none; }

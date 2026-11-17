@@ -168,7 +168,7 @@ AE.shard({
       #${DLG} .chk.bad { color:var(--aui-status-error, #c62828); }
       #${DLG} .chk.soft { color:var(--aui-on-surface-soft, #5d5e61); }
       #${DLG} .res { margin-top:16px; border:1px solid var(--aui-outline, #d9d9de); border-radius:12px; padding:14px 16px; }
-      #${DLG} .res .mk { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--aui-on-surface-soft, #666); }
+      #${DLG} .res .mk { font-size:13px; font-weight:700; color:var(--aui-on-surface-soft, #666); }
       #${DLG} .res .md { font-size:24px; font-weight:800; margin:2px 0 4px; }
       #${DLG} .res .src { font-size:12.5px; color:var(--aui-on-surface-soft, #666); }
       #${DLG} .rows { display:grid; grid-template-columns:120px 1fr; gap:8px 12px; margin-top:12px; padding-top:12px; border-top:1px solid var(--aui-outline-soft, #eeedf1); font-size:14px; align-items:center; }
