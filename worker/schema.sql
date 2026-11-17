@@ -70,6 +70,11 @@ CREATE TABLE IF NOT EXISTS checkin_drafts (  -- Return: incomplete check-ins (cu
   PRIMARY KEY (store, id)
 );
 CREATE INDEX IF NOT EXISTS checkin_drafts_arrival ON checkin_drafts (store, arrival_id);
+CREATE TABLE IF NOT EXISTS return_notes (     -- Return: an arrival's intake notes, AES-GCM ciphertext made in the browser (the key is only on the label); deleted at check-in or after 3 days
+  store INTEGER NOT NULL, arrival_id INTEGER NOT NULL, token_hash TEXT NOT NULL, iv TEXT NOT NULL, data TEXT NOT NULL,
+  by_name TEXT, by_id INTEGER, at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY (store, arrival_id)
+);
 CREATE TABLE IF NOT EXISTS sheets (          -- Provoke: a store's lead texts and Price sheet, pushed by the sync job (JSON)
   store INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL, synced_at TEXT NOT NULL,
   PRIMARY KEY (store, kind)

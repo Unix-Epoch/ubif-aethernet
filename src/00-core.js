@@ -939,9 +939,14 @@ const AE = (() => {
   // danger: the confirm button deletes or removes something: it's red, and Cancel has the focus so a stray Enter doesn't confirm.
   // choices: [{ label, value, primary }] in place of the confirm button, one per row; resolves to the picked value, or null
   // on Cancel, Escape or a click outside.
-  function confirmDialog({ title, message, warning, icon: iconId, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false, choices = null }) {
+  // The dialog's look, for a shard that builds its own card on the same scrim (Return's intake form).
+  function confirmCss() {
     ensureCss();
     if (!document.getElementById('sg-confirm-css')) document.head.append(h('style', { id: 'sg-confirm-css' }, CONFIRM_CSS));
+  }
+  confirmDialog.css = confirmCss;
+  function confirmDialog({ title, message, warning, icon: iconId, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false, choices = null }) {
+    confirmCss();
     return new Promise((resolve) => {
       const no = choices ? null : false;
       const done = (v) => { scrim.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };

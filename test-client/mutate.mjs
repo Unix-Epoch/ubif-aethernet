@@ -197,6 +197,9 @@ const M = [
   ['return: gate skipped for Asurion Mobility', '22-checkin-drafts.js', 'if (a && isMobility(a)) go = await ask(a);', ''],
   ['return: ticket reasons create the work order', '22-checkin-drafts.js', 'if (!reason.ticket) return true;', 'return true;'],
   ['return: closing the question creates the work order', '22-checkin-drafts.js', "if (able !== 'no') return false;", "if (able !== 'no') return true;"],
+  ['return: notes removed while still at Initial check-in', '22-checkin-drafts.js', 'if (Number(wo.workorderStatusId) === INITIAL_CHECKIN) continue;', ''],
+  ['return: a failed WO read removes the notes', '22-checkin-drafts.js', "try { wo = AE.shape.workorder(await AE.api('GET', '/api/workorder/' + k.woId)); } catch (_) { continue; }", "try { wo = AE.shape.workorder(await AE.api('GET', '/api/workorder/' + k.woId)); } catch (_) { wo = {}; }"],
+  ['return: labels kept past 3 days', '22-checkin-drafts.js', '&& Date.now() - (v.at || 0) < KEEP_MS', ''],
   ['return: answered arrivals asked again', '22-checkin-drafts.js', 'if (!id || cleared.has(id)) return;', 'if (!id) return;'],
 ];
 

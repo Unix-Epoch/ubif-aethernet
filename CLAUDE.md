@@ -10,7 +10,7 @@ Aethernet is a Tampermonkey userscript of "shards" (features named after FFXIV a
 - `15-wo-cleanings.js` Esuna (`woCleanings`): cleanings pill on a work order
 - `17-text-notes.js` Recitation (`textNotes`): sent text becomes a WO note
 - `20-auto-close.js` Swiftcast (`autoClose`): one-click cleaning auto-close
-- `22-checkin-drafts.js` Return (`checkinDrafts`): arrival labels (AER + arrival number, scan to open) and the Asurion Mobility cleanings question on the arrival's Check-in (dev-only)
+- `22-checkin-drafts.js` Return (`checkinDrafts`): intake notes sealed in the browser (key only on the label, AER + arrival + K + secret; Worker `/return`, deleted at check-in or after 3 days), the notes box/panel with Fill, and the Asurion Mobility cleanings question on the arrival's Check-in (dev-only)
 - `23-price-sheet.js` Price sheet shared by Provoke/Reassemble (not a shard)
 - `24-provoke.js` Provoke (`leadReplies`): lead replies
 - `27-tracker.js` WO tracker collection (not a shard)

@@ -161,4 +161,46 @@ assert.ok(logged.some((l) => l.includes('[' + j500.id + ']') && l.includes(SECRE
 assert.equal((await call('GET', '/v1/fixed?version=bad')).j.error, 'version=X.Y.Z required');
 const bj = await worker.fetch(new Request('https://t.test/v1/914/usage', { method: 'POST', headers: { 'x-aethernet-key': 'k' }, body: '{bad' }), E2);
 assert.equal(bj.status, 400); assert.equal((await bj.json()).error, 'bad JSON');
+
+// ---- Return notes: only a hash of the token is stored, a wrong token reads/changes/deletes nothing, 3-day expiry
+{
+  const notes = new Map(); let clock = Date.parse('2026-11-17T12:00:00Z');
+  const RealDate = Date;
+  const db = { prepare(sql) { let a = []; const q = { bind(...x) { a = x; return q; },
+    async first() {
+      if (/FROM store_access/.test(sql)) return a[0] === 914 ? { 1: 1 } : null;
+      if (/FROM return_notes/.test(sql)) { const r = notes.get(a[0] + '|' + a[1]); return r ? { token_hash: r.token_hash, iv: r.iv, data: r.data, by: r.by_name, at: r.at, updatedAt: r.updated_at } : null; }
+      throw new Error('unexpected first: ' + sql);
+    },
+    async run() {
+      if (/^DELETE FROM return_notes WHERE at < \?/.test(sql)) { for (const [k, r] of notes) if (r.at < a[0]) notes.delete(k); return { meta: {} }; }
+      if (/^DELETE FROM return_notes WHERE store/.test(sql)) { const k = a[0] + '|' + a[1]; if (notes.get(k)?.token_hash === a[2]) notes.delete(k); return { meta: {} }; }
+      if (/^INSERT INTO return_notes/.test(sql)) { const [store, arrival, token_hash, iv, data, by_name, by_id, at, updated_at] = a; notes.set(store + '|' + arrival, { token_hash, iv, data, by_name, by_id, at, updated_at }); return { meta: {} }; }
+      if (/^UPDATE return_notes/.test(sql)) { const [iv, data, by_name, by_id, updated_at, store, arrival, hash] = a; const r = notes.get(store + '|' + arrival); if (r && r.token_hash === hash) Object.assign(r, { iv, data, by_name, by_id, updated_at }); return { meta: {} }; }
+      throw new Error('unexpected run: ' + sql);
+    } }; return q; }, batch() { throw new Error('DB touched'); } };
+  const E3 = { APP_KEY: 'k', DB: db, LIMITER: null };
+  globalThis.Date = class extends RealDate { constructor(...x) { super(...(x.length ? x : [clock])); } static now() { return clock; } };
+  const c3 = async (path, body) => { const r = await worker.fetch(new Request('https://t.test' + path, { method: 'POST', headers: { 'x-aethernet-key': 'k' }, body: JSON.stringify(body) }), E3); return { status: r.status, j: await r.json() }; };
+  const T = 'a'.repeat(64), T2 = 'b'.repeat(64), save = { arrivalId: 880001, token: T, iv: 'AAAAAAAAAAAAAAAA', data: 'c2VhbGVk', by: 'Erin Baker', byId: 12345 };
+  try {
+    assert.equal((await c3('/v1/915/return', save)).status, 403, 'a store without access is refused');
+    for (const bad of [{ token: 'short' }, { token: 'A'.repeat(64) }, { arrivalId: 'x' }, { arrivalId: 0 }, { iv: '' }, { data: 'not base64!' }, { data: 'x'.repeat(20001) }])
+      assert.equal((await c3('/v1/914/return', { ...save, ...bad })).status, 400, JSON.stringify(bad).slice(0, 60));
+    assert.equal((await c3('/v1/914/return', save)).status, 200);
+    const stored = [...notes.values()][0];
+    assert.notEqual(stored.token_hash, T, 'the token itself is never stored'); assert.match(stored.token_hash, /^[0-9a-f]{64}$/);
+    assert.equal((await c3('/v1/914/return/read', { arrivalId: 880001, token: T2 })).status, 404, 'a wrong token reads nothing');
+    assert.equal((await c3('/v1/914/return', { ...save, token: T2, data: 'b3RoZXI=' })).status, 409, 'a wrong token cannot overwrite');
+    assert.equal((await c3('/v1/914/return/remove', { arrivalId: 880001, token: T2 })).status, 404, 'a wrong token cannot delete');
+    assert.equal((await c3('/v1/914/return/read', { arrivalId: 880001, token: T })).j.data, 'c2VhbGVk');
+    clock += 3600000; assert.equal((await c3('/v1/914/return', { ...save, data: 'bmV3' })).status, 200, 'the same token updates');
+    assert.equal((await c3('/v1/914/return/read', { arrivalId: 880001, token: T })).j.data, 'bmV3');
+    clock += 3 * 86400000 - 7200000; assert.equal((await c3('/v1/914/return/read', { arrivalId: 880001, token: T })).status, 200, 'kept until 3 days after the first save');
+    clock += 7200000; assert.equal((await c3('/v1/914/return/read', { arrivalId: 880001, token: T })).status, 404, 'gone 3 days after the first save (edits do not extend it)');
+    await c3('/v1/914/return', save);
+    assert.equal((await c3('/v1/914/return/remove', { arrivalId: 880001, token: T })).status, 200);
+    assert.equal(notes.size, 0, 'removed with the right token');
+  } finally { globalThis.Date = RealDate; }
+}
 console.log('waymark worker: all passed');
