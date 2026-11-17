@@ -26,6 +26,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -39,12 +44,16 @@ import dev.aethernet.linkpearl.core.design.LpShapes
 import dev.aethernet.linkpearl.core.design.StateMessage
 
 /**
- * The camera viewfinder for Pullbacks: CameraX preview + ML Kit's bundled barcode model (1D codes and QR). Every frame's codes are read;
- * the one that matches [expected] wins, else the first. The same value is passed on at most once every 1.5 s, so holding the label in
+ * The camera viewfinder for Pullbacks: CameraX preview + ML Kit's bundled barcode model, reading [formats] only (serial labels). Every frame's codes are read;
+ * only codes whose centre is inside the scan frame count (the rest of the view is ignored); of those, the one that matches [expected]
+ * wins, else the first. The same value is passed on at most once every 1.5 s, so holding the label in
  * view doesn't scan it again. Asks for the camera permission the first time; without it, a line and a retry.
  */
+/** Serial labels are 1D codes (Code 128, sometimes Code 39 or 93). Product codes (UPC/EAN), QR and Data Matrix are left out unless a caller asks. */
+val SERIAL_FORMATS = listOf(Barcode.FORMAT_CODE_128, Barcode.FORMAT_CODE_39, Barcode.FORMAT_CODE_93)
+
 @Composable
-fun PullbackCamera(expected: String, onCode: (String) -> Unit) {
+fun PullbackCamera(expected: String, onCode: (String) -> Unit, formats: List<Int> = SERIAL_FORMATS) {
     val context = LocalContext.current
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
@@ -66,17 +75,20 @@ fun PullbackCamera(expected: String, onCode: (String) -> Unit) {
     }
     val scanner = remember {
         BarcodeScanning.getClient(
-            BarcodeScannerOptions.Builder().setBarcodeFormats(
-                Barcode.FORMAT_CODE_128, Barcode.FORMAT_CODE_39, Barcode.FORMAT_CODE_93, Barcode.FORMAT_CODABAR, Barcode.FORMAT_EAN_13,
-                Barcode.FORMAT_EAN_8, Barcode.FORMAT_ITF, Barcode.FORMAT_UPC_A, Barcode.FORMAT_UPC_E, Barcode.FORMAT_QR_CODE, Barcode.FORMAT_DATA_MATRIX,
-            ).build(),
+            BarcodeScannerOptions.Builder().setBarcodeFormats(formats.first(), *formats.drop(1).toIntArray()).build(),
         )
     }
     var last by remember { mutableStateOf("" to 0L) }
+    // The scan frame in the preview's pixels (the analyzer's boxes are view-referenced, so they share these coordinates).
+    var frame by remember { mutableStateOf<Rect?>(null) }
+    val inFrame by rememberUpdatedState(frame)
     DisposableEffect(controller, owner) {
         val executor = ContextCompat.getMainExecutor(context)
         controller.setImageAnalysisAnalyzer(executor, MlKitAnalyzer(listOf(scanner), CameraController.COORDINATE_SYSTEM_VIEW_REFERENCED, executor) { result ->
-            val codes = result.getValue(scanner).orEmpty().mapNotNull { it.rawValue?.trim()?.takeIf(String::isNotEmpty) }
+            val f = inFrame ?: return@MlKitAnalyzer
+            val codes = result.getValue(scanner).orEmpty()
+                .filter { b -> b.boundingBox?.let { r -> f.contains(Offset(r.exactCenterX(), r.exactCenterY())) } == true }
+                .mapNotNull { it.rawValue?.trim()?.takeIf(String::isNotEmpty) }
             if (codes.isEmpty()) return@MlKitAnalyzer
             val v = codes.firstOrNull { Pullbacks.norm(it) == want } ?: codes.first()
             val now = System.currentTimeMillis()
@@ -90,6 +102,9 @@ fun PullbackCamera(expected: String, onCode: (String) -> Unit) {
     DisposableEffect(scanner) { onDispose { scanner.close() } }
     Box(Modifier.fillMaxSize()) {
         AndroidView({ ctx -> PreviewView(ctx).apply { this.controller = controller; scaleType = PreviewView.ScaleType.FILL_CENTER } }, Modifier.fillMaxSize())
-        Box(Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 28.dp).height(72.dp).border(2.dp, Lp.colors.fg, LpShapes.Card))
+        Box(
+            Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 28.dp).height(72.dp).border(2.dp, Lp.colors.fg, LpShapes.Card)
+                .onGloballyPositioned { frame = Rect(it.positionInParent(), it.size.toSize()) },
+        )
     }
 }
