@@ -415,7 +415,7 @@ AE.shard({
     // ---------------------------------------------------------- upload
     function showStart(error) {
       const input = h('input', { type: 'file', accept: '.xlsx,.csv', hidden: true, onchange: () => { const f = input.files[0]; input.value = ''; if (f) take(f); } });
-      const zone = h('label', { class: 'drop' }, 'Upload PowerBI export', input);
+      const zone = h('label', { class: 'drop' }, 'Upload PowerBI export or Linkpearl results', input);
       zone.ondragover = (e) => { e.preventDefault(); zone.classList.add('over'); };
       zone.ondragleave = () => zone.classList.remove('over');
       zone.ondrop = (e) => { e.preventDefault(); zone.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) take(f); };
