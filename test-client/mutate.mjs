@@ -40,7 +40,6 @@ const M = [
   ['esuna: old work-order fallback', '15-wo-cleanings.js', "AE.shape.workorder(await AE.api('GET', '/api/workorder/' + woId), 'Esuna work order ' + woId)", "((j) => (j && j.workorder) || AE.unwrap(j))(await AE.api('GET', '/api/workorder/' + woId))"],
   ['swiftcast: old work-order fallback', '20-auto-close.js', "Object.assign({}, AE.shape.workorder(r, 'Swiftcast work order ' + woId))", 'Object.assign({}, (r && r.workorder) || unwrap(r))'],
   ['swiftcast: checkout GET not raw', '20-auto-close.js', "await api('GET', '/api/checkout/workorder/' + woId, undefined, { raw: true });", "await api('GET', '/api/checkout/workorder/' + woId);"],
-  ['return: old work-order fallback', '22-checkin-drafts.js', "try { wo = AE.shape.workorder(await AE.api('GET', '/api/workorder/' + current.woId)); } catch (_) { return; }", "try { const j = await AE.api('GET', '/api/workorder/' + current.woId); wo = (j && j.workorder) || AE.unwrap(j) || {}; } catch (_) { return; }"],
   ['recitation: old work-order fallback', '17-text-notes.js', "AE.shape.workorder(woRes, 'Recitation work order ' + woId)", '(woRes && woRes.workorder) || AE.unwrap(woRes) || {}'],
   ['macrocosmos: no work-order check', '30-galaxy.js', "AE.shape.workorder(json, 'Macrocosmos work order ' + woId)", '((json && json.workorder) || {})'],
   ['decipher: old work-order fallback', '64-decipher.js', "fromWo(AE.shape.workorder(j, 'Decipher work order ' + woId))", 'fromWo((j && j.workorder) || AE.unwrap(j))'],
@@ -194,10 +193,11 @@ const M = [
   ["safety: cache: not wiped on sign-out (401)", "00-core.js", "if (res.status === 401) signedOut(); ", ""],
   ["safety: cache: not wiped when the store changes", "00-core.js", "try { localCache.clear(); } catch (_) {} // the cached work order details belong", "// the cached work order details belong"],
   ["safety: cache: not wiped when Portal has no signed-in store", "01-access.js", "if (p) AE.signedOut();", ""],
-  // ---- Return (paused while saved check-ins are off)
-  ['return: saving switched back on', '22-checkin-drafts.js', 'const SAVING_OFF = true;', 'const SAVING_OFF = false;'],
-  ['return: pause guard removed', '22-checkin-drafts.js', 'if (SAVING_OFF) return;', ''],
-  ['return: Settings no longer says paused', '05-settings.js', "'Paused: saved check-ins are off while their storage is being made private. Return will save", "'Return will save"],
+  // ---- Return (arrival labels, cleanings gate)
+  ['return: gate skipped for Asurion Mobility', '22-checkin-drafts.js', 'if (a && isMobility(a)) go = await ask(a);', ''],
+  ['return: ticket reasons create the work order', '22-checkin-drafts.js', 'if (!reason.ticket) return true;', 'return true;'],
+  ['return: closing the question creates the work order', '22-checkin-drafts.js', "if (able !== 'no') return false;", "if (able !== 'no') return true;"],
+  ['return: answered arrivals asked again', '22-checkin-drafts.js', 'if (!id || cleared.has(id)) return;', 'if (!id) return;'],
 ];
 
 const only = process.argv.slice(2);
