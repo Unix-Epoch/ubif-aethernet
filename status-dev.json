@@ -1,7 +1,7 @@
 {
   "latest": {
-    "version": "2.24.0.151",
-    "date": "2026-11-15T00:09:16Z"
+    "version": "2.24.0.152",
+    "date": "2026-11-17T16:42:52Z"
   },
   "incident": {
     "id": "2026-10-18-update-aethernet-to-keep-waymarks-and-tr",
@@ -9,9 +9,6 @@
     "title": "Update Aethernet to keep Waymarks and tracking working",
     "message": "We noticed a bug with this version, Waymark is sending erroneous data and messing with the backend data. Update Aethernet to 2.23.1 to fix this issue. Waymark will be paused until you update.",
     "crystals": [
-      "waymark"
-    ],
-    "shards": [
       "waymark"
     ],
     "pause": [
