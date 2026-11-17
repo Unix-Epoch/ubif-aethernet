@@ -472,10 +472,11 @@ AE.waymark = (() => {
   #sg-wm-bubble .sg-actions { margin-top:10px; justify-content:flex-end; }
   #sg-wm-bubble .sg-actions .sg-btn { flex:none; }
   #sg-wm-bubble .tail { position:absolute; top:-8px; width:14px; height:14px; background:inherit; border:1px solid var(--aui-status-error, #b91a24); border-width:1px 0 0 1px; transform:rotate(45deg); }
-  #sg-wm-board { position:fixed; z-index:2147483646; right:16px; width:min(560px, calc(100vw - 32px)); max-height:calc(100vh - 100px); display:flex; flex-direction:column;
-    padding:16px 16px 10px; font-size:14px; line-height:1.4; }
-  #sg-wm-board .head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
-  #sg-wm-board .head b { flex:1; font-size:18px; }
+  #sg-wm-board { position:fixed; z-index:2147483646; width:min(540px, calc(100vw - 16px)); max-height:calc(100vh - 90px); display:flex; flex-direction:column;
+    padding:16px 16px 12px; font-size:14px; line-height:1.4; }
+  @media (prefers-reduced-motion: no-preference) { #sg-wm-board { animation:sg-in .15s ease-out; } }
+  #sg-wm-board .head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  #sg-wm-board .head b { flex:1; font-size:16px; }
   #sg-wm-board .filters { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
   #sg-wm-board .list { overflow:auto; }
   #sg-wm-board .group { margin-bottom:12px; }
@@ -971,13 +972,15 @@ AE.shard({
     let boardManager = false; // managers clear tags right from the board
     async function toggleBoard() {
       if (document.getElementById(BOARD_ID)) { document.getElementById(BOARD_ID).remove(); return; }
-      const header = document.querySelector('.components-header');
-      const board = h('div', { id: BOARD_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': 'Waymark board',
-        style: 'top:' + Math.round((header ? header.getBoundingClientRect().bottom : 64) + 8) + 'px' },
+      const board = h('div', { id: BOARD_ID, class: 'sg sg-card', role: 'dialog', 'aria-label': 'Waymark board' },
         h('div', { class: 'head ae-head' }, h('span', { html: AE.actionIcon('waymark', 26) }), h('b', null, 'Waymark'),
           h('button', { type: 'button', class: 'sg-x', title: 'Close', onclick: () => board.remove() }, '✕')),
         h('div', { class: 'list' }, h('div', { class: 'sg-soft' }, h('span', { class: 'sg-spin', style: 'display:inline-block;vertical-align:-3px;margin-right:6px' }), 'Loading open work orders…')));
       document.body.appendChild(board);
+      // Opens under its header icon, like Assize and Divination; bottom-left when the icons float.
+      const box = AE.headerIconBox('waymark'), r = box && box.rect;
+      if (r && !box.floating) { board.style.top = (r.bottom + 8) + 'px'; board.style.left = Math.max(8, Math.min(r.left, innerWidth - board.offsetWidth - 8)) + 'px'; }
+      else { board.style.left = '16px'; board.style.bottom = '60px'; }
       AE.track('waymark:board');
       try {
         const [c, wos, role] = await Promise.all([W.load(true), AE.data.workorders(Date.now(), 0), W.canEdit().catch(() => ({ ok: false }))]);
@@ -1057,6 +1060,7 @@ AE.shard({
       }) : [h('div', { class: 'sg-soft', style: 'padding:8px 0' }, c.list.length ? 'No open work orders are tagged yet. Open a work order and use + Tag.' : 'No tags yet. A manager can set up the store list in Settings → Waymark; anyone can add one-off tags from a work order.')]),
         h('div', { class: 'sg-soft', style: 'padding:6px 0 2px' }, ((n) => n + ' open work order' + (n === 1 ? ' has' : 's have') + ' no tags.')(wos.length - tagged.length)));
     }
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !document.getElementById('sg-wm-push')) document.getElementById(BOARD_ID)?.remove(); });
     document.addEventListener('click', (e) => {
       const b = document.getElementById(BOARD_ID), path = e.composedPath();
       if (b && !path.includes(b) && !path.includes(document.getElementById(BTN_ID)) && !path.some((n) => n.id === 'sg-wm-push')) b.remove();

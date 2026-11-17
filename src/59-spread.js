@@ -124,6 +124,8 @@ AE.shard({
     // ------------------------------------------------------------ CSS
     const CSS = `
     [data-ae-spread="hidden"] { display:none !important; }
+    /* Board view: the page behind the board doesn't scroll; only the columns do */
+    [data-ae-spread-lock] { overflow:hidden !important; }
     /* grows to fill the row so it sits against the per-page menu (Portal gives that menu an auto left margin too, which would split the space) */
     .sp-switch { display:flex; flex:1 1 auto; justify-content:flex-end; align-items:center; gap:8px; margin:0 14px 0 0; font-family:Apercu,"Helvetica Neue",Helvetica,Arial,sans-serif; }
     .sp-switch .sp-name { font-size:13px; font-weight:700; color:var(--aui-primary,#8223d2); letter-spacing:.2px; }
@@ -148,7 +150,7 @@ AE.shard({
     .sp-head h3 { margin:0; font:700 16px/1.2 Apercu,"Helvetica Neue",Arial,sans-serif; }
     .sp-count { min-width:24px; height:22px; padding:0 8px; box-sizing:border-box; border-radius:11px; background:var(--aui-surface,#fff); border:1px solid var(--aui-outline,#d9d9de); font:700 13px/20px Apercu,Arial,sans-serif; text-align:center; }
     .sp-rfp { margin-top:6px; font-size:13px; color:var(--aui-on-surface-soft,#5d5e61); } .sp-rfp b { color:var(--aui-on-surface,#1a1c1e); font-weight:700; }
-    .sp-list { flex:1; min-height:0; overflow-y:auto; padding:4px 8px 10px; display:flex; flex-direction:column; gap:8px; }
+    .sp-list { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:4px 8px 10px; display:flex; flex-direction:column; gap:8px; }
     .sp-list::-webkit-scrollbar { width:8px; } .sp-list::-webkit-scrollbar-thumb { background:var(--aui-outline,#b9b9c2); border-radius:4px; } .sp-list::-webkit-scrollbar-track { background:transparent; margin:2px 0; }
     .sp-empty { margin:8px 0; padding:22px 8px; text-align:center; font-size:14px; color:var(--aui-on-surface-soft,#5d5e61); border:1px dashed var(--aui-outline,#c9c9d0); border-radius:8px; }
     .sp-card { position:relative; display:block; color:inherit; text-decoration:none; background:var(--aui-surface,#fff); border:1px solid var(--aui-outline-soft,#e3e3e8); border-left:6px solid var(--edge); background-image:linear-gradient(90deg, color-mix(in srgb, var(--edge-fade, var(--edge)) 35%, transparent), transparent 40px); border-radius:8px; padding:9px 10px 8px 10px; cursor:pointer; flex:none; box-shadow:0 1px 1px rgba(0,0,0,.04); transition:transform 120ms ease-out, box-shadow 120ms ease-out; }
@@ -266,7 +268,15 @@ AE.shard({
         if (el.getAttribute('data-ae-spread') !== 'hidden') el.setAttribute('data-ae-spread', 'hidden');
       }
     }
-    const unhide = () => document.querySelectorAll('[data-ae-spread="hidden"]').forEach((el) => el.removeAttribute('data-ae-spread'));
+    // Board view stops the page (and any of Portal's scrolling containers around the board) from scrolling.
+    function lockScroll() {
+      for (let el = ui.board.parentElement; el; el = el.parentElement) {
+        const oy = getComputedStyle(el).overflowY;
+        if (el === document.documentElement || el === document.body || oy === 'auto' || oy === 'scroll') el.setAttribute('data-ae-spread-lock', '');
+      }
+    }
+    const unlockScroll = () => document.querySelectorAll('[data-ae-spread-lock]').forEach((el) => el.removeAttribute('data-ae-spread-lock'));
+    const unhide = () => { document.querySelectorAll('[data-ae-spread="hidden"]').forEach((el) => el.removeAttribute('data-ae-spread')); unlockScroll(); };
     function teardown() {
       if (!ui) return;
       clearTimeout(dealTimer); clearTimeout(leaveTimer);
@@ -301,6 +311,7 @@ AE.shard({
         clearTimeout(leaveTimer); board.classList.remove('sp-leaving');
         hideAround();
         board.classList.add('sp-on');
+        lockScroll();
         size();
         if (deal) dealPending = true;
         if (data) paint(); else renderState();
