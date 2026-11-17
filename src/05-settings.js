@@ -31,6 +31,7 @@
     ['buybacks', 'Bountiful Yield', 'Handy "add all" buttons for setting up your Buybacks and RMAs. Find them in the Add buyback parts and Add RMA parts popouts.'],
     ['printLabels', 'Quick Synthesis', 'No longer shall you have to manually print 20+ generic SKU labels! Click Print all labels on a purchase order\'s Receive page.'],
     ]),
+    ...(AE_DEV ? [['linkshell', 'Linkshell', 'Links this browser to Linkpearl on your phone. Find it in the avatar menu.']] : []),
     ...(AE_DEV ? [['pullbacks', 'Elusive Jump', 'Scan your store\'s pullback list and mark each part for pullback in Portal as you go. Find it on the Inventory page or in the avatar menu.']] : []),
     ...(AE_DEV ? [['spread', 'Spread', 'A Board view for the Work orders list: every open work order as a card in its status column, oldest first. Read-only for now. Switch between List and Board next to the per-page menu.']] : []),
     ['glamour', 'Glamour', 'Beautify your Portal - change the colors of your pages and the image on your login page. Pick your look right here in Settings.'],
@@ -50,7 +51,7 @@
     ['orders', 'Work orders & customers', ['waymark', 'assize', 'spread', 'textNotes', 'leadReplies', 'rowColors', 'checkinDrafts']],
     ['devices', 'Devices & pricing', ['decipher', 'reassemble', 'galaxy']],
     ['inventory', 'Inventory', ['pullbacks', 'countCheck', 'buybacks', 'printLabels']],
-    ['store', 'Store & Portal', ['timeSheet', 'fixes', 'glamour']],
+    ['store', 'Store & Portal', ['linkshell', 'timeSheet', 'fixes', 'glamour']],
   ];
 
   /*
