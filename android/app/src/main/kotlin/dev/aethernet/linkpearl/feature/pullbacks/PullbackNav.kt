@@ -25,15 +25,17 @@ import dev.aethernet.linkpearl.core.di.AppContainer
 import dev.aethernet.linkpearl.core.di.FeatureModule
 import dev.aethernet.linkpearl.core.di.LocalAppContainer
 import dev.aethernet.linkpearl.core.nav.Routes
+import dev.aethernet.linkpearl.feature.linkshell.LinkshellClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** Where Pullbacks keeps its run (`files/pullbacks/`). */
+/** Where Pullbacks keeps its run (`files/pullbacks/`), and its half of Pullbacks over Linkshell. */
 object PullbacksModule : FeatureModule {
     override fun install(c: AppContainer) {
         c.provide<PbStore> { FilePbStore(File(c.application.filesDir, "pullbacks")) }
+        c.provide<PullbackLink> { PullbackLink(c.get<LinkshellClient>()) }
     }
 }
 
@@ -53,7 +55,7 @@ fun PullbacksRoute() {
     val vm: PullbackViewModel = viewModel(factory = viewModelFactory {
         initializer {
             val stores = (runCatching { c.get<Auth>() }.getOrNull()?.state?.value as? AuthState.Registered)?.stores?.map { it.id }.orEmpty()
-            PullbackViewModel(c.get<PbStore>(), stores)
+            PullbackViewModel(c.get<PbStore>(), stores, link = runCatching { c.get<PullbackLink>() }.getOrNull())
         }
     })
     val ui by vm.state.collectAsStateWithLifecycle()

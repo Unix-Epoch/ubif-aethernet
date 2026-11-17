@@ -111,7 +111,7 @@ fun PullbackScreen(
         Header(state, actions.onBack)
         if (state is PbUi.Scanning) {
             Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = LpSpacing.Gutter), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
-                ScanBody(state.s, actions, camera)
+                ScanBody(state.s, actions, camera, state.pc)
             }
         } else Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = LpSpacing.Gutter).padding(bottom = LpSpacing.M),
@@ -160,13 +160,15 @@ fun PullbackScreen(
 @Composable
 private fun Header(state: PbUi, onBack: () -> Unit) {
     val s = (state as? PbUi.Scanning)?.s ?: (state as? PbUi.Done)?.s
+    val pc = (state as? PbUi.Scanning)?.pc ?: (state as? PbUi.Done)?.pc
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = LpSpacing.Gutter - 4.dp, end = LpSpacing.Gutter, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         LpIconButton(LpIcons.Back, "Back", onBack, Modifier.padding(end = 4.dp))
         Text("Pullbacks", style = LpType.Screen, color = Lp.colors.fg, maxLines = 1, modifier = Modifier.weight(1f).semantics { heading() })
         if (s != null) {
             val n = Pullbacks.storeNum(s.store)
             Row(Modifier.glass().padding(start = 6.dp, end = 12.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (n.isNotEmpty()) StoreNumber(n, storeColor(0))
+                if (s.link != null) PcBadge(pc == true)
+                else if (n.isNotEmpty()) StoreNumber(n, storeColor(0))
                 Text(if (s.complete) "Done" else "${(s.idx ?: 0) + 1} / ${s.total}", style = LpType.Chip, color = Lp.colors.fg, maxLines = 1)
             }
         }
@@ -177,6 +179,17 @@ private fun Header(state: PbUi, onBack: () -> Unit) {
 private fun StoreNumber(n: String, color: androidx.compose.ui.graphics.Color) {
     Box(Modifier.clip(RoundedCornerShape(50)).background(color).padding(horizontal = 7.dp, vertical = 2.dp)) {
         Text(n, style = LpType.Chip.copy(fontFamily = LpDisplay, fontWeight = FontWeight.Bold), color = if (Lp.colors.isDark) Lp.colors.page else androidx.compose.ui.graphics.Color.White)
+    }
+}
+
+/** "PC" on a run joined from Aethernet: accent while the browser is connected, soft while it is away. */
+@Composable
+private fun PcBadge(online: Boolean) {
+    val c = Lp.colors
+    Box(Modifier.clip(RoundedCornerShape(50)).background(if (online) c.acc else c.surf3).padding(horizontal = 7.dp, vertical = 2.dp)
+        .semantics { contentDescription = if (online) "PC connected" else "PC away" }) {
+        Text("PC", style = LpType.Chip.copy(fontFamily = LpDisplay, fontWeight = FontWeight.Bold),
+            color = if (!online) c.soft else if (c.isDark) c.page else androidx.compose.ui.graphics.Color.White)
     }
 }
 
@@ -236,7 +249,7 @@ internal const val SCAN_REST_MS = 250L
  * pulling down shows the ones already scanned. After each scan the list scrolls smoothly to the new current item.
  */
 @Composable
-private fun ColumnScope.ScanBody(s: PbSession, actions: PullbackActions, camera: (@Composable (String, (String) -> Unit) -> Unit)?) {
+private fun ColumnScope.ScanBody(s: PbSession, actions: PullbackActions, camera: (@Composable (String, (String) -> Unit) -> Unit)?, pc: Boolean? = null) {
     val c = Lp.colors
     val cur = s.current ?: return
     val i = s.idx ?: return
@@ -261,6 +274,7 @@ private fun ColumnScope.ScanBody(s: PbSession, actions: PullbackActions, camera:
         PbMsg.Reverted -> Message("Reverted", null)
         null -> {}
     }
+    if (s.link != null && pc == false && s.sending > 0) Message("PC offline · ${Fmt.count(s.sending)} waiting", null, bad = true)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ProgressBar((s.total - s.pending).toFloat() / s.total.coerceAtLeast(1), c.acc, Modifier.weight(1f))
         if (s.count(PbStatus.Skipped) > 0) LpChip("${Fmt.count(s.count(PbStatus.Skipped))} skipped", tone = Tone.Warn)
@@ -275,7 +289,7 @@ private fun ColumnScope.ScanBody(s: PbSession, actions: PullbackActions, camera:
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         itemsIndexed(s.items, key = { k, _ -> k }) { k, item ->
-            if (k == i) CurrentRow(item) else ItemRow(item)
+            if (k == i) CurrentRow(item) else ItemRow(item, if (s.link != null) sync(item, pc == true) else null)
         }
     }
 }
@@ -289,9 +303,20 @@ private fun CurrentRow(it: PbItem) {
     }
 }
 
-/** A row that isn't the current one; a scanned row turns green with a tick that springs in. */
+/** On a run joined from Aethernet: what the browser said about a scanned row (null while not scanned). */
+private fun sync(it: PbItem, online: Boolean): Pair<String, Tone>? = when {
+    it.status == PbStatus.Pending || it.status == PbStatus.Skipped -> null
+    it.backendStatus == PbSession.SENDING -> (if (online) "Sending" else "Waiting") to Tone.Warn
+    it.backendStatus == PbSession.QUEUED -> "Waiting" to Tone.Warn
+    it.backendStatus == "success" -> "Marked" to Tone.Good
+    it.backendStatus == "skipped-already-marked" -> "Already marked" to Tone.Accent
+    it.backendStatus == "failed" -> "Failed" to Tone.Warn
+    else -> "Sending" to Tone.Warn
+}
+
+/** A row that isn't the current one; a scanned row turns green with a tick that springs in ([sync]: the browser's word instead of the tick). */
 @Composable
-private fun ItemRow(it: PbItem) {
+private fun ItemRow(it: PbItem, sync: Pair<String, Tone>? = null) {
     val c = Lp.colors
     val done = it.status == PbStatus.Matched || it.status == PbStatus.Overridden
     val bg by animateColorAsState(
@@ -306,7 +331,8 @@ private fun ItemRow(it: PbItem) {
             Text(it.description, style = LpType.Small, color = if (done) c.soft else c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(it.serial, style = LpType.Caption.copy(fontFamily = FontFamily.Monospace), color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (tick > 0.01f) Icon(LpIcons.Check, "Scanned", tint = c.good, modifier = Modifier.size(22.dp).graphicsLayer { scaleX = tick; scaleY = tick })
+        if (sync != null) LpChip(sync.first, tone = sync.second)
+        else if (tick > 0.01f) Icon(LpIcons.Check, "Scanned", tint = c.good, modifier = Modifier.size(22.dp).graphicsLayer { scaleX = tick; scaleY = tick })
         else if (it.status == PbStatus.Skipped) Text("Skipped", style = LpType.Label, color = c.warn)
     }
 }

@@ -74,6 +74,7 @@ object LpIcons {
     val Camera = icon("camera", "M4 8h3l2-3h6l2 3h3v11H4z", "M9 13a3 3 0 1 0 6 0a3 3 0 1 0-6 0")
     val Keyboard = icon("keyboard", "M3 6h18v12H3z", "M7 10h.01M11 10h.01M15 10h.01M7 14h10")
     val Undo = icon("undo", "M9 7L4 12l5 5", "M4 12h11a5 5 0 0 1 0 10h-3")
+    val Link = icon("link", "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1", "M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1")
     val Share = icon("share", "M12 3v12M8 7l4-4 4 4", "M5 12v8h14v-8")
     val Outbox = icon("outbox", "M4 14v6h16v-6M12 15V4M8 8l4-4 4 4")
     val Tag = icon("tag", "M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z", "M7.5 7.5h.01")

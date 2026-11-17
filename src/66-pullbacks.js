@@ -364,6 +364,7 @@ AE.shard({
       #${DLG} .hd h2 { margin:0; font-size:22px; font-weight:700; }
       #${DLG} .hd .chip { height:24px; padding:0 10px; border-radius:12px; font-size:12px; font-weight:700; display:inline-flex; align-items:center;
         background:var(--aui-primary-soft, #faecff); color:var(--aui-primary, #8223d2); }
+      #${DLG} .hd .chip.ph { background:var(--aui-status-success-soft, #c5ffc8); color:var(--aui-status-success, #136d31); }
       #${DLG} .hd .chip[hidden] { display:none; }
       #${DLG} .hd .sg-x { margin-left:auto; }
       #${DLG} .box { border:1px solid var(--aui-outline, #d9d9de); border-radius:12px; padding:16px; margin-bottom:12px; }
@@ -403,9 +404,10 @@ AE.shard({
     const save = (s) => { try { GM_setValue(KEY, s); } catch (_) {} };
     const drop = () => { try { GM_deleteValue(KEY); } catch (_) {} };
 
-    let S = null;   // { file, store, storeId, headers, items, idx, history, last }
+    let S = null;   // { file, store, storeId, headers, items, idx, history, last, phone }  phone: the Linkshell run id while the phone scans
     let ui = null;  // { scrim, body, close }
     let run = 0;    // bumps when the dialog closes, stopping a batch mark
+    let view = null; // what the dialog shows: 'start' | 'batch' | 'scan' | 'done'
 
     function download() {
       const bytes = P.results(S.headers, S.items);
@@ -423,20 +425,20 @@ AE.shard({
       AE.track('pullbacks');
       AE.ensureModalCss(); // the dialog styles live with Settings' dialogs
       const body = h('div');
-      const chip = h('span', { class: 'chip', hidden: true });
-      const hd = h('div', { class: 'hd ae-head' }, icon(32), h('h2', null, 'Pullbacks'), chip, h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕'));
+      const chip = h('span', { class: 'chip', hidden: true }), phoneChip = h('span', { class: 'chip ph', hidden: true }, 'Phone');
+      const hd = h('div', { class: 'hd ae-head' }, icon(32), h('h2', null, 'Pullbacks'), chip, phoneChip, h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕'));
       const card = h('div', { class: 'sg sg-card sg-about pb', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Pullbacks' }, hd, body);
       const scrim = h('div', { class: 'sg sg-about-scrim', id: DLG, onclick: (e) => { if (e.target === scrim && !busy) close(); } }, card);
       const onKey = (e) => { if (e.key === 'Escape' && !busy) { e.stopPropagation(); close(); } };
       function close() { run++; scrim.remove(); document.removeEventListener('keydown', onKey, true); ui = null; }
       document.addEventListener('keydown', onKey, true);
       document.body.append(scrim);
-      ui = { scrim, body, chip, close };
+      ui = { scrim, body, chip, phoneChip, close };
       S = load();
       if (S) { S.history = S.history || []; showStart(); } else showStart();
     }
     let busy = false, msg = null;
-    const setChip = () => { if (!ui) return; const n = S && P.storeNum(S.store); ui.chip.hidden = !n; ui.chip.textContent = n ? '#' + n : ''; };
+    const setChip = () => { if (!ui) return; const n = S && P.storeNum(S.store); ui.chip.hidden = !n; ui.chip.textContent = n ? '#' + n : ''; ui.phoneChip.hidden = !(S && S.phone && link()); };
     const paint = (...kids) => { if (!ui) return; ui.body.replaceChildren(...kids); setChip(); };
 
     // ---------------------------------------------------------- upload
@@ -452,10 +454,11 @@ AE.shard({
         const c = P.counts(saved.items);
         kids.push(h('div', { class: 'box' }, h('div', { class: 'line' },
           h('div', { class: 'g' }, h('b', null, saved.file || 'Pullback Serials.xlsx'), h('div', { class: 'soft' }, '#' + (P.storeNum(saved.store) || saved.store) + ' · ' + (c.total - c.pending) + ' of ' + c.total)),
+          link() ? btn('Scan with phone', () => { S = saved; S.history = S.history || []; phoneStart(); resume(); }) : null,
           btn('Resume', () => { S = saved; S.history = S.history || []; resume(); }, true),
-          btn('Discard', () => { drop(); S = null; showStart(); }))));
+          btn('Discard', () => { S = saved; phoneEnd(); drop(); S = null; showStart(); }))));
       }
-      S = null; paint(...kids);
+      S = null; view = 'start'; paint(...kids);
     }
     async function take(f) {
       let parsed;
@@ -481,6 +484,7 @@ AE.shard({
       };
       if (!list.length) { S = { file: f.name, store: '', storeId, headers: parsed.headers, items: all, idx: 0, history: [], last: null }; save(S); return resume(); }
       if (mine) return begin(mine.store);
+      view = 'start';
       paint(h('div', { class: 'box' }, h('div', { class: 'stores' },
         list.map((x) => h('button', { type: 'button', class: 'sg-btn', onclick: () => begin(x.store) }, h('span', null, x.store), h('span', { class: 'soft' }, String(x.n)))))));
     }
@@ -496,6 +500,7 @@ AE.shard({
       const me = ++run;
       let paused = false;
       const todo = S.items.filter(P.unmarked);
+      view = 'batch';
       const stats = h('div', { class: 'stats' }), bar = h('b', { style: 'width:0' });
       const pause = btn('Pause', () => { paused = true; pause.disabled = true; });
       paint(h('div', { class: 'box' }, h('b', null, S.file), h('div', { class: 'bar', style: 'margin-top:10px' }, bar), stats, h('div', { class: 'acts' }, pause)));
@@ -507,14 +512,16 @@ AE.shard({
         for (const it of todo) {
           if (me !== run) return;
           if (paused) break;
+          if (!P.unmarked(it)) { done++; draw(); continue; } // undone on the phone meanwhile
           const r = await P.mark(it.sku, it.scanned_serial || it.serial, S.storeId);
           Object.assign(it, r.ok ? { backend_status: r.already ? 'skipped-already-marked' : 'success', backend_message: r.message, backend_at: P.stamp() }
             : { backend_status: 'failed', backend_message: r.message });
-          done++; save(S); draw();
-          if (/session expired/.test(r.message)) break;
+          done++; save(S); draw(); tellPhone(S.items.indexOf(it));
+          if (/session expired/.test(r.message)) { paused = true; break; }
         }
       } finally { busy = false; }
       if (me !== run) return;
+      if (!paused && S.items.some(queued)) return batch(); // the phone's scans that came in meanwhile
       S.idx = firstPending();
       if (paused || S.idx == null) return showDone();
       showScan();
@@ -522,14 +529,19 @@ AE.shard({
 
     // ---------------------------------------------------------- scanning
     function showScan() {
-      const it = S.items[S.idx], c = P.counts(S.items);
+      view = 'scan';
+      const it = S.items[S.idx], c = P.counts(S.items), phone = !!(S.phone && link());
       const done = c.matched + c.overridden;
       const input = h('input', { class: 'scan', placeholder: 'Scan serial', autocomplete: 'off', spellcheck: 'false', disabled: busy });
       const form = h('form', { onsubmit: (e) => { e.preventDefault(); onScan(input.value); } }, input);
       const acts = [];
       if (msg && msg.kind === 'mismatch') acts.push(btn('Accept anyway', () => accept(S.last, true), false, busy));
       if (msg && msg.kind === 'fail') acts.push(btn('Retry', () => accept(S.last, P.norm(S.last) !== P.norm(it.serial)), true, busy), btn('Already marked', () => already(), false, busy));
-      acts.push(btn('Skip', () => skip(), false, busy), btn('Undo', () => undo(), false, busy || !S.history.length));
+      if (phone) acts.push(btn('Scan here', () => { phoneEnd(); msg = null; showScan(); }, false, busy), btn('Pause', () => showDone(), false, busy));
+      else {
+        acts.push(btn('Skip', () => skip(), false, busy), btn('Undo', () => undo(), false, busy || !S.history.length));
+        if (link()) acts.push(btn('Scan with phone', () => { phoneStart(); msg = null; showScan(); }, false, busy));
+      }
       const nj = nextPending(S.idx), nx = nj != null && nj !== S.idx ? S.items[nj] : null;
       paint(
         h('div', { class: 'box' },
@@ -537,16 +549,17 @@ AE.shard({
           h('div', { class: 'bar' }, h('b', { style: 'width:' + ((c.total - c.pending) / c.total * 100) + '%' })),
           h('dl', null, h('dt', null, 'SKU'), h('dd', null, String(it.sku)), h('dt', null, 'Description'), h('dd', null, String(it.description))),
           h('div', { class: 'exp' }, it.serial),
-          form,
+          phone ? null : form,
           busy ? h('div', { class: 'msg warn' }, 'Marking…')
             : msg ? h('div', { class: 'msg ' + (msg.kind === 'ok' ? 'ok' : msg.kind === 'warn' ? 'warn' : 'bad') }, msg.title, msg.code ? h('code', null, msg.code) : null) : null,
           h('div', { class: 'acts' }, acts)),
         h('div', { class: 'line' },
           h('div', { class: 'next g' }, nx ? ['Next ', h('b', null, String(nx.sku)), ' · ' + nx.description + ' · …' + String(nx.serial).slice(-6)] : 'Last item'),
           btn('Download results', download)));
-      if (!busy) setTimeout(() => input.focus(), 0);
+      if (!busy && !phone) setTimeout(() => input.focus(), 0);
     }
     function showDone() {
+      view = 'done';
       const c = P.counts(S.items);
       const rows = [['Total items', c.total], ['Matched', c.matched], ['Overridden', c.overridden]];
       if (c.already) rows.push(['Already marked', c.already]);
@@ -562,13 +575,15 @@ AE.shard({
           failed ? btn('Retry marking', () => batch()) : null,
           c.pending ? btn('Resume', () => resume()) : null,
           c.skipped ? btn('Scan skipped', () => { S.items.forEach((x) => { if (x.status === 'skipped') x.status = 'pending'; }); S.history = []; save(S); resume(); }) : null)),
-      h('div', { class: 'line' }, h('div', { class: 'g' }), btn('New file', () => { drop(); S = null; showStart(); })));
+      h('div', { class: 'line' }, h('div', { class: 'g' }), btn('New file', () => { phoneEnd(); drop(); S = null; showStart(); })));
     }
 
     function advance() {
       S.history.push(S.idx); S.last = null;
+      tellPhone(S.idx);
       const nj = nextPending(S.idx);
       save(S);
+      if (S.items.some(queued)) { if (nj != null) S.idx = nj; return batch(); }
       if (nj == null) return showDone();
       S.idx = nj; showScan();
     }
@@ -591,7 +606,7 @@ AE.shard({
       if (!r.ok) {
         Object.assign(it, { backend_status: 'failed', backend_message: r.message });
         msg = { kind: 'fail', title: 'Couldn\'t mark in Portal', code: r.message };
-        save(S); return showScan();
+        save(S); tellPhone(S.idx, r.message); return showScan();
       }
       Object.assign(it, { status: override ? 'overridden' : 'matched', scanned_serial: scanned, match: override ? 'OVERRIDE' : 'YES', scanned_at: P.stamp(),
         backend_status: r.already ? 'skipped-already-marked' : 'success', backend_message: r.message, backend_at: P.stamp() });
@@ -613,8 +628,91 @@ AE.shard({
       const j = S.history.pop();
       P.blank(S.items[j]); S.idx = j; S.last = null;
       msg = { kind: 'warn', title: 'Reverted' };
-      save(S); showScan();
+      save(S); tellPhone(j); showScan();
     }
+
+    // ---------------------------------------------------------- scanning on the phone (Linkshell)
+    /*
+      "Scan with phone" sends the list to the linked Linkpearl (pullbacks.run, in parts) and the phone scans down it. Each scan,
+      skip or undo comes back as a message; the answer for that item goes back as pullbacks.result. The phone's messages
+      change Portal only while this dialog shows the run: on the scan screen a scan is marked at once; otherwise it is kept
+      in the session (Linkpearl's results-file rule: scanned, not marked) and marked when the run is resumed here.
+      "Scan here" ends the phone's part (pullbacks.end). A message for another run is ignored.
+        PC → phone  pullbacks.run     { run, file, store, part, parts, items: [[i, sku, description, serial, state], …] }
+                    pullbacks.result  { run, i, state, message? }   state: pending | queued | marked | already | failed | skipped
+                    pullbacks.end     { run }
+        phone → PC  pullbacks.scan    { run, i, serial, override }  override: the phone's "Accept anyway" on a mismatch
+                    pullbacks.skip    { run, i }
+                    pullbacks.undo    { run, i }
+                    pullbacks.join    { run }   the list again (the phone lost it)
+    */
+    const link = () => (AE.linkshell && AE.settings.crystals.linkshell !== false && AE.linkshell.linked() ? AE.linkshell : null);
+    const queued = (it) => (it.status === 'matched' || it.status === 'overridden') && !it.backend_status;
+    const phoneState = (it) => (it.status === 'pending' ? (it.backend_status === 'failed' ? 'failed' : 'pending') : it.status === 'skipped' ? 'skipped' : !it.backend_status ? 'queued'
+      : it.backend_status === 'failed' ? 'failed' : it.backend_status === 'skipped-already-marked' ? 'already' : 'marked');
+    const RUN_PART = 40;
+    function sendRun() {
+      const L = link();
+      if (!L || !S || !S.phone) return;
+      const rows = S.items.map((it, i) => [i, String(it.sku), String(it.description), String(it.serial), phoneState(it)]);
+      const parts = Math.max(1, Math.ceil(rows.length / RUN_PART));
+      for (let p = 0; p < parts; p++) L.send('pullbacks.run', { run: S.phone, file: S.file, store: P.storeNum(S.store) || String(S.store), part: p, parts, items: rows.slice(p * RUN_PART, (p + 1) * RUN_PART) });
+    }
+    function phoneStart() {
+      if (!S || !link()) return;
+      S.phone = [...crypto.getRandomValues(new Uint8Array(8))].map((x) => x.toString(16).padStart(2, '0')).join('');
+      save(S); sendRun(); setChip();
+    }
+    function phoneEnd() {
+      if (!S || !S.phone) return;
+      const L = link();
+      if (L) L.send('pullbacks.end', { run: S.phone });
+      S.phone = null; save(S); setChip();
+    }
+    function tellPhone(i, message) {
+      const L = link(), it = S && S.items[i];
+      if (L && S.phone && it) L.send('pullbacks.result', message ? { run: S.phone, i, state: phoneState(it), message } : { run: S.phone, i, state: phoneState(it) });
+    }
+    // A change the phone made away from the scan screen (or while a mark was running): saved, told, and shown.
+    function phoneChanged(i) {
+      if (ui && S.items[S.idx] && S.items[S.idx].status !== 'pending') { const nj = nextPending(S.idx); if (nj != null) S.idx = nj; }
+      save(S); tellPhone(i);
+      if (!ui || busy) return;
+      if (view === 'done') return showDone();
+      if (view === 'scan') return S.items.some(queued) ? batch() : firstPending() == null ? showDone() : showScan();
+    }
+    async function fromPhone(op, b) {
+      if (!ui) S = load(); // the dialog is closed: the saved session
+      if (!S || !S.phone || !b || b.run !== S.phone) return;
+      if (op === 'join') return sendRun();
+      const i = Number(b.i), it = S.items[i];
+      if (!Number.isInteger(i) || !it) return;
+      if (op === 'scan') {
+        const v = String(b.serial || '').trim();
+        if (it.status !== 'pending' || !v) return tellPhone(i);
+        const match = P.norm(v) === P.norm(it.serial);
+        if (!match && !b.override) return tellPhone(i);
+        if (ui && view === 'scan' && !busy) { S.idx = i; S.last = v; msg = null; return accept(v, !match); }
+        Object.assign(it, { status: match ? 'matched' : 'overridden', scanned_serial: v, match: match ? 'YES' : 'OVERRIDE', scanned_at: P.stamp(), backend_status: '', backend_message: '', backend_at: '' });
+        S.history.push(i);
+        return phoneChanged(i);
+      }
+      if (op === 'skip') {
+        if (it.status !== 'pending') return tellPhone(i);
+        P.blank(it).status = 'skipped';
+        S.history.push(i);
+        return phoneChanged(i);
+      }
+      if (op === 'undo') {
+        if (it.status === 'pending') return tellPhone(i);
+        const at = S.history.lastIndexOf(i);
+        if (at >= 0) S.history.splice(at, 1);
+        P.blank(it);
+        if (ui && (view === 'scan' || view === 'done') && !busy) { S.idx = i; S.last = null; msg = { kind: 'warn', title: 'Reverted' }; save(S); tellPhone(i); return showScan(); }
+        save(S); tellPhone(i);
+      }
+    }
+    if (AE.linkshell) for (const op of ['scan', 'skip', 'undo', 'join']) AE.linkshell.on('pullbacks.' + op, (b) => fromPhone(op, b));
 
     // ---------------------------------------------------------- entry points
     // A Pullbacks tile on the Inventory hub: a copy of Portal's Inventory Count tile (<a class="cards-link"> around a simple-card),

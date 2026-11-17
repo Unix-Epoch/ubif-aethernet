@@ -61,6 +61,8 @@ import { retraceStore, retraceAdmin, woRetraceStmts } from './retrace-api.js';
 import { meter, usageLoad, pruneUsage } from './usage.js';
 import { AGENT_DEFAULTS } from './agent-defaults.js';
 import { mobileAgentApi } from './mobile-agent.js';
+import { linkshellStore, linkshellConnect, linkshellTrim } from './linkshell.js';
+export { LinkshellRoom } from './linkshell.js';
 import { alertsTick } from './mobile-alerts.js';
 import { over, charge, spend, pruneBudget, PER_WO_HOUR } from './budget.js';
 
@@ -915,6 +917,7 @@ async function trackerRoutes(req, env, url, path, email, who) {
     if (am[2] === 'remove') {
       await T.batch([T.prepare('DELETE FROM agent_keys WHERE agent_id = ?').bind(a.id), T.prepare('DELETE FROM agents WHERE id = ?').bind(a.id)]);
       await T.prepare('DELETE FROM agent_kind WHERE agent_id = ?').bind(a.id).run().catch(() => {}); // revoked: its token stops working at once
+      await linkshellTrim(env).catch(() => {}); // its Linkshell links go with it
       await log(env, email, 'agent:remove', null, null, a.name + ' ' + a.id);
       return json({ ok: true }, 200, false);
     }
@@ -1034,6 +1037,7 @@ export default {
     if (ev && ev.cron === TICK_CRON) { ctx.waitUntil(Promise.resolve().then(() => alertsTick(env, Date.now())).catch((e) => console.error('alerts tick failed:', e))); return; }
     ctx.waitUntil(trim(env).catch((e) => console.error('trim failed:', e)));
     ctx.waitUntil(pruneUsage(env).catch(() => {}));
+    ctx.waitUntil(linkshellTrim(env).catch((e) => console.error('linkshell trim failed:', e)));
   },
 };
 
@@ -1052,6 +1056,10 @@ async function handle(req, env) {
   const url = new URL(req.url);
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (env.LIMITER) { const { success } = await env.LIMITER.limit({ key: req.headers.get('cf-connecting-ip') || 'x' }); if (!success) return fail(429, 'slow down'); }
+  // Linkshell's WebSocket: a browser can't add the app key header, so this route carries its own credential (src/linkshell.js).
+  if (url.pathname === '/v1/linkshell/connect') {
+    try { return await linkshellConnect(req, env, url, { json, fail, allowed }); } catch (e) { return serverError(e, req); }
+  }
   if (!env.APP_KEY || req.headers.get('x-aethernet-key') !== env.APP_KEY) return fail(403, 'app key required');
   try {
     const sg = await sandboxGuard(req, url);
@@ -1061,11 +1069,12 @@ async function handle(req, env) {
       return r ? json({ publicJwk: JSON.parse(r.public_jwk) }) : fail(404, 'tracker not set up');
     }
     if (url.pathname.startsWith('/v1/agents/')) return await agentApi(req, env, url);
-    const m = url.pathname.match(/^\/v1\/(\d{1,6})\/(tracker|assize)\//);
+    const m = url.pathname.match(/^\/v1\/(\d{1,6})\/(tracker|assize|linkshell)\//);
     if (!m) return fail(404, 'not found');
     const store = Number(m[1]);
     if (!(await allowed(env, store))) return fail(403, 'store has no Aethernet access');
     if (m[2] === 'assize') return await assizeStore(req, env, url, store, { json, fail });
+    if (m[2] === 'linkshell') return await linkshellStore(req, env, url, store, { json, fail, readJson, clean, log });
     return await storeApi(req, env, url, store);
   } catch (e) {
     return serverError(e, req);

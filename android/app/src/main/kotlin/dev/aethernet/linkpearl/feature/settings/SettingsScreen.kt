@@ -56,6 +56,7 @@ data class SettingsActions(
     val onAppearance: (Appearance) -> Unit = {},
     val onUpdate: () -> Unit = {},
     val onOpenAdmin: () -> Unit = {},
+    val onLinkshell: () -> Unit = {},
     val onAskForget: () -> Unit = {},
     val onCancelForget: () -> Unit = {},
     val onConfirmForget: () -> Unit = {},
@@ -69,7 +70,7 @@ fun SettingsScreen(
     val wide = LocalAdaptive.current.isTwoPane
     val title = @Composable { Text("Settings", style = LpType.Screen, color = Lp.colors.fg, modifier = Modifier.heightIn(min = LpSpacing.Touch).semantics { heading() }) }
     val left = @Composable {
-        DeviceSection(state); CustomerSection(state, actions); NotificationsSection(state, actions)
+        DeviceSection(state, actions); CustomerSection(state, actions); NotificationsSection(state, actions)
     }
     val right = @Composable {
         AppearanceSection(state, actions); AboutSection(version, update, actions); ForgetSection(actions)
@@ -113,12 +114,14 @@ private fun Lead(icon: ImageVector) = LpIcon(icon, null, tint = Lp.colors.soft)
 private fun Chevron() = LpIcon(LpIcons.ChevronRight, null, tint = Lp.colors.soft)
 
 @Composable
-private fun DeviceSection(s: SettingsUiState) = Section("Device") {
+private fun DeviceSection(s: SettingsUiState, a: SettingsActions) = Section("Device") {
     LpListRow(s.phoneName ?: "—", leading = { Lead(LpIcons.Phone) })
     s.stores.forEach { st ->
         Divider()
         LpListRow(st.label, leading = { Lead(LpIcons.Store) }, trailing = { st.updated?.let { Value(it) } })
     }
+    Divider()
+    LpListRow("Linkshell", leading = { Lead(LpIcons.Link) }, onClick = a.onLinkshell, trailing = { Chevron() })
 }
 
 @Composable

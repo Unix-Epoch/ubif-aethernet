@@ -17,6 +17,7 @@ object Routes {
     const val TRENDS = "trends/{store}"
     const val PRICES = "prices/{store}"
     const val PULLBACKS = "pullbacks"
+    const val LINKSHELL = "linkshell"
     const val ONBOARDING = "onboarding"
 
     const val ARG_ID = "id"
