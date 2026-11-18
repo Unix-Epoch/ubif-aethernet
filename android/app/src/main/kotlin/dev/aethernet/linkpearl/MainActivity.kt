@@ -25,7 +25,11 @@ import dev.aethernet.linkpearl.core.nav.LinkpearlRoot
 import dev.aethernet.linkpearl.core.prefs.AppPrefs
 import dev.aethernet.linkpearl.feature.alerts.AlertsHub
 import dev.aethernet.linkpearl.feature.alerts.NotificationTap
+import dev.aethernet.linkpearl.feature.push.PushBannerHost
 import dev.aethernet.linkpearl.feature.workorders.PortalLink
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,7 +49,7 @@ class MainActivity : ComponentActivity() {
             // System bars and the window behind the first frame follow the chosen theme, not only the phone's.
             LaunchedEffect(dark) { applyTheme(dark) }
             CompositionLocalProvider(LocalAppContainer provides container) {
-                LinkpearlTheme(darkTheme = dark) { AdaptiveProvider { LinkpearlRoot() } }
+                LinkpearlTheme(darkTheme = dark) { AdaptiveProvider { Box(Modifier.fillMaxSize()) { LinkpearlRoot(); PushBannerHost() } } }
             }
         }
     }

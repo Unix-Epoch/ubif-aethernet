@@ -3,7 +3,8 @@
 
     /v1/agents/m/home?store=<id>|all   Home's numbers (built; tracker-worker/src/mobile.js homeApi, same answer as the admin site's /api/m/home)
     /v1/agents/m/wo…                   work order lookup + unlock          → mobile-wo.js     woApi      (stub, 501)
-    /v1/agents/m/alerts…, /push…       alerts, history, Web/FCM push setup → mobile-alerts.js alertsApi  (stub, 501)
+    /v1/agents/m/alerts…               alerts, history                     → mobile-alerts.js alertsApi
+    /v1/agents/m/push                  the phone's FCM token               → push.js          pushApi
     /v1/agents/m/retrace…              Retrace lookup: items, item, label, POs → mobile-retrace.js retraceApi (built)
     /v1/agents/m/prefs…                device details, rename, forget      → mobile-prefs.js  prefsApi
     /v1/agents/m/trends…               week / month / year series          → mobile-trends.js trendsApi
@@ -29,6 +30,7 @@ import { pricesApi } from './mobile-prices.js';
 import { updateApi } from './mobile-update.js';
 import { waymarkApi } from './mobile-waymark.js';
 import { linkshellPhone } from './linkshell.js';
+import { pushApi } from './push.js';
 
 // The device as the `me` that homeApi expects: limited to its approved stores, never an owner.
 export const meOf = (device) => ({ owner: false, scope: 'stores', stores: device.stores, email: 'device:' + device.id });
@@ -37,7 +39,8 @@ export async function mobileAgentApi(req, env, url, device, h) {
   const path = url.pathname.replace(/^\/v1\/agents\/m/, '') || '/';
   if (path === '/home') return homeApi(req, env, url, meOf(device), {});
   if (/^\/wo(\/|$)/.test(path)) return woApi(req, env, url, device, h);
-  if (/^\/(alerts|push)(\/|$)/.test(path)) return alertsApi(req, env, url, device, h);
+  if (/^\/push(\/|$)/.test(path)) return pushApi(req, env, url, device, h);
+  if (/^\/alerts(\/|$)/.test(path)) return alertsApi(req, env, url, device, h);
   if (/^\/prefs(\/|$)/.test(path)) return prefsApi(req, env, url, device, h);
   if (/^\/retrace(\/|$)/.test(path)) return retraceApi(req, env, url, device, h);
   if (/^\/trends(\/|$)/.test(path)) return trendsApi(req, env, url, device, h);

@@ -26,6 +26,8 @@
 
   Frames over the socket (JSON text):
     → { t: 'msg', id, kind, iv, ct }   a sealed message for the other end; delivered at once, or held if it isn't connected
+      (+ wake: true, PC only)          also push the phone (src/push.js) so it hears about it with Linkpearl closed: once per
+                                       message id, at most one push per link every 15 seconds; the phone decides how to show it
     → { t: 'ack', ids: [...] }         received and applied; held copies are dropped and the sender is told
     ← { t: 'hello', peer, seen }       on connect: whether the other end is connected, and when it was last seen
     ← { t: 'presence', peer, seen }    the other end connected or left
@@ -35,7 +37,9 @@
   Limits: 3 links per phone, 5 per store; a link unused for 30 days is removed by the daily job, as is any link whose phone is removed.
 */
 
-export const LS = { PAIR_MIN: 5, IDLE_DAYS: 30, PER_PHONE: 3, PER_STORE: 5, PAIRS_PER_STORE: 10, HOLD_HOURS: 24, MAX_FRAME: 16384, MAX_HELD: 500 };
+import { sendPush } from './push.js';
+
+export const LS = { PUSH_GAP_MS: 15000, PAIR_MIN: 5, IDLE_DAYS: 30, PER_PHONE: 3, PER_STORE: 5, PAIRS_PER_STORE: 10, HOLD_HOURS: 24, MAX_FRAME: 16384, MAX_HELD: 500 };
 const HEX32 = /^[0-9a-f]{32}$/, HEX64 = /^[0-9a-f]{64}$/, CODE = /^[A-Za-z0-9_-]{22}$/, B64U = /^[A-Za-z0-9_-]+$/;
 const KIND = /^[a-z][a-z0-9-]{0,30}(\.[a-z0-9-]{1,30}){0,3}$/, MID = /^[A-Za-z0-9_-]{8,40}$/, B64 = /^[A-Za-z0-9+/_-]+=*$/;
 
@@ -177,7 +181,7 @@ export async function linkshellConnect(req, env, url, h) {
   if (!env.LINKSHELL) return h.fail(503, 'linkshell not set up');
   await T.prepare('UPDATE linkshell_links SET used_at = ? WHERE id = ?').bind(nowIso(), l.id).run();
   const stub = env.LINKSHELL.get(env.LINKSHELL.idFromName(l.id));
-  return stub.fetch(new Request('https://linkshell/connect?side=' + side, { headers: { upgrade: 'websocket' } }));
+  return stub.fetch(new Request('https://linkshell/connect?side=' + side + '&link=' + l.id, { headers: { upgrade: 'websocket' } }));
 }
 
 // Daily: links unused for 30 days, links whose phone is gone, and expired pairings.
@@ -185,6 +189,7 @@ export async function linkshellTrim(env) {
   const T = env.TR, cutoff = new Date(Date.now() - LS.IDLE_DAYS * 86400000).toISOString();
   const gone = await T.prepare('SELECT id FROM linkshell_links WHERE used_at < ? OR agent_id NOT IN (SELECT id FROM agents)').bind(cutoff).all();
   for (const r of gone.results) { await T.prepare('DELETE FROM linkshell_links WHERE id = ?').bind(r.id).run(); await closeRoom(env, r.id); }
+  await T.prepare('DELETE FROM push_tokens WHERE agent_id NOT IN (SELECT id FROM agents)').run().catch(() => {}); // a removed phone's push token
   await T.prepare('DELETE FROM linkshell_pairs WHERE expires_at < ?').bind(nowIso()).run();
   return gone.results.length;
 }
@@ -200,6 +205,7 @@ export class LinkshellRoom {
   constructor(ctx, env) {
     this.ctx = ctx; this.env = env;
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS held (id TEXT PRIMARY KEY, side TEXT NOT NULL, frame TEXT NOT NULL, at INTEGER NOT NULL)');
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS pushed (id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     if (typeof WebSocketRequestResponsePair !== 'undefined' && ctx.setWebSocketAutoResponse) ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
   peers(side) { return this.ctx.getWebSockets(side).filter((ws) => ws.readyState === undefined || ws.readyState === 1); }
@@ -215,6 +221,8 @@ export class LinkshellRoom {
     }
     const side = url.searchParams.get('side');
     if (url.pathname !== '/connect' || (side !== 'pc' && side !== 'phone')) return new Response('not found', { status: 404 });
+    const link = url.searchParams.get('link');
+    if (HEX32.test(link || '') && (await this.ctx.storage.get('link')) !== link) await this.ctx.storage.put('link', link);
     const pair = new WebSocketPair(), client = pair[0], server = pair[1];
     await this.accept(server, side);
     return new Response(null, { status: 101, webSocket: client, headers: { 'sec-websocket-protocol': 'linkshell' } });
@@ -235,11 +243,14 @@ export class LinkshellRoom {
     if (f.t === 'msg') {
       if (!MID.test(f.id) || !KIND.test(f.kind) || typeof f.iv !== 'string' || f.iv.length > 32 || !B64.test(f.iv) || typeof f.ct !== 'string' || !B64.test(f.ct)) return;
       const frame = JSON.stringify({ t: 'msg', id: f.id, kind: f.kind, iv: f.iv, ct: f.ct });
-      if (this.peers(to).length) { this.send(to, JSON.parse(frame)); return; }
-      const n = this.ctx.storage.sql.exec('SELECT COUNT(*) AS n FROM held').toArray()[0].n;
-      if (n >= LS.MAX_HELD) return;
-      this.ctx.storage.sql.exec('INSERT OR IGNORE INTO held (id, side, frame, at) VALUES (?, ?, ?, ?)', f.id, to, frame, Date.now());
-      if (!(await this.ctx.storage.getAlarm())) await this.ctx.storage.setAlarm(Date.now() + LS.HOLD_HOURS * 3600000);
+      if (this.peers(to).length) this.send(to, JSON.parse(frame));
+      else {
+        const n = this.ctx.storage.sql.exec('SELECT COUNT(*) AS n FROM held').toArray()[0].n;
+        if (n >= LS.MAX_HELD) return;
+        this.ctx.storage.sql.exec('INSERT OR IGNORE INTO held (id, side, frame, at) VALUES (?, ?, ?, ?)', f.id, to, frame, Date.now());
+        if (!(await this.ctx.storage.getAlarm())) await this.ctx.storage.setAlarm(Date.now() + LS.HOLD_HOURS * 3600000);
+      }
+      if (f.wake === true && side === 'pc') await this.wakePhone(f.id, f.kind);
       return;
     }
     if (f.t === 'ack' && Array.isArray(f.ids)) {
@@ -248,6 +259,22 @@ export class LinkshellRoom {
       this.ctx.storage.sql.exec(`DELETE FROM held WHERE side = ? AND id IN (${ids.map(() => '?').join(',')})`, side, ...ids);
       this.send(to, { t: 'ack', ids });
     }
+  }
+  // A push to the phone for a PC message sent with wake: true. The PC resends its outbox on every connect, so a message id is pushed
+  // once; a run sent in parts (or several requests in a row) gives one push. Returns sendPush's answer, or 'skipped'.
+  async wakePhone(id, kind) {
+    const now = Date.now();
+    this.ctx.storage.sql.exec('DELETE FROM pushed WHERE at < ?', now - LS.HOLD_HOURS * 3600000);
+    if (this.ctx.storage.sql.exec('SELECT 1 AS x FROM pushed WHERE id = ?', id).toArray().length) return 'skipped';
+    this.ctx.storage.sql.exec('INSERT INTO pushed (id, at) VALUES (?, ?)', id, now);
+    const last = (await this.ctx.storage.get('pushAt')) || 0;
+    if (now - last < LS.PUSH_GAP_MS) return 'skipped';
+    const linkId = await this.ctx.storage.get('link');
+    if (!linkId || !this.env || !this.env.TR) return 'skipped';
+    const l = await this.env.TR.prepare('SELECT agent_id FROM linkshell_links WHERE id = ?').bind(linkId).first();
+    if (!l) return 'skipped';
+    await this.ctx.storage.put('pushAt', now);
+    return sendPush(this.env, l.agent_id, { t: 'linkshell', link: linkId, kind, id });
   }
   async webSocketClose(ws, code) {
     const side = this.ctx.getTags(ws)[0];

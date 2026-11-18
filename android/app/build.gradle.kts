@@ -35,16 +35,27 @@ android {
         applicationId = "dev.aethernet.linkpearl"
         minSdk = 31 // hardware-backed ECDH in the Android Keystore needs API 31
         targetSdk = 37
-        versionCode = 14
-        versionName = "1.2.9"
+        versionCode = 15
+        versionName = "1.2.10"
 
         // Server base URL and the public app key (one place: android/gradle.properties).
         fun prop(name: String) = providers.gradleProperty(name).get().replace("\\", "\\\\").replace("\"", "\\\"")
         buildConfigField("String", "API_BASE_URL", "\"${prop("linkpearl.baseUrl")}\"")
         buildConfigField("String", "APP_KEY", "\"${prop("linkpearl.appKey")}\"")
+
+        // Firebase (push): the four values from the Firebase project's google-services.json, kept in android/gradle.properties as
+        // linkpearl.firebase.appId / apiKey / projectId / senderId. They become the resources Firebase reads at start-up (what the
+        // google-services plugin would generate). All four or none: without them the app runs without push.
+        val firebase = listOf("appId", "apiKey", "projectId", "senderId").associateWith { providers.gradleProperty("linkpearl.firebase.$it").orNull?.trim().orEmpty() }
+        if (firebase.values.all { it.isNotEmpty() }) {
+            resValue("string", "google_app_id", firebase.getValue("appId"))
+            resValue("string", "google_api_key", firebase.getValue("apiKey"))
+            resValue("string", "project_id", firebase.getValue("projectId"))
+            resValue("string", "gcm_defaultSenderId", firebase.getValue("senderId"))
+        }
     }
 
-    buildFeatures { buildConfig = true }
+    buildFeatures { buildConfig = true; resValues = true }
 
     signingConfigs {
         if (missingSigning.isEmpty()) {
@@ -136,6 +147,8 @@ dependencies {
     implementation(libs.camerax.view)
     implementation(libs.camerax.mlkit.vision)
     implementation(libs.mlkit.barcode.scanning)
+    // Push: Firebase Cloud Messaging (Linkshell wakes; feature/push)
+    implementation(libs.firebase.messaging)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)

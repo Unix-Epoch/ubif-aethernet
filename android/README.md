@@ -227,6 +227,16 @@ work order list, a sealed detail whose card and snapshot are opened through the 
 the server's alerts tick (one alert of each type), the background check with a recording notifier, the feed and read marks, quiet hours and a threshold change,
 the prefs route, forget, and the 401 afterwards. The server's clock is moved (control route `/__ctl/clock`) so every rule can fire.
 
+## Push (feature/push)
+
+Linkshell requests from the PC (a message sent with `wake: true`, today "Scan with phone" in Pullbacks) reach the phone through Firebase Cloud Messaging:
+the tracker Worker sends a data-only, high-priority ping `{ t: 'linkshell', link, kind, id }` (`tracker-worker/src/push.js`; no job data). With the app in the
+background or closed, `LinkpearlMessagingService` posts a notification on the "Linkshell" channel that opens Linkshell; with it open, `PushBannerHost` shows a
+banner at the top for 2.5 seconds and the Linkshell connection wakes. The FCM token goes to `POST /v1/agents/m/push` once per device and token.
+Setup: the four `linkpearl.firebase.*` values in `gradle.properties` come from the Firebase project's `google-services.json` (`mobilesdk_app_id`, `current_key`,
+`project_id`, `project_number`); `app/build.gradle.kts` turns them into Firebase's start-up resources (no google-services plugin). Empty values build an app without
+push. The Worker needs the secret `FCM_SERVICE_ACCOUNT` (the service-account key JSON). iOS later: the same token route with `platform: 'ios'`; FCM forwards to APNs.
+
 ## Build and release
 
 Debug: `./gradlew assembleDebug` (`app/build/outputs/apk/debug/app-debug.apk`). Release: R8 on, signed from `LINKPEARL_KEYSTORE_FILE`, `LINKPEARL_KEYSTORE_PASSWORD`,
@@ -258,7 +268,7 @@ Android documentation (Nov 13, 2026; nothing for Android 17 was found):
 - Not suitable: expedited work (one-time work only, short tasks, quota-limited), exact alarms and foreground services for recurring background work
   ([persistent work](https://developer.android.com/develop/background-work/background-tasks/persistent),
   [alarms](https://developer.android.com/develop/background-work/services/alarms),
-  [battery optimisation](https://developer.android.com/develop/background-work/background-tasks/optimize-battery)). The documented route to timely delivery is high-priority FCM, which this app deliberately does not use.
+  [battery optimisation](https://developer.android.com/develop/background-work/background-tasks/optimize-battery)). The documented route to timely delivery is high-priority FCM, which alerts do not use (Linkshell requests do: see Push below).
 - The docs do not cover manufacturer (for example Samsung) background limits beyond saying makers set their own criteria. WorkManager reschedules its work after reboot itself.
 - Gaps in the docs: Doze window spacing, the flex-interval minimum value (docs say 15 minutes in one place), and the maximum backoff value.
 

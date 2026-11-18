@@ -469,3 +469,6 @@ CREATE TABLE IF NOT EXISTS linkshell_links (id TEXT PRIMARY KEY, store INTEGER N
   pc_jwk TEXT NOT NULL, phone_jwk TEXT NOT NULL, created_at TEXT NOT NULL, used_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS linkshell_links_agent ON linkshell_links (agent_id);
 CREATE INDEX IF NOT EXISTS linkshell_links_store ON linkshell_links (store);
+
+-- Push (src/push.js, migration 2026-11-17-push.sql): one FCM token per phone, so Linkshell can wake it.
+CREATE TABLE IF NOT EXISTS push_tokens (agent_id TEXT PRIMARY KEY, platform TEXT NOT NULL, token TEXT NOT NULL, updated_at TEXT NOT NULL);
