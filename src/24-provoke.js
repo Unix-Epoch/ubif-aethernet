@@ -193,7 +193,7 @@ AE.shard({
     }
 
     // " (edited Oct 6)": when the sheet file itself last changed (the sync only pushes changed files).
-    const edited = (sh) => { const m = sh && sh.data && (sh.data.modified || sh.syncedAt); return m ? ' (edited ' + new Date(m).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ')' : ''; };
+    const sheetEdited = (sh) => { const m = sh && sh.data && (sh.data.modified || sh.syncedAt); return m ? ' (edited ' + new Date(m).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ')' : ''; };
     function render(a, leads, prices) {
       const items = leads.data.items || [];
       const p = pick(a, leads.data, prices && prices.data);
@@ -291,8 +291,8 @@ AE.shard({
         reset,
         second ? h('label', { class: 'chk' }, second, h('span', null, 'Also send the price match message')) : null, quote,
         h('div', { class: 'ft' }, msg, h('span', { class: 'sp' }), btn),
-        h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' }, 'From the lead sheet' + edited(leads) +
-          (p.prices && p.prices.length ? ' and Price sheet' + edited(prices) : '') + '.'));
+        h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' }, 'From the lead sheet' + sheetEdited(leads) +
+          (p.prices && p.prices.length ? ' and Price sheet' + sheetEdited(prices) : '') + '.'));
       setText();
       return root;
     }
@@ -445,7 +445,7 @@ AE.shard({
       const cs = h('div', { class: 'cs' }, order.map((k) => chip(named[k], k === top)), more);
       const root = h('div', { id: CHAT_ID, class: 'sg sg-card', 'data-wo': woId },
         h('div', { class: 'hd ae-head' }, h('span', { style: 'line-height:0', html: AE.actionIcon('leadReplies', 22) }), h('span', null, 'Provoke'),
-          h('span', { class: 'sp' }), h('span', { class: 'sg-soft', style: 'font-weight:400' }, 'Lead sheet' + edited(leads))),
+          h('span', { class: 'sp' }), h('span', { class: 'sg-soft', style: 'font-weight:400' }, 'Lead sheet' + sheetEdited(leads))),
         cs);
       return root;
     }
@@ -458,6 +458,6 @@ AE.shard({
       const b = document.getElementById(BOX_ID);
       if (!b || !b.isConnected) box();
     });
-    AE.leadReplies = { pick, pricesFor, screenPrices, byStatus };
+    AE.leadReplies = { pick, pricesFor, screenPrices, byStatus, render };
   },
 });

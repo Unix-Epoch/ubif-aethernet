@@ -1379,6 +1379,13 @@ const provoke = (env) => {
     return chat; })`, env.ctx)(ui);
   return { chat: fn, ui };
 };
+await t('Provoke: the arrival box draws (a Mobility lead, with the sheet edit date)', async () => {
+  const env = load(['00-core.js', '23-price-sheet.js', '24-provoke.js'], { pathname: '/' });
+  await env.AE.shards.find((x) => x.id === 'leadReplies').run();
+  const leads = { data: { items: [{ title: 'iPhone', group: 'G', texts: ['Hi'] }], modified: '2026-11-17T00:00:00Z' } };
+  const a = { arrivalId: 50, program: { programId: 5062 }, customer: { firstName: 'Avery', lastName: 'Stone' }, customerDevice: { deviceName: 'iPhone 15' } };
+  assert.ok(env.AE.leadReplies.render(a, leads, null), 'render returned the box');
+});
 await t('Provoke: a failed work order read still places the row (no status order) and is retried with a backoff, not every second', async () => {
   for (const status of [404, 504]) {
     const env = load(['00-core.js'], { fetch: router([['GET', /^\/api\/workorder\/123$/, { status, body: 'x' }]]) });
