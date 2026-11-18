@@ -539,6 +539,7 @@ const mp2 = (await call('GET', '/v1/tracker/master')).j.publicJwk;
 ok(await call('POST', '/v1/326/tracker/key', await C.newStoreKey(326, mp2)), 'key 326');
 const busy = Array.from({ length: 60 }, (_, i) => ({ wo: 770000 + i, statusId: 2, status: 'Work in progress', updatedAt: '2026-11-11T10:00:00Z', createdAt: '2026-11-10T10:00:00Z' }));
 let sent = 0;
+const busyFrom = bucketH(); // this block takes most of a minute: when it runs across the top of an hour its counts sit in two hour buckets
 for (let pass = 0; pass < 4; pass++) {
   const list = busy.map((x) => Object.assign({}, x, { updatedAt: '2026-11-11T1' + pass + ':00:00Z' }));
   await env.TR.prepare('UPDATE workorders SET claimed_until = NULL').run();
@@ -554,7 +555,7 @@ assert.ok(sent >= 100, 'scan-driven uploads: ' + sent);
 // ...and every one of the 60 uploaded a few more times (new hash each, as when notes and carts keep changing)
 for (let k = 0; k < 4; k++) for (const x of busy) { r = await raw(326, x.wo, 'more' + k + '-' + x.wo, 2, { cart: { items: [{ name: 'Line' + k, sku: 'L' + k, price: 5 * k, quantity: 1 }], payment: { total: 5 * k } } }); assert.equal(r.status, 200, 'busy store, upload ' + k + ' of ' + x.wo + ': ' + JSON.stringify(r.j)); sent++; }
 assert.ok(sent >= 340);
-for (const k of ['snap', 'chg', 'scan', 'fresh']) { const row = await env.TR.prepare("SELECT n FROM write_budget WHERE store = 326 AND kind = ? AND bucket = ?").bind(k, bucketH()).first(); assert.ok(row && row.n < BUDGET[k].hour * 0.7, k + ' stays under its hourly limit even in this deliberately busy hour: ' + (row && row.n)); }
+for (const k of ['snap', 'chg', 'scan', 'fresh']) { const row = await env.TR.prepare("SELECT SUM(n) AS n FROM write_budget WHERE store = 326 AND kind = ? AND bucket IN (?, ?)").bind(k, busyFrom, bucketH()).first(); assert.ok(row && row.n > 0 && row.n < BUDGET[k].hour * 0.7, k + ' stays under its hourly limit even in this deliberately busy hour: ' + (row && row.n)); }
 
 // scan budget: too many never-listed work orders in an hour → 429, nothing written; a scan of known ones is unaffected
 await clearBudget(); await seed(326, 'fresh', bucketH(), BUDGET.fresh.hour - 5);
