@@ -58,11 +58,15 @@ sealed interface UpdatePhase {
     }
 }
 
+/** The Check for updates button's last result. */
+enum class CheckStatus { Idle, Checking, UpToDate, Failed }
+
 data class UpdateState(
     val current: AppVersion,
     val latest: Release? = null,
     val min: MinVersion? = null,
     val phase: UpdatePhase = UpdatePhase.Idle,
+    val checkStatus: CheckStatus = CheckStatus.Idle,
 ) {
     /** A newer build is published: Settings shows the update row and the nav shows a dot. */
     val available: Boolean get() = latest != null && latest.code > current.code

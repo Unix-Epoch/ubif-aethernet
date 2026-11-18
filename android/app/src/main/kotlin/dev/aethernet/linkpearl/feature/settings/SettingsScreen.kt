@@ -45,6 +45,7 @@ import dev.aethernet.linkpearl.core.nav.HingeTwoPane
 import dev.aethernet.linkpearl.core.nav.LocalAdaptive
 import androidx.compose.ui.text.font.FontWeight
 import dev.aethernet.linkpearl.core.prefs.Appearance
+import dev.aethernet.linkpearl.feature.update.CheckStatus
 import dev.aethernet.linkpearl.feature.update.UpdatePhase
 import dev.aethernet.linkpearl.feature.update.UpdateProgress
 import dev.aethernet.linkpearl.feature.update.UpdateState
@@ -56,6 +57,7 @@ data class SettingsActions(
     val onAlertSettings: () -> Unit = {},
     val onAppearance: (Appearance) -> Unit = {},
     val onUpdate: () -> Unit = {},
+    val onCheckUpdates: () -> Unit = {},
     val onAutoUpdate: (Boolean) -> Unit = {},
     val onOpenAdmin: () -> Unit = {},
     val onLinkshell: () -> Unit = {},
@@ -185,6 +187,20 @@ private fun AboutSection(version: String, autoUpdate: Boolean, update: UpdateSta
     Divider()
     if (update != null && update.available) {
         UpdateRow(update, a.onUpdate)
+        Divider()
+    } else {
+        val status = update?.checkStatus ?: CheckStatus.Idle
+        LpListRow(
+            "Check for updates", onClick = if (status == CheckStatus.Checking) null else a.onCheckUpdates,
+            trailing = {
+                when (status) {
+                    CheckStatus.Checking -> Value("Checking…")
+                    CheckStatus.UpToDate -> Value("Up to date")
+                    CheckStatus.Failed -> Value("Couldn't check")
+                    CheckStatus.Idle -> {}
+                }
+            },
+        )
         Divider()
     }
     LpListRow("Open admin site", onClick = a.onOpenAdmin, trailing = { LpIcon(LpIcons.External, null, tint = Lp.colors.soft) })

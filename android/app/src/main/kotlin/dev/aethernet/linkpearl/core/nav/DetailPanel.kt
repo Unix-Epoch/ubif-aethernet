@@ -40,9 +40,12 @@ import dev.aethernet.linkpearl.core.design.Lp
 fun SlideInPanelHost(open: Boolean, initiallyOpen: Boolean, onClose: () -> Unit, base: @Composable () -> Unit, panel: @Composable (topPadding: Dp) -> Unit) {
     val visible = remember { MutableTransitionState(initiallyOpen) }
     visible.targetState = open
+    // onClose never runs inside itself: an onClose that dispatches Back would come straight back here through the BackHandler.
+    val guard = remember { booleanArrayOf(false) }
+    val close = { if (!guard[0]) { guard[0] = true; try { onClose() } finally { guard[0] = false } } }
     Box(Modifier.fillMaxSize()) {
         base()
-        BackHandler(enabled = open) { onClose() }
+        BackHandler(enabled = open) { close() }
         val c = Lp.colors
         // The content area sits below the status bar; the scrim and panel reach up under it, and the panel pads its content back down.
         val topInset = WindowInsets.safeDrawing.getTop(LocalDensity.current)
@@ -51,7 +54,7 @@ fun SlideInPanelHost(open: Boolean, initiallyOpen: Boolean, onClose: () -> Unit,
             layout(p.width, cs.maxHeight) { p.place(0, -topInset) }
         }
         AnimatedVisibility(visible, enter = fadeIn(tween(250)), exit = fadeOut(tween(250))) {
-            Box(reachUp.fillMaxSize().background(c.page.copy(alpha = 0.6f)).pointerInput(Unit) { detectTapGestures { onClose() } })
+            Box(reachUp.fillMaxSize().background(c.page.copy(alpha = 0.6f)).pointerInput(Unit) { detectTapGestures { close() } })
         }
         AnimatedVisibility(
             visible, modifier = Modifier.align(Alignment.CenterEnd).then(reachUp).fillMaxWidth(0.9f),
