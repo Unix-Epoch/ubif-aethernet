@@ -102,7 +102,7 @@ assert.equal((await call('GET', '/v1/999/tracker/key')).status, 403);           
 // --- in the background (waitUntil): requests only count in memory; one write per window
 {
   const before = await rows(), waits = [];
-  const ctx = { waitUntil: (p) => waits.push(p) }, E2 = Object.assign({}, E, { USAGE_FLUSH_MS: '30' });
+  const ctx = { waitUntil: (p) => waits.push(p) }, E2 = Object.assign({}, E, { USAGE_FLUSH_MS: '1500' }); // long enough that six requests fit in one window on a slow machine
   for (let i = 0; i < 6; i++) await call('GET', '/v1/tracker/master', null, E2, ctx);
   assert.equal(waits.length, 1, 'one flush scheduled for six requests');
   assert.equal((await rows()).tracker.requests, before.tracker.requests, 'nothing written before the window ends');
