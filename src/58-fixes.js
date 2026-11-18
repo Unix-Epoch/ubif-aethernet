@@ -133,6 +133,17 @@
     Live Portal (Oct 2, 2026): Support Ticket is drawn in an
     <appcues-experience-container id="appcues-container-<uuid>"> with
     display:contents, so tucking also gives the box display:block.
+
+  - viewPo: on a work order, each part line's ⋮ menu gets "View PO" right
+    after Portal's "View item": it opens the PO the line's label came in on
+    (Portal's PO page, /boh/inventory/purchase-orders/<PO>, the address its
+    own "View Purchase Order" builds), with no reload; Ctrl/⌘/middle click
+    opens a new tab. The PO is the label's PurchaseOrderNumber
+    (GET /api/boh/inventory/<label>), read once per label for the lines on
+    the page. Lines without a label, buybacks (B-…, BB0001) and labels
+    without a PO get no item. The item is a copy of Portal's own menu item
+    (Portal's menu: <button data-testid="option-<id>"> in
+    [data-testid="action-menu-section"], drawn each time the menu opens).
 */
 AE.fixesInfo = [
   ['logoLink', 'Logo link', 'Restores the ability to right click or middle click the UBIF logo in the top left to open a new tab.'],
@@ -161,6 +172,7 @@ AE.fixesInfo = [
     __DEV__ && ((s, h) => h('label', { style: 'display:flex;align-items:center;gap:8px;margin:-2px 0 10px 14px;font-size:12px', class: 'sg-soft' },
       h('input', { type: 'checkbox', checked: !!s.fixes.scanDebug, onchange: (e) => { s.fixes.scanDebug = e.target.checked; } }),
       'Show scan debugging (a log of every scan, bottom right; to find out why a scan didn\'t work)'))],
+  ['viewPo', 'View PO', 'On a work order, each part\'s ⋮ menu gets View PO, which opens the purchase order the part came in on.'],
 ];
 
 AE.shard({
@@ -473,6 +485,71 @@ AE.shard({
             (btn && btn.isConnected ? btn : wrap.querySelector('button'))?.click(); // Portal's own route change
           });
           wrap.append(link);
+        });
+      },
+      viewPo() {
+        const ID = 'option-aeViewPo';
+        const WO_PAGE = /^\/repair\/workorder\/\d+\/?$/;
+        const LABEL_RE = /^[A-Za-z0-9]{2,}-\d{10,}$/; // <item>-<serial>, as scan to open; B-<item>-… buybacks never match
+        const pos = new Map(); // label → Promise<PO number | ''>
+        const poOf = (label) => {
+          if (!pos.has(label)) {
+            pos.set(label, AE.api('GET', '/api/boh/inventory/' + encodeURIComponent(label) + '?includeQuarantineInfo=false')
+              .then((d) => { const po = d && typeof d.PurchaseOrderNumber === 'string' ? d.PurchaseOrderNumber.trim() : ''; return /^[A-Za-z0-9-]{1,40}$/.test(po) ? po : ''; })
+              .catch((e) => { pos.delete(label); throw e; })); // a failed read is tried again next time
+          }
+          return pos.get(label);
+        };
+        const poUrl = (po) => '/boh/inventory/purchase-orders/' + encodeURIComponent(po);
+        // The line's label: Portal shows it under the part's name (.primary-class's second text).
+        const labelOf = (row) => {
+          for (const t of row.querySelectorAll('td.--primary [data-aui="text"]')) {
+            const x = t.textContent.trim();
+            if (LABEL_RE.test(x) && !/^BB0001-/i.test(x)) return x;
+          }
+          return null;
+        };
+        const go = (url) => { history.pushState(null, '', url); dispatchEvent(new PopStateEvent('popstate', { state: null })); };
+        function place(view, label, po) {
+          const menu = view.parentElement;
+          if (!menu || !view.isConnected || menu.querySelector('[data-testid="' + ID + '"]')) return;
+          const item = view.cloneNode(true);
+          item.setAttribute('data-testid', ID);
+          item.disabled = false;
+          item.removeAttribute('disabled');
+          const text = item.querySelector('[data-aui="text"]') || item;
+          text.textContent = 'View PO';
+          if (text !== item) text.style.color = 'var(--aui-on-surface)'; // the copy may come from a disabled View item
+          const open = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            AE.track('fixes:viewPo');
+            if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) window.open(poUrl(po), '_blank', 'noopener');
+            else go(poUrl(po));
+            // close Portal's menu the way a click outside does
+            document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+          };
+          item.addEventListener('click', open);
+          item.addEventListener('auxclick', (e) => { if (e.button === 1) open(e); });
+          item.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // no autoscroll on middle click
+          view.after(item);
+        }
+        let seen = '';
+        AE.onDom(() => {
+          if (!WO_PAGE.test(location.pathname)) return;
+          const rows = [...document.querySelectorAll('tbody tr')].filter((r) => r.querySelector('td.--actions'));
+          // Read the POs for the lines on the page ahead, so the item is there as the menu opens.
+          const labels = rows.map(labelOf).filter(Boolean);
+          const key = labels.join(',');
+          if (key !== seen) { seen = key; AE.afterLoad().then(() => labels.forEach((l) => poOf(l).catch(() => {}))); }
+          for (const view of document.querySelectorAll('[data-testid="action-menu-section"] [data-testid="option-viewPartDetails"]')) {
+            if (view.parentElement.querySelector('[data-testid="' + ID + '"]')) continue;
+            const row = view.closest('tr');
+            const label = row && labelOf(row);
+            if (!label) continue;
+            poOf(label).then((po) => { if (po) place(view, label, po); }).catch(() => {});
+          }
         });
       },
       autoNotes() {
