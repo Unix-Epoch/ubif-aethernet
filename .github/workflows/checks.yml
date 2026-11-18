@@ -1,0 +1,60 @@
+# Runs the test suites on every pull request and on pushes to the long-lived branches. Read-only: nothing is built for
+# publishing, published or deployed from here.
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main, 'release-*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  client:
+    name: Client tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node test-client/run.mjs
+      - run: node test-client/pullbacks.mjs
+      - run: node test-client/linkshell.mjs
+
+  guards:
+    name: Build guards and Aethernet Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: python3 -m unittest test-build/test_build.py
+      - run: node worker/test/worker.test.mjs
+
+  tracker:
+    name: Tracker Worker tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tracker-worker/package-lock.json
+      - run: npm ci
+        working-directory: tracker-worker
+      - run: npm test
+        working-directory: tracker-worker

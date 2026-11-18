@@ -1,0 +1,203 @@
+{
+ "workorder": {
+  "workorder": {
+   "workorderId": 9000001,
+   "itemswithdevice": "",
+   "customerDeviceId": 9000002,
+   "workorderStatusId": 14,
+   "warrantyWorkorderId": null,
+   "tradeCreditStatusId": null,
+   "claimNumber": null,
+   "imeiBypassedByUserId": null,
+   "csuSalesOrderId": "",
+   "csuCartId": "",
+   "iqcComplete": null,
+   "nextUpdate": "2026-10-01T15:00:00.000Z",
+   "programId": 5062,
+   "oldDeviceRepair": null,
+   "storeId": 914,
+   "createdBy": 9000003,
+   "updatedBy": 9000004,
+   "createdAt": "2026-09-30T19:49:58.634Z",
+   "updatedAt": "2026-09-30T22:21:55.131Z",
+   "migrated": null,
+   "companyId": null,
+   "clientId": 10,
+   "slaEndTime": "2026-10-01T14:50:00.000Z",
+   "crossStoreRefWorkorderId": null,
+   "WorkorderStatus": {
+    "name": "Sale complete",
+    "workorderStatusId": 14
+   },
+   "WorkorderBinDeviceLocation": {
+    "workorder_bin_device_location_id": 9000005,
+    "workorder_id": 9000001,
+    "workorder_bin_id": 9000006,
+    "WorkorderBin": {
+     "workorder_bin_id": 9000006,
+     "name": "BB5"
+    }
+   },
+   "Program": {
+    "name": "Asurion Mobility",
+    "programId": 5062,
+    "programTypeId": 4
+   },
+   "Store": {
+    "storeName": "Newport News",
+    "isDepot": null
+   },
+   "CustomerDevice": {
+    "customerDeviceId": "9000002",
+    "customerId": "9000007",
+    "deviceCatalogId": 7264,
+    "companyId": null,
+    "name": "Test device",
+    "passcode": "",
+    "serialType": null,
+    "serial": "",
+    "imei": "",
+    "createdBy": 9000008,
+    "updatedBy": 9000008,
+    "createdAt": "2026-09-24T14:45:04.521Z",
+    "updatedAt": "2026-09-30T20:41:36.220Z",
+    "isLiquidDamage": null,
+    "externalCustomerDeviceNumber": null,
+    "isRefurbished": null,
+    "deviceModelNumber": null,
+    "DeviceCatalog": {
+     "deviceCatalogId": 7264,
+     "deviceModelId": 1753,
+     "name": "iPhone 17 Pro Deep Blue",
+     "description": null,
+     "image": "/static-assets/devicesimages/device-types/iphone-17-pro-job-details-130x130.png",
+     "effectiveStartDate": "2025-12-10T21:45:57.000Z",
+     "effectiveEndDate": null,
+     "status": 1,
+     "migrated": null,
+     "createdBy": 9000009,
+     "updatedBy": 9000009,
+     "createdAt": "2025-12-11T18:50:48.000Z",
+     "updatedAt": "2025-12-11T18:50:48.000Z",
+     "DeviceModel": {
+      "deviceTypeId": 9,
+      "deviceManufacturerId": 12,
+      "modelNumber": "iPhone 17 Pro",
+      "DeviceManufacturer": {
+       "name": "Apple"
+      },
+      "DeviceType": {
+       "name": "Cell Phone"
+      },
+      "DeviceFamily": {
+       "name": "iPhone"
+      }
+     },
+     "DeviceCatalogAttributes": [
+      {
+       "deviceCatalogAttributeId": 9000010,
+       "deviceCatalogId": 7264,
+       "deviceCatalogAttributeTypeId": 21,
+       "value": "",
+       "createdBy": 9000009,
+       "updatedBy": 9000009,
+       "createdAt": "2025-12-12T01:45:20.488Z",
+       "updatedAt": "2025-12-12T01:45:20.488Z",
+       "deletedBy": null,
+       "deletedAt": null
+      }
+     ]
+    }
+   },
+   "WorkorderAttributes": [
+    {
+     "workorderAttributeId": 9000011,
+     "workorderId": 9000001,
+     "workorderAttributeTypeId": 17,
+     "value": "",
+     "createdBy": 9000003,
+     "updatedBy": 9000003,
+     "createdAt": "2026-09-30T19:50:21.389Z",
+     "updatedAt": "2026-09-30T19:50:21.389Z",
+     "key": null,
+     "WorkorderAttributeType": {
+      "workorderAttributeTypeId": 17,
+      "name": "Quote",
+      "createdBy": 9000009,
+      "updatedBy": 9000009,
+      "createdAt": "2024-07-11T17:49:05.820Z",
+      "updatedAt": "2024-07-11T17:49:05.820Z",
+      "deletedBy": null,
+      "deletedAt": null
+     }
+    }
+   ],
+   "PartnerJob": {
+    "partnerJobId": 9000012,
+    "partnerId": 6,
+    "arrivalId": 9000013,
+    "workorderId": 9000001,
+    "customerDeviceId": 9000002,
+    "parentPartnerJobId": null,
+    "apiBypass": null,
+    "partnerSourceJobId": null,
+    "partnerSourceEntity": null,
+    "orgWorkorderId": null,
+    "createdBy": 9000008,
+    "updatedBy": 9000008,
+    "createdAt": "2026-09-30T19:45:09.725Z",
+    "updatedAt": "2026-09-30T19:49:58.667Z",
+    "PartnerJobAttributes": [
+     {
+      "partnerJobAttributeId": 9000014,
+      "partnerJobId": 9000012,
+      "partnerJobAttributeTypeId": 51,
+      "value": "",
+      "orgPartnerJobId": null,
+      "createdBy": 9000008,
+      "updatedBy": 9000008,
+      "createdAt": "2026-09-30T19:45:09.736Z",
+      "updatedAt": "2026-09-30T19:45:09.736Z"
+     }
+    ],
+    "GspnReplacementPartScans": []
+   },
+   "WorkorderDeviceIssueServiceOptions": [
+    {
+     "workorder_device_issue_service_option_id": 9000015,
+     "device_issue_category_type_option_id": 55,
+     "DeviceIssueCategoryTypeOption": {
+      "device_issue_category_type_option_id": 55,
+      "device_issue_id": 1,
+      "device_sub_issue_id": null,
+      "DeviceIssue": {
+       "deviceIssueId": 1,
+       "name": "Broken front screen",
+       "oow": 1,
+       "active": 1,
+       "createdBy": 9000009,
+       "updatedBy": 9000009,
+       "createdAt": "2024-07-11T15:54:49.373Z",
+       "updatedAt": "2024-07-11T15:54:49.373Z",
+       "deletedBy": null,
+       "deletedAt": null
+      },
+      "DeviceSubIssue": null
+     }
+    }
+   ],
+   "quotes": [],
+   "arrivalId": 9000013
+  },
+  "stage": "prod",
+  "useReportableAndShopSupplies": true,
+  "isUpsellPermitted": true
+ },
+ "cart": {
+  "cartId": "914-1700000000000",
+  "cartItems": [],
+  "discountCodes": [],
+  "isCanceled": false,
+  "payment": {}
+ }
+}

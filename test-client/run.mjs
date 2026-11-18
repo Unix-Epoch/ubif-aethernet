@@ -7,7 +7,8 @@
 // The src files load into a Node vm with stubbed browser globals (test-client/harness.mjs); `fetch` is stubbed per test and every
 // request is recorded as sent (env.requests), so tests assert the bodies that would reach Portal or the Worker. Loops run on the
 // harness's virtual clock (timers: 'fake') where timing matters.
-// Responses come from the captured fixtures (tracker-worker/test/fixtures/retrace/*.json, sandbox/fixtures/wo-template.json).
+// Responses come from the captured fixtures (tracker-worker/test/fixtures/retrace/*.json, test-client/fixtures/wo-template.json:
+// sandbox/capture.py's scrubbed work order with its ids renumbered, kept in the repo so the suite runs on any clone).
 // Anything built here by hand is marked SYNTHETIC: a bad shape a real Portal is not known to send, or a stand-in for an answer
 // no capture covers yet. Nothing here is evidence of a Portal shape beyond what the fixture it is copied from proves.
 // Exit code 0 = all passed. Needs Node 18+ and nothing from npm. No Portal, no Worker, no browser is touched.
@@ -25,7 +26,7 @@ async function t(name, fn) {
 
 // ------------------------------------------------------------------ fixtures
 const STORE = 914;
-const woTemplate = fixture('sandbox/fixtures/wo-template.json'); // GET /api/workorder/{id} as { workorder: {...}, ... } + the cart (values blanked)
+const woTemplate = fixture('test-client/fixtures/wo-template.json'); // GET /api/workorder/{id} as { workorder: {...}, ... } + the cart (values blanked)
 const WO_ANSWER = woTemplate.workorder;                          // captured shape: { workorder: { workorderStatusId: 14, csuCartId, storeId, … }, stage, … }
 const withStatus = (n) => ({ ...WO_ANSWER, workorder: { ...WO_ANSWER.workorder, workorderStatusId: n } }); // the same answer at another status
 const LABELS = retraceFx('store-products');                      // { @odata.context, @odata.count: 3, value: [3 rows] }
@@ -333,6 +334,21 @@ await t('api (virtual clock): a hung call times out at 30 s and counts; a finish
   await env.advance(2);
   assert.ok(err instanceof AE.ApiError); assert.equal(err.timedOut, true); assert.match(err.message, /timed out after 30 s/);
   assert.equal(AE.health.state().failures, 1); assert.equal(AE.health.state().last.kind, 'timeout');
+});
+
+await t('AE.every (virtual clock): a hidden tab skips its ticks and catches up once when shown; background loops keep running', async () => {
+  const env = load(['00-core.js'], { timers: 'fake', fetch: controlled().fetch });
+  const { AE } = env, doc = env.ctx.document;
+  let page = 0, bg = 0;
+  AE.every(1000, () => { page++; });
+  AE.every(1000, () => { bg++; }, { background: true });
+  await env.advance(0); assert.equal(page, 1); assert.equal(bg, 1);          // both run once straight away
+  await env.advance(3000); assert.equal(page, 4); assert.equal(bg, 4);
+  doc.hidden = true;
+  await env.advance(5000); assert.equal(page, 4, 'no ticks while hidden'); assert.equal(bg, 9, 'the background loop went on');
+  doc.hidden = false; doc.dispatchEvent({ type: 'visibilitychange' });
+  await env.advance(0); assert.equal(page, 5, 'one catch-up run when the tab shows again');
+  await env.advance(1000); assert.equal(page, 6);
 });
 
 await t('workerCall: not Portal\'s health; every error (HTTP, timeout) is tagged worker', async () => {
