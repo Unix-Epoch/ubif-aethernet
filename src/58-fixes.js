@@ -139,9 +139,10 @@
     (Portal's PO page, /boh/inventory/purchase-orders/<PO>, the address its
     own "View Purchase Order" builds), with no reload; Ctrl/⌘/middle click
     opens a new tab. The PO is the label's PurchaseOrderNumber
-    (GET /api/boh/inventory/<label>), read once per label for the lines on
-    the page. Lines without a label, buybacks (B-…, BB0001) and labels
-    without a PO get no item. The item is a copy of Portal's own menu item
+    (GET /api/boh/inventory/<label>), read ahead once per label for the
+    lines on the page and again on click if that read hadn't finished.
+    Lines without a label, buybacks (B-…, BB0001) and labels read as having
+    no PO get no item. The item is a copy of Portal's own menu item
     (Portal's menu: <button data-testid="option-<id>"> in
     [data-testid="action-menu-section"], drawn each time the menu opens).
 */
@@ -489,30 +490,43 @@ AE.shard({
       },
       viewPo() {
         const ID = 'option-aeViewPo';
-        const WO_PAGE = /^\/repair\/workorder\/\d+\/?$/;
-        const LABEL_RE = /^[A-Za-z0-9]{2,}-\d{10,}$/; // <item>-<serial>, as scan to open; B-<item>-… buybacks never match
+        const WO_PAGE = /^\/repair\/workorder\/\d+/;
+        const LABEL_RE = /^[A-Za-z0-9]{2,}-[A-Za-z0-9]{6,}$/; // <item>-<serial> (Portal's getSkuOrSerial); B-<item>-… buybacks never match
         const pos = new Map(); // label → Promise<PO number | ''>
+        const known = new Map(); // label → PO number | '' once read
         const poOf = (label) => {
           if (!pos.has(label)) {
             pos.set(label, AE.api('GET', '/api/boh/inventory/' + encodeURIComponent(label) + '?includeQuarantineInfo=false')
-              .then((d) => { const po = d && typeof d.PurchaseOrderNumber === 'string' ? d.PurchaseOrderNumber.trim() : ''; return /^[A-Za-z0-9-]{1,40}$/.test(po) ? po : ''; })
+              .then((d) => {
+                const po = d && typeof d.PurchaseOrderNumber === 'string' ? d.PurchaseOrderNumber.trim() : '';
+                const ok = /^[A-Za-z0-9-]{1,40}$/.test(po) ? po : '';
+                known.set(label, ok);
+                return ok;
+              })
               .catch((e) => { pos.delete(label); throw e; })); // a failed read is tried again next time
           }
           return pos.get(label);
         };
         const poUrl = (po) => '/boh/inventory/purchase-orders/' + encodeURIComponent(po);
-        // The line's label: Portal shows it under the part's name (.primary-class's second text).
+        // The line's label: Portal shows it under the part's name in the row's first cell.
         const labelOf = (row) => {
-          for (const t of row.querySelectorAll('td.--primary [data-aui="text"]')) {
-            const x = t.textContent.trim();
-            if (LABEL_RE.test(x) && !/^BB0001-/i.test(x)) return x;
+          const cell = row.querySelector('td.--primary') || row.cells[0];
+          if (!cell) return null;
+          const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+          for (let n = w.nextNode(); n; n = w.nextNode()) {
+            const x = n.nodeValue.trim();
+            if (LABEL_RE.test(x) && !/^BB0001-/i.test(x)) return x.toUpperCase();
           }
           return null;
         };
         const go = (url) => { history.pushState(null, '', url); dispatchEvent(new PopStateEvent('popstate', { state: null })); };
-        function place(view, label, po) {
+        const closeMenu = () => {
+          // the way a click outside Portal's menu closes it
+          for (const t of ['mousedown', 'mouseup', 'click']) document.body.dispatchEvent(new MouseEvent(t, { bubbles: true }));
+        };
+        function place(view, label) {
           const menu = view.parentElement;
-          if (!menu || !view.isConnected || menu.querySelector('[data-testid="' + ID + '"]')) return;
+          if (!menu || menu.querySelector('[data-testid="' + ID + '"]')) return;
           const item = view.cloneNode(true);
           item.setAttribute('data-testid', ID);
           item.disabled = false;
@@ -520,15 +534,15 @@ AE.shard({
           const text = item.querySelector('[data-aui="text"]') || item;
           text.textContent = 'View PO';
           if (text !== item) text.style.color = 'var(--aui-on-surface)'; // the copy may come from a disabled View item
-          const open = (e) => {
+          const open = async (e) => {
             e.preventDefault(); e.stopPropagation();
+            const tab = e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1;
+            closeMenu();
+            let po;
+            try { po = await poOf(label); } catch (err) { AE.toast('View PO', "Couldn't read " + label + "'s PO.", 'err', 6000); return; }
+            if (!po) { AE.toast('View PO', label + ' has no PO.', 'err', 6000); return; }
             AE.track('fixes:viewPo');
-            if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) window.open(poUrl(po), '_blank', 'noopener');
-            else go(poUrl(po));
-            // close Portal's menu the way a click outside does
-            document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-            document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-            document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            if (tab) window.open(poUrl(po), '_blank', 'noopener'); else go(poUrl(po));
           };
           item.addEventListener('click', open);
           item.addEventListener('auxclick', (e) => { if (e.button === 1) open(e); });
@@ -537,18 +551,18 @@ AE.shard({
         }
         let seen = '';
         AE.onDom(() => {
-          if (!WO_PAGE.test(location.pathname)) return;
-          const rows = [...document.querySelectorAll('tbody tr')].filter((r) => r.querySelector('td.--actions'));
-          // Read the POs for the lines on the page ahead, so the item is there as the menu opens.
-          const labels = rows.map(labelOf).filter(Boolean);
-          const key = labels.join(',');
-          if (key !== seen) { seen = key; AE.afterLoad().then(() => labels.forEach((l) => poOf(l).catch(() => {}))); }
-          for (const view of document.querySelectorAll('[data-testid="action-menu-section"] [data-testid="option-viewPartDetails"]')) {
-            if (view.parentElement.querySelector('[data-testid="' + ID + '"]')) continue;
+          if (WO_PAGE.test(location.pathname)) {
+            // Read the POs for the lines on the page ahead, so a label without one gets no item.
+            const labels = [...document.querySelectorAll('tbody tr')].filter((r) => r.querySelector('td.--actions')).map(labelOf).filter(Boolean);
+            const key = labels.join(',');
+            if (key !== seen) { seen = key; AE.afterLoad().then(() => labels.forEach((l) => poOf(l).catch(() => {}))); }
+          }
+          for (const view of document.querySelectorAll('[data-testid="option-viewPartDetails"]')) {
+            if (view.parentElement && view.parentElement.querySelector('[data-testid="' + ID + '"]')) continue;
             const row = view.closest('tr');
             const label = row && labelOf(row);
-            if (!label) continue;
-            poOf(label).then((po) => { if (po) place(view, label, po); }).catch(() => {});
+            if (!label || known.get(label) === '') continue; // no label, or read and has no PO
+            place(view, label);
           }
         });
       },
