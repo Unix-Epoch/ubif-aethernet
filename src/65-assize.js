@@ -119,10 +119,10 @@ AE.shard({
       if (w.storeId != null && storeId != null && Number(w.storeId) !== Number(storeId)) throw Object.assign(new Error("another store's work order"), { otherStore: true });
       return { d: trimDetail(x.workorder, x.notes.notes, x.audit_trail, x.cart), at: x.at, fetched: x.at >= asked }; // at: when Portal answered
     }
-    // Orders worth a detail fetch: open, in a status with rules, not a cleaning.
     // The list row's fields a person changes in Portal without moving updatedAt: when they moved since a detail was fetched,
     // that detail is fetched again (its notes and the rest can be behind too).
     const rowKey = (r) => [r.locationBin == null ? '' : r.locationBin, (r.customerDevice && r.customerDevice.name) || '', r.workorderStatusId, r.nextUpdate || ''].join('\u0001');
+    // Orders worth a detail fetch: open, in a status with rules, not a cleaning.
     const inScope = (r) => !/sale complete|cancel|repair summary|awaiting diag|partner approval/i.test(r.workorderStatusName || '') && R.programOf(r.programId, r.programName).key !== 'cleaning';
 
     // ------------------------------------------------------------ the pass
