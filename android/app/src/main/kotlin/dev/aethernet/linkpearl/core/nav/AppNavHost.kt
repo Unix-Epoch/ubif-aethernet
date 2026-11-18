@@ -82,7 +82,7 @@ private fun MainShell() {
             // Alerts and Settings open each other's screens (alert settings, a work order) inside this one back stack, so Back returns to them.
             alertsGraph(navigate = nav::navigate)
             workOrdersGraph(navigate = nav::navigate)
-            retraceGraph(navigate = nav::navigate)
+            retraceGraph(navigate = nav::navigate, close = { nav.popBackStack() })
             settingsGraph(navigate = { nav.navigate(it) })
             // A scan opens its work order or label in place of the scanner, so Back returns to the screen the scan started from.
             scanGraph(open = { route -> nav.navigate(route) { popUpTo(Routes.SCAN) { inclusive = true } } })

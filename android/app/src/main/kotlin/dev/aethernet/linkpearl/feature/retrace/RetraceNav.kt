@@ -37,8 +37,8 @@ import java.time.ZoneId
  * reference opens `workorders/{store}-{wo}` (the existing Work orders detail). On phones a detail is a full screen with Back; on wide screens
  * the list stays and the detail is the shared slide-in panel.
  */
-fun NavGraphBuilder.retraceGraph(navigate: ((route: String) -> Unit)? = null) {
-    composable(Routes.RETRACE, deepLinks = listOf(navDeepLink { uriPattern = Routes.deepLink(Routes.RETRACE) })) { RetraceRoute(null, navigate) }
+fun NavGraphBuilder.retraceGraph(navigate: ((route: String) -> Unit)? = null, close: (() -> Unit)? = null) {
+    composable(Routes.RETRACE, deepLinks = listOf(navDeepLink { uriPattern = Routes.deepLink(Routes.RETRACE) })) { RetraceRoute(null, navigate, close) }
     composable(
         Routes.RETRACE_ITEM,
         arguments = listOf(navArgument(Routes.ARG_STORE) { type = NavType.IntType }, navArgument(Routes.ARG_ITEM) { type = NavType.StringType }),
@@ -46,7 +46,7 @@ fun NavGraphBuilder.retraceGraph(navigate: ((route: String) -> Unit)? = null) {
     ) { e ->
         val store = e.arguments?.getInt(Routes.ARG_STORE)
         val item = e.arguments?.getString(Routes.ARG_ITEM)
-        RetraceRoute(if (store != null && !item.isNullOrBlank()) RtTarget.Item(store, item) else null, navigate)
+        RetraceRoute(if (store != null && !item.isNullOrBlank()) RtTarget.Item(store, item) else null, navigate, close)
     }
     composable(
         Routes.RETRACE_LABEL,
@@ -55,7 +55,7 @@ fun NavGraphBuilder.retraceGraph(navigate: ((route: String) -> Unit)? = null) {
     ) { e ->
         val store = e.arguments?.getInt(Routes.ARG_STORE)
         val label = e.arguments?.getString(Routes.ARG_LABEL)
-        RetraceRoute(if (store != null && !label.isNullOrBlank()) RtTarget.Label(store, label) else null, navigate)
+        RetraceRoute(if (store != null && !label.isNullOrBlank()) RtTarget.Label(store, label) else null, navigate, close)
     }
 }
 
@@ -63,7 +63,7 @@ private fun AppContainer.authOrNull(): Auth? = runCatching { get<Auth>() }.getOr
 
 /** The stateful Retrace destination. [initial] set = a detail is open (a deep link or a tap). */
 @Composable
-fun RetraceRoute(initial: RtTarget?, navigate: ((String) -> Unit)?) {
+fun RetraceRoute(initial: RtTarget?, navigate: ((String) -> Unit)?, close: (() -> Unit)? = null) {
     val c = LocalAppContainer.current
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     val wide = LocalAdaptive.current.isTwoPane
@@ -99,7 +99,8 @@ fun RetraceRoute(initial: RtTarget?, navigate: ((String) -> Unit)?) {
             RetraceScreen(ui, actions = actions, twoColumns = wide)
         } else {
             SlideInPanelHost(
-                open = true, initiallyOpen = true, onClose = { back?.onBackPressed() },
+                // Pops this detail's entry. Dispatching Back here would land in the panel's own BackHandler and call onClose again, forever.
+                open = true, initiallyOpen = true, onClose = { close?.invoke() },
                 base = { RetraceScreen(ui, actions = actions, twoColumns = true, selectedItem = (initial as? RtTarget.Item)?.item) },
                 panel = { top -> DetailContent(initial, detailActions(initial), showBack = true, closeIcon = true, modifier = Modifier.padding(top = top)) },
             )
