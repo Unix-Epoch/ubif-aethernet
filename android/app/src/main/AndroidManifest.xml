@@ -116,6 +116,12 @@
             tools:node="merge">
             <meta-data android:name="androidx.work.WorkManagerInitializer" android:value="androidx.startup" tools:node="remove" />
         </provider>
+        <!-- Push (feature/push): Firebase Cloud Messaging delivers Linkshell wakes here. -->
+        <service android:name=".feature.push.LinkpearlMessagingService" android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
         <!-- Pullbacks: the results file handed to the share sheet (cache/pullbacks/ only) -->
         <provider
             android:name="androidx.core.content.FileProvider"

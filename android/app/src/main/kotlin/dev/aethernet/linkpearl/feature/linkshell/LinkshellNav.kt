@@ -1,6 +1,14 @@
 package dev.aethernet.linkpearl.feature.linkshell
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import android.app.Application
 import android.os.Bundle
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
@@ -67,6 +75,14 @@ fun LinkshellRoute(navigate: (String) -> Unit) {
         initializer { LinkshellViewModel(c.get<LinkshellClient>(), c.get<LinkshellRepository>(), runCatching { c.get<PullbackLink>() }.getOrNull()) }
     })
     val ui by vm.state.collectAsStateWithLifecycle()
+    // Linked: ask once for notifications, so a request from the PC can reach this phone with the app closed (feature/push).
+    val context = LocalContext.current
+    val askNotify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    val linked = ui is LsUi.Linked
+    LaunchedEffect(linked) {
+        if (linked && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            askNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
     val stores = (runCatching { c.get<Auth>() }.getOrNull()?.state?.value as? AuthState.Registered)?.stores.orEmpty()
     LinkshellScreen(
         ui,
