@@ -202,7 +202,7 @@ const M = [
   ['return: labels kept past 3 days', '22-checkin-drafts.js', '&& Date.now() - (v.at || 0) < KEEP_MS', ''],
   ['return: closing the intake form still prints the ticket', '22-checkin-drafts.js', 'if (!d) return false;', ''],
   ['return: no intake form before the ticket', '22-checkin-drafts.js', 'const d = await AE.checkinDrafts.intake(a.arrivalId, { print: false });', 'const d = labelFor(a);'],
-  ['return: answered arrivals asked again', '22-checkin-drafts.js', 'if (!id || cleared.has(id)) return;', 'if (!id) return;'],
+  ['return: answered arrivals asked again', '22-checkin-drafts.js', 'if (!id || cleared.has(id)) return;', 'if (!id) return;'],  ['every: hidden tabs keep ticking', '00-core.js', 'haltTimers.push(setInterval(() => { if (!document.hidden) safe(); }, ms));', 'haltTimers.push(setInterval(safe, ms));'],
 ];
 
 const only = process.argv.slice(2);

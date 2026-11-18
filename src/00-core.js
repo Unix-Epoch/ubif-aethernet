@@ -1709,10 +1709,20 @@ const AE = (() => {
     return item;
   }
 
-  function every(ms, fn) {
+  // A hidden tab skips its ticks (nearly every loop only puts a button or badge back on the page) and runs each loop once
+  // when the tab shows again. opts.background: true keeps a loop running while hidden, for work that isn't about the page.
+  const shownFns = [];
+  let shownWired = false;
+  function every(ms, fn, opts = {}) {
     // Promise.resolve so async callbacks' rejections are caught too.
     const safe = () => (halted ? undefined : Promise.resolve().then(fn).catch((e) => { noteError('timer', e); console.error('[' + AE_NAME + ']', e); }));
-    haltTimers.push(setInterval(safe, ms));
+    if (opts.background) { haltTimers.push(setInterval(safe, ms)); safe(); return; }
+    haltTimers.push(setInterval(() => { if (!document.hidden) safe(); }, ms));
+    shownFns.push(safe);
+    if (!shownWired) {
+      shownWired = true;
+      document.addEventListener('visibilitychange', () => { if (!document.hidden && !halted) for (const f of shownFns) f(); });
+    }
     safe();
   }
 
