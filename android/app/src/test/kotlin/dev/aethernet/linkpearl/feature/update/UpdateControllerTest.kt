@@ -259,4 +259,32 @@ class UpdateControllerTest {
         advanceUntilIdle()
         assertEquals(listOf("Linkpearl-6.apk"), dir.list()!!.toList())
     }
+
+    @Test fun checkNowAsksEvenWhenNotDueAndSaysUpToDate() = runTest {
+        val source = FakeUpdateSource(UpdateAnswer(Release120.copy(code = 4, name = "1.1.1"), MinVersion(1, "1.0.0")))
+        val c = controller(source = source)
+        assertTrue(c.checkIfDue())
+        c.checkNow()
+        advanceUntilIdle()
+        assertEquals(2, source.calls)
+        assertEquals(CheckStatus.UpToDate, c.state.value.checkStatus)
+    }
+
+    @Test fun checkNowFindsAnUpdateAndInstallsWithAutoUpdate() = runTest {
+        val installer = FakeInstaller()
+        val c = controller(installer = installer, auto = true)
+        c.checkNow()
+        advanceUntilIdle()
+        assertTrue(c.state.value.available)
+        assertEquals(CheckStatus.Idle, c.state.value.checkStatus)
+        assertEquals(1, installer.installed.size)
+    }
+
+    @Test fun checkNowSaysWhenTheServerCantBeReached() = runTest {
+        val c = controller(source = FakeUpdateSource(null))
+        c.checkNow()
+        advanceUntilIdle()
+        assertEquals(CheckStatus.Failed, c.state.value.checkStatus)
+        assertFalse(c.state.value.available)
+    }
 }

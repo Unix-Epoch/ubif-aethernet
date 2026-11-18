@@ -117,6 +117,21 @@ class UpdateController(
         true
     }
 
+    /**
+     * The Check for updates button: asks the server now, however recently it was asked. A new version then shows the Update row, and with
+     * Auto-update on it is downloaded and installed like on a due check.
+     */
+    fun checkNow() {
+        if (_state.value.checkStatus == CheckStatus.Checking) return
+        _state.update { it.copy(checkStatus = CheckStatus.Checking) }
+        scope.launch {
+            restored.join()
+            val ok = runCatching { check() }.getOrDefault(false)
+            _state.update { it.copy(checkStatus = if (!ok) CheckStatus.Failed else if (it.available) CheckStatus.Idle else CheckStatus.UpToDate) }
+            if (ok) autoInstall()
+        }
+    }
+
     /** The server's minimum from `/m/prefs` (`minApp`), which Settings reads anyway. */
     fun onMinApp(min: MinVersion) {
         if (_state.value.min == min) return
