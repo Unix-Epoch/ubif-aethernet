@@ -36,14 +36,16 @@
   Cost: Portal's open list once a pass (+1 page of closed orders, for 4b), then each in-scope open
   order's detail (GET /api/workorder/:id, /api/note?workorderId=… (30 a page), /api/workorder-audit-
   trail/:id and /api/get-cart/:csuCartId: 4 calls, made together) when its updatedAt changed, when the
-  copy is older than 30 minutes (updatedAt does NOT move for a new note or a nickname edit), on the
+  copy is older than 30 minutes (updatedAt does NOT move for a new note, a nickname edit or a bin set in Portal), when
+  the list row's bin, nickname, status or next update moved since the copy was fetched (forced past the shared cache), on the
   panel's Refresh (every open order, cache ignored: about 4 calls each plus the list), and right away
   after a text, a Recitation note or a Waymark nickname change on that order; one order after another,
   300 ms apart. The detail comes through AE.woDetail (27-tracker.js), shared with the tracker: a copy
   either one fetched in the last 10 minutes (2 for the order on screen) with the same updatedAt is
   used without asking Portal again (not on Refresh or after a change). The list
-  row's status, nickname, bin and dates are re-read every pass and win over a cached detail. One pass per 10 minutes, shared by every tab (a timestamp
-  in GM storage, like Waymark's scan), plus the order being viewed (at most every 2 minutes). Rows
+  row's status, nickname, bin and dates are re-read every pass and win over a cached detail. One pass per 3 minutes, shared by every tab (a timestamp
+  in GM storage, like Waymark's scan), run by a visible tab (right away when one comes back into view), plus the order being viewed (at most
+  every 2 minutes). Rows
   and details are kept in GM storage per store, so every tab shows the same findings without
   fetching again; each tab re-runs the rules every minute so time-based ones (after close, today's
   contact dates, ages) stay current between passes. Published rules: one small GET to the tracker Worker
@@ -79,7 +81,7 @@ AE.shard({
   sites: ['portal.ubreakifix.net'],
   run() {
     const { h, esc } = AE, R = AE.assizeRules;
-    const SCAN_MS = 10 * 60 * 1000, GAP_MS = 300, WO_MS = 2 * 60 * 1000, DETAIL_TTL = 30 * 60 * 1000;
+    const SCAN_MS = 3 * 60 * 1000, GAP_MS = 300, WO_MS = 2 * 60 * 1000, DETAIL_TTL = 30 * 60 * 1000;
     const PANEL_ID = 'ae-as-panel', PILL_ID = 'ae-as-pill', POP_ID = 'ae-as-pop', MK = 'ae-as-mk';
     const CHECK_NAME = Object.fromEntries(R.CHECKS);
     const orders = (n) => n + (n === 1 ? ' open order' : ' open orders');
@@ -117,6 +119,9 @@ AE.shard({
       if (w.storeId != null && storeId != null && Number(w.storeId) !== Number(storeId)) throw Object.assign(new Error("another store's work order"), { otherStore: true });
       return { d: trimDetail(x.workorder, x.notes.notes, x.audit_trail, x.cart), at: x.at, fetched: x.at >= asked }; // at: when Portal answered
     }
+    // The list row's fields a person changes in Portal without moving updatedAt: when they moved since a detail was fetched,
+    // that detail is fetched again (its notes and the rest can be behind too).
+    const rowKey = (r) => [r.locationBin == null ? '' : r.locationBin, (r.customerDevice && r.customerDevice.name) || '', r.workorderStatusId, r.nextUpdate || ''].join('\u0001');
     // Orders worth a detail fetch: open, in a status with rules, not a cleaning.
     const inScope = (r) => !/sale complete|cancel|repair summary|awaiting diag|partner approval/i.test(r.workorderStatusName || '') && R.programOf(r.programId, r.programName).key !== 'cleaning';
 
@@ -146,16 +151,17 @@ AE.shard({
         GM_setValue(key('details'), keep);
         compute(); render();
         const nowMs = Date.now();
-        const stale = want.filter((r) => full || !keep[r.workorderId] || keep[r.workorderId].u !== r.updatedAt || nowMs - (keep[r.workorderId].at || 0) > DETAIL_TTL);
+        const moved = (r) => { const k = keep[r.workorderId]; return !!k && k.rk != null && k.rk !== rowKey(r); };
+        const stale = want.filter((r) => full || !keep[r.workorderId] || keep[r.workorderId].u !== r.updatedAt || moved(r) || nowMs - (keep[r.workorderId].at || 0) > DETAIL_TTL);
         progress = { done: 0, total: stale.length };
         let n = 0;
         for (const r of stale) {
           let fetched = true;
           try {
-            const x = await detailOf(r.workorderId, full ? { force: true } : { updatedAt: r.updatedAt });
+            const x = await detailOf(r.workorderId, full || moved(r) ? { force: true } : { updatedAt: r.updatedAt });
             fetched = x.fetched;
             const cur = readDetails();
-            cur[r.workorderId] = { u: r.updatedAt, at: x.at, d: x.d };
+            cur[r.workorderId] = { u: r.updatedAt, rk: rowKey(r), at: x.at, d: x.d };
             GM_setValue(key('details'), cur);
           } catch (e) {
             if (/session expired/i.test(e.message || '') || e.storeChanged) throw e;
@@ -177,8 +183,10 @@ AE.shard({
     }
     // Daily metrics for the admin Metrics page: today's counts (dismissed findings are already out of result.sum).
     // Only after a pass that finished; fire and forget (AE.tracker.daily is quiet on failure).
+    let dailyAt = 0;
     function uploadDaily() {
-      if (lastError || !result || !AE.tracker || !AE.tracker.configured()) return;
+      if (lastError || !result || !AE.tracker || !AE.tracker.configured() || Date.now() - dailyAt < 10 * 60 * 1000) return;
+      dailyAt = Date.now();
       const t = new Date(), day = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'), s = result.sum;
       AE.profile().then((p) => p.storeId && AE.tracker.daily(p.storeId, day, { assize_fail: s.fail, assize_flag: s.flag, assize_note: s.note }, 'assize')).catch(() => {});
     }
@@ -209,7 +217,7 @@ AE.shard({
           return;
         }
         const all = readDetails();
-        all[woId] = { u: row ? row.updatedAt : d.wo.updatedAt, at, d };
+        all[woId] = { u: row ? row.updatedAt : d.wo.updatedAt, rk: row ? rowKey(row) : null, at, d };
         GM_setValue(key('details'), all);
         compute(); render();
       } catch (e) { if (!e.otherStore) AE.noteError('Assize WO ' + woId, e); }
@@ -704,7 +712,8 @@ AE.shard({
       }
       if (AE.priceSheet && AE.waymark && AE.waymark.configured()) AE.priceSheet.get().then((v) => { sheet = v && v.data ? v : null; compute(); render(); }).catch(() => {});
       loadRules(false);
-      AE.every(60 * 1000, () => { if (!document.hidden) { pass(false); loadRules(false); } compute(); render(); }); // both wait out their shared 10 minutes
+      AE.every(60 * 1000, () => { if (!document.hidden) { pass(false); loadRules(false); } compute(); render(); }); // both wait out their shared interval
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) pass(false); }); // back in view: a due pass now, not at the next minute
       // Another tab's pass: pick up its results.
       AE.every(5000, () => {
         const rows = readRows();
