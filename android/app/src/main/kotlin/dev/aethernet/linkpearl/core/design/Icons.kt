@@ -69,6 +69,8 @@ object LpIcons {
     val Package = icon("package", "M12 3l8 4.5v9L12 21l-8-4.5v-9z", "M4 7.5l8 4.5 8-4.5M12 12v9")
     /** Retrace: two stops joined by a winding trail. */
     val Retrace = icon("retrace", "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M15 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M9 6h5a3 3 0 0 1 0 6h-4a3 3 0 0 0 0 6h5")
+    /** Scan: a viewfinder with a scan line. */
+    val Scan = icon("scan", "M4 8V5a1 1 0 0 1 1-1h3", "M16 4h3a1 1 0 0 1 1 1v3", "M20 16v3a1 1 0 0 1-1 1h-3", "M8 20H5a1 1 0 0 1-1-1v-3", "M7 12h10")
     // Pullbacks
     val Barcode = icon("barcode", "M4 6v12M7 6v12M10.5 6v12M13 6v12M16.5 6v12M20 6v12")
     val Camera = icon("camera", "M4 8h3l2-3h6l2 3h3v11H4z", "M9 13a3 3 0 1 0 6 0a3 3 0 1 0-6 0")

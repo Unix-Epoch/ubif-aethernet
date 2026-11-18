@@ -38,5 +38,6 @@ fun HomeRoute(modifier: Modifier = Modifier, navigate: ((String) -> Unit)? = nul
     HomeScreen(
         state, onPickStore = vm::pick, onRefresh = vm::refresh, modifier = modifier,
         onOpenTrends = { navigate?.invoke(Routes.trends(state.scope.key)) }, onOpenPrices = { navigate?.invoke(Routes.prices(state.scope.key)) },
+        onOpenScan = navigate?.let { { it(Routes.SCAN) } },
     )
 }

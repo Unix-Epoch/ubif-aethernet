@@ -26,6 +26,7 @@ import dev.aethernet.linkpearl.feature.pullbacks.pullbacksGraph
 import dev.aethernet.linkpearl.feature.linkshell.linkshellGraph
 import dev.aethernet.linkpearl.feature.trends.trendsGraph
 import dev.aethernet.linkpearl.feature.retrace.retraceGraph
+import dev.aethernet.linkpearl.feature.scan.scanGraph
 import dev.aethernet.linkpearl.feature.settings.settingsGraph
 import dev.aethernet.linkpearl.feature.update.UpdateGate
 import dev.aethernet.linkpearl.feature.workorders.workOrdersGraph
@@ -83,6 +84,8 @@ private fun MainShell() {
             workOrdersGraph(navigate = nav::navigate)
             retraceGraph(navigate = nav::navigate)
             settingsGraph(navigate = { nav.navigate(it) })
+            // A scan opens its work order or label in place of the scanner, so Back returns to the screen the scan started from.
+            scanGraph(open = { route -> nav.navigate(route) { popUpTo(Routes.SCAN) { inclusive = true } } })
         }
     }
 }
