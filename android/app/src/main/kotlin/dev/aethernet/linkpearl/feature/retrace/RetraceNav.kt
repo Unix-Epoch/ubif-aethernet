@@ -93,6 +93,7 @@ fun RetraceRoute(initial: RtTarget?, navigate: ((String) -> Unit)?) {
             onOpenItem = { go(Routes.retraceItem(ui.store ?: return@RetraceActions, it.item)) },
             onOpenLabel = { go(Routes.retraceLabel(ui.store ?: return@RetraceActions, it.label)) },
             onPullbacks = { go(Routes.PULLBACKS) },
+            onScan = navigate?.let { { go(Routes.SCAN) } },
         )
         if (initial == null) {
             RetraceScreen(ui, actions = actions, twoColumns = wide)

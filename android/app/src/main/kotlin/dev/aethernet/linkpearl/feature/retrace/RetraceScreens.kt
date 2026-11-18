@@ -85,6 +85,7 @@ data class RetraceActions(
     val onOpenItem: (RtItemRow) -> Unit = {},
     val onOpenLabel: (RtLabelHit) -> Unit = {},
     val onPullbacks: () -> Unit = {},
+    val onScan: (() -> Unit)? = null,
 )
 
 /**
@@ -116,6 +117,7 @@ fun RetraceScreen(
         Column(Modifier.padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Retrace", style = LpType.Screen, color = Lp.colors.fg, modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1)
+                actions.onScan?.let { LpIconButton(LpIcons.Scan, "Scan", it) }
                 LpIconButton(LpIcons.Barcode, "Pullbacks", actions.onPullbacks)
             }
             SearchField(state.query, true, actions.onQuery, actions.onClearQuery, {}, placeholder = "Item, name, SKU, label")

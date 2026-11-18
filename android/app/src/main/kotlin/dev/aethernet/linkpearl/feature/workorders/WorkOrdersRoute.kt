@@ -97,6 +97,7 @@ fun WorkOrdersRoute(initialId: String? = null, navigate: ((String) -> Unit)? = n
         onUnlock = lock::unlock, onLock = lock::lock, onQuery = listVm::setQuery, onClearQuery = listVm::clearQuery,
         onPickStore = listVm::pickStore, onPickFilter = listVm::pickFilter, onPickSort = listVm::pickSort,
         onRefresh = listVm::refresh, onLoadMore = listVm::loadMore,
+        onScan = navigate?.let { { it(Routes.SCAN) } },
     )
     val detailActions = WoDetailActions(
         onRefresh = detailVm::refresh, onUnlock = lock::unlock, onLock = lock::lock,

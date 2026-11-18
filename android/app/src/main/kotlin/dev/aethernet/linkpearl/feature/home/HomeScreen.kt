@@ -77,13 +77,14 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
     onOpenTrends: () -> Unit = {},
     onOpenPrices: () -> Unit = {},
+    onOpenScan: (() -> Unit)? = null,
 ) {
     var menu by remember { mutableStateOf(false) }
     val wide = LocalAdaptive.current.isTwoPane
     val scopeIndex = (state.scope as? StoreScope.One)?.let { one -> state.stores.indexOfFirst { it.id == one.id } }?.takeIf { it >= 0 }
     val switcher = @Composable { StoreSwitcher(storeLabel(state), onClick = { menu = true }, colorIndex = scopeIndex) }
     val navInset = LocalNavInset.current
-    val refresh = @Composable { PricesButton(onOpenPrices); RefreshButton(state.busy, onRefresh) }
+    val refresh = @Composable { onOpenScan?.let { LpIconButton(LpIcons.Scan, "Scan", it) }; PricesButton(onOpenPrices); RefreshButton(state.busy, onRefresh) }
     val status = @Composable { Status(state, onRefresh, Modifier) }
     val d = state.data.takeIf { state.view == HomeView.Ok && it?.empty != true }
 

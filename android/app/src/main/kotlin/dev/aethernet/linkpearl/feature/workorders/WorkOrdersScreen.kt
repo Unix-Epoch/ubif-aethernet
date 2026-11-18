@@ -117,6 +117,7 @@ data class WoListActions(
     val onRefresh: () -> Unit = {},
     val onLoadMore: () -> Unit = {},
     val onOpen: (WoRow) -> Unit = {},
+    val onScan: (() -> Unit)? = null,
 )
 
 /**
@@ -151,6 +152,7 @@ fun WorkOrdersScreen(
         Column(Modifier.padding(horizontal = LpSpacing.Gutter).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Work orders", style = LpType.Screen, color = Lp.colors.fg, modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1)
+                actions.onScan?.let { LpIconButton(LpIcons.Scan, "Scan", it) }
                 LockControl(state.unlocked, remaining, actions.onUnlock, actions.onLock)
             }
             SearchField(state.query, state.unlocked, actions.onQuery, actions.onClearQuery, actions.onUnlock)
