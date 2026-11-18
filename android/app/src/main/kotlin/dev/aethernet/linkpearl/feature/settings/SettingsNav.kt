@@ -23,6 +23,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navDeepLink
 import dev.aethernet.linkpearl.BuildConfig
 import dev.aethernet.linkpearl.core.di.LocalAppContainer
+import dev.aethernet.linkpearl.feature.scanner.scannerGraph
 import dev.aethernet.linkpearl.feature.update.UpdateController
 import dev.aethernet.linkpearl.core.nav.Routes
 import kotlinx.coroutines.launch
@@ -35,6 +36,7 @@ const val ADMIN_SITE = "https://aethernet-admin.ubifaethernet.workers.dev/"
  */
 fun NavGraphBuilder.settingsGraph(navigate: ((String) -> Unit)? = null) {
     composable(Routes.SETTINGS, deepLinks = listOf(navDeepLink { uriPattern = Routes.deepLink(Routes.SETTINGS) })) { SettingsRoute(navigate) }
+    scannerGraph()
 }
 
 @Composable
@@ -74,6 +76,10 @@ fun SettingsRoute(navigate: ((String) -> Unit)? = null, modifier: Modifier = Mod
             onCheckUpdates = updates::checkNow,
             onAutoUpdate = vm::setAutoUpdate,
             onOpenAdmin = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ADMIN_SITE))) },
+            onScanner = {
+                if (navigate != null) navigate(Routes.SCANNER)
+                else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Routes.deepLink(Routes.SCANNER))).setPackage(context.packageName))
+            },
             onLinkshell = {
                 if (navigate != null) navigate(Routes.LINKSHELL)
                 else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Routes.deepLink(Routes.LINKSHELL))).setPackage(context.packageName))

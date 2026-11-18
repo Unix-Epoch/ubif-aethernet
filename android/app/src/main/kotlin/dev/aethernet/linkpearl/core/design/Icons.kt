@@ -74,6 +74,7 @@ object LpIcons {
     // Pullbacks
     val Barcode = icon("barcode", "M4 6v12M7 6v12M10.5 6v12M13 6v12M16.5 6v12M20 6v12")
     val Camera = icon("camera", "M4 8h3l2-3h6l2 3h3v11H4z", "M9 13a3 3 0 1 0 6 0a3 3 0 1 0-6 0")
+    val Flashlight = icon("flashlight", "M7 3h10v4l-3 4v10h-4V11L7 7z", "M7 7h10", "M12 14v2")
     val Keyboard = icon("keyboard", "M3 6h18v12H3z", "M7 10h.01M11 10h.01M15 10h.01M7 14h10")
     val Undo = icon("undo", "M9 7L4 12l5 5", "M4 12h11a5 5 0 0 1 0 10h-3")
     val Link = icon("link", "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1", "M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1")
