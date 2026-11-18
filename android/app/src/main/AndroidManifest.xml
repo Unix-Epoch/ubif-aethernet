@@ -11,6 +11,7 @@
     <!-- In-app updates (feature/update): the downloaded APK is installed through PackageInstaller. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Pullbacks: scanning labels with the camera (optional: typing works without one) -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 

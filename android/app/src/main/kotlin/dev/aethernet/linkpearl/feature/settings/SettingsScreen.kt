@@ -61,6 +61,7 @@ data class SettingsActions(
     val onAutoUpdate: (Boolean) -> Unit = {},
     val onOpenAdmin: () -> Unit = {},
     val onLinkshell: () -> Unit = {},
+    val onScanner: () -> Unit = {},
     val onAskForget: () -> Unit = {},
     val onCancelForget: () -> Unit = {},
     val onConfirmForget: () -> Unit = {},
@@ -126,6 +127,8 @@ private fun DeviceSection(s: SettingsUiState, a: SettingsActions) = Section("Dev
     }
     Divider()
     LpListRow("Linkshell", leading = { Lead(LpIcons.Link) }, onClick = a.onLinkshell, trailing = { Chevron() })
+    Divider()
+    LpListRow("Scanner", leading = { Lead(LpIcons.Scan) }, onClick = a.onScanner, trailing = { Chevron() })
 }
 
 @Composable

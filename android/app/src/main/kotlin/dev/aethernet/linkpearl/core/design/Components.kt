@@ -28,6 +28,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -228,6 +232,36 @@ fun SwitchRow(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Uni
             )
         },
     )
+}
+
+/** `Title  ----o------  value`: a slider row (calibration). [steps] as in Material's Slider (stops between the ends). */
+@Composable
+fun SliderRow(
+    title: String, value: Float, onValueChange: (Float) -> Unit, range: ClosedFloatingPointRange<Float>, valueText: String,
+    modifier: Modifier = Modifier, steps: Int = 0,
+) {
+    val c = Lp.colors
+    Row(
+        modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = LpSpacing.L).semantics(mergeDescendants = true) { stateDescription = valueText },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(LpSpacing.M),
+    ) {
+        Text(title, style = LpType.Body, color = c.fg, maxLines = 1, modifier = Modifier.width(88.dp))
+        // A round thumb on a thin track (the app's look), not Material's bar thumb with stop dots.
+        Slider(
+            value = value, onValueChange = onValueChange, valueRange = range, steps = steps, modifier = Modifier.weight(1f),
+            thumb = { Box(Modifier.size(22.dp).background(c.acc, CircleShape)) },
+            track = { state ->
+                val span = state.valueRange.endInclusive - state.valueRange.start
+                val f = if (span > 0f) ((state.value - state.valueRange.start) / span).coerceIn(0f, 1f) else 0f
+                Canvas(Modifier.fillMaxWidth().height(4.dp)) {
+                    val y = size.height / 2
+                    drawLine(c.surf3, Offset(0f, y), Offset(size.width, y), strokeWidth = size.height, cap = StrokeCap.Round)
+                    drawLine(c.acc, Offset(0f, y), Offset(size.width * f, y), strokeWidth = size.height, cap = StrokeCap.Round)
+                }
+            },
+        )
+        Text(valueText, style = LpType.Body, color = c.soft, maxLines = 1, textAlign = TextAlign.End, modifier = Modifier.width(52.dp))
+    }
 }
 
 /** `[-]  3 days  [+]` with 48dp buttons. [unit] is shown after the value ("days"). Clamped to [min]..[max]. */
