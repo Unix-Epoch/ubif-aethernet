@@ -142,7 +142,9 @@
     (GET /api/boh/inventory/<label>), read ahead once per label for the
     lines on the page and again on click if that read hadn't finished.
     Lines without a label, buybacks (B-…, BB0001) and labels read as having
-    no PO get no item. The item is a copy of Portal's own menu item
+    no PO get no item, except a generic (special order) part still on order
+    (SKU only, PO Created / In Transit): its PO is the newest in-transit or
+    draft PO with a line for that SKU and part name (Metadata.PartName). The item is a copy of Portal's own menu item
     (Portal's menu: <button data-testid="option-<id>"> in
     [data-testid="action-menu-section"], drawn each time the menu opens).
 */
@@ -492,6 +494,8 @@ AE.shard({
         const ID = 'option-aeViewPo';
         const WO_PAGE = /^\/repair\/workorder\/\d+/;
         const LABEL_RE = /^[A-Za-z0-9]{2,}-[A-Za-z0-9]{6,}$/; // <item>-<serial> (Portal's getSkuOrSerial); B-<item>-… buybacks never match
+        const SKU_RE = /^\d{4,8}$/;
+        const ON_ORDER = /^(PO Created|In Transit)$/i; // Portal's PartStatus for a line ordered on a PO and not received yet
         const pos = new Map(); // label → Promise<PO number | ''>
         const known = new Map(); // label → PO number | '' once read
         const poOf = (label) => {
@@ -507,24 +511,72 @@ AE.shard({
           }
           return pos.get(label);
         };
+        /*
+          A generic (special order) part has no label until it's received; its line shows the SKU and "PO Created" or
+          "In Transit". Portal keeps no link from the WO to that PO: the PO's line carries the SKU and the part name the
+          WO gave it (PurchaseOrderLinesV2[].ItemNumber + Metadata.PartName). So the store's in-transit and draft POs are
+          read (lists, then each PO once) and the newest one with a line for that SKU and part name is the PO.
+        */
+        const norm = (x) => String(x == null ? '' : x).replace(/\s+/g, ' ').trim().toLowerCase();
+        let openPos = null; // Promise<[{ po, lines }]>, newest first, once per page visit
+        const readOpenPos = () => {
+          if (openPos) return openPos;
+          openPos = (async () => {
+            const out = [];
+            for (const orderType of ['in-transit', 'draft']) {
+              for (let page = 1; page <= 4; page++) {
+                const j = await AE.api('POST', '/api/boh/purchase-orders?pageSize=50&page=' + page + '&searchTerm=', { orderType });
+                const rows = j && Array.isArray(j.value) ? j.value : [];
+                for (const r of rows) {
+                  const po = r && typeof r.PurchaseOrderNumber === 'string' ? r.PurchaseOrderNumber.trim() : '';
+                  if (/^[A-Za-z0-9-]{1,40}$/.test(po) && !out.some((x) => x.po === po)) out.push({ po });
+                }
+                if (rows.length < 50) break;
+              }
+            }
+            for (const x of out) {
+              const h = await AE.api('GET', '/api/boh/purchase-orders/' + encodeURIComponent(x.po)).catch(() => null);
+              x.lines = h && Array.isArray(h.PurchaseOrderLinesV2) ? h.PurchaseOrderLinesV2 : [];
+            }
+            return out;
+          })();
+          openPos.catch(() => { openPos = null; }); // tried again next time
+          return openPos;
+        };
+        const genericPo = async (sku, name) => {
+          for (const x of await readOpenPos()) {
+            if (x.lines.some((l) => l && String(l.ItemNumber) === sku && l.Metadata && norm(l.Metadata.PartName) === norm(name))) return x.po;
+          }
+          return '';
+        };
         const poUrl = (po) => '/boh/inventory/purchase-orders/' + encodeURIComponent(po);
+        const texts = (el) => {
+          const out = [], w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          for (let n = w.nextNode(); n; n = w.nextNode()) { const x = n.nodeValue.trim(); if (x) out.push(x); }
+          return out;
+        };
+        const firstCell = (row) => row.querySelector('td.--primary') || row.cells[0];
         // The line's label: Portal shows it under the part's name in the row's first cell.
         const labelOf = (row) => {
-          const cell = row.querySelector('td.--primary') || row.cells[0];
-          if (!cell) return null;
-          const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
-          for (let n = w.nextNode(); n; n = w.nextNode()) {
-            const x = n.nodeValue.trim();
-            if (LABEL_RE.test(x) && !/^BB0001-/i.test(x)) return x.toUpperCase();
-          }
-          return null;
+          const cell = firstCell(row);
+          const x = cell && texts(cell).find((t) => LABEL_RE.test(t) && !/^BB0001-/i.test(t));
+          return x ? x.toUpperCase() : null;
+        };
+        // A generic part on order: no label, the SKU under the name, status PO Created / In Transit.
+        const genericOf = (row) => {
+          const cell = firstCell(row);
+          if (!cell || labelOf(row)) return null;
+          const t = texts(cell), sku = t.find((x) => SKU_RE.test(x));
+          const name = t.find((x) => x !== sku);
+          const onOrder = [...row.cells].slice(1).some((c) => texts(c).some((x) => ON_ORDER.test(x)));
+          return sku && name && onOrder ? { sku, name } : null;
         };
         const go = (url) => { history.pushState(null, '', url); dispatchEvent(new PopStateEvent('popstate', { state: null })); };
         const closeMenu = () => {
           // the way a click outside Portal's menu closes it
           for (const t of ['mousedown', 'mouseup', 'click']) document.body.dispatchEvent(new MouseEvent(t, { bubbles: true }));
         };
-        function place(view, label) {
+        function place(view, find) {
           const menu = view.parentElement;
           if (!menu || menu.querySelector('[data-testid="' + ID + '"]')) return;
           const item = view.cloneNode(true);
@@ -539,8 +591,8 @@ AE.shard({
             const tab = e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1;
             closeMenu();
             let po;
-            try { po = await poOf(label); } catch (err) { AE.toast('View PO', "Couldn't read " + label + "'s PO.", 'err', 6000); return; }
-            if (!po) { AE.toast('View PO', label + ' has no PO.', 'err', 6000); return; }
+            try { po = await find(); } catch (err) { AE.toast('View PO', "Couldn't read the PO.", 'err', 6000); return; }
+            if (!po) { AE.toast('View PO', 'No PO found for this part.', 'err', 6000); return; }
             AE.track('fixes:viewPo');
             if (tab) window.open(poUrl(po), '_blank', 'noopener'); else go(poUrl(po));
           };
@@ -549,20 +601,32 @@ AE.shard({
           item.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // no autoscroll on middle click
           view.after(item);
         }
-        let seen = '';
+        let seen = '', path = '';
         AE.onDom(() => {
+          if (location.pathname !== path) { path = location.pathname; openPos = null; } // POs change; read again on another visit
           if (WO_PAGE.test(location.pathname)) {
-            // Read the POs for the lines on the page ahead, so a label without one gets no item.
-            const labels = [...document.querySelectorAll('tbody tr')].filter((r) => r.querySelector('td.--actions')).map(labelOf).filter(Boolean);
-            const key = labels.join(',');
-            if (key !== seen) { seen = key; AE.afterLoad().then(() => labels.forEach((l) => poOf(l).catch(() => {}))); }
+            // Read ahead, so the item is ready as the menu opens and a label without a PO gets none.
+            const rows = [...document.querySelectorAll('tbody tr')].filter((r) => r.querySelector('td.--actions'));
+            const labels = rows.map(labelOf).filter(Boolean);
+            const generic = rows.some((r) => genericOf(r));
+            const key = labels.join(',') + (generic ? '+g' : '');
+            if (key !== seen) {
+              seen = key;
+              AE.afterLoad().then(() => { labels.forEach((l) => poOf(l).catch(() => {})); if (generic) readOpenPos().catch(() => {}); });
+            }
           }
+          // Portal's ⋮ menu of a WO line (its "View item" option)
           for (const view of document.querySelectorAll('[data-testid="option-viewPartDetails"]')) {
             if (view.parentElement && view.parentElement.querySelector('[data-testid="' + ID + '"]')) continue;
             const row = view.closest('tr');
-            const label = row && labelOf(row);
-            if (!label || known.get(label) === '') continue; // no label, or read and has no PO
-            place(view, label);
+            if (!row) continue;
+            const label = labelOf(row);
+            if (label) {
+              if (known.get(label) !== '') place(view, () => poOf(label)); // '' = read, and it has no PO
+              continue;
+            }
+            const g = genericOf(row);
+            if (g) place(view, () => genericPo(g.sku, g.name));
           }
         });
       },
