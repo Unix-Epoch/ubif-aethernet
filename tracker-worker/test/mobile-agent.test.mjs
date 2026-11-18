@@ -30,6 +30,15 @@ assert.ok(!JSON.stringify(list).includes(p.token) && !('token_hash' in list[0]))
 // only the owner approves (full access)
 assert.equal((await approve(p, [914], 'someone@x.com')).status, 403);
 const ap = await approve(p, [914, 326]); assert.equal(ap.status, 200, JSON.stringify(ap.j));
+// "last seen" is written at most every 5 minutes, not on every request
+{
+  const seen = async () => (await env.TR.prepare('SELECT last_seen_at FROM agents WHERE id = ?').bind(p.id).first()).last_seen_at;
+  const first = await seen(); assert.ok(first, 'set by the first request');
+  await authed(p, '/v1/agents/me'); assert.equal(await seen(), first, 'a request soon after writes nothing');
+  const old = new Date(Date.now() - 6 * 60000).toISOString();
+  await env.TR.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').bind(old, p.id).run();
+  await authed(p, '/v1/agents/me'); assert.ok((await seen()) > old, 'written again once it is more than 5 minutes old');
+}
 
 // ---- approved: /me delivers the wrapped store keys, which the phone opens with its private key (ECDH P-256 → HKDF-SHA256 → AES-256-GCM)
 me = await authed(p, '/v1/agents/me');

@@ -601,7 +601,7 @@ AE.shard({
       if (on ? !b || !b.isConnected || !document.getElementById(BOX_ID) : !!b || (p !== '/check-in' && document.getElementById(PANEL_ID))) tick();
     });
     // Finished check-ins: their notes are removed (only labels this browser knows, and only once one has a work order).
-    AE.every(60000, () => { if (Object.values(keys()).some((k) => k.woId) && !(AE.health && AE.health.down && AE.health.down())) sweep(); });
+    AE.every(60000, () => { if (Object.values(keys()).some((k) => k.woId) && !(AE.health && AE.health.down && AE.health.down())) sweep(); }, { background: true });
 
     AE.checkinDrafts = { open, intake, CODE_RE, labelFor, isMobility, seal, unseal, tokenOf, newSecret, fill, sweep, keys };
   },
