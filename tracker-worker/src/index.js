@@ -271,6 +271,15 @@ const parseRun = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { r
 
 // 'phone' for a Linkpearl device (agent_kind row, migrations/2026-11-13-mobile-devices.sql), else 'agent'. Before the migration every agent is 'agent'.
 const kindOf = async (T, id) => ((await T.prepare('SELECT kind FROM agent_kind WHERE agent_id = ?').bind(id).first().catch(() => null)) || {}).kind || 'agent';
+// The agent's row with its kind, in one read. Without the agent_kind table (before that migration) it falls back to two.
+const SEEN_MIN = 5;
+async function agentRow(T, id) {
+  let a;
+  try { a = await T.prepare('SELECT a.*, k.kind AS kind FROM agents a LEFT JOIN agent_kind k ON k.agent_id = a.id WHERE a.id = ?').bind(id).first(); }
+  catch (_) { a = await T.prepare('SELECT * FROM agents WHERE id = ?').bind(id).first(); if (a) a.kind = await kindOf(T, id); }
+  if (a) a.kind = a.kind || 'agent';
+  return a;
+}
 
 async function agentApi(req, env, url) {
   const T = env.TR, path = url.pathname.replace(/^\/v1\/agents/, '');
@@ -297,11 +306,12 @@ async function agentApi(req, env, url) {
     return json({ id: b.id, fingerprint: await fingerprint(jwk), status: 'pending', kind: phone ? 'phone' : 'agent' });
   }
   const m = /^Bearer ([0-9a-f]{32})\.([0-9a-f]{64})$/.exec(req.headers.get('authorization') || '');
-  const a = m && await T.prepare('SELECT * FROM agents WHERE id = ?').bind(m[1]).first();
+  const a = m && await agentRow(T, m[1]);
   if (!a || (await sha256hex(m[2])) !== a.token_hash) return fail(401, 'unknown program or wrong token');
-  await T.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').bind(now(), a.id).run();
+  // "Last seen" is for the admin site's list: written at most every SEEN_MIN minutes, not on every request.
+  if (!a.last_seen_at || Date.now() - Date.parse(a.last_seen_at) > SEEN_MIN * 60000) await T.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').bind(now(), a.id).run();
   const stores = JSON.parse(a.stores || '[]'), jwk = JSON.parse(a.public_jwk), active = a.status === 'active';
-  const kind = await kindOf(T, a.id);
+  const kind = a.kind;
 
   // The phone app's API: /v1/agents/m/… . Auth is done above; routing is in src/mobile-agent.js (the only place to add phone routes).
   if (path === '/m' || path.startsWith('/m/')) {
