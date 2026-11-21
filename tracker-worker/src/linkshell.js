@@ -27,7 +27,7 @@
   Frames over the socket (JSON text):
     → { t: 'msg', id, kind, iv, ct }   a sealed message for the other end; delivered at once, or held if it isn't connected
       (+ wake: true, PC only)          also push the phone (src/push.js) so it hears about it with Linkpearl closed: once per
-                                       message id, at most one push per link every 15 seconds; the phone decides how to show it
+                                       message id, at most one push per link every 15 seconds, none when the phone switched the link's store off; the phone decides how to show it
     → { t: 'ack', ids: [...] }         received and applied; held copies are dropped and the sender is told
     ← { t: 'hello', peer, seen }       on connect: whether the other end is connected, and when it was last seen
     ← { t: 'presence', peer, seen }    the other end connected or left
@@ -38,6 +38,9 @@
 */
 
 import { sendPush } from './push.js';
+
+// The phone's per-store switch (alert settings, src/mobile-alerts.js): only an explicit false is off.
+const storeOff = (raw, store) => { try { const s = JSON.parse(raw || '{}'); return !!(s && s.stores && s.stores[store] === false); } catch (_) { return false; } };
 
 export const LS = { PUSH_GAP_MS: 15000, PAIR_MIN: 5, IDLE_DAYS: 30, PER_PHONE: 3, PER_STORE: 5, PAIRS_PER_STORE: 10, HOLD_HOURS: 24, MAX_FRAME: 16384, MAX_HELD: 500 };
 const HEX32 = /^[0-9a-f]{32}$/, HEX64 = /^[0-9a-f]{64}$/, CODE = /^[A-Za-z0-9_-]{22}$/, B64U = /^[A-Za-z0-9_-]+$/;
@@ -271,8 +274,9 @@ export class LinkshellRoom {
     if (now - last < LS.PUSH_GAP_MS) return 'skipped';
     const linkId = await this.ctx.storage.get('link');
     if (!linkId || !this.env || !this.env.TR) return 'skipped';
-    const l = await this.env.TR.prepare('SELECT agent_id FROM linkshell_links WHERE id = ?').bind(linkId).first();
+    const l = await this.env.TR.prepare('SELECT l.agent_id, l.store, d.settings FROM linkshell_links l LEFT JOIN alert_device d ON d.device_id = l.agent_id WHERE l.id = ?').bind(linkId).first();
     if (!l) return 'skipped';
+    if (storeOff(l.settings, l.store)) return 'skipped'; // the phone switched this store off in its notification settings
     await this.ctx.storage.put('pushAt', now);
     return sendPush(this.env, l.agent_id, { t: 'linkshell', link: linkId, kind, id });
   }
