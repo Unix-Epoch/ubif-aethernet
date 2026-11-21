@@ -468,7 +468,7 @@ assert.ok(c914.labels >= 5 && c914.histories === 3 &&  c914.backlog > 0 && c914.
   assert.equal(pg1.serials.length, 1); assert.equal(pg1.total, sr.j.total); assert.equal(pg2.serials[0].label, sr.j.serials[1].label, 'paging');
   // days: by the serial's last movement (a label last moved long ago drops out, the sold one stays)
   await T.prepare("INSERT INTO inv_movements (store, label, item, at, kind, source, key, recorded_at) VALUES (914, '180001-0000600099', '180001', '2025-01-01T00:00:00.000Z', 'received', 'watch', 'test-old-serial', ?), (914, NULL, '180001', ?, 'adjusted_in', 'watch', 'test-loose', ?)").bind(AT, new Date().toISOString(), AT).run();
-  const wide = (await admin('owner@x.com', '/retrace/serials/914/180001')).j, recent = (await admin('owner@x.com', '/retrace/serials/914/180001?days=30')).j;
+  const wide = (await admin('owner@x.com', '/retrace/serials/914/180001')).j, recent = (await admin('owner@x.com', '/retrace/serials/914/180001?days=' + (Math.ceil((Date.now() - Date.parse(AT)) / 864e5) + 30))).j; // back to 30 days before the fixtures, whatever today is
   assert.ok(wide.serials.some((x) => x.label === '180001-0000600099') && !recent.serials.some((x) => x.label === '180001-0000600099'), 'days filters on the last movement');
   assert.ok(recent.serials.some((x) => x.label === '180001-0000600001'));
   assert.equal(recent.total, recent.groups.all); assert.equal(recent.groups.all, wide.groups.all - 1);
