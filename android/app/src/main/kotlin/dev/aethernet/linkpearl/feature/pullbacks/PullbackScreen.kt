@@ -184,7 +184,7 @@ private fun StoreNumber(n: String, color: androidx.compose.ui.graphics.Color) {
 
 /** "PC" on a run joined from Aethernet: accent while the browser is connected, soft while it is away. */
 @Composable
-private fun PcBadge(online: Boolean) {
+internal fun PcBadge(online: Boolean) {
     val c = Lp.colors
     Box(Modifier.clip(RoundedCornerShape(50)).background(if (online) c.acc else c.surf3).padding(horizontal = 7.dp, vertical = 2.dp)
         .semantics { contentDescription = if (online) "PC connected" else "PC away" }) {
@@ -339,7 +339,7 @@ private fun ItemRow(it: PbItem, sync: Pair<String, Tone>? = null) {
 
 /** A text field for typing or a keyboard-style barcode scanner (types, then Enter). Cleared after every entry. */
 @Composable
-private fun ScanField(resetKey: Any, onScan: (String) -> Unit) {
+internal fun ScanField(resetKey: Any, onScan: (String) -> Unit, placeholder: String = "Scan serial") {
     val c = Lp.colors
     var text by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
@@ -351,10 +351,10 @@ private fun ScanField(resetKey: Any, onScan: (String) -> Unit) {
         cursorBrush = SolidColor(c.acc),
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, autoCorrectEnabled = false, imeAction = ImeAction.Go),
         keyboardActions = KeyboardActions(onGo = { onScan(text); text = "" }, onDone = { onScan(text); text = "" }),
-        modifier = Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = "Scan serial" },
+        modifier = Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = placeholder },
         decorationBox = { inner ->
             Box(Modifier.fillMaxWidth().heightIn(min = 56.dp).glass().padding(horizontal = 18.dp), contentAlignment = Alignment.CenterStart) {
-                if (text.isEmpty()) Text("Scan serial", style = LpType.Body, color = c.soft)
+                if (text.isEmpty()) Text(placeholder, style = LpType.Body, color = c.soft)
                 inner()
             }
         },
@@ -362,7 +362,7 @@ private fun ScanField(resetKey: Any, onScan: (String) -> Unit) {
 }
 
 @Composable
-private fun Message(title: String, code: String?, bad: Boolean = false) {
+internal fun Message(title: String, code: String?, bad: Boolean = false) {
     val c = Lp.colors
     Column(Modifier.fillMaxWidth().clip(LpShapes.Card).background(if (bad) c.warnBg else c.surf3).padding(horizontal = 14.dp, vertical = 12.dp)) {
         Text(title, style = LpType.BodyStrong, color = if (bad) c.warn else c.fg)

@@ -88,6 +88,7 @@ Full description, frames and limits: top of `src/linkshell.js`. Phone routes (Be
 - `GET /v1/agents/m/linkshell/links` → `{ links: [{ id, store, pcName, createdAt, usedAt }] }`
 - `POST /v1/agents/m/linkshell/unlink` `{ linkId }`
 - `GET /v1/linkshell/connect?link=<id>` WebSocket, `Sec-WebSocket-Protocol: linkshell, ph.<agent id>.<agent token>` (no app key). Bodies are sealed end to end with the link key (ECDH P-256 + HKDF-SHA256, AES-256-GCM); Linkpearl's side is `feature/linkshell`.
+- Message kinds in use: `pullbacks.*` (listed in `src/66-pullbacks.js`, phone side `feature/pullbacks`) and `buybacks.*` (listed above `AE.buybacks` in `src/45-buybacks.js`, phone side `feature/buybacks`).
 
 ## Sealed data and wrapped store keys (exact crypto, from `src/crypto.js`)
 

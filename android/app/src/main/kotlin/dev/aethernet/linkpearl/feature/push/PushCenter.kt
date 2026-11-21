@@ -34,6 +34,7 @@ data class PushNote(val id: String, val title: String, val text: String, val rou
 
 fun noteFor(ping: PushPing, pcName: String): PushNote = when (ping.kind) {
     "pullbacks.run" -> PushNote(ping.id, "Pullbacks ready to scan", pcName, Routes.LINKSHELL)
+    "buybacks.run" -> PushNote(ping.id, "Buybacks ready to scan", pcName, Routes.LINKSHELL)
     else -> PushNote(ping.id, "Linkshell request", pcName, Routes.LINKSHELL)
 }
 
