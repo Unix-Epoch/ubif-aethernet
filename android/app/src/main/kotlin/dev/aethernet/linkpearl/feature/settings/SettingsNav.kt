@@ -37,6 +37,7 @@ const val ADMIN_SITE = "https://aethernet-admin.ubifaethernet.workers.dev/"
 fun NavGraphBuilder.settingsGraph(navigate: ((String) -> Unit)? = null) {
     composable(Routes.SETTINGS, deepLinks = listOf(navDeepLink { uriPattern = Routes.deepLink(Routes.SETTINGS) })) { SettingsRoute(navigate) }
     scannerGraph()
+    developerGraph()
 }
 
 @Composable
@@ -84,6 +85,8 @@ fun SettingsRoute(navigate: ((String) -> Unit)? = null, modifier: Modifier = Mod
                 if (navigate != null) navigate(Routes.LINKSHELL)
                 else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Routes.deepLink(Routes.LINKSHELL))).setPackage(context.packageName))
             },
+            onVersionTap = vm::tapVersion,
+            onDeveloper = { navigate?.invoke(Routes.DEVELOPER) },
             onAskForget = vm::askForget, onCancelForget = vm::cancelForget, onConfirmForget = vm::confirmForget,
         ),
     )

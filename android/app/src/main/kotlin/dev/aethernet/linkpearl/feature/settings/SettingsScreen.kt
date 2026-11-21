@@ -3,6 +3,8 @@ package dev.aethernet.linkpearl.feature.settings
 import dev.aethernet.linkpearl.core.nav.LocalNavInset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,6 +64,8 @@ data class SettingsActions(
     val onOpenAdmin: () -> Unit = {},
     val onLinkshell: () -> Unit = {},
     val onScanner: () -> Unit = {},
+    val onVersionTap: () -> Unit = {},
+    val onDeveloper: () -> Unit = {},
     val onAskForget: () -> Unit = {},
     val onCancelForget: () -> Unit = {},
     val onConfirmForget: () -> Unit = {},
@@ -78,7 +82,7 @@ fun SettingsScreen(
         DeviceSection(state, actions); CustomerSection(state, actions); NotificationsSection(state, actions)
     }
     val right = @Composable {
-        AppearanceSection(state, actions); AboutSection(version, state.autoUpdate, update, actions); ForgetSection(actions)
+        AppearanceSection(state, actions); AboutSection(version, state.autoUpdate, state.developer, update, actions); ForgetSection(actions)
     }
     val gap = Arrangement.spacedBy(LpSpacing.Xl)
     val navInset = LocalNavInset.current
@@ -183,8 +187,8 @@ private fun RowScope.Segment(label: String, description: String, selected: Boole
 }
 
 @Composable
-private fun AboutSection(version: String, autoUpdate: Boolean, update: UpdateState?, a: SettingsActions) = Section("About") {
-    LpListRow("Version", trailing = { Value(version) })
+private fun AboutSection(version: String, autoUpdate: Boolean, developer: Boolean, update: UpdateState?, a: SettingsActions) = Section("About") {
+    VersionRow(version, a.onVersionTap)
     Divider()
     SwitchRow("Auto-update", autoUpdate, a.onAutoUpdate)
     Divider()
@@ -207,6 +211,17 @@ private fun AboutSection(version: String, autoUpdate: Boolean, update: UpdateSta
         Divider()
     }
     LpListRow("Open admin site", onClick = a.onOpenAdmin, trailing = { LpIcon(LpIcons.External, null, tint = Lp.colors.soft) })
+    if (developer) {
+        Divider()
+        LpListRow("Developer", onClick = a.onDeveloper, trailing = { Chevron() })
+    }
+}
+
+/** Version reads as plain text (no ripple, no button role); the taps still count toward the Developer row. */
+@Composable
+private fun VersionRow(version: String, onTap: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    LpListRow("Version", Modifier.clickable(source, indication = null, onClick = onTap), trailing = { Value(version) })
 }
 
 /** The highlighted "new version" row: download icon, the version name, Update; the progress (or the error) below while it runs. */
