@@ -148,7 +148,7 @@ PUT { "types": { "stuck": { "days": 5 }, "quiet": { "on": false } }, "quietHours
 
 Bad input is `400 {"error": "…"}` with the key and the range, e.g. `types.stuck.days: days must be a whole number from 1 to 30`, `unknown setting "types.stuck.day"` (typos are refused), `quietHours.from must be a time like "22:00" (24-hour, store local time)`, `quietHours.from and quietHours.to must differ`, `types.unlinked.hours: hours without a work order must be a whole number from 1 to 48`, `unknown setting "types.coverage.hours"`. A store that is not the phone's is `403 not your store`; a body over 2000 characters `413`; bad JSON `400`.
 
-The `quiet` type's switch also governs its `back` entries. Store switches do not apply to the digest (it covers all the phone's stores); turn it off with `types.digest.on`. Stores are all in the zone `STORE_TZ` (America/New_York); the phone should show times in that zone, like Home.
+The `quiet` type's switch also governs its `back` entries. A store switched off is left out everywhere: its alerts, the digest (which covers only the switched-on stores; none on, no digest) and Linkshell pushes from that store's PC. Turn the digest off with `types.digest.on`. Stores are all in the zone `STORE_TZ` (America/New_York); the phone should show times in that zone, like Home.
 
 ## Thresholds are per phone
 
