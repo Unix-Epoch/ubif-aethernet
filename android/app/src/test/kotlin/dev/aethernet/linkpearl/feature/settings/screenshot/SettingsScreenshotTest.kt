@@ -12,6 +12,8 @@ import androidx.compose.ui.unit.dp
 import dev.aethernet.linkpearl.core.design.Lp
 import dev.aethernet.linkpearl.core.design.LpShapes
 import dev.aethernet.linkpearl.core.prefs.Appearance
+import dev.aethernet.linkpearl.feature.settings.DeveloperScreen
+import dev.aethernet.linkpearl.feature.settings.DeveloperUi
 import dev.aethernet.linkpearl.feature.settings.ForgetConfirm
 import dev.aethernet.linkpearl.feature.settings.SettingsActions
 import dev.aethernet.linkpearl.feature.settings.SettingsScreen
@@ -55,5 +57,7 @@ class SettingsScreenshotTest(private val device: Device, private val dark: Boole
             Box(Modifier.padding(24.dp).background(Lp.colors.surf, LpShapes.Card).border(1.dp, Lp.colors.line, LpShapes.Card).padding(16.dp)) { ForgetConfirm(SettingsActions()) }
         }
     }
+    @Test fun developerRow() = rule.shoot("settings", "developer-row", device, dark) { SettingsScreen(base.copy(developer = true), version) }
+    @Test fun developer() = rule.shoot("settings", "developer", device, dark) { DeveloperScreen(DeveloperUi(allowCapture = true)) }
     @Test fun fontScale() = rule.shoot("settings", "font13", device, dark, fontScale = 1.3f) { SettingsScreen(base.copy(notificationsOn = false), version) }
 }

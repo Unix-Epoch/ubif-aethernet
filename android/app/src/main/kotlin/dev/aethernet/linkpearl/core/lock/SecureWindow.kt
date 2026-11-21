@@ -6,20 +6,30 @@ import android.content.ContextWrapper
 import android.view.WindowManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.WeakHashMap
+
+/** The developer's "Allow screen capture" switch (Settings > Developer), mirrored here from AppPrefs by PrefsModule. */
+object CapturePolicy {
+    val allowed = MutableStateFlow(false)
+}
 
 /**
  * Sets FLAG_SECURE on the hosting activity's window while [enabled] (unlocked customer details are on screen): no screenshots, no
  * screen recording, a blank thumbnail in Recents. Reference-counted per window so two panes showing details do not clear each other.
- * Compose-only; MainActivity is not touched.
+ * Compose-only; MainActivity is not touched. Skipped while [CapturePolicy.allowed] is on.
  */
 @Composable
 fun SecureWindow(enabled: Boolean) {
     val activity = LocalContext.current.findActivity() ?: return
-    DisposableEffect(activity, enabled) {
-        if (enabled) SecureFlag.acquire(activity)
-        onDispose { if (enabled) SecureFlag.release(activity) }
+    val allowed by CapturePolicy.allowed.collectAsState()
+    val secure = enabled && !allowed
+    DisposableEffect(activity, secure) {
+        if (secure) SecureFlag.acquire(activity)
+        onDispose { if (secure) SecureFlag.release(activity) }
     }
 }
 
