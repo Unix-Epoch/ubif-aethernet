@@ -380,8 +380,12 @@ assert.equal((await dg(A, '?store=914')).length + (await dg(A, '?store=326')).le
 assert.equal((await dg(C, '?store=326')).length, 1, 'a one-store phone filtered to its store still has it');
 assert.deepEqual((await api(A, '/alerts/new?since=0', { now: THU(8, 5) })).j.alerts.filter((x) => x.type === 'digest').map((x) => x.stores), [[326, 914]], 'digest at 8:00, quiet hours to 7:00: notifies normally');
 await put(A, { stores: { 326: false } }, { now: THU(8, 5) });
-assert.equal((await dg(A))[0].notify, true, 'store switches do not apply to the digest (it covers all stores)');
-assert.equal((await api(A, '/alerts/new?since=0', { now: THU(8, 5) })).j.alerts.filter((x) => x.type === 'digest').length, 1);
+assert.deepEqual((await dg(A)).map((x) => x.stores), [[914]], 'a store switched off leaves the digest scope: A now matches the 914-only digest');
+assert.deepEqual((await api(A, '/alerts/new?since=0', { now: THU(8, 5) })).j.alerts.filter((x) => x.type === 'digest').map((x) => x.stores), [[914]]);
+await put(A, { stores: { 914: false } }, { now: THU(8, 5) });
+assert.equal((await dg(A)).length, 0, 'every store off: no digest');
+await tick(THU(8, 30)); assert.equal((await digests()).length, 3, 'and none is made for an empty scope');
+await put(A, { stores: { 914: true } }, { now: THU(8, 5) });
 await put(A, { stores: { 326: true }, quietHours: { from: '22:00', to: '09:00' } }, { now: THU(8, 5) });
 assert.equal((await api(A, '/alerts/new?since=0', { now: THU(8, 5) })).j.held, true, 'digest hour inside quiet hours: held');
 assert.equal((await api(A, '/alerts/new?since=0', { now: THU(9) })).j.alerts.filter((x) => x.type === 'digest').length, 1, 'and delivered when they end');

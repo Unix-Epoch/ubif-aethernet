@@ -15,6 +15,7 @@ object Routes {
     const val RETRACE_LABEL = "retrace/label/{store}/{label}"
     const val SETTINGS = "settings"
     const val SCANNER = "settings/scanner"
+    const val DEVELOPER = "settings/developer"
     const val TRENDS = "trends/{store}"
     const val PRICES = "prices/{store}"
     const val PULLBACKS = "pullbacks"

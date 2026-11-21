@@ -23,11 +23,11 @@
   Switches and quiet hours are applied when a phone reads, so the feed stays complete (one exception: a digest is only made for a scope at least
   one phone with the digest switched on asks for; switched on after its hour, the next tick makes today's, feed-only when over an hour late).
 
-  The digest is not per store: it covers ALL of a phone's approved stores in one entry. Its scope key is the sorted store list plus the
+  The digest is not per store: it covers ALL of a phone's switched-on stores in one entry. Its scope key is the sorted store list plus the
   phone's stuck threshold ("326,914|3"); phones with the same scope share one digest. The row is filed under the scope's first store, its
   subject is "<scope key>@<day>", its level the digest hour; a phone's feed matches the subject's scope key to its own (so a phone with
-  914 + 326 gets one combined digest, never the single-store ones of a 914-only phone). Store switches do not apply to it, and a feed
-  filtered to one store leaves digests out.
+  914 + 326 gets one combined digest, never the single-store ones of a 914-only phone). A store switched off leaves the phone's scope, so
+  its digest covers only the stores it wants (none on: no digest). A feed filtered to one store leaves digests out.
 
   No customer or staff names, phones or e-mails anywhere in an alert (facts are status name/id, days, count, times, due date, work order and
   sales order numbers, money totals).
@@ -81,7 +81,9 @@ export function normalize(raw, stores) {
 }
 const levelsOf = (s) => ({ stuck: s.types.stuck.days, pickup: s.types.pickup.days, followup: s.types.followup.hour, quiet: s.types.quiet.hours,
   digest: s.types.digest.hour, unlinked: s.types.unlinked.hours, coverage: 0 });
-// The digest's scope key: all the phone's approved stores (sorted) and its stuck threshold (the digest lists stuck work orders at it).
+// The phone's approved stores that are switched on: the only stores it hears about (alerts, the digest's scope, Linkshell pushes).
+export const onStores = (stores, s) => stores.filter((x) => s.stores[x] !== false);
+// The digest's scope key: the phone's switched-on stores (sorted) and its stuck threshold (the digest lists stuck work orders at it).
 export const scopeKey = (stores, s) => [...stores].map(Number).sort((a, b) => a - b).join(',') + '|' + s.types.stuck.days;
 
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
@@ -258,8 +260,9 @@ async function run(env, nowMs, stats) {
       for (const k of TYPES) p[k].add(lv[k]);
       plan.set(s, p);
     }
-    if (!stores.length || !set.types.digest.on) continue; // digests are worked out for phones that want one (the one rule whose facts cost reads)
-    const key = scopeKey(stores, set), g = digests.get(key) || { stores: [...stores].sort((a, b) => a - b), stuck: set.types.stuck.days, hours: new Set() };
+    const on = onStores(stores, set);
+    if (!on.length || !set.types.digest.on) continue; // digests are worked out for phones that want one (the one rule whose facts cost reads)
+    const key = scopeKey(on, set), g = digests.get(key) || { stores: [...on].sort((a, b) => a - b), stuck: set.types.stuck.days, hours: new Set() };
     g.hours.add(lv.digest);
     digests.set(key, g);
   }
@@ -424,14 +427,14 @@ const FEED_FROM = `FROM alerts a LEFT JOIN alert_reads r ON r.device_id = ?1 AND
     AND a.level = CASE a.type WHEN 'stuck' THEN ?4 WHEN 'pickup' THEN ?5 WHEN 'followup' THEN ?6 WHEN 'quiet' THEN ?7 WHEN 'digest' THEN ?8 WHEN 'unlinked' THEN ?9 ELSE 0 END
     AND (a.type != 'digest' OR substr(a.subject, 1, length(?10) + 1) = ?10 || '@')`;
 const feedBinds = (stores, id, st, scope) => {
-  const lv = levelsOf(st.settings);
-  return [id, JSON.stringify(stores), st.readUpto, lv.stuck, lv.pickup, lv.followup, lv.quiet, lv.digest, lv.unlinked, scope === undefined ? scopeKey(stores, st.settings) : scope];
+  const lv = levelsOf(st.settings), on = onStores(stores, st.settings);
+  return [id, JSON.stringify(stores), st.readUpto, lv.stuck, lv.pickup, lv.followup, lv.quiet, lv.digest, lv.unlinked, scope !== undefined ? scope : on.length ? scopeKey(on, st.settings) : ''];
 };
 
 const switches = (st) => ({
   type: (t) => (t === 'back' ? st.settings.types.quiet.on : st.settings.types[t] ? st.settings.types[t].on : true),
   store: (s) => st.settings.stores[s] !== false,
-  row: (r) => r.type === 'digest' || st.settings.stores[r.store] !== false, // the digest covers all the phone's stores: no store switch
+  row: (r) => r.type === 'digest' || st.settings.stores[r.store] !== false, // the digest's scope is already only the switched-on stores
 });
 const unreadOf = async (T, device, st) => {
   const sw = switches(st), offT = TYPES.concat('back').filter((t) => !sw.type(t)), offS = device.stores.filter((s) => !sw.store(s));

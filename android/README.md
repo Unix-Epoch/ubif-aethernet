@@ -237,6 +237,13 @@ Setup: the four `linkpearl.firebase.*` values in `gradle.properties` come from t
 `project_id`, `project_number`); `app/build.gradle.kts` turns them into Firebase's start-up resources (no google-services plugin). Empty values build an app without
 push. The Worker needs the secret `FCM_SERVICE_ACCOUNT` (the service-account key JSON). iOS later: the same token route with `platform: 'ios'`; FCM forwards to APNs.
 
+## Developer menu (feature/settings/DeveloperScreen.kt)
+
+Tapping Settings > About > Version seven times adds a Developer row under About on that phone only (`AppPrefs.developer`, local DataStore; nothing
+reaches the server or other phones). Settings > Developer holds per-phone switches: today "Allow screen capture", which stops `SecureWindow` from setting
+FLAG_SECURE on the work order screens (`AppPrefs.allowCapture`, mirrored into `CapturePolicy` at start-up). "Hide developer menu" removes the row and turns
+every switch back off. Add a setting as one more `AppPrefs` flow, one field in `DeveloperUi` and one row.
+
 ## Build and release
 
 Debug: `./gradlew assembleDebug` (`app/build/outputs/apk/debug/app-debug.apk`). Release: R8 on, signed from `LINKPEARL_KEYSTORE_FILE`, `LINKPEARL_KEYSTORE_PASSWORD`,

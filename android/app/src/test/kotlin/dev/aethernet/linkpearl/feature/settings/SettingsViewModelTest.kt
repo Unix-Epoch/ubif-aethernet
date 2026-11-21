@@ -159,4 +159,24 @@ class SettingsViewModelTest {
         vm()
         assertEquals(1, seen.size)
     }
+
+    @Test fun sevenVersionTapsShowTheDeveloperRow() = runTest {
+        val prefs = MemoryAppPrefs()
+        val v = vm(prefs = prefs)
+        repeat(SettingsViewModel.DEVELOPER_TAPS - 1) { v.tapVersion() }
+        assertFalse(v.state.value.developer)
+        v.tapVersion()
+        assertTrue(v.state.value.developer)
+        assertTrue(prefs.developer.first())
+    }
+
+    @Test fun hidingTheDeveloperMenuTurnsCaptureBackOff() = runTest {
+        val prefs = MemoryAppPrefs(developer = true)
+        val dev = DeveloperViewModel(prefs)
+        dev.setAllowCapture(true)
+        assertTrue(dev.state.value.allowCapture)
+        dev.hide()
+        assertFalse(prefs.allowCapture.first())
+        assertFalse(prefs.developer.first())
+    }
 }

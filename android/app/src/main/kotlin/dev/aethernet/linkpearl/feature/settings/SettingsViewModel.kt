@@ -55,6 +55,7 @@ data class SettingsUiState(
     val notificationsOn: Boolean = false,
     val appearance: Appearance = Appearance.Dark,
     val autoUpdate: Boolean = true,
+    val developer: Boolean = false,
     val confirmForget: Boolean = false,
     val forgetting: Boolean = false,
 )
@@ -85,6 +86,7 @@ class SettingsViewModel(
         )
     }.combine(local) { s, l -> s.copy(confirmForget = l.confirmForget, forgetting = l.forgetting) }
         .combine(prefs.autoUpdate) { s, auto -> s.copy(autoUpdate = auto) }
+        .combine(prefs.developer) { s, dev -> s.copy(developer = dev) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsUiState())
 
     init { refresh() }
@@ -118,6 +120,14 @@ class SettingsViewModel(
 
     fun setAutoUpdate(value: Boolean) { viewModelScope.launch { prefs.setAutoUpdate(value) } }
 
+    private var versionTaps = 0
+
+    /** Seven taps on Version turn on the Developer row (Android's own convention for developer options). */
+    fun tapVersion() {
+        if (state.value.developer) return
+        if (++versionTaps >= DEVELOPER_TAPS) { versionTaps = 0; viewModelScope.launch { prefs.setDeveloper(true) } }
+    }
+
     fun askForget() = local.update { it.copy(confirmForget = true) }
     fun cancelForget() = local.update { it.copy(confirmForget = false) }
 
@@ -132,6 +142,7 @@ class SettingsViewModel(
 
     companion object {
         const val STORE_TZ = "America/New_York"
+        const val DEVELOPER_TAPS = 7
 
         internal fun parseScans(o: JsonObject?): Map<Int, String?> =
             (o?.get("stores") as? JsonArray).orEmpty().mapNotNull { e ->

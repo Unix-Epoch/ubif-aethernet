@@ -122,6 +122,14 @@ try {
     kv.set('pushAt', 0);
     await room.webSocketMessage(ph, msg('w0000005', 'pullbacks.scan', true));
     assert.equal(pushes.length, 2, 'only the PC wakes the phone');
+    await T.env.TR.prepare("INSERT INTO alert_device (device_id, settings, read_upto, updated_at) VALUES (?, ?, 0, 'x')").bind(phone.id, JSON.stringify({ stores: { 914: false } })).run();
+    kv.set('pushAt', 0);
+    await room.webSocketMessage(pc, msg('w0000006', 'pullbacks.run', true));
+    assert.equal(pushes.length, 2, "the link's store switched off on the phone: no push");
+    await T.env.TR.prepare('UPDATE alert_device SET settings = ? WHERE device_id = ?').bind(JSON.stringify({ stores: { 914: true } }), phone.id).run();
+    kv.set('pushAt', 0);
+    await room.webSocketMessage(pc, msg('w0000007', 'pullbacks.run', true));
+    assert.equal(pushes.length, 3, 'switched back on: pushed');
     console.log('push: linkshell wake passed');
   } finally { globalThis.fetch = realFetch; }
 } finally {
