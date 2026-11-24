@@ -4,6 +4,8 @@
   Pairing: Linkshell in the avatar menu shows a QR code ("LS1.<store>.<pairId>.<code>", 5 minutes). Linkpearl scans it and sends its
   public key; both ends show the same check code (from the two public keys), and Link here finishes it. The tracker Worker keeps
   only a hash of this browser's link token (tracker-worker/src/linkshell.js).
+  This browser also makes a pairing secret that is never in the QR code; the Worker asks for it on every later pairing call from
+  here, so a copy of the QR code alone can't finish or cancel the pairing.
   The link is kept in Tampermonkey's storage (ae_linkshell), not a Portal cookie, so script updates, Portal sign-outs and clearing
   Portal's site data don't undo it. Unlink here, Unlink on the phone, removing the phone on the admin site, or 30 days unused ends it.
 
@@ -21,6 +23,8 @@
   tab is gone goes stale after 90 seconds (ae_linkshell_hold).
   Delivery: every send goes to an outbox (ae_linkshell_out) and stays there until the phone acknowledges it; it is sent again on
   every connect. Received ids are remembered (ae_linkshell_seen), so a resend is never applied twice.
+  Size: the relay closes a socket that sends a frame over 16,384 characters (code 1009). A message that would be larger is never
+  queued or sent (console.error instead), and a list goes out in parts that each fit (sendParts).
 
   For other shards:
     AE.linkshell.linked()             → { linkId, store, phoneName } | null
@@ -28,6 +32,11 @@
     AE.linkshell.on(kind, fn)         fn(body, { id, kind }) for each new message of that kind; one handler per kind
     AE.linkshell.send(kind, body, { wake })  queue a sealed message for the phone (returns its id); wake: true also pushes a
                                       notification to the phone, for a message that asks it to start something
+    AE.linkshell.sendParts(kind, base, rows, { size, key, wake })  a list in parts: each body is base + { part, parts, [key]: rows }
+                                      (key: 'items' unless given), at most `size` rows a part and fewer when a part would not fit
+                                      a frame; base may be a function of the part's number; wake goes on the first part only
+    AE.linkshell.paused()             → Promise of '' or why this page must not act on a phone's message now (Aethernet stopped on
+                                      the page, or Portal switched stores); a shard checks it before every write a phone asks for
     AE.linkshell.onState(fn)          fn(state) on every change; returns an unsubscribe function
     AE.linkshell.wake()               connect now if linked (a shard that is about to need the phone)
     AE.linkshell.hold(onLost)         keep the connection in this tab for a run; returns the release function. onLost() runs if
@@ -38,6 +47,7 @@ AE.linkshell = (() => {
   const API = '__TRACKER_API__', KEY = '__WAYMARK_KEY__';
   const LINK_KEY = 'ae_linkshell', OUT_KEY = 'ae_linkshell_out', SEEN_KEY = 'ae_linkshell_seen', HOLD_KEY = 'ae_linkshell_hold';
   const IDLE_MS = 5 * 60 * 1000, HOLD_MS = 24 * 3600 * 1000, SEEN_MAX = 400;
+  const MAX_FRAME = 16384; // the relay's limit for one frame (LS.MAX_FRAME in tracker-worker/src/linkshell.js)
   const BEAT_MS = 20000, STALE_MS = 90000; // a hold is written again every 20 s; 90 s allows for a background tab's slowed timers
   const configured = () => /^(https:\/\/|http:\/\/localhost[:/])/.test(API);
 
@@ -108,6 +118,7 @@ AE.linkshell = (() => {
 
   // ---------------------------------------------------------------- the socket
   let ws = null, idleTimer = null, retryTimer = null, retryMs = 2000, lastWake = 0;
+  let sentIds = new Set(); // outbox messages sent on the socket that is open now
   const idle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => { if (holding) return idle(); if (ws) ws.close(1000, 'idle'); }, IDLE_MS); };
 
   // ---------------------------------------------------------------- the hold (see top)
@@ -142,7 +153,7 @@ AE.linkshell = (() => {
     const url = API.replace(/^http/, 'ws') + '/v1/linkshell/connect?link=' + l.linkId;
     let sock;
     try { sock = new WebSocket(url, ['linkshell', 'pc.' + l.token]); } catch (_) { return; }
-    ws = sock;
+    ws = sock; sentIds = new Set();
     let ping = null;
     sock.onopen = () => {
       retryMs = 2000; st.online = true; changed(); idle(); flush();
@@ -159,6 +170,7 @@ AE.linkshell = (() => {
       if (e.code === 4000 && holding) { beat(); retryTimer = setTimeout(connect, 1000); return; } // taken from a run: taken back
       if (e.code === 4000) return;                       // another tab took over; this one waits until it's used again
       if (e.code === 1000) return;                       // idle: waits for the next wake
+      if (e.code === 1009) dropLargest();                // the relay refused a frame as too large: that message is never sent again
       if (getLink()) { retryTimer = setTimeout(connect, retryMs); retryMs = Math.min(retryMs * 2, 60000); }
     };
   }
@@ -177,28 +189,69 @@ AE.linkshell = (() => {
     st.online = false; st.peer = false; changed();
   }
 
+  // A frame's length, known before sealing: the envelope plus the sealed body in base64 (AES-GCM adds a 16-byte tag).
+  const frame = (m, s) => Object.assign({ t: 'msg', id: m.id, kind: m.kind, iv: s.iv, ct: s.ct }, m.wake ? { wake: true } : {});
+  const frameLen = (m) => JSON.stringify(frame(m, { iv: 'A'.repeat(16), ct: '' })).length
+    + 4 * Math.ceil((enc.encode(JSON.stringify(m.body == null ? {} : m.body)).length + 16) / 3);
+  function tooBig(m) {
+    const n = frameLen(m);
+    if (n <= MAX_FRAME) return false;
+    console.error('[Linkshell] ' + m.kind + ' not sent: its frame would be ' + n + ' characters, over the relay\'s ' + MAX_FRAME);
+    return true;
+  }
+  const post = (m, s) => { if (ws && ws.readyState === 1) { sentIds.add(m.id); ws.send(JSON.stringify(frame(m, s))); } };
+  // After a 1009 close: the largest message sent on that socket goes, so the next connect can't be closed for it again.
+  function dropLargest() {
+    const o = outbox(), sent = o.filter((m) => sentIds.has(m.id));
+    if (!sent.length) return;
+    const worst = sent.reduce((a, b) => (frameLen(b) > frameLen(a) ? b : a));
+    console.error('[Linkshell] ' + worst.kind + ' dropped: the relay closed the connection for a frame that was too large');
+    setOutbox(o.filter((m) => m.id !== worst.id));
+  }
   async function flush() {
     const l = getLink();
     if (!l || !ws || ws.readyState !== 1) return;
     const key = await keyOf(l);
-    for (const m of outbox()) {
+    const all = outbox(), fits = all.filter((m) => !tooBig(m)); // one queued before this limit was checked would close the socket on every connect
+    if (fits.length !== all.length) setOutbox(fits);
+    for (const m of fits) {
       if (!ws || ws.readyState !== 1) return;
-      const s = await seal(key, l.linkId, 'pc', m.id, m.kind, m.body);
-      ws.send(JSON.stringify(frame(m, s)));
+      post(m, await seal(key, l.linkId, 'pc', m.id, m.kind, m.body));
     }
   }
-  const frame = (m, s) => Object.assign({ t: 'msg', id: m.id, kind: m.kind, iv: s.iv, ct: s.ct }, m.wake ? { wake: true } : {});
+  // → the message's id, or null when it is too large to send (logged, not queued).
   function send(kind, body, opts) {
     const id = newId(), m = { id, kind, body, at: Date.now() };
     if (opts && opts.wake) m.wake = true;
+    if (tooBig(m)) return null;
     const o = outbox(); o.push(m); setOutbox(o);
     if (ws && ws.readyState === 1) {
       idle();
       const l = getLink();
-      if (l) keyOf(l).then((key) => seal(key, l.linkId, 'pc', id, kind, body)).then((s) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(frame(m, s))); })
+      if (l) keyOf(l).then((key) => seal(key, l.linkId, 'pc', id, kind, body)).then((s) => post(m, s))
         .catch((e) => console.error('[Linkshell]', e));
     } else wake(true);
     return id;
+  }
+  // A list in numbered parts (see top). The parts are cut by row count first, as each caller always did, and shorter where a part
+  // would not fit a frame; a single row too large for a frame is left to send(), which drops it.
+  function sendParts(kind, base, rows, opts) {
+    const o = opts || {}, key = o.key || 'items', size = o.size || 40;
+    const body = (p, parts, chunk) => Object.assign({}, typeof base === 'function' ? base(p) : base, { part: p, parts, [key]: chunk });
+    const fits = (p, chunk) => frameLen({ id: 'A'.repeat(22), kind, wake: true, body: body(p, rows.length, chunk) }) <= MAX_FRAME;
+    const chunks = [[]];
+    for (const row of rows) {
+      let cur = chunks[chunks.length - 1];
+      if (cur.length && (cur.length >= size || !fits(chunks.length - 1, cur.concat([row])))) chunks.push(cur = []);
+      cur.push(row);
+    }
+    return chunks.map((chunk, p) => send(kind, body(p, chunks.length, chunk), { wake: !!o.wake && p === 0 }));
+  }
+  // '' when this page may act on a phone's message, else why not (see top). Asked fresh each time: the store can change in any tab.
+  async function paused() {
+    try { if (AE.halted() || AE.storeChanged() || !(await AE.sameStore(true))) return 'Aethernet is paused on the PC'; }
+    catch (_) { return 'The PC couldn\'t check its store in Portal'; }
+    return '';
   }
   const busy = new Set(); // ids being opened or handled right now
   async function receive(text) {
@@ -377,7 +430,7 @@ AE.linkshell = (() => {
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     function close() {
       gone = true; clearInterval(timer); if (stopState) stopState();
-      if (pair && !pair.done) call('/v1/' + pair.store + '/linkshell/pair/cancel', { pairId: pair.pairId, code: pair.code }).catch(() => {});
+      if (pair && !pair.done) call('/v1/' + pair.store + '/linkshell/pair/cancel', { pairId: pair.pairId, code: pair.code, secret: pair.secret }).catch(() => {});
       scrim.remove(); document.removeEventListener('keydown', onKey, true);
     }
     const btn = (label, onclick, primary) => h('button', { type: 'button', class: 'sg-btn sg-lg' + (primary ? ' sg-primary' : ''), onclick }, label);
@@ -413,9 +466,9 @@ AE.linkshell = (() => {
       if (gone) return;
       if (!store || !configured()) return paint([h('div', { class: 'err' }, 'Couldn\'t start linking')], [btn('Close', () => close())]);
       try {
-        const keys = await newKeys();
-        const r = await call('/v1/' + store + '/linkshell/pair/start', { publicJwk: keys.pub, name: pcName() });
-        pair = { store, keys, pairId: r.pairId, code: r.code, expires: Date.parse(r.expiresAt), done: false };
+        const keys = await newKeys(), secret = newId(); // the secret stays here: it is what shows a later call is from this browser
+        const r = await call('/v1/' + store + '/linkshell/pair/start', { publicJwk: keys.pub, name: pcName(), secret });
+        pair = { store, keys, secret, pairId: r.pairId, code: r.code, expires: Date.parse(r.expiresAt), done: false };
       } catch (e) {
         return paint([h('div', { class: 'err' }, 'Couldn\'t start linking'), AE.bugLinkEl('Report a bug', 'Linkshell pairing: ' + ((e && e.message) || e))], [btn('Close', () => close())]);
       }
@@ -431,7 +484,7 @@ AE.linkshell = (() => {
         if (polling) return;
         polling = true;
         try {
-          const s = await call('/v1/' + store + '/linkshell/pair/status', { pairId: pair.pairId, code: pair.code });
+          const s = await call('/v1/' + store + '/linkshell/pair/status', { pairId: pair.pairId, code: pair.code, secret: pair.secret });
           if (!gone && s.state === 'scanned') { clearInterval(timer); showCheck(s); }
         } catch (_) {} finally { polling = false; }
       };
@@ -443,7 +496,7 @@ AE.linkshell = (() => {
       paint([device({ name: s.phoneName }), h('div', { class: 'code' }, code)], [btn('Cancel', () => close()), btn('Link', async (e) => {
         e.target.disabled = true;
         try {
-          const r = await call('/v1/' + pair.store + '/linkshell/pair/finish', { pairId: pair.pairId, code: pair.code });
+          const r = await call('/v1/' + pair.store + '/linkshell/pair/finish', { pairId: pair.pairId, code: pair.code, secret: pair.secret });
           pair.done = true;
           setLink({ linkId: r.linkId, token: r.token, store: pair.store, priv: pair.keys.priv, pub: pair.keys.pub, phonePub: pub(s.phoneJwk), phoneName: r.phoneName || s.phoneName, at: Date.now() });
           setOutbox([]); keyCache = null;
@@ -471,8 +524,8 @@ AE.linkshell = (() => {
   }
 
   return { linked: () => { const l = getLink(); return l ? { linkId: l.linkId, store: l.store, phoneName: l.phoneName } : null; },
-    state, onState, on, send, wake, hold, open, verify,
-    _test: { seal, unseal, linkKey, newKeys, checkCode, qr, receive, flush } };
+    state, onState, on, send, sendParts, paused, wake, hold, open, verify,
+    _test: { seal, unseal, linkKey, newKeys, checkCode, qr, receive, flush, frameLen, MAX_FRAME } };
 })();
 
 AE.shard({
