@@ -4,7 +4,7 @@ import fs from 'fs';
 import vm from 'vm';
 import assert from 'assert/strict';
 
-function make(wo, store = 914) {
+function make(wo, store = 914, link = null) {
   const calls = [], events = [];
   const state = { wo: JSON.parse(JSON.stringify(wo)) };
   const AE = {
@@ -19,9 +19,19 @@ function make(wo, store = 914) {
     profile: async () => ({ storeId: store, name: 'Sam Tech' }),
     emit: (n, d) => events.push([n, d]), refreshView: () => {},
   };
-  const ctx = vm.createContext({ AE, location: { pathname: '/repair/workorder/1' }, console });
+  const sent = [], handlers = {};
+  if (link) {
+    const el = () => ({ replaceChildren() {}, remove() {}, append() {} });
+    Object.assign(AE, {
+      linkshell: { on: (k, fn) => { handlers[k] = fn; }, send: (k, b) => { sent.push([k, JSON.parse(JSON.stringify(b))]); return 'id'; }, linked: () => link },
+      data: { workorders: async () => link.rows || [], nameOf: (r) => (r.customer && r.customer.fullName) || '' },
+      h: el, actionIcon: () => '', icon: () => '', track: () => {}, noteError: () => {},
+    });
+  }
+  const document = { getElementById: () => null, head: { append() {} }, body: { append() {} } };
+  const ctx = vm.createContext({ AE, AE_ON_PORTAL: true, document, location: { pathname: '/repair/workorder/1' }, console });
   vm.runInContext(fs.readFileSync(new URL('../src/68-morning-check.js', import.meta.url), 'utf8'), ctx);
-  return { mc: AE.morningCheck, calls, events, state };
+  return { mc: AE.morningCheck, calls, events, state, sent, handlers };
 }
 const WO = { workorderId: 1, workorderStatusId: 8, storeId: 914, customerId: 55, updatedAt: 'u1',
   CustomerDevice: { customerDeviceId: 9, customerId: 55, passcode: 'x', serial: 's', imei: 'i', deviceCatalogId: 3, name: 'Blue case' },
@@ -86,5 +96,33 @@ await t('the phone may only move up to Work in progress', async () => {
   const { mc } = make(WO);
   assert.equal(mc.PHONE_STATUSES.some((s) => [11, 12, 13].includes(s)), false);
   assert.equal(mc.PHONE_STATUSES.includes(10), true);
+});
+await t('Linkshell: a host link lists open work orders with the moves the phone may make', async () => {
+  const rows = [{ workorderId: 1, workorderStatusId: 8, locationBin: 'B2', customerDevice: { name: 'Blue case' }, deviceCatalog: { name: 'iPhone 14' }, deviceIssues: [{ name: 'Screen' }], customer: { fullName: 'Riley Price' }, programName: 'Retail', updatedAt: 'u1' }];
+  const { sent, handlers } = make(WO, 914, { host: true, phoneName: 'Pixel', rows });
+  await handlers['check.start']({ run: 'r1' });
+  const [kind, b] = sent[0];
+  assert.equal(kind, 'check.list'); assert.equal(b.parts, 1); assert.equal(b.bins, false);
+  assert.deepEqual(b.rows[0], ['1', 8, 'B2', 'Blue case', 'iPhone 14', 'Screen', 'Riley Price', 'Retail', 'u1']);
+  assert.deepEqual(b.statuses.find((x) => x[0] === 8)[2], [9]);
+  assert.deepEqual(b.statuses.find((x) => x[0] === 12)[2], []);
+});
+await t('Linkshell: changes run in order; a guessed bin and a Portal-only move are refused, the rest saved', async () => {
+  const { sent, handlers, calls } = make(Object.assign({}, WO, { workorderStatusId: 10 }), 914, { host: true, rows: [] });
+  await handlers['check.start']({ run: 'r1' });
+  await handlers['check.set']({ run: 'r1', cid: 'c1', wo: '1', updatedAt: 'u1', nickname: 'Red', note: 'Hi', bin: 'A1', status: 13 });
+  const r = sent.find((x) => x[0] === 'check.result')[1];
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.failed.map((f) => f[0]), ['bin', 'status']);
+  assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => c.method + ' ' + c.path), ['PUT /api/customer-devices/9', 'POST /api/note']);
+});
+await t('Linkshell: stale order or no check running: nothing written', async () => {
+  const { sent, handlers, calls } = make(WO, 914, { host: true, rows: [] });
+  await handlers['check.set']({ run: 'r1', cid: 'c0', wo: '1', nickname: 'x' });
+  assert.equal(sent[0][1].failed[0][1], 'Not running on the PC');
+  await handlers['check.start']({ run: 'r1' });
+  await handlers['check.set']({ run: 'r1', cid: 'c1', wo: '1', updatedAt: 'older', nickname: 'x' });
+  assert.equal(sent.find((x) => x[0] === 'check.result' && x[1].cid === 'c1')[1].failed[0][1], 'Changed in Portal since');
+  assert.equal(calls.filter((c) => c.method !== 'GET').length, 0);
 });
 console.log('\n' + n + ' Morning check tests passed');

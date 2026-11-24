@@ -120,3 +120,144 @@ AE.morningCheck = (() => {
 
   return { STATUS, PHONE_STATUSES, read, statusPlan, setStatus, setBin, setNickname, addNote, _test: { binOf, putBody } };
 })();
+
+/*
+  Over Linkshell: Linkpearl's morning check. The phone asks, the PC lists its open work orders, and the phone's changes are made
+  here with the calls above, one work order at a time. The PC acts only while its Morning check panel is open: a PC shows the
+  ask and someone allows it there; a Linkshell host link (link.host) opens it by itself.
+
+    phone → PC  check.start   { run }                                       ask for a check (run: the phone's id for it)
+    PC → phone  check.list    { run, part, parts, store, statuses, rows }  the open work orders, in parts
+                  rows: [[wo, statusId, bin, nickname, device, issue, customer, program, updatedAt], …]
+                  statuses: [[id, name, [ids it can move to from the phone]], …]; bins: false while bin changes are still guesses
+    phone → PC  check.set     { run, cid, wo, updatedAt, status?, bin?, nickname?, note? }   one work order's changes
+    PC → phone  check.result  { run, cid, wo, ok, row, failed: [[field, message], …] }        what Portal took, and the order after
+    phone → PC  check.progress { run, done, total }                         the panel's count
+    either      check.end     { run, reason? }                              finished, stopped, or declined on the PC
+  Changes run in a fixed order (nickname, note, bin, status) and each is reported on its own; the first write is refused when the
+  order changed in Portal since the phone's copy (updatedAt). Only proven calls run from the phone (see the top of this file).
+*/
+AE.morningCheck.link = (() => {
+  if (typeof AE.linkshell === 'undefined' || !AE_ON_PORTAL) return null;
+  const L = AE.linkshell, MC = AE.morningCheck;
+  const PART = 15;
+  const LIVE = { bin: false }; // bin changes: on once Portal's call is recorded
+  let run = null; // { id, total, done, changed, log: [] , panel }
+
+  // The moves the phone may make from each status: proven calls only, and never past Work in progress.
+  const movesFrom = (from) => MC.PHONE_STATUSES.filter((to) => to !== from && MC.statusPlan(from, to).proven);
+
+  const rowOf = (r) => [String(r.workorderId), r.workorderStatusId, r.locationBin || '', (r.customerDevice && r.customerDevice.name) || '',
+    (r.deviceCatalog && r.deviceCatalog.name) || '', (r.deviceIssues || []).map((x) => (x && (x.name || x.issueName)) || x).filter((x) => typeof x === 'string').join(', '),
+    AE.data.nameOf(r) || '', r.programName || '', r.updatedAt || ''];
+
+  async function sendList(id) {
+    const store = (await AE.profile()).storeId;
+    const rows = (await AE.data.workorders(Date.now(), 0)).map(rowOf);
+    const statuses = Object.entries(MC.STATUS).map(([s, n]) => [Number(s), n, movesFrom(Number(s))]);
+    const parts = Math.max(1, Math.ceil(rows.length / PART));
+    for (let p = 0; p < parts; p++) L.send('check.list', { run: id, part: p, parts, store: String(store), bins: LIVE.bin, statuses: p === 0 ? statuses : [], rows: rows.slice(p * PART, (p + 1) * PART) });
+    return rows.length;
+  }
+
+  async function apply(b) {
+    const failed = [], wo = String(b.wo || '');
+    if (!/^\d{1,12}$/.test(wo)) return { failed: [['wo', 'Not a work order']], row: null };
+    let before = null;
+    try { before = await MC.read(wo); } catch (e) { return { failed: [['wo', (e && e.message) || String(e)]], row: null }; }
+    if (b.updatedAt && before.updatedAt && b.updatedAt !== before.updatedAt) failed.push(['wo', 'Changed in Portal since']);
+    else {
+      const step = async (field, fn) => { try { await fn(); } catch (e) { failed.push([field, (e && (e.portalMessage || e.message)) || String(e)]); } };
+      if (typeof b.nickname === 'string') await step('nickname', () => MC.setNickname(wo, b.nickname.slice(0, 60)));
+      if (typeof b.note === 'string' && b.note.trim()) await step('note', () => MC.addNote(wo, b.note.slice(0, 2000)));
+      if (typeof b.bin === 'string') await step('bin', () => { if (!LIVE.bin) throw new Error('Not available yet'); return MC.setBin(wo, b.bin.slice(0, 40)); });
+      if (b.status != null) await step('status', async () => {
+        const now = await MC.read(wo);
+        if (!movesFrom(now.statusId).includes(Number(b.status))) throw new Error('Change this status in Portal');
+        return MC.setStatus(wo, Number(b.status));
+      });
+    }
+    let row = null;
+    try { const r = await MC.read(wo); row = [r.wo, r.statusId, r.bin, r.nickname, r.updatedAt]; } catch (_) {}
+    return { failed, row };
+  }
+
+  // ---------------------------------------------------------------- the panel
+  const ID = 'ae-morning-check';
+  function css() {
+    if (document.getElementById(ID + '-css')) return;
+    document.head.append(AE.h('style', { id: ID + '-css' }, `
+      #${ID} { position:fixed; right:16px; bottom:16px; z-index:2147483640; width:340px; padding:16px; }
+      #${ID} .hd { display:flex; align-items:center; gap:10px; }
+      #${ID} .hd h4 { margin:0; font-size:16px; flex:1; }
+      #${ID} .st { height:24px; padding:0 10px; border-radius:12px; font-size:12px; font-weight:700; display:inline-flex; align-items:center;
+        background:var(--aui-status-success-soft, #c5ffc8); color:var(--aui-status-success, #136d31); }
+      #${ID} .bar { height:6px; border-radius:3px; background:var(--aui-neutral-soft, #e3e2e7); overflow:hidden; margin:14px 0 6px; }
+      #${ID} .bar b { display:block; height:100%; background:var(--aui-primary, #8223d2); }
+      #${ID} .ct { display:flex; justify-content:space-between; font-weight:600; font-size:13px; }
+      #${ID} ul { margin:12px 0 0; padding:0; list-style:none; font-size:13px; max-height:180px; overflow:auto; }
+      #${ID} li { display:flex; gap:8px; padding:7px 0; border-top:1px solid var(--aui-outline-soft, #eeedf1); }
+      #${ID} li b { min-width:78px; } #${ID} li span { flex:1; color:var(--aui-on-surface-soft, #5d5e61); }
+      #${ID} li i { font-style:normal; font-weight:700; color:var(--aui-status-success, #136d31); } #${ID} li i.r { color:var(--aui-status-error, #b91a24); }
+      #${ID} .sg-actions { margin-top:12px; }
+    `));
+  }
+  function panel() {
+    css();
+    let el = document.getElementById(ID);
+    if (!el) { el = AE.h('div', { id: ID, class: 'sg sg-card', role: 'dialog', 'aria-label': 'Morning check' }); document.body.append(el); }
+    return el;
+  }
+  const close = () => { const el = document.getElementById(ID); if (el) el.remove(); };
+  const phoneName = () => (L.linked() || {}).phoneName || 'Linkpearl';
+  const btn = (label, onclick, primary) => AE.h('button', { type: 'button', class: 'sg-btn sg-lg' + (primary ? ' sg-primary' : ''), onclick }, label);
+  const head = () => AE.h('div', { class: 'hd' }, AE.h('span', { html: AE.actionIcon('linkshell', 30) || AE.icon('aetheryte', 30), style: 'line-height:0' }), AE.h('h4', null, 'Morning check'), AE.h('span', { class: 'st' }, phoneName()));
+
+  function draw() {
+    if (!run) return close();
+    const el = panel(), pct = run.total ? Math.round((run.done / run.total) * 100) : 0;
+    el.replaceChildren(head(), AE.h('div', { class: 'bar' }, AE.h('b', { style: 'width:' + pct + '%' })),
+      AE.h('div', { class: 'ct' }, AE.h('b', null, run.done + ' / ' + run.total), AE.h('span', { class: 'sg-soft' }, run.changed ? run.changed + ' changed' : '')),
+      run.log.length ? AE.h('ul', null, ...run.log.slice(0, 20).map((x) => AE.h('li', null, AE.h('b', null, x.wo), AE.h('span', null, x.what), AE.h('i', { class: x.ok ? '' : 'r' }, x.ok ? 'Saved' : 'Failed')))) : null,
+      AE.h('div', { class: 'sg-actions' }, btn('Stop', () => stop())));
+  }
+  function ask(id) {
+    return new Promise((resolve) => {
+      const el = panel();
+      el.replaceChildren(head(), AE.h('div', { class: 'sg-actions' }, btn('Decline', () => { close(); resolve(false); }), btn('Allow', () => resolve(true), true)));
+    });
+  }
+  function stop(reason) {
+    if (run) L.send('check.end', { run: run.id, reason: reason || 'stopped' });
+    run = null; close();
+  }
+
+  // ---------------------------------------------------------------- messages
+  L.on('check.start', async (b) => {
+    const id = String((b && b.run) || '').slice(0, 40);
+    if (!id) return;
+    if (run && run.id === id) { await sendList(id); return; } // the phone reopened it
+    const link = L.linked() || {};
+    if (!link.host) {
+      const ok = await ask(id);
+      if (!ok) { L.send('check.end', { run: id, reason: 'declined' }); return; }
+    }
+    AE.track('morningCheck');
+    run = { id, total: 0, done: 0, changed: 0, log: [] };
+    try { run.total = await sendList(id); } catch (e) { L.send('check.end', { run: id, reason: 'failed' }); run = null; close(); AE.noteError('morning check list', e); return; }
+    draw();
+  });
+  L.on('check.set', async (b) => {
+    if (!run || !b || b.run !== run.id) { L.send('check.result', { run: b && b.run, cid: b && b.cid, wo: b && b.wo, ok: false, failed: [['check', 'Not running on the PC']] }); return; }
+    const { failed, row } = await apply(b);
+    const what = [b.bin != null ? b.bin : null, b.status != null ? MC.STATUS[b.status] : null, b.nickname != null ? 'Nickname' : null, b.note ? 'Note' : null].filter(Boolean).join(' · ');
+    if (!failed.length) run.changed++;
+    run.log.unshift({ wo: String(b.wo), what, ok: !failed.length });
+    L.send('check.result', { run: run.id, cid: b.cid, wo: String(b.wo), ok: !failed.length, row, failed });
+    draw();
+  });
+  L.on('check.progress', (b) => { if (run && b && b.run === run.id) { run.done = Math.max(0, Number(b.done) || 0); run.total = Number(b.total) || run.total; draw(); } });
+  L.on('check.end', (b) => { if (run && b && b.run === run.id) { run = null; close(); } });
+
+  return { _test: { apply, movesFrom, rowOf, LIVE }, state: () => run };
+})();
