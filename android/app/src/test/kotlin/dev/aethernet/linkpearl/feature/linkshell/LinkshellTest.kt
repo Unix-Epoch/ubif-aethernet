@@ -12,6 +12,7 @@ import dev.aethernet.linkpearl.core.data.ApiResult
 import dev.aethernet.linkpearl.core.data.Credentials
 import dev.aethernet.linkpearl.core.data.LinkpearlJson
 import dev.aethernet.linkpearl.core.data.P256
+import dev.aethernet.linkpearl.feature.morningcheck.MorningCheckLink
 import dev.aethernet.linkpearl.feature.pullbacks.PbSession
 import dev.aethernet.linkpearl.feature.pullbacks.PbStatus
 import dev.aethernet.linkpearl.feature.pullbacks.PcItem
@@ -20,6 +21,7 @@ import dev.aethernet.linkpearl.feature.pullbacks.PcState
 import dev.aethernet.linkpearl.feature.pullbacks.PullbackLink
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -312,5 +314,32 @@ class LinkshellTest {
         assertEquals(BbUi.None(stopped = true), vm.state.value)
         assertTrue(Buybacks.isLabel("B-660482-0000012671"))
         assertTrue(!Buybacks.isLabel("I-0017390417"))
+    }
+
+    // ---------------------------------------------------------------- a morning check list from the browser
+    @Test fun morningCheckListFromAnotherStoreIsNotShown() = runTest {
+        val r = Rig(this, MemoryLinkshellStore(LinkshellData(link = link()))) // linked to store 900
+        val mc = MorningCheckLink(r.client)
+        val ended = mutableListOf<Pair<String, String>>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { mc.ended.collect { ended += it } }
+        r.client.wake(); runCurrent()
+        val ws = r.sockets.single(); ws.l.onOpen(); runCurrent()
+        fun list(id: String, run: String, store: String, part: Int, parts: Int, wo: String) = fromPc(id, "check.list",
+            """{"run":"$run","store":"$store","bins":false,"statuses":[[8,"Ready for work",[9]]],"part":$part,"parts":$parts,"rows":[["$wo",8,"B2","","Phone","Screen","Sam Doe","Retail","u1"]]}""")
+        // Portal on the PC is on another store: nothing is shown, the check ends here and the browser is told
+        ws.sent.clear()
+        ws.l.onMessage(list("chk-list-01", "c1", "914", 0, 1, "700001")); runCurrent()
+        assertNull(mc.list.value)
+        assertEquals(listOf("c1" to "store"), ended)
+        val f = ws.frames().single { it["t"] == JsonPrimitive("msg") }
+        assertEquals("check.end", f.s("kind"))
+        assertEquals("""{"run":"c1"}""", LinkshellCrypto.open(phoneKey(), linkId, "phone", f.s("id"), "check.end", f.s("iv"), f.s("ct")))
+        // the link's own store, in two parts arriving out of order: shown once complete, rows in part order
+        ws.l.onMessage(list("chk-list-02", "c2", "900", 1, 2, "700002")); runCurrent()
+        assertNull(mc.list.value)
+        ws.l.onMessage(list("chk-list-03", "c2", "900", 0, 2, "700001")); runCurrent()
+        assertEquals(listOf("700001", "700002"), mc.list.value!!.rows.map { it.wo })
+        assertEquals("900", mc.list.value!!.store)
+        assertEquals(1, ended.size)
     }
 }
