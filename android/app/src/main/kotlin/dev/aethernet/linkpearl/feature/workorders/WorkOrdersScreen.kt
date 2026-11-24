@@ -29,6 +29,10 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.runtime.withFrameNanos
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.ui.unit.Density
 import dev.aethernet.linkpearl.core.nav.LocalAdaptive
 import androidx.compose.foundation.lazy.items
@@ -52,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
@@ -135,6 +140,17 @@ fun WorkOrdersScreen(
     /** Wide screens: cards in two columns, the gap on the fold when one is known. */
     twoColumns: Boolean = false,
 ) {
+    // The search field never takes focus on its own: coming back to this screen (from a work order, the scanner, another tab or
+    // another app) leaves the keyboard down. Focus is dropped on the way out and again on the way back in.
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val dropFocus = { focusManager.clearFocus(force = true); keyboard?.hide() }
+    LaunchedEffect(Unit) { withFrameNanos { }; dropFocus() }
+    LifecycleResumeEffect(Unit) { dropFocus(); onPauseOrDispose { } }
+    val actions = actions.copy(
+        onOpen = { row -> dropFocus(); actions.onOpen(row) },
+        onScan = actions.onScan?.let { scan -> { dropFocus(); scan() } },
+    )
     val nowMs = rememberNowMs(state.skewMs)
     var storeMenu by remember { mutableStateOf(false) }
     val listState = rememberLazyGridState()
@@ -277,7 +293,7 @@ private fun EmptyLane() {
     }
 }
 
-/** One work order card: number and time in status; device, issue and program; status chip, Urgent and store; the customer line. */
+/** One work order card: number, location and time in status; device, issue and program; status chip, Urgent and store; the customer line. */
 @Composable
 fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showStoreAlways: Boolean = false, onClick: () -> Unit) {
     val c = Lp.colors
@@ -299,7 +315,12 @@ fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showS
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(row.wo.toString(), style = LpType.Number, color = c.fg, modifier = Modifier.weight(1f), maxLines = 1)
+            Text(row.wo.toString(), style = LpType.Number, color = c.fg, maxLines = 1)
+            Box(Modifier.weight(1f).padding(start = 10.dp, end = 8.dp)) {
+                row.bin?.trim()?.takeIf { it.isNotEmpty() }?.let { bin ->
+                    LpChip(bin, Modifier.clearAndSetSemantics { contentDescription = "Location $bin" }, icon = LpIcons.Pin)
+                }
+            }
             if (old) OldChip(row, nowMs) else if (row.open) TimeInStatus(row.statusSince, nowMs) else Text(WoFmt.shortDayTime(row.closedAt, LocalWoClock.current.zone), style = LpType.Small, color = c.soft)
         }
         val issue = row.issues?.takeIf { it.isNotEmpty() }?.joinToString(", ")
