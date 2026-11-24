@@ -22,7 +22,7 @@
   wrong pick. The Worker (/v1/:store/tac) only ever gets the 8-digit TAC and the model: never an IMEI, serial or customer.
   Opens from the avatar menu, a Decipher button beside the IMEI box on check-in's Device step, and Master's Mend's scan to open
   (a scanned 15-digit number that passes the check digit; not on check-in itself, where a scan is data entry).
-  No lost status (Garrett, Oct 16, 2026).
+  No lost status (decided Oct 16, 2026).
 */
 AE.decipher = (() => {
   const digitsOf = (s) => String(s || '').replace(/\D/g, '');

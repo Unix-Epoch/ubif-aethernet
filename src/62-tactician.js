@@ -24,7 +24,7 @@
   Tactician's store-wide parts, outside the shard so Settings can use them:
     · General manager(s) of this location: a store setting on the tracker (GET/PUT …/settings/gm), picked by
       anyone with Store time sheet access (Portal's own manager gate for that page). Portal's roles aren't used:
-      Garrett, Oct 12, 2026: "Portal roles are often not set up properly". Store setup will set it too.
+      they are often not set up properly (Oct 12, 2026). Store setup will set it too.
     · Punches and sales for a date range, shared by the Store time sheet page and the Reports card.
 */
 AE.tactician = (() => {
@@ -460,7 +460,7 @@ AE.shard({
       remembered in this browser. Needs Store time sheet access and the work order tracker.
     */
     const RP = 'ae-splh', GM_KEY = 'ae_splh_gm', RANGE_KEY = 'ae_splh_range';
-    // Target ranges (Garrett, Oct 12, 2026): ~$160–180 per labor hour leaving out general managers, ~$145–165 counting them.
+    // Target ranges (Oct 12, 2026): ~$160–180 per labor hour leaving out general managers, ~$145–165 counting them.
     const TARGET = { withoutGm: [160, 180], withGm: [145, 165] };
     const RANGES = [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month'], ['90', 'Last 90 days']];
     const rangeDates = (r) => {
@@ -546,7 +546,7 @@ AE.shard({
     // Bar color: at/over the target's low end = good; within 10% below, or over it with the RFP total picked up = near; else miss.
     const grade = (r, lo) => (r.splh >= lo ? 'good' : r.splh >= lo * 0.9 || (r.ghost && r.ghost >= lo) ? 'near' : 'miss');
     // A day's details under the chart: sales, hours and who worked it (this store). Hovering a bar previews it; a click, a tap or the
-    // keyboard picks the day, and the pick stays (pickDay) until another one. (No overtime here: Garrett, Oct 12, 2026.)
+    // keyboard picks the day, and the pick stays (pickDay) until another one. (No overtime here, decided Oct 12, 2026.)
     let pickDay = null;
     function dayInfo(r, leaveOut) {
       const fmtD = new Date(r.day + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });

@@ -1298,7 +1298,7 @@ const AE = (() => {
     Resolves once Portal's first load has settled: the page's load event, then
     no new Portal API request for 600 ms (at most 8 s after load). Background
     fetches (Divination's count, Esuna, Waymark's scan) wait on it so they never
-    compete with Portal's own first requests (Garrett, Oct 6, 2026). Later
+    compete with Portal's own first requests (Oct 6, 2026). Later
     calls resolve at once.
   */
   let settledP = null;

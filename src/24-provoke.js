@@ -34,7 +34,7 @@ AE.shard({
     const { h } = AE;
     const BOX_ID = 'ae-provoke';
     const APPOINTMENT = 1, CONTACTED = 53;
-    // Which message each program gets (Garrett, Oct 6, 2026: M1-M23).
+    // Which message each program gets (Oct 6, 2026: M1-M23).
     const NO_BOX = [11759, 9470, 11009, 9901, 10303,  // cleanings
       12532, 8857, 9258, 8088, 11289];                 // not repair leads: in-store pickup, retail, remote tech, screen protector
     const MOBILITY = 5062;                              // the only "Reply ready" program
@@ -299,7 +299,7 @@ AE.shard({
 
     // ------------------------------------------------------------ WO chat panel
     // On a WO page, a row of lead-sheet texts in Portal's Customer Chat panel, in place of
-    // Portal's own quick replies (hidden while it's there; Garrett, Oct 12, 2026). A click
+    // Portal's own quick replies (hidden while it's there; Oct 12, 2026). A click
     // only fills Portal's message box: Portal's Send arrow sends it (so Recitation and
     // Auto-Waymark see an ordinary send).
     // Portal's panel (ubif-components ChatPanel): a flex column of header, Recent jobs,
@@ -310,7 +310,7 @@ AE.shard({
     const WO_TOP = ['pickup', 'partsArrived', 'partsOrdered', 'update', 'fmip']; // the chips; the rest of Special Circumstances go under More
     const WO_T = { pickup: /^pick ?up/i, partsArrived: /^parts arrived/i, partsOrdered: /^parts ordered/i, update: /^update$/i, fmip: /^turn off fmip/i };
     const WO_GROUPS = /special circumstances/i;
-    // The WO status → the message that goes first (Garrett, Oct 10, 2026). Name first, id as a fallback.
+    // The WO status → the message that goes first (Oct 10, 2026). Name first, id as a fallback.
     const byStatus = (name, id) => /ready for pickup/i.test(name) || id === 13 ? 'pickup'
       : /awaiting item|parts on order|ordered/i.test(name) || id === 3 ? 'partsOrdered'
         : /parts (received|arrived)/i.test(name) ? 'partsArrived' : null;

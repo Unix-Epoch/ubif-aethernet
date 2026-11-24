@@ -1,6 +1,6 @@
 /*
   Rainbow Drip (WO list row colors) — colors each row of a work-order list
-  by its status (Garrett's colors, Sep 30, 2026).
+  by its status (colors set Sep 30, 2026).
 
   Portal draws the status as a tag in a "Status" column and puts nothing on
   the row itself, so every row with a work-order link gets a class

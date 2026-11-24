@@ -17,7 +17,7 @@
     only; it never ships in the script, so other users can't read any of it
     even with the public app key.
   - Patch notes mention the feedback button and credits, never the admin
-    panel or usage analytics (Garrett's call).
+    panel or usage analytics.
 */
 AE.feedback = (() => {
   if (!AE_ON_PORTAL) return null;
