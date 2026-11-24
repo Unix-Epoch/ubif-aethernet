@@ -1,4 +1,5 @@
-// Elusive Jump (src/66-pullbacks.js): the .xlsx reader/writer, the list rules and the Portal mark calls. Fake data only.
+// Elusive Jump (src/66-pullbacks.js): the .xlsx reader/writer, the list rules, the Portal mark calls, and the shard's answers to
+// the phone's messages (Linkshell) with the page as it should be and paused. Fake data only.
 // node test-client/pullbacks.mjs
 import fs from 'fs';
 import vm from 'vm';
@@ -117,6 +118,73 @@ await test('mark: other answers fail', async () => {
   answer = () => ({ res: { status: 401 }, text: '' });
   assert.match((await P.mark(1, 'S-1', '900')).message, /session expired/);
   assert.ok(calls.includes('signedOut'));
+});
+
+// ---- the shard itself: the phone's messages against a saved session (the dialog closed)
+async function shard() {
+  const defs = [], handlers = {}, sent = [], lists = [], portal = [], gm = new Map(), page = { why: '', asked: 0, waits: [] };
+  const A = {
+    async timedFetch(method, url) { portal.push([method, url]); return { res: { status: 200 }, text: '{"Success":true}' }; },
+    shard: (d) => defs.push(d), h: () => ({}), actionIcon: () => '', onDom() {}, every() {}, settings: { crystals: {} },
+    linkshell: { on: (k, fn) => { handlers[k] = fn; }, send: (k, b) => { sent.push([k, plain(b)]); return 'id'; }, sendParts: (...a) => { lists.push(plain(a)); }, linked: () => ({ store: 900 }),
+      paused: async () => { page.asked++; await new Promise((r) => setTimeout(r, page.waits.shift() || 0)); return page.why; } },
+  };
+  vm.runInContext(fs.readFileSync(new URL('../src/66-pullbacks.js', import.meta.url), 'utf8'), vm.createContext({ AE: A, TextEncoder, TextDecoder, DecompressionStream, Response, Blob, console,
+    document: { head: { append() {} } }, GM_getValue: (k, d) => (gm.has(k) ? plain(gm.get(k)) : d), GM_setValue: (k, v) => gm.set(k, plain(v)), GM_deleteValue: (k) => gm.delete(k) }));
+  defs[0].run();
+  const parsed = A.pullbacks.parse(await A.pullbacks.readXlsx(A.pullbacks.writeXlsx(exportRows, [], 'Export')));
+  const items = A.pullbacks.forStore(parsed.items, 'Test Store #900'); // serials s-1, S-2
+  gm.set('ae_pullback_session', { file: 'Pullback Serials.xlsx', store: 'Test Store #900', storeId: '900', headers: parsed.headers, items, idx: 0, history: [], last: null, phone: 'run1' });
+  return { handlers, sent, lists, portal, page, session: () => gm.get('ae_pullback_session') };
+}
+
+await test('phone: a scan away from the scan screen is kept in the session and answered queued; the list goes through sendParts', async () => {
+  const s = await shard();
+  await s.handlers['pullbacks.scan']({ run: 'run1', i: 0, serial: 'S-1' });
+  assert.equal(s.session().items[0].status, 'matched');
+  assert.deepEqual(s.sent, [['pullbacks.result', { run: 'run1', i: 0, state: 'queued' }]]);
+  await s.handlers['pullbacks.join']({ run: 'run1' });
+  assert.deepEqual(s.lists, [['pullbacks.run', { run: 'run1', file: 'Pullback Serials.xlsx', store: '900' },
+    [[0, '100001', 'iPad 11" Glass & LCD', 's-1', 'queued'], [1, '100002', 'Phone B Screen', 'S-2', 'pending']], { size: 40 }]]);
+  assert.equal(s.portal.length, 0, 'nothing sent to Portal with the dialog closed');
+});
+
+await test('phone: paused on the PC, a scan is answered failed and a skip or undo with the state unchanged; the session is not touched', async () => {
+  const s = await shard();
+  await s.handlers['pullbacks.scan']({ run: 'run1', i: 0, serial: 'S-1' }); // before the pause: queued
+  const before = s.session();
+  s.page.why = 'Aethernet is paused on the PC';
+  s.sent.length = 0;
+  await s.handlers['pullbacks.scan']({ run: 'run1', i: 1, serial: 'S-2' });
+  await s.handlers['pullbacks.skip']({ run: 'run1', i: 1 });
+  await s.handlers['pullbacks.undo']({ run: 'run1', i: 0 });
+  await s.handlers['pullbacks.scan']({ run: 'run1', i: 0, serial: 'S-1' }); // already scanned here: its state, not a failure
+  const why = 'Aethernet is paused on the PC';
+  assert.deepEqual(s.sent, [
+    ['pullbacks.result', { run: 'run1', i: 1, state: 'failed', message: why }],
+    ['pullbacks.result', { run: 'run1', i: 1, state: 'pending', message: why }],
+    ['pullbacks.result', { run: 'run1', i: 0, state: 'queued', message: why }],
+    ['pullbacks.result', { run: 'run1', i: 0, state: 'queued', message: why }],
+  ]);
+  assert.deepEqual(s.session(), before);
+  assert.equal(s.portal.length, 0);
+  // the list can still be asked for, without asking about the page
+  const asked = s.page.asked;
+  await s.handlers['pullbacks.join']({ run: 'run1' });
+  assert.equal(s.lists.length, 1); assert.equal(s.page.asked, asked);
+  // a message for another run is ignored
+  await s.handlers['pullbacks.scan']({ run: 'other', i: 1, serial: 'S-2' });
+  assert.equal(s.sent.length, 4); assert.equal(s.page.asked, asked, 'and the page is not asked about for it');
+});
+
+await test('phone: messages are handled in the order they came, however long each check of the page takes', async () => {
+  const s = await shard();
+  s.page.waits = [30, 1]; // the first check answers after the second would have
+  const L = s.handlers;
+  const a = L['pullbacks.skip']({ run: 'run1', i: 1 }), b = L['pullbacks.undo']({ run: 'run1', i: 1 });
+  await Promise.all([a, b]);
+  assert.deepEqual(s.sent.map((x) => x[1].state), ['skipped', 'pending']);
+  assert.equal(s.session().items[1].status, 'pending');
 });
 
 console.log(n + ' passed');

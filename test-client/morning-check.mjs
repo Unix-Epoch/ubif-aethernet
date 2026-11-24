@@ -23,7 +23,7 @@ function make(wo, store = 914, link = null) {
   if (link) {
     const el = () => ({ replaceChildren() {}, remove() {}, append() {} });
     Object.assign(AE, {
-      linkshell: { on: (k, fn) => { handlers[k] = fn; }, send: (k, b) => { sent.push([k, JSON.parse(JSON.stringify(b))]); return 'id'; }, linked: () => link, hold: (fn) => { held.push(fn); return () => { held.length = 0; }; } },
+      linkshell: { on: (k, fn) => { handlers[k] = fn; }, send: (k, b) => { sent.push([k, JSON.parse(JSON.stringify(b))]); return 'id'; }, sendParts: (...a) => realParts(sent, ...a), linked: () => link, hold: (fn) => { held.push(fn); return () => { held.length = 0; }; } },
       data: { workorders: async () => link.rows || [], nameOf: (r) => (r.customer && r.customer.fullName) || '' },
       h: el, actionIcon: () => '', icon: () => '', track: () => {}, noteError: () => {},
     });
@@ -138,5 +138,72 @@ await t('Linkshell: a check is only for the linked store, on a page still on it;
   assert.deepEqual(sent[sent.length - 1], ['check.end', { run: 'r1', reason: 'store' }]);
   assert.equal(calls.filter((c) => c.method !== 'GET').length, 0);
   assert.equal(mc.link.state(), null); assert.equal(held.length, 0);
+});
+
+// ---- appended: the list in parts, and one Allow / Decline question at a time
+// Linkshell's own sendParts (src/67-linkshell.js) with nothing linked: what it queues is what would be sent.
+function realParts(sent, kind, base, rows, opts) {
+  const gm = new Map(), A = { shard() {} };
+  vm.runInContext(fs.readFileSync(new URL('../src/67-linkshell.js', import.meta.url), 'utf8'), vm.createContext({ AE: A, TextEncoder, TextDecoder, crypto, btoa, atob, console,
+    setTimeout, clearTimeout, setInterval, clearInterval, document: { visibilityState: 'visible' }, navigator: { userAgent: '' },
+    GM_getValue: (k, d) => (gm.has(k) ? gm.get(k) : d), GM_setValue: (k, v) => gm.set(k, v), GM_deleteValue: (k) => gm.delete(k) }));
+  A.linkshell.sendParts(kind, base, rows, opts);
+  for (const m of gm.get('ae_linkshell_out') || []) sent.push([m.kind, JSON.parse(JSON.stringify(m.body))]);
+}
+// A link that asks first (not a host link), with the panel's buttons kept so a test can press them.
+function makeAsking() {
+  const sent = [], handlers = {}, buttons = {};
+  const el = () => ({ replaceChildren() {}, remove() {}, append() {} });
+  const AE = {
+    profile: async () => ({ storeId: 914 }), sameStore: async () => true, data: { workorders: async () => [], nameOf: () => '' },
+    h: (tag, attrs, label) => { if (tag === 'button') buttons[label] = attrs.onclick; return el(); }, actionIcon: () => '', icon: () => '', track: () => {}, noteError: () => {},
+    linkshell: { on: (k, fn) => { handlers[k] = fn; }, send: (k, b) => { sent.push([k, JSON.parse(JSON.stringify(b))]); return 'id'; }, sendParts: (...a) => realParts(sent, ...a),
+      linked: () => ({ store: 914, phoneName: 'Pixel' }), hold: () => () => {} },
+  };
+  const document = { getElementById: () => null, head: { append() {} }, body: { append() {} } };
+  vm.runInContext(fs.readFileSync(new URL('../src/68-morning-check.js', import.meta.url), 'utf8'), vm.createContext({ AE, AE_ON_PORTAL: true, document, location: { pathname: '/' }, console }));
+  return { mc: AE.morningCheck, sent, handlers, buttons };
+}
+const tick = () => new Promise((r) => setTimeout(r, 5));
+
+await t('Linkshell: the list goes in parts of 15 with the same bodies as before; statuses on the first part only', async () => {
+  const rows = Array.from({ length: 31 }, (_, i) => ({ workorderId: 100 + i, workorderStatusId: 8, locationBin: 'B' + i, customerDevice: { name: 'Case ' + i }, deviceCatalog: { name: 'Phone' }, deviceIssues: [{ name: 'Screen' }], customer: { fullName: 'Riley Price' }, programName: 'Retail', updatedAt: 'u' + i }));
+  const { sent, handlers, mc } = make(WO, 914, { host: true, rows });
+  await handlers['check.start']({ run: 'r1' });
+  const lists = sent.filter((x) => x[0] === 'check.list').map((x) => x[1]);
+  const all = rows.map((r) => [String(r.workorderId), 8, r.locationBin, r.customerDevice.name, 'Phone', 'Screen', 'Riley Price', 'Retail', r.updatedAt]);
+  assert.equal(lists.length, 3);
+  lists.forEach((b, p) => {
+    assert.deepEqual(Object.keys(b).sort(), ['bins', 'part', 'parts', 'rows', 'run', 'statuses', 'store']);
+    assert.deepEqual([b.run, b.part, b.parts, b.store, b.bins], ['r1', p, 3, '914', false]);
+    assert.deepEqual(b.rows, all.slice(p * 15, (p + 1) * 15));
+    assert.equal(b.statuses.length > 0, p === 0);
+  });
+  assert.equal(mc.link.state().total, 31);
+});
+await t('Linkshell: a newer check.start takes the question; the one it replaces is declined, and its message is finished', async () => {
+  const { sent, handlers, buttons, mc } = makeAsking();
+  const first = handlers['check.start']({ run: 'r1' });
+  await tick();
+  assert.equal(typeof buttons.Allow, 'function'); assert.deepEqual(sent, []);
+  const second = handlers['check.start']({ run: 'r2' });
+  await first; // no longer waits for a click that can't come
+  assert.deepEqual(sent, [['check.end', { run: 'r1', reason: 'declined' }]]);
+  assert.equal(mc.link.state(), null);
+  buttons.Allow();
+  await second;
+  assert.equal(sent[1][0], 'check.list'); assert.equal(sent[1][1].run, 'r2');
+  assert.equal(mc.link.state().id, 'r2');
+});
+await t('Linkshell: the same check.start again while its question shows does not decline it', async () => {
+  const { sent, handlers, buttons, mc } = makeAsking();
+  const first = handlers['check.start']({ run: 'r3' });
+  await tick();
+  await handlers['check.start']({ run: 'r3' });
+  assert.deepEqual(sent, []);
+  buttons.Decline();
+  await first;
+  assert.deepEqual(sent, [['check.end', { run: 'r3', reason: 'declined' }]]);
+  assert.equal(mc.link.state(), null);
 });
 console.log('\n' + n + ' Morning check tests passed');

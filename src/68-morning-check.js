@@ -156,8 +156,7 @@ AE.morningCheck.link = (() => {
     const store = (await AE.profile()).storeId;
     const rows = (await AE.data.workorders(Date.now(), 0)).map(rowOf);
     const statuses = Object.entries(MC.STATUS).map(([s, n]) => [Number(s), n, movesFrom(Number(s))]);
-    const parts = Math.max(1, Math.ceil(rows.length / PART));
-    for (let p = 0; p < parts; p++) L.send('check.list', { run: id, part: p, parts, store: String(store), bins: LIVE.bin, statuses: p === 0 ? statuses : [], rows: rows.slice(p * PART, (p + 1) * PART) });
+    L.sendParts('check.list', (p) => ({ run: id, store: String(store), bins: LIVE.bin, statuses: p === 0 ? statuses : [] }), rows, { size: PART, key: 'rows' });
     return rows.length;
   }
 
@@ -215,6 +214,7 @@ AE.morningCheck.link = (() => {
   const head = () => AE.h('div', { class: 'hd' }, AE.h('span', { html: AE.actionIcon('linkshell', 30) || AE.icon('aetheryte', 30), style: 'line-height:0' }), AE.h('h4', null, 'Morning check'), AE.h('span', { class: 'st' }, phoneName()));
 
   function draw() {
+    if (asking) return; // the panel is showing a question; the next draw after it is answered catches up
     if (!run) return close();
     const el = panel(), pct = run.total ? Math.round((run.done / run.total) * 100) : 0;
     el.replaceChildren(head(), AE.h('div', { class: 'bar' }, AE.h('b', { style: 'width:' + pct + '%' })),
@@ -222,16 +222,22 @@ AE.morningCheck.link = (() => {
       run.log.length ? AE.h('ul', null, ...run.log.slice(0, 20).map((x) => AE.h('li', null, AE.h('b', null, x.wo), AE.h('span', null, x.what), AE.h('i', { class: x.ok ? '' : 'r' }, x.ok ? 'Saved' : 'Failed')))) : null,
       AE.h('div', { class: 'sg-actions' }, btn('Stop', () => stop())));
   }
+  // One question at a time: a newer check.start takes the panel, and the one it replaces is answered as declined (its handler tells
+  // the phone), so no question is left waiting for a click that can't come.
+  let asking = null; // { id, done } while Allow / Decline is showing
   function ask(id) {
+    if (asking) asking.done(false);
     return new Promise((resolve) => {
+      const me = asking = { id, done: (ok) => { if (asking !== me) return; asking = null; resolve(ok); } };
       const el = panel();
-      el.replaceChildren(head(), AE.h('div', { class: 'sg-actions' }, btn('Decline', () => { close(); resolve(false); }), btn('Allow', () => resolve(true), true)));
+      el.replaceChildren(head(), AE.h('div', { class: 'sg-actions' }, btn('Decline', () => { if (asking === me) close(); me.done(false); }), btn('Allow', () => me.done(true), true)));
     });
   }
   // The run lives in this tab, so the tab holds the Linkshell socket while it lasts (another tab in use would answer "not running").
   let unhold = null;
   function clear() {
-    run = null; close();
+    run = null;
+    if (!asking) close(); // a question for another check stays up
     if (unhold) { unhold(); unhold = null; }
   }
   function stop(reason) {
@@ -253,6 +259,7 @@ AE.morningCheck.link = (() => {
     if (!(await storeOk())) { L.send('check.end', { run: id, reason: 'store' }); return; }
     const link = L.linked() || {};
     if (!link.host) {
+      if (asking && asking.id === id) return; // the same start again while its question is showing: that one answers
       const ok = await ask(id);
       if (!ok) { L.send('check.end', { run: id, reason: 'declined' }); return; }
     }

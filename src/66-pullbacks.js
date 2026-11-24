@@ -655,8 +655,7 @@ AE.shard({
       const L = link();
       if (!L || !S || !S.phone) return;
       const rows = S.items.map((it, i) => [i, String(it.sku), String(it.description), String(it.serial), phoneState(it)]);
-      const parts = Math.max(1, Math.ceil(rows.length / RUN_PART));
-      for (let p = 0; p < parts; p++) L.send('pullbacks.run', { run: S.phone, file: S.file, store: P.storeNum(S.store) || String(S.store), part: p, parts, items: rows.slice(p * RUN_PART, (p + 1) * RUN_PART) }, { wake: wake && p === 0 });
+      L.sendParts('pullbacks.run', { run: S.phone, file: S.file, store: P.storeNum(S.store) || String(S.store) }, rows, { size: RUN_PART, wake });
     }
     // While the phone scans, this tab keeps the Linkshell socket (its session is the one in memory here).
     let unhold = null;
@@ -686,12 +685,16 @@ AE.shard({
       if (view === 'done') return showDone();
       if (view === 'scan') return S.items.some(queued) ? batch() : firstPending() == null ? showDone() : showScan();
     }
-    async function fromPhone(op, b) {
+    // why: AE.linkshell.paused()'s answer for this message ('' when the page may act on it).
+    async function fromPhone(op, b, why) {
       if (!ui) S = load(); // the dialog is closed: the saved session
       if (!S || !S.phone || !b || b.run !== S.phone) return;
       if (op === 'join') return sendRun();
       const i = Number(b.i), it = S.items[i];
       if (!Number.isInteger(i) || !it) return;
+      // Aethernet has stopped on this page, or Portal moved to another store: nothing is marked or changed. A scan is answered as a
+      // failed mark is; a skip or undo gets the item's state as it still is here.
+      if (why) { const L = link(); if (L) L.send('pullbacks.result', { run: S.phone, i, state: op === 'scan' && it.status === 'pending' ? 'failed' : phoneState(it), message: why }); return; }
       if (op === 'scan') {
         const v = String(b.serial || '').trim();
         if (it.status !== 'pending' || !v) return tellPhone(i);
@@ -717,7 +720,15 @@ AE.shard({
         save(S); tellPhone(i);
       }
     }
-    if (AE.linkshell) for (const op of ['scan', 'skip', 'undo', 'join']) AE.linkshell.on('pullbacks.' + op, (b) => fromPhone(op, b));
+    // The page is asked about before each message of this run, one at a time, so the phone's messages are still handled in the order
+    // they came.
+    let asked = Promise.resolve('');
+    if (AE.linkshell) for (const op of ['scan', 'skip', 'undo', 'join']) AE.linkshell.on('pullbacks.' + op, (b) => {
+      const s = ui ? S : load();
+      if (!s || !s.phone || !b || b.run !== s.phone) return;
+      const why = asked = asked.then(() => (op === 'join' ? '' : AE.linkshell.paused()));
+      return why.then((w) => fromPhone(op, b, w));
+    });
 
     // ---------------------------------------------------------- entry points
     // A Pullbacks tile on the Inventory hub: a copy of Portal's Inventory Count tile (<a class="cards-link"> around a simple-card),
