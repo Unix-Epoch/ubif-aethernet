@@ -73,7 +73,7 @@ object FakeHomeData {
 
 /**
  * Returns mock data. [scenario] picks the state; by default the answer follows the chosen scope (All stores / Sandbox / Lynnhaven stale).
- * Loading never answers. Replace with the real repository in `DataModule` (agent A).
+ * Loading never answers.
  */
 class FakeHomeRepository(
     private val scenario: (StoreScope) -> HomeScenario? = { null },

@@ -6,10 +6,7 @@ import android.content.Intent
 import dev.aethernet.linkpearl.LinkpearlApp
 import kotlinx.coroutines.launch
 
-/**
- * The notification's "Mark read" action. Needs `<receiver android:name=".feature.alerts.AlertActionReceiver" android:exported="false" />`
- * in the manifest (shared file: requested in the report); until then the action is not shown.
- */
+/** The notification's "Mark read" action. Declared in the manifest, not exported: only the app's own PendingIntent reaches it. */
 class AlertActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_MARK_READ) return

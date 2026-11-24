@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun markTappedRead(intent: Intent?) =
-        NotificationTap.consume(intent) { ids -> (application as LinkpearlApp).container.get<AlertsHub>().feed.markRead(ids) }
+        NotificationTap.consume(intent, { NotificationTap.token(this) }) { ids -> (application as LinkpearlApp).container.get<AlertsHub>().feed.markRead(ids) }
 
     private fun applyTheme(dark: Boolean) {
         val bars = if (dark) SystemBarStyle.dark(AColor.TRANSPARENT) else SystemBarStyle.light(AColor.TRANSPARENT, AColor.TRANSPARENT)

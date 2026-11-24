@@ -82,7 +82,7 @@ export function load(files, opts = {}) {
   class FakeDate extends Date { constructor(...a) { if (a.length) super(...a); else super(clock.now); } static now() { return clock.now; } }
   // An element that remembers what was set on it (innerHTML, attributes) and ignores everything else.
   const rec = (tag) => {
-    const e = { tag, nodeType: 1, innerHTML: '', attrs: {}, style: {}, dataset: {}, setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k] ?? null; },
+    const e = { tag, nodeType: 1, innerHTML: '', attrs: {}, style: {}, dataset: {}, setAttribute(k, v) { this.attrs[k] = v; if (/^data-/.test(k)) this.dataset[k.slice(5).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = String(v); }, getAttribute(k) { return this.attrs[k] ?? null; },
       classList: { add() {}, remove() {}, contains: () => false, toggle() {} }, children: [], childNodes: [], append() {}, appendChild() {}, remove() {}, addEventListener() {}, removeEventListener() {} };
     return new Proxy(e, { get: (t, k) => (k in t ? t[k] : k === 'then' || typeof k === 'symbol' ? undefined : /^(querySelectorAll)$/.test(k) ? () => [] : () => null), set: (t, k, v) => { t[k] = v; return true; } });
   };
@@ -105,12 +105,15 @@ export function load(files, opts = {}) {
     navigator: nav,
     CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init && init.detail; } },
     AbortController, URL, URLSearchParams, TextEncoder, TextDecoder, Promise, JSON, Math, Date: FakeDate, Number, String, Object, Array, Set, Map, Error, RegExp, Symbol, Intl,
-    crypto: globalThis.crypto, btoa, atob, CompressionStream, DecompressionStream, Blob, Response, ReadableStream, WritableStream, performance, structuredClone,
+    crypto: globalThis.crypto, btoa, atob, CompressionStream, DecompressionStream, Blob, Response, ReadableStream, WritableStream, structuredClone,
+    performance: mode === 'fake' ? { now: () => clock.now } : performance, // fake: core's "Portal's first load has settled" wait runs on the virtual clock too
     MutationObserver: class { observe() {} disconnect() {} }, ResizeObserver: class { observe() {} disconnect() {} },
     sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} }, localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     NodeFilter: { SHOW_TEXT: 4 }, Node: { ELEMENT_NODE: 1 }, HTMLElement: class {}, Event: class {},
     addEventListener() {}, removeEventListener() {}, requestAnimationFrame: (fn) => real.setTimeout(fn, 0), cancelAnimationFrame() {},
     getComputedStyle: () => ({}),
+    // core's header icons paint in a microtask and need a real DOM: what they throw on this stand-in is not a test's business
+    queueMicrotask: (fn) => queueMicrotask(() => { try { fn(); } catch (_) {} }),
     // fast: the collector's pauses (300 ms and the like) shrink to 1 ms; long timers (the 45 s Retrace tick) never keep Node alive
     setTimeout: mode === 'fake' ? (fn, ms, ...a) => vAdd(fn, ms, a, false)
       : (fn, ms, ...a) => { const t = real.setTimeout(fn, fast && ms > 1 && ms <= 5000 ? 1 : ms, ...a); if (ms > 5000) t.unref(); return t; },
@@ -151,17 +154,11 @@ export function load(files, opts = {}) {
   return { AE, ctx, gm, fetchLog, requests, toasts, scripts, clock, setFetch: (fn) => { fetchImpl = fn; }, advance, settle, pendingTimers: () => vt.size, online: (v) => { nav.onLine = v; } };
 }
 
-// The source of one function in a src file, found by its header text (brace matching), so a test can run the real code
-// of a function that lives inside a shard's closure. Throws if it is not there (the test then needs updating).
-export function extractFn(file, header) {
-  const src = readFileSync(path.join(ROOT, 'src', file), 'utf8');
-  const at = src.indexOf(header);
-  if (at < 0) throw new Error(file + ': "' + header + '" not found');
-  let i = src.indexOf('{', at), depth = 0;
-  for (let j = i; j < src.length; j++) {
-    const c = src[j];
-    if (c === '{') depth++;
-    else if (c === '}' && --depth === 0) return src.slice(at, j + 1);
-  }
-  throw new Error('unbalanced');
+// Starts one shard the way AE.start would (its run()), and gives back what it exposes to tests (its `_test`, set in run()):
+// the shard's own functions, closed over its real state and neighbours. The DOM is the harness's stand-in unless the test changes it.
+export function runShard(env, id) {
+  const s = env.AE.shards.find((x) => x.id === id);
+  if (!s) throw new Error('no shard "' + id + '" among the loaded files');
+  s.run();
+  return s._test || {};
 }

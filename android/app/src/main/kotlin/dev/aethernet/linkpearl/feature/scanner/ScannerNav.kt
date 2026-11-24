@@ -36,7 +36,7 @@ fun NavGraphBuilder.scannerGraph() {
 fun ScannerRoute() {
     val c = LocalAppContainer.current
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
-    val vm: ScannerViewModel = viewModel(factory = viewModelFactory { initializer { ScannerViewModel(c.get<ScannerPrefs>()) } })
+    val vm: ScannerViewModel = viewModel(factory = viewModelFactory { initializer { ScannerViewModel(c.get<ScannerPrefs>(), c.appScope) } })
     val ui by vm.state.collectAsStateWithLifecycle()
     DisposableEffect(vm) { onDispose { vm.flush() } }
     ScannerScreen(

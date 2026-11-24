@@ -5,7 +5,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.decodeFromJsonElement
 import java.util.concurrent.ConcurrentHashMap
 
 @Serializable
@@ -29,9 +28,9 @@ class RealHomeRepository(
 
     override suspend fun load(scope: StoreScope, fresh: Boolean): HomeResult {
         val query = buildMap { put("store", scope.key); if (fresh) put("fresh", "1") }
-        return when (val r = api.get("/v1/agents/m/home", query)) {
+        return when (val r = api.get("/v1/agents/m/home", query).decode(HomeData.serializer())) {
             is ApiResult.Success -> {
-                val data = try { LinkpearlJson.decodeFromJsonElement<HomeData>(r.value) } catch (_: Exception) { return HomeResult.Failed(FailureReason.Server) }
+                val data = r.value
                 if (!data.empty) remember(scope, data)
                 onStores(data.stores)
                 if (!data.empty) onZone(data.tz)

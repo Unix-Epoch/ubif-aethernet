@@ -178,5 +178,6 @@ AE.shard({
       if (row && (!pill || pill.parentElement !== row)) render();
     });
     AE.on('cleaning-changed', () => { const woId = currentWoId(); if (woId) load(woId, true); });
+    this._test = { load, state: () => state }; // the client tests' way in (test-client/)
   },
 });

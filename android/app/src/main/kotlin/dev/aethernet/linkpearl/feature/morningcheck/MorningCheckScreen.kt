@@ -98,6 +98,8 @@ fun MorningCheckScreen(
     camera: (@Composable (onCode: (String) -> Unit) -> Unit)? = null,
     startEditing: Boolean = false,
     startScanning: Boolean = false,
+    /** Customer names show only while the app is unlocked (as on Work orders). */
+    names: Boolean = true,
 ) {
     val navInset = LocalNavInset.current
     var editing by rememberSaveable { mutableStateOf(startEditing) }
@@ -114,8 +116,8 @@ fun MorningCheckScreen(
                 McUi.NoLink -> StateMessage("No linked PC", actionLabel = "Linkshell", onAction = actions.onLinkshell)
                 is McUi.Start -> StartBody(state, actions)
                 is McUi.Waiting -> PcCard(state.pc, state.online)
-                is McUi.Ended -> StateMessage(if (state.reason == "declined") "Declined on the PC" else "Stopped on the PC")
-                is McUi.Checking -> if (state.s.complete) DoneBody(state.s) else CheckBody(state.s, if (scanning) camera else null, actions.onScan)
+                is McUi.Ended -> StateMessage(when (state.reason) { "declined" -> "Declined on the PC"; "store" -> "Portal is on another store"; else -> "Stopped on the PC" })
+                is McUi.Checking -> if (state.s.complete) DoneBody(state.s) else CheckBody(state.s, if (scanning) camera else null, actions.onScan, names)
             }
         }
         val bottom = @Composable { content: @Composable () -> Unit ->
@@ -185,7 +187,7 @@ private fun ColumnScope.StartBody(state: McUi.Start, actions: McActions) {
 
 // ---------------------------------------------------------------- one work order
 @Composable
-private fun ColumnScope.CheckBody(s: McSession, camera: (@Composable ((String) -> Unit) -> Unit)?, onScan: (String) -> Unit) {
+private fun ColumnScope.CheckBody(s: McSession, camera: (@Composable ((String) -> Unit) -> Unit)?, onScan: (String) -> Unit, names: Boolean) {
     val c = Lp.colors
     val cur = s.current ?: return
     val haptics = rememberHaptics()
@@ -197,14 +199,14 @@ private fun ColumnScope.CheckBody(s: McSession, camera: (@Composable ((String) -
         if (s.count(McMark.Skipped) > 0) LpChip("${Fmt.count(s.count(McMark.Skipped))} skipped", tone = Tone.Warn)
     }
     Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(LpSpacing.M)) {
-        OrderCard(s, cur)
+        OrderCard(s, cur, names)
         val next = ((s.idx ?: 0) + 1 until s.items.size).map { s.items[it] }.filter { it.mark == McMark.Pending }.take(3)
         next.forEach { NextRow(it) }
     }
 }
 
 @Composable
-private fun OrderCard(s: McSession, it: McItem) {
+private fun OrderCard(s: McSession, it: McItem, names: Boolean) {
     val c = Lp.colors
     val r = it.row
     LpCard {
@@ -213,7 +215,7 @@ private fun OrderCard(s: McSession, it: McItem) {
             if (it.movedUp) LpChip("Moved up", tone = Tone.Info)
         }
         Text(listOf(r.device, r.issue, r.program).filter { t -> t.isNotBlank() }.joinToString(" · "), style = LpType.Body, color = c.fg, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        if (r.customer.isNotBlank()) Text(r.customer, style = LpType.Small, color = c.soft, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+        if (names && r.customer.isNotBlank()) Text(r.customer, style = LpType.Small, color = c.soft, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
         Field("Location") {
             val was = it.was?.bin?.takeIf { b -> b != r.bin }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

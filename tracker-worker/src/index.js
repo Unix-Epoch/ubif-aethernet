@@ -52,6 +52,8 @@
   storage is set up) unless TRIM_WITHOUT_ARCHIVE is set. The log tables (scans, access_log, write budget counters) are
   pruned on every run, archive or not: they hold no customer data and need no cold copy.
 */
+import { CORS, json, fail, readJson, safeEqual, now, int, iso, clean, parse, tzOf, DAY_RE } from './http.js';
+import { CLOSED_STATUS } from './constants.js';
 import { daily } from './daily.js';
 
 import { PAGES, WIDE_PAGES, owners, cleanPages, presetOf, accessOf, check, stripSealed } from './access.js';
@@ -69,22 +71,9 @@ import { over, charge, spend, pruneBudget, PER_WO_HOUR } from './budget.js';
 const TICK_CRON = '*/10 * * * *'; // must match wrangler.toml
 const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
-const CLOSED_IDS = new Set([14, 15, 25]); // Sale complete, Closed, Cancelled
 const MAX = { scan: 400000, wo: 2000000, plain: 400000, sealed: 1800000, card: 8000 };
 
-const CORS = {
-  'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
-  'access-control-allow-headers': 'content-type, x-aethernet-key',
-  'access-control-max-age': '86400',
-};
-const json = (body, status = 200, cors = true) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...(cors ? CORS : {}) } });
-const fail = (status, error, cors = true) => json({ error }, status, cors);
-const now = () => new Date().toISOString();
 const later = (min) => new Date(Date.now() + min * 60000).toISOString();
-const clean = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, max) : '');
-const int = (v) => (Number.isInteger(v) ? v : (typeof v === 'string' && /^\d{1,12}$/.test(v) ? Number(v) : null));
-const iso = (v) => (typeof v === 'string' && /^\d{4}-\d\d-\d\dT[\d:.]+(Z|[+-]\d\d:?\d\d)?$/.test(v) ? v.slice(0, 40) : null);
 const num = (v) => (typeof v === 'number' && isFinite(v) ? Math.round(v * 100) / 100 : null);
 
 const B64U = /^[A-Za-z0-9_-]+$/;
@@ -94,12 +83,6 @@ const isSealed = (s, max) => typeof s === 'string' && s.length <= max && s.lengt
 const isCopy = (c) => c && typeof c.salt === 'string' && B64U.test(c.salt) && c.salt.length <= 32 && Number.isInteger(c.rounds) && c.rounds >= 100000 && c.rounds <= 5000000
   && typeof c.wrapped === 'string' && c.wrapped.startsWith('p1.') && c.wrapped.length <= 1000 && B64U.test(c.wrapped.slice(3));
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}$/;
-
-async function readJson(req, max) {
-  const text = await req.text();
-  if (text.length > max) throw Object.assign(new Error('too large'), { status: 413 });
-  try { return text ? JSON.parse(text) : {}; } catch (_) { throw Object.assign(new Error('bad JSON'), { status: 400 }); }
-}
 
 // ------------------------------------------------------------------ store access (Waymark's list)
 const accessCache = new Map();
@@ -144,7 +127,6 @@ const soldAtOf = (plain) => {
   if (Number(w.statusId) === 14 && w.updatedAt) return w.updatedAt;
   return ((plain && plain.auditTrail) || []).filter((a) => Number(a.statusId) === 14 && a.createdAt).map((a) => a.createdAt).sort().pop() || null;
 };
-const DAY_RE = /^\d{4}-\d\d-\d\d$/;
 
 /*
   Daily sales per store and day: Portal's (source portal|mac) where the day was synced, else an estimate
@@ -152,7 +134,7 @@ const DAY_RE = /^\d{4}-\d\d-\d\d$/;
   admin site and the store side (Tactician's sales per labor hour). visible(store) filters.
 */
 async function salesDays(env, visible, from, to) {
-  const T = env.TR, tz = env.STORE_TZ || 'America/New_York';
+  const T = env.TR, tz = tzOf(env);
   const pad = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
   const [days, sales, sold] = await T.batch([
     T.prepare('SELECT * FROM sales_days WHERE day BETWEEN ? AND ?').bind(from, to),
@@ -211,7 +193,7 @@ function dayEnd(day, tz) {
 }
 // The RFP total at the end of each day in [from, to] (today: now). [{ day, count, value }]
 async function rfpDays(env, store, from, to) {
-  const tz = env.STORE_TZ || 'America/New_York', today = localDay(new Date().toISOString(), tz);
+  const tz = tzOf(env), today = localDay(new Date().toISOString(), tz);
   const r = await env.TR.prepare('SELECT wo, start_at, end_at, value FROM rfp_periods WHERE store = ? AND start_at <= ? AND (end_at IS NULL OR end_at >= ?)')
     .bind(store, dayEnd(to, tz), from + 'T00:00:00Z').all();
   const out = [];
@@ -267,7 +249,6 @@ export function agentSettings(b) {
   return o;
 }
 const withDefaults = (text) => { let s = {}; try { s = JSON.parse(text || '{}'); } catch (_) {} return Object.assign({}, AGENT_DEFAULTS, s); };
-const parseRun = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 
 // 'phone' for a Linkpearl device (agent_kind row, migrations/2026-11-13-mobile-devices.sql), else 'agent'. Before the migration every agent is 'agent'.
 const kindOf = async (T, id) => ((await T.prepare('SELECT kind FROM agent_kind WHERE agent_id = ?').bind(id).first().catch(() => null)) || {}).kind || 'agent';
@@ -307,7 +288,7 @@ async function agentApi(req, env, url) {
   }
   const m = /^Bearer ([0-9a-f]{32})\.([0-9a-f]{64})$/.exec(req.headers.get('authorization') || '');
   const a = m && await agentRow(T, m[1]);
-  if (!a || (await sha256hex(m[2])) !== a.token_hash) return fail(401, 'unknown program or wrong token');
+  if (!a || !safeEqual(await sha256hex(m[2]), a.token_hash)) return fail(401, 'unknown program or wrong token');
   // "Last seen" is for the admin site's list: written at most every SEEN_MIN minutes, not on every request.
   if (!a.last_seen_at || Date.now() - Date.parse(a.last_seen_at) > SEEN_MIN * 60000) await T.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').bind(now(), a.id).run();
   const stores = JSON.parse(a.stores || '[]'), jwk = JSON.parse(a.public_jwk), active = a.status === 'active';
@@ -323,7 +304,7 @@ async function agentApi(req, env, url) {
   if (path === '/me' && req.method === 'GET') {
     const keys = active ? (await T.prepare('SELECT k.store, s.public_jwk, k.wrapped FROM agent_keys k JOIN store_keys s ON s.store = k.store WHERE k.agent_id = ? ORDER BY k.store').bind(a.id).all()).results
       .filter((k) => stores.includes(k.store)).map((k) => ({ store: k.store, publicJwk: JSON.parse(k.public_jwk), wrapped: k.wrapped })) : [];
-    return json({ id: a.id, name: a.name, kind, status: a.status, stores, fingerprint: await fingerprint(jwk), keys, settings: withDefaults(a.settings), runNow: !!a.run_now, lastRun: parseRun(a.last_run) });
+    return json({ id: a.id, name: a.name, kind, status: a.status, stores, fingerprint: await fingerprint(jwk), keys, settings: withDefaults(a.settings), runNow: !!a.run_now, lastRun: parse(a.last_run) });
   }
   if (path === '/report' && req.method === 'POST') {
     const b = await readJson(req, 4000), ranAt = iso(b.ranAt);
@@ -368,8 +349,8 @@ async function storeApi(req, env, url, store) {
     return json({ publicJwk: JSON.parse(r.public_jwk) });
   }
 
-  if (path === '/daily' && req.method === 'POST') return daily(req, env, store, { readJson, json, fail, clean });
-  if (path.startsWith('/retrace/')) return retraceStore(req, env, url, store, path, { readJson, json, fail, clean, now });
+  if (path === '/daily' && req.method === 'POST') return daily(req, env, store);
+  if (path.startsWith('/retrace/')) return retraceStore(req, env, url, store, path);
 
   if (path === '/scan' && req.method === 'POST') {
     const b = await readJson(req, MAX.scan);
@@ -470,7 +451,7 @@ async function storeApi(req, env, url, store) {
     if (isNaN(Date.parse(day)) || Date.parse(day) < nowMs - 400 * 86400000 || Date.parse(day) > nowMs + 2 * 86400000) return fail(400, 'day out of range');
     const budgetMsg = await spend(T, store, [['sales', 1]]);
     if (budgetMsg) return fail(429, budgetMsg);
-    const at = now(), tz = env.STORE_TZ || 'America/New_York';
+    const at = now(), tz = tzOf(env);
     const rows = [];
     for (const r of b.rows) {
       const id = clean(r && r.saleId, 40);
@@ -617,7 +598,7 @@ async function storeApi(req, env, url, store) {
     const w = plain.workorder, pay = (plain.cart && plain.cart.payment) || {}, value = cartValue(plain);
     // Portal empties a WO's cart at Sale complete: keep the last non-empty one (sales items, estimates).
     const hasItems = !!(plain.cart && plain.cart.items && plain.cart.items.length), soldAt = soldAtOf(plain);
-    const statusId = int(w.statusId), closed = CLOSED_IDS.has(statusId);
+    const statusId = int(w.statusId), closed = CLOSED_STATUS.has(statusId);
     const prevPlain = prev.plain ? JSON.parse(prev.plain) : null;
     const changes = prevPlain ? diff(prevPlain, plain) : [];
     // Write budgets (src/budget.js): one work order's snapshots an hour, then the store's snapshots, bytes and change rows. Over → 429, nothing stored.
@@ -850,9 +831,9 @@ async function trackerRoutes(req, env, url, path, email, who) {
   // Metrics (src/metrics.js): the gate above already required page 'metrics'; metricsApi limits stores to what `me` may see.
   if (path === '/metrics' || path.startsWith('/metrics/')) return metricsApi(req, env, url, path, me);
   // Assize rules (src/assize.js): the gate above already required page 'rules'; edits check the scope there.
-  if (path.startsWith('/assize/')) return assizeAdmin(req, env, url, path, me, email, { json, fail, readJson, clean, int, now, log });
+  if (path.startsWith('/assize/')) return assizeAdmin(req, env, url, path, me, email, { log });
   // Retrace (src/retrace-api.js): the gate above already required page 'retrace' and the store in the path / ?store=.
-  if (path.startsWith('/retrace/')) return retraceAdmin(req, env, url, path, me, email, { json, fail, clean, int, log, readJson });
+  if (path.startsWith('/retrace/')) return retraceAdmin(req, env, url, path, me, email, { log });
   // Cloudflare and Portal load (src/usage.js): the gate above already required page 'usage'; usageLoad limits stores and totals to what `me` may see.
   if (req.method === 'GET' && path === '/usage-load') return json(await usageLoad(env, me), 200, false);
 
@@ -919,7 +900,7 @@ async function trackerRoutes(req, env, url, path, email, who) {
     const kinds = new Map(((await T.prepare('SELECT agent_id, kind FROM agent_kind').all().catch(() => ({ results: [] }))).results).map((k) => [k.agent_id, k.kind]));
     return json({ agents: await Promise.all(r.results.map(async (a) => ({ id: a.id, name: a.name, kind: kinds.get(a.id) || 'agent', fingerprint: await fingerprint(JSON.parse(a.public_jwk)), status: a.status, stores: JSON.parse(a.stores || '[]'),
       created_at: a.created_at, approved_by: a.approved_by, approved_at: a.approved_at, last_seen_at: a.last_seen_at, publicJwk: JSON.parse(a.public_jwk),
-      settings: withDefaults(a.settings), runNow: !!a.run_now, lastRun: parseRun(a.last_run) }))) }, 200, false);
+      settings: withDefaults(a.settings), runNow: !!a.run_now, lastRun: parse(a.last_run) }))) }, 200, false);
   }
   const am = path.match(/^\/agents\/([0-9a-f]{32})\/(approve|remove|settings|run-now)$/);
   if (req.method === 'POST' && am) {
@@ -1071,7 +1052,7 @@ async function handle(req, env) {
   if (url.pathname === '/v1/linkshell/connect') {
     try { return await linkshellConnect(req, env, url, { json, fail, allowed }); } catch (e) { return serverError(e, req); }
   }
-  if (!env.APP_KEY || req.headers.get('x-aethernet-key') !== env.APP_KEY) return fail(403, 'app key required');
+  if (!env.APP_KEY || !safeEqual(req.headers.get('x-aethernet-key'), env.APP_KEY)) return fail(403, 'app key required');
   try {
     const sg = await sandboxGuard(req, url);
     if (sg) return sg;
@@ -1084,7 +1065,7 @@ async function handle(req, env) {
     if (!m) return fail(404, 'not found');
     const store = Number(m[1]);
     if (!(await allowed(env, store))) return fail(403, 'store has no Aethernet access');
-    if (m[2] === 'assize') return await assizeStore(req, env, url, store, { json, fail });
+    if (m[2] === 'assize') return await assizeStore(req, env, url, store);
     if (m[2] === 'linkshell') return await linkshellStore(req, env, url, store, { json, fail, readJson, clean, log });
     return await storeApi(req, env, url, store);
   } catch (e) {

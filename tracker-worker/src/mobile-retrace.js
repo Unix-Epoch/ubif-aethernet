@@ -13,28 +13,21 @@
   Indexes used: inv_mv_item (store, item, at), inv_mv_label (store, label, at), inv_labels PK (store, label) and inv_labels_item (store, item), inv_items PK,
   inv_docs PK (store, type, id), inv_cursors PK. No migration needed.
 */
+import { json, fail, int, httpError, cleanAny, parse } from './http.js';
 import { cleanLabel, parseLabel } from './retrace.js';
+import { storeOf } from './mobile-agent.js';
 import { nowCols, rowNow, nowCountsRows, nowCountsStmt, availRes } from './retrace-now.js';
 
 const DEFAULT_LIMIT = 25, MAX_LIMIT = 100;
 const ITEM_LABELS = 100, ITEM_LABELS_READ = 1000, ITEM_MOVES = 50, LABEL_MOVES = 300, LABEL_HITS = 10;
 
-const err = (status, message) => Object.assign(new Error(message), { status });
 const b64 = (o) => btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const unb64 = (s) => { try { return JSON.parse(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4))); } catch (_) { return null; } };
-const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 const unesc = (v) => { try { return decodeURIComponent(v); } catch (_) { return null; } };
 const likeEsc = (s) => s.replace(/[\\%_]/g, (c) => '\\' + c);
-const clean = (v, max) => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
 const GROUPS = ['in', 'wo', 'out', 'q', 'bad'];
 
-// The one store this request is about. Throws 400 / 403.
-function storeOf(device, v) {
-  if (v == null || !/^\d{1,6}$/.test(v)) throw err(400, 'store: a store number');
-  if (!device.stores.map(Number).includes(Number(v))) throw err(403, 'not your store');
-  return Number(v);
-}
-const limitOf = (h, v) => Math.min(Math.max(h.int(v) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+const limitOf = (h, v) => Math.min(Math.max(int(v) || DEFAULT_LIMIT, 1), MAX_LIMIT);
 const movement = (m) => ({ at: m.at, kind: m.kind, refType: m.ref_type || null, refId: m.ref_id || null, label: m.label || null });
 
 // Quantities of an inv_items row as the admin items list reads them: onHand = sum over warehouses, available = non-quarantine warehouses; null without a lookup.
@@ -48,12 +41,12 @@ function qtyOf(qtyText, labelAvail) {
 // ---------------------------------------------------------------- GET /retrace/items
 async function items(env, url, device, h) {
   const q = url.searchParams, T = env.TR, store = storeOf(device, q.get('store')), limit = limitOf(h, q.get('limit'));
-  const term = clean(q.get('q'), 60);
+  const term = cleanAny(q.get('q'), 60);
   const out = { v: 1, now: h.now(), store, q: term || null, asOf: null, items: [], next: null };
   let cur = null;
   if (q.get('after')) {
     cur = unb64(q.get('after'));
-    if (!cur || typeof cur.at !== 'string' || cur.at.length > 40 || typeof cur.item !== 'string' || cur.item.length > 40 || (cur.t || '') !== term) throw err(400, 'after: not a cursor from this list');
+    if (!cur || typeof cur.at !== 'string' || cur.at.length > 40 || typeof cur.item !== 'string' || cur.item.length > 40 || (cur.t || '') !== term) throw httpError(400, 'after: not a cursor from this list');
   }
   const args = [store], cond = [];
   if (term) { // item number starts with q, or the name contains it (names from inv_items; an item with no name row is found by number via its labels)
@@ -94,7 +87,7 @@ async function items(env, url, device, h) {
       .bind(store, (parseLabel(term) || { label: term }).label, likeEsc(term) + '%', LABEL_HITS).all()).results;
     out.labels = lab.map((l) => { const [now, group] = rowNow(l); return { label: l.label, item: l.item || null, name: l.name || null, now, group }; });
   }
-  return h.json(out);
+  return json(out);
 }
 
 // ---------------------------------------------------------------- GET /retrace/item/<store>/<item>
@@ -102,7 +95,7 @@ async function item(env, url, device, h, store, itemNo) {
   const q = url.searchParams, T = env.TR;
   storeOf(device, String(store));
   const group = q.get('group');
-  if (group != null && group !== '' && !GROUPS.includes(group)) throw err(400, 'group: ' + GROUPS.join(', '));
+  if (group != null && group !== '' && !GROUPS.includes(group)) throw httpError(400, 'group: ' + GROUPS.join(', '));
   const [info, counts, labels, moves, first] = await T.batch([
     T.prepare('SELECT name, category, qty, last_seen FROM inv_items WHERE store = ? AND item = ?').bind(store, itemNo),
     nowCountsStmt(T, store, [itemNo]),
@@ -114,7 +107,7 @@ async function item(env, url, device, h, store, itemNo) {
     T.prepare('SELECT product FROM inv_labels WHERE store = ? AND item = ? AND product IS NOT NULL LIMIT 1').bind(store, itemNo),
   ]);
   const i = info.results[0] || null;
-  if (!i && !labels.results.length && !moves.results.length) throw err(404, 'item not seen at this store');
+  if (!i && !labels.results.length && !moves.results.length) throw httpError(404, 'item not seen at this store');
   const cmap = new Map(), derived = nowCountsRows(counts.results);
   for (const c of derived) { const k = c.now + '\u0001' + c.group, x = cmap.get(k); if (x) x.n += c.n; else cmap.set(k, { now: c.now, group: c.group, n: c.n }); }
   const { onHand, available } = qtyOf(i && i.qty, labels.results.length ? availRes(derived).av : null);
@@ -123,7 +116,7 @@ async function item(env, url, device, h, store, itemNo) {
     return { label: l.label, now, group: g, wo: l.wo || null, po: l.po || null, lastKind: l.last_kind || null, lastAt: l.last_at || null };
   });
   const shown = group ? rows.filter((r) => r.group === group) : rows;
-  return h.json({ v: 1, now: h.now(), store, item: itemNo,
+  return json({ v: 1, now: h.now(), store, item: itemNo,
     info: { name: (i && i.name) || (first.results[0] && first.results[0].product) || null, category: (i && i.category) || null, onHand, available, lastSeen: (i && i.last_seen) || null },
     counts: [...cmap.values()].sort((a, b) => b.n - a.n || (a.now < b.now ? -1 : 1)),
     labels: shown.slice(0, ITEM_LABELS), labelsTotal: shown.length, movements: moves.results.map(movement) });
@@ -139,11 +132,11 @@ async function label(env, url, device, h, store, labelNo) {
     T.prepare('SELECT COUNT(*) AS n FROM inv_movements WHERE store = ? AND label = ?').bind(store, labelNo),
   ]);
   const l = row.results[0] || null;
-  if (!l && !moves.results.length) throw err(404, 'label not seen at this store');
+  if (!l && !moves.results.length) throw httpError(404, 'label not seen at this store');
   let now = null, group = null;
   if (l) [now, group] = rowNow(l);
   const list = moves.results.map(movement).reverse(); // oldest to newest; when capped, the newest LABEL_MOVES
-  return h.json({ v: 1, now: h.now(), store, label: labelNo,
+  return json({ v: 1, now: h.now(), store, label: labelNo,
     row: l && { label: l.label, item: l.item || null, name: l.name || null, now, group, wo: l.wo || null, po: l.po || null, salesOrder: l.sales_order || null },
     movements: list, movementsTotal: total.results[0].n });
 }
@@ -155,7 +148,7 @@ async function pos(env, url, device, h) {
   let cur = null;
   if (q.get('after')) {
     cur = unb64(q.get('after'));
-    if (!cur || typeof cur.at !== 'string' || cur.at.length > 40 || typeof cur.id !== 'string' || cur.id.length > 80) throw err(400, 'after: not a cursor from this list');
+    if (!cur || typeof cur.at !== 'string' || cur.at.length > 40 || typeof cur.id !== 'string' || cur.id.length > 80) throw httpError(400, 'after: not a cursor from this list');
   }
   // keys first (id, at), then the page's own JSON; newest document date first, a PO without a date last
   const keyArgs = [store], cond = ["d.store = ?1", "d.type = 'po'"];
@@ -175,23 +168,23 @@ async function pos(env, url, device, h) {
     }
   }
   if (more) { const last = page[page.length - 1]; out.next = b64({ at: last.e, id: last.id }); }
-  return h.json(out);
+  return json(out);
 }
 
 // ---------------------------------------------------------------- dispatch
 export async function retraceApi(req, env, url, device, h) {
-  if (req.method !== 'GET') return h.fail(404, 'not found');
+  if (req.method !== 'GET') return fail(404, 'not found');
   const path = url.pathname.replace(/^\/v1\/agents\/m\/retrace/, '') || '/';
   try {
     if (path === '/items') return await items(env, url, device, h);
     if (path === '/pos') return await pos(env, url, device, h);
     let m = path.match(/^\/item\/(\d{1,6})\/([^/]{1,80})$/);
-    if (m) { const it = clean(unesc(m[2]), 40); if (!it) throw err(400, 'item required'); return await item(env, url, device, h, storeOf(device, m[1]), it); }
+    if (m) { const it = cleanAny(unesc(m[2]), 40); if (!it) throw httpError(400, 'item required'); return await item(env, url, device, h, storeOf(device, m[1]), it); }
     m = path.match(/^\/label\/(\d{1,6})\/([^/]{1,80})$/);
-    if (m) { const store = storeOf(device, m[1]), lb = cleanLabel(unesc(m[2])); if (!lb) throw err(400, 'not a label'); return await label(env, url, device, h, store, lb); }
+    if (m) { const store = storeOf(device, m[1]), lb = cleanLabel(unesc(m[2])); if (!lb) throw httpError(400, 'not a label'); return await label(env, url, device, h, store, lb); }
   } catch (e) {
-    if (e && e.status && e.status < 500) return h.fail(e.status, e.message);
+    if (e && e.status && e.status < 500) return fail(e.status, e.message);
     throw e;
   }
-  return h.fail(404, 'not found');
+  return fail(404, 'not found');
 }

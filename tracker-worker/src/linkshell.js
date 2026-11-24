@@ -6,12 +6,15 @@
   "pullbacks.scan"), and the sealed bytes. A message is held only while the other end isn't connected, and for 24 hours at most.
 
   Pairing (the PC shows a QR code, the phone scans it):
-    PC     POST /v1/:store/linkshell/pair/start   { publicJwk, name }          → { pairId, code, expiresAt }   (5 minutes)
-    phone  POST /v1/agents/m/linkshell/pair       { pairId, code, publicJwk }  → { linkId, store, pcName, pcJwk }
-    PC     POST /v1/:store/linkshell/pair/status  { pairId, code }             → { state: 'waiting' } | { state: 'scanned', linkId, phoneName, phoneJwk }
-    PC     POST /v1/:store/linkshell/pair/finish  { pairId, code }             → { linkId, token }  (the PC's link token, shown once; only its hash is kept)
-    PC     POST /v1/:store/linkshell/pair/cancel  { pairId, code }
+    PC     POST /v1/:store/linkshell/pair/start   { publicJwk, name, secret }    → { pairId, code, expiresAt }   (5 minutes)
+    phone  POST /v1/agents/m/linkshell/pair       { pairId, code, publicJwk }    → { linkId, store, pcName, pcJwk }
+    PC     POST /v1/:store/linkshell/pair/status  { pairId, code, secret }       → { state: 'waiting' } | { state: 'scanned', linkId, phoneName, phoneJwk }
+    PC     POST /v1/:store/linkshell/pair/finish  { pairId, code, secret }       → { linkId, token }  (the PC's link token, shown once; only its hash is kept)
+    PC     POST /v1/:store/linkshell/pair/cancel  { pairId, code, secret }
   Both ends show a check code made from the two public keys, so a key swapped on the way would show as a different code.
+  secret: 22 characters the PC makes up at start and never puts in the QR code (only its hash is kept, pc_secret_hash). A pairing
+  started with one answers status, finish and cancel only to a caller that sends it, so the QR code's pairId and code alone can't
+  take the PC's link token. A pairing started without one (a script from before this) is checked by pairId and code as it was.
 
   The link afterwards:
     PC     POST /v1/:store/linkshell/link    { linkId, token }  → { linkId, phoneName, usedAt }   (404 once unlinked)
@@ -34,6 +37,10 @@
     'ping' → 'pong'                    keep-alive, answered by Cloudflare without waking the relay (not billed)
   Idle sockets hibernate, so a connected but quiet link costs nothing.
 
+  A phone's standing (active, still approved for the link's store) is checked at connect, and again when it sends a message more
+  than 5 minutes after the last check: a phone turned off or moved off the store loses its open socket then (close 1008), and its
+  next connect is refused like any other. One D1 read per check.
+
   Limits: 3 links per phone, 5 per store; a link unused for 30 days is removed by the daily job, as is any link whose phone is removed.
 */
 
@@ -42,7 +49,7 @@ import { sendPush } from './push.js';
 // The phone's per-store switch (alert settings, src/mobile-alerts.js): only an explicit false is off.
 const storeOff = (raw, store) => { try { const s = JSON.parse(raw || '{}'); return !!(s && s.stores && s.stores[store] === false); } catch (_) { return false; } };
 
-export const LS = { PUSH_GAP_MS: 15000, PAIR_MIN: 5, IDLE_DAYS: 30, PER_PHONE: 3, PER_STORE: 5, PAIRS_PER_STORE: 10, HOLD_HOURS: 24, MAX_FRAME: 16384, MAX_HELD: 500 };
+export const LS = { PUSH_GAP_MS: 15000, PAIR_MIN: 5, IDLE_DAYS: 30, PER_PHONE: 3, PER_STORE: 5, PAIRS_PER_STORE: 10, HOLD_HOURS: 24, MAX_FRAME: 16384, MAX_HELD: 500, STANDING_MS: 5 * 60000 };
 const HEX32 = /^[0-9a-f]{32}$/, HEX64 = /^[0-9a-f]{64}$/, CODE = /^[A-Za-z0-9_-]{22}$/, B64U = /^[A-Za-z0-9_-]+$/;
 const KIND = /^[a-z][a-z0-9-]{0,30}(\.[a-z0-9-]{1,30}){0,3}$/, MID = /^[A-Za-z0-9_-]{8,40}$/, B64 = /^[A-Za-z0-9+/_-]+=*$/;
 
@@ -51,6 +58,15 @@ const b64u = (n) => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8
 export const sha256hex = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map((x) => x.toString(16).padStart(2, '0')).join('');
 const isJwk = (k) => k && k.kty === 'EC' && k.crv === 'P-256' && typeof k.x === 'string' && typeof k.y === 'string' && k.x.length === 43 && k.y.length === 43 && B64U.test(k.x) && B64U.test(k.y) && !('d' in k);
 const pubJwk = (k) => ({ kty: 'EC', crv: 'P-256', x: k.x, y: k.y });
+// Hashes and tokens are compared without stopping at the first difference, so the time taken says nothing about where they differ.
+const same = (a, b) => {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+};
+// A phone may use a link while it is an active phone that is still approved for the link's store.
+const standing = (a, store) => { try { return !!a && a.status === 'active' && a.kind === 'phone' && JSON.parse(a.stores || '[]').includes(store); } catch (_) { return false; } };
 const nowIso = () => new Date().toISOString();
 const plus = (min) => new Date(Date.now() + min * 60000).toISOString();
 
@@ -67,13 +83,15 @@ async function pairRow(T, store, b) {
   if (!HEX32.test(b.pairId) || !CODE.test(b.code)) return null;
   await T.prepare('DELETE FROM linkshell_pairs WHERE expires_at < ?').bind(nowIso()).run();
   const p = await T.prepare('SELECT * FROM linkshell_pairs WHERE id = ?').bind(b.pairId).first();
-  if (!p || (store != null && p.store !== store) || (await sha256hex(b.code)) !== p.code_hash) return null;
+  if (!p || (store != null && p.store !== store) || !same(await sha256hex(b.code), p.code_hash)) return null;
+  // The store side (the PC) also proves it is the browser that started the pairing, when that browser gave a secret.
+  if (store != null && p.pc_secret_hash && !(typeof b.secret === 'string' && CODE.test(b.secret) && same(await sha256hex(b.secret), p.pc_secret_hash))) return null;
   return p;
 }
 async function pcLink(T, store, b) {
   if (!HEX32.test(b.linkId) || !HEX64.test(b.token)) return null;
   const l = await T.prepare('SELECT * FROM linkshell_links WHERE id = ? AND store = ?').bind(b.linkId, store).first();
-  return l && (await sha256hex(b.token)) === l.pc_token_hash ? l : null;
+  return l && same(await sha256hex(b.token), l.pc_token_hash) ? l : null;
 }
 const closeRoom = (env, linkId) => (env.LINKSHELL ? env.LINKSHELL.get(env.LINKSHELL.idFromName(linkId)).fetch('https://linkshell/close', { method: 'POST' }).catch(() => {}) : null);
 
@@ -84,11 +102,12 @@ export async function linkshellStore(req, env, url, store, h) {
   const b = await h.readJson(req, 4000);
   if (what === 'pair/start') {
     if (!isJwk(b.publicJwk)) return h.fail(400, 'publicJwk required');
+    if (b.secret != null && !(typeof b.secret === 'string' && CODE.test(b.secret))) return h.fail(400, 'bad secret');
     await T.prepare('DELETE FROM linkshell_pairs WHERE expires_at < ?').bind(nowIso()).run();
     if ((await T.prepare('SELECT COUNT(*) AS n FROM linkshell_pairs WHERE store = ?').bind(store).first()).n >= LS.PAIRS_PER_STORE) return h.fail(429, 'too many pairings open');
     const pairId = hex(16), code = b64u(16), expiresAt = plus(LS.PAIR_MIN);
-    await T.prepare('INSERT INTO linkshell_pairs (id, store, code_hash, pc_jwk, pc_name, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .bind(pairId, store, await sha256hex(code), JSON.stringify(pubJwk(b.publicJwk)), h.clean(b.name, 60) || 'PC', nowIso(), expiresAt).run();
+    await T.prepare('INSERT INTO linkshell_pairs (id, store, code_hash, pc_jwk, pc_name, created_at, expires_at, pc_secret_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(pairId, store, await sha256hex(code), JSON.stringify(pubJwk(b.publicJwk)), h.clean(b.name, 60) || 'PC', nowIso(), expiresAt, b.secret ? await sha256hex(b.secret) : null).run();
     return h.json({ pairId, code, expiresAt });
   }
   if (what.startsWith('pair/')) {
@@ -174,10 +193,10 @@ export async function linkshellConnect(req, env, url, h) {
   let side = null;
   for (const p of protos) {
     let m;
-    if ((m = /^pc\.([0-9a-f]{64})$/.exec(p)) && (await sha256hex(m[1])) === l.pc_token_hash && (await h.allowed(env, l.store))) side = 'pc';
+    if ((m = /^pc\.([0-9a-f]{64})$/.exec(p)) && same(await sha256hex(m[1]), l.pc_token_hash) && (await h.allowed(env, l.store))) side = 'pc';
     else if ((m = /^ph\.([0-9a-f]{32})\.([0-9a-f]{64})$/.exec(p)) && m[1] === l.agent_id) {
       const a = await T.prepare('SELECT a.token_hash, a.status, a.stores, k.kind FROM agents a LEFT JOIN agent_kind k ON k.agent_id = a.id WHERE a.id = ?').bind(m[1]).first();
-      if (a && a.status === 'active' && a.kind === 'phone' && (await sha256hex(m[2])) === a.token_hash && JSON.parse(a.stores || '[]').includes(l.store)) side = 'phone';
+      if (standing(a, l.store) && same(await sha256hex(m[2]), a.token_hash)) side = 'phone';
     }
   }
   if (!side) return h.fail(401, 'wrong credential');
@@ -227,6 +246,7 @@ export class LinkshellRoom {
     const link = url.searchParams.get('link');
     if (HEX32.test(link || '') && (await this.ctx.storage.get('link')) !== link) await this.ctx.storage.put('link', link);
     const pair = new WebSocketPair(), client = pair[0], server = pair[1];
+    if (side === 'phone') await this.checked(Date.now()); // linkshellConnect has just checked this phone
     await this.accept(server, side);
     return new Response(null, { status: 101, webSocket: client, headers: { 'sec-websocket-protocol': 'linkshell' } });
   }
@@ -244,6 +264,11 @@ export class LinkshellRoom {
     try { f = JSON.parse(data); } catch (_) { return; }
     if (!f || typeof f !== 'object') return;
     if (f.t === 'msg') {
+      if (side === 'phone') {
+        const ok = await this.phoneStanding();
+        if (ok === false) { try { ws.close(1008, 'not allowed'); } catch (_) {} await this.left(ws, side); }
+        if (!ok) return; // the message goes nowhere
+      }
       if (!MID.test(f.id) || !KIND.test(f.kind) || typeof f.iv !== 'string' || f.iv.length > 32 || !B64.test(f.iv) || typeof f.ct !== 'string' || !B64.test(f.ct)) return;
       const frame = JSON.stringify({ t: 'msg', id: f.id, kind: f.kind, iv: f.iv, ct: f.ct });
       if (this.peers(to).length) this.send(to, JSON.parse(frame));
@@ -280,9 +305,36 @@ export class LinkshellRoom {
     await this.ctx.storage.put('pushAt', now);
     return sendPush(this.env, l.agent_id, { t: 'linkshell', link: linkId, kind, id });
   }
+  // Is the phone still allowed on this link? Asked of D1 at most once every STANDING_MS (the time of the last check is kept in
+  // storage, so waking from hibernation doesn't ask again). → true, false, or null for a link that is gone (both ends closed, as unlink
+  // does). If D1 can't be read the phone stays, and the next message asks again.
+  async checked(at) { this.standingAt = at; await this.ctx.storage.put('standingAt', at); }
+  async phoneStanding() {
+    if (!this.env || !this.env.TR) return true;
+    const now = Date.now();
+    if (this.standingAt == null) this.standingAt = (await this.ctx.storage.get('standingAt')) || 0;
+    if (now - this.standingAt < LS.STANDING_MS) return true;
+    const linkId = await this.ctx.storage.get('link');
+    if (!linkId) return true;
+    let a;
+    try {
+      a = await this.env.TR.prepare('SELECT l.store AS link_store, a.status, a.stores, k.kind FROM linkshell_links l LEFT JOIN agents a ON a.id = l.agent_id LEFT JOIN agent_kind k ON k.agent_id = a.id WHERE l.id = ?').bind(linkId).first();
+    } catch (_) { return true; }
+    if (!a) {
+      for (const ws of this.ctx.getWebSockets()) { try { ws.close(4001, 'unlinked'); } catch (_) {} }
+      await this.ctx.storage.deleteAll(); this.standingAt = null;
+      return null;
+    }
+    await this.checked(now);
+    return standing(a, a.link_store);
+  }
   async webSocketClose(ws, code) {
     const side = this.ctx.getTags(ws)[0];
     try { ws.close(code === 1005 || code === 1006 ? 1000 : code, 'bye'); } catch (_) {}
+    await this.left(ws, side);
+  }
+  // A socket of `side` is gone: unless another is open, the other end hears when.
+  async left(ws, side) {
     if (this.ctx.getWebSockets(side).some((x) => x !== ws && (x.readyState === undefined || x.readyState === 1))) return;
     const at = Date.now();
     await this.ctx.storage.put('seen:' + side, at);

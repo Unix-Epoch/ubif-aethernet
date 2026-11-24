@@ -6,8 +6,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * Counts shown on navigation items (the unread-alerts "3"). The alerts agent (C) provides the real source from `AlertsModule`
- * (`c.provide<NavBadges> { ... }`); until then a fixed fake keeps the chrome looking like the mockups.
+ * Counts shown on navigation items (the unread-alerts "3"). `AlertsModule` provides the real source (`c.provide<NavBadges> { ... }`),
+ * replacing the fixed fake that [NavModule] registers first.
  */
 interface NavBadges {
     val counts: StateFlow<Map<TopLevel, Int>>
@@ -26,7 +26,7 @@ object NoNavDots : NavDots {
     override val dots: StateFlow<Set<TopLevel>> = MutableStateFlow(emptySet())
 }
 
-/** Scaffold-owned: registers the default badge source. */
+/** Registers the default badge source. */
 object NavModule : FeatureModule {
     override fun install(c: AppContainer) {
         c.provide<NavBadges> { FakeNavBadges() }

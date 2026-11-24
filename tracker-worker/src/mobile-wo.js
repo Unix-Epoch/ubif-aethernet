@@ -21,32 +21,25 @@
   Indexes used: PK (store, wo) and wo_open (store, is_open, status_id) for the work orders, PK (store, wo, start_at) for status_periods, snap_wo
   (store, wo, id) for the one latest snapshot of a detail, wo_closed (store, is_open, closed_at) for states recent and closed, chg_wo (store, wo, id).
 */
+import { json, fail, int, httpError, parse } from './http.js';
+import { CLOSED_STATUS } from './constants.js';
 import { laneOf, LANES } from './mobile.js';
+import { storesOf, isDeviceStore } from './mobile-agent.js';
 import { marksFor, dueMarks, dueCond, todayOf } from './mobile-waymark.js';
 
 const DEFAULT_LIMIT = 25, MAX_LIMIT = 100;      // list page
 const FIND_LIMIT = 20, FIND_MAX = 50;           // number lookup
 const RECENT_DEFAULT = 7, RECENT_MAX = 14;      // days closed work orders stay in "recent" (the Mac audit route's maximum is the same 14)
 const TIMELINE_MAX = 100, LINES_MAX = 60, CHANGES_MAX = 100, PARTS_MAX = 100;
-const CLOSED_STATUS = new Set([14, 15, 25]);    // Sale complete, Closed, Cancelled: no status_periods rows of their own
+// CLOSED_STATUS (Sale complete, Closed, Cancelled): no status_periods rows of their own
 const LANE_IDS = LANES.map((l) => l.id);
 const LANE_KNOWN = new Set(LANES.flatMap((l) => l.ids));
 
-const err = (status, message) => Object.assign(new Error(message), { status });
 const b64 = (o) => btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const unb64 = (s) => { try { return JSON.parse(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4))); } catch (_) { return null; } };
 const numOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 const secs = (a, b) => (a && b ? Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 1000)) : null);
 
-// The stores this request is about: ?store=<id> (must be an approved one) or all of the device's. Throws 400 / 403.
-function storesOf(device, ask) {
-  const mine = device.stores.map(Number);
-  if (ask == null || ask === '' || ask === 'all') return mine;
-  if (!/^\d{1,6}$/.test(ask)) throw err(400, 'store: all or a store number');
-  if (!mine.includes(Number(ask))) throw err(403, 'not your store');
-  return [Number(ask)];
-}
 // Stores (of those asked) that this device holds a wrapped key for: the only ones whose sealed blobs it may have.
 async function keyedStores(env, device, ids) {
   if (!ids.length) return [];
@@ -81,30 +74,30 @@ const ROW_COLS = `w.store, w.wo, w.status_id, w.status_name, w.program_name, w.d
 async function list(env, url, device, h) {
   const q = url.searchParams, T = env.TR;
   const state = q.get('state') || 'open';
-  if (state !== 'open' && state !== 'recent' && state !== 'closed') throw err(400, 'state: open, recent or closed');
+  if (state !== 'open' && state !== 'recent' && state !== 'closed') throw httpError(400, 'state: open, recent or closed');
   const sort = q.get('sort') || (state === 'open' ? 'status' : 'closed');
-  if (!['status', 'updated', 'closed'].includes(sort) || (sort === 'closed' && state === 'open') || (state === 'closed' && sort !== 'closed')) throw err(400, 'sort: status, updated or (recent / closed only) closed');
-  const limit = Math.min(Math.max(h.int(q.get('limit')) || DEFAULT_LIMIT, 1), MAX_LIMIT);
-  const days = Math.min(Math.max(h.int(q.get('closedDays')) ?? RECENT_DEFAULT, 1), RECENT_MAX);
+  if (!['status', 'updated', 'closed'].includes(sort) || (sort === 'closed' && state === 'open') || (state === 'closed' && sort !== 'closed')) throw httpError(400, 'sort: status, updated or (recent / closed only) closed');
+  const limit = Math.min(Math.max(int(q.get('limit')) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+  const days = Math.min(Math.max(int(q.get('closedDays')) ?? RECENT_DEFAULT, 1), RECENT_MAX);
   const ids = storesOf(device, q.get('store'));
   const wantCards = q.get('cards') === '1';
   const fu = q.get('followups');
-  if (fu != null && fu !== '' && fu !== '0' && fu !== '1') throw err(400, 'followups: 1 (open work orders only)');
+  if (fu != null && fu !== '' && fu !== '0' && fu !== '1') throw httpError(400, 'followups: 1 (open work orders only)');
   const followups = fu === '1';
-  if (followups && state !== 'open') throw err(400, 'followups: 1 (open work orders only)');
+  if (followups && state !== 'open') throw httpError(400, 'followups: 1 (open work orders only)');
   let lanes = null;
   if (q.get('lane')) {
     lanes = [...new Set(q.get('lane').split(',').map((s) => s.trim()))];
-    if (state !== 'open' || lanes.some((l) => !LANE_IDS.includes(l))) throw err(400, 'lane: ' + LANE_IDS.join(', ') + ' (open work orders only)');
+    if (state !== 'open' || lanes.some((l) => !LANE_IDS.includes(l))) throw httpError(400, 'lane: ' + LANE_IDS.join(', ') + ' (open work orders only)');
   }
   const out = { v: 1, now: h.now(), state, sort, scope: ids.length === 1 ? ids[0] : 'all', stores: ids, rows: [], next: null };
-  if (!ids.length) return h.json(Object.assign(out, { empty: true }));
+  if (!ids.length) return json(Object.assign(out, { empty: true }));
 
   // the cursor: { s: sort, t: state, e: sort key, st: store, w: wo } of the last row of the previous page
   let cur = null;
   if (q.get('after')) {
     cur = unb64(q.get('after'));
-    if (!cur || cur.s !== sort || cur.t !== state || typeof cur.e !== 'string' || cur.e.length > 40 || !Number.isInteger(cur.st) || !Number.isInteger(cur.w)) throw err(400, 'after: not a cursor from this list');
+    if (!cur || cur.s !== sort || cur.t !== state || typeof cur.e !== 'string' || cur.e.length > 40 || !Number.isInteger(cur.st) || !Number.isInteger(cur.w)) throw httpError(400, 'after: not a cursor from this list');
   }
   let rows, more, chipRes = null, keyed = null, due = null;
   const today = todayOf(env);
@@ -191,21 +184,21 @@ async function list(env, url, device, h) {
   if (state === 'recent') out.closedDays = days;
   if (wantCards) {
     out.cards = true; out.cardsFor = ids.filter((s) => keyed.has(s)); out.noKey = ids.filter((s) => !keyed.has(s));
-    if (q.get('store') && q.get('store') !== 'all' && !out.cardsFor.length) throw err(403, 'no key for this store');
+    if (q.get('store') && q.get('store') !== 'all' && !out.cardsFor.length) throw httpError(403, 'no key for this store');
     // one access_log row per store whose cards went out (what a phone downloaded), like the admin site's 'list'
     for (const s of out.cardsFor) await h.log(env, who(device), 'list', s, null, 'phone cards ' + out.rows.filter((r) => r.store === s && r.card).length + ' ' + device.id.slice(0, 8));
   }
-  return h.json(out);
+  return json(out);
 }
 
 // ---------------------------------------------------------------- GET /wo/find
 async function find(env, url, device, h) {
   const q = url.searchParams, T = env.TR, term = String(q.get('q') || '').trim();
-  if (!/^[1-9]\d{2,11}$/.test(term)) throw err(400, 'q: 3 to 12 digits, a work order number or its start');
-  const limit = Math.min(Math.max(h.int(q.get('limit')) || FIND_LIMIT, 1), FIND_MAX);
+  if (!/^[1-9]\d{2,11}$/.test(term)) throw httpError(400, 'q: 3 to 12 digits, a work order number or its start');
+  const limit = Math.min(Math.max(int(q.get('limit')) || FIND_LIMIT, 1), FIND_MAX);
   const ids = storesOf(device, q.get('store'));
   const out = { v: 1, now: h.now(), q: term, rows: [], more: false };
-  if (!ids.length) return h.json(out);
+  if (!ids.length) return json(out);
   // a prefix of a number of 3-12 digits is one range per possible length: p×10^k … p×10^k + 10^k - 1 (the PK (store, wo) answers each)
   const p = Number(term), ranges = [];
   for (let k = 0; term.length + k <= 12; k++) ranges.push([p * 10 ** k, p * 10 ** k + 10 ** k - 1]);
@@ -216,7 +209,7 @@ async function find(env, url, device, h) {
   rows.sort((a, b) => (b.wo === p) - (a.wo === p) || a.wo - b.wo || a.store - b.store);
   out.more = rows.length > limit;
   out.rows = rows.slice(0, limit).map((r) => rowOf(r, r.since));
-  return h.json(out);
+  return json(out);
 }
 
 // ---------------------------------------------------------------- GET /wo/<store>/<wo>
@@ -250,7 +243,7 @@ function changeOf(c) {
 
 async function detail(env, url, device, h, store, wo) {
   const T = env.TR, sealed = url.searchParams.get('sealed') === '1';
-  if (!device.stores.map(Number).includes(store)) throw err(403, 'not your store');
+  if (!isDeviceStore(device, store)) throw httpError(403, 'not your store');
   const nowMs = Date.now();
   const [wr, sp, partsR, soldR, chg] = await T.batch([
     T.prepare(`SELECT ${ROW_COLS}, w.plain AS plain_json, w.cart_total, w.cart_paid, w.closed_reason, w.sold_at FROM workorders w WHERE w.store = ? AND w.wo = ?`).bind(store, wo),
@@ -265,8 +258,8 @@ async function detail(env, url, device, h, store, wo) {
       WHERE c.store = ? AND c.wo = ? AND c.field IN ('workorder.statusId', 'workorder.nextUpdate') ORDER BY c.id DESC LIMIT ?`).bind(store, wo, CHANGES_MAX),
   ]);
   const r = wr.results[0];
-  if (!r) throw err(404, 'no such work order');
-  if (sealed && !(await keyedStores(env, device, [store])).length) throw err(403, 'no key for this store');
+  if (!r) throw httpError(404, 'no such work order');
+  if (sealed && !(await keyedStores(env, device, [store])).length) throw httpError(403, 'no key for this store');
   const plain = parse(r.plain_json) || {}, pw = plain.workorder || {};
   const row = rowOf(r, sp.results[0] ? sp.results[0].start_at : null);
   const tl = await timelineOf(T, store, wo, nowMs);
@@ -297,12 +290,12 @@ async function detail(env, url, device, h, store, wo) {
     await h.log(env, who(device), 'open', store, wo, 'phone sealed ' + device.id.slice(0, 8)); // logged first: nothing sealed leaves unrecorded
     out.sealed = { card: (card.results[0] && card.results[0].card) || null, snapshot: s ? { id: s.id, fetchedAt: s.fetched_at, sealed: s.sealed } : null };
   }
-  return h.json(out);
+  return json(out);
 }
 
 // ---------------------------------------------------------------- dispatch
 export async function woApi(req, env, url, device, h) {
-  if (req.method !== 'GET') return h.fail(404, 'not found');
+  if (req.method !== 'GET') return fail(404, 'not found');
   const path = url.pathname.replace(/^\/v1\/agents\/m\/wo/, '') || '/';
   try {
     if (path === '/') return await list(env, url, device, h);
@@ -310,8 +303,8 @@ export async function woApi(req, env, url, device, h) {
     const m = path.match(/^\/(\d{1,6})\/(\d{1,12})$/);
     if (m) return await detail(env, url, device, h, Number(m[1]), Number(m[2]));
   } catch (e) {
-    if (e && e.status && e.status < 500) return h.fail(e.status, e.message);
+    if (e && e.status && e.status < 500) return fail(e.status, e.message);
     throw e;
   }
-  return h.fail(404, 'not found');
+  return fail(404, 'not found');
 }

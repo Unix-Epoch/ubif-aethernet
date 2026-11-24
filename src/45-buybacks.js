@@ -329,7 +329,7 @@ AE.shard({
     // ---------- Scan with phone (Linkshell; the messages are listed above AE.buybacks) ----------
     const link = () => (AE.linkshell && AE.settings.crystals.linkshell !== false && AE.linkshell.linked() ? AE.linkshell : null);
     const orderNo = () => (location.pathname.match(/^\/boh\/inventory\/buyback-order\/([^/?#]+)/) || [])[1] || null;
-    const phone = { run: null, order: null, store: '', items: [], added: 0, last: '' };
+    const phone = { run: null, order: null, store: '', items: [], added: 0, last: '', unhold: null };
     let chain = Promise.resolve();
     async function call(method, path, body) {
       const init = { method, credentials: 'include', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body) };
@@ -344,8 +344,7 @@ AE.shard({
     function sendRun(wake) {
       const L = link();
       if (!L || !phone.run) return;
-      const parts = Math.max(1, Math.ceil(phone.items.length / RUN_PART));
-      for (let p = 0; p < parts; p++) L.send('buybacks.run', { run: phone.run, order: phone.order, store: phone.store, part: p, parts, items: phone.items.slice(p * RUN_PART, (p + 1) * RUN_PART) }, { wake: wake && p === 0 });
+      L.sendParts('buybacks.run', { run: phone.run, order: phone.order, store: phone.store }, phone.items, { size: RUN_PART, wake });
     }
     function phoneStart() {
       const table = getTable(getModal()), order = orderNo();
@@ -356,6 +355,8 @@ AE.shard({
       phone.order = order; phone.added = 0; phone.last = '';
       phone.store = String((link().linked() || {}).store || '');
       phone.items = getRows(table).map((r, i) => [i, r.serial, r.dest, 'pending']);
+      // The run lives in this tab: other tabs leave the Linkshell socket alone until it ends.
+      phone.unhold = link().hold(() => { phone.unhold = null; phone.run = null; refreshToolbar(); });
       sendRun(true); refreshToolbar();
     }
     function phoneEnd() {
@@ -363,6 +364,7 @@ AE.shard({
       const L = link();
       if (L) L.send('buybacks.end', { run: phone.run });
       phone.run = null; refreshToolbar();
+      if (phone.unhold) { phone.unhold(); phone.unhold = null; }
     }
     // Bounce the tabs so the list drops what was just added (read-only, as recover()).
     async function refreshList() {
@@ -386,6 +388,10 @@ AE.shard({
       };
       if (!AE.buybacks.isLabel(label)) return tell('failed', 'Not a buyback label');
       if (i >= 0 && phone.items[i][3] === 'added') return tell('added');
+      // Nothing is added from a page Aethernet has stopped on, or one Portal has moved to another store.
+      const why = await AE.linkshell.paused();
+      if (!phone.run) return; // ended while that was asked
+      if (why) return tell('failed', why);
       const modal = getModal(), table = modal && buybacksTabActive(modal) ? getTable(modal) : null;
       if (!table || orderNo() !== phone.order) return tell('failed', "Add buyback parts isn't open on the PC");
       if (!getRows(table).some((r) => r.serial.toUpperCase() === label.toUpperCase())) return tell('failed', 'Not eligible');
@@ -397,6 +403,7 @@ AE.shard({
     if (AE.linkshell) {
       AE.linkshell.on('buybacks.scan', (b) => { chain = chain.then(() => phoneScan(b)).catch(() => {}); return chain; });
       AE.linkshell.on('buybacks.join', (b) => { if (phone.run && b && b.run === phone.run) sendRun(); });
+      AE.buybacks._test = { phone }; // the run, for test-client/buybacks.mjs
     }
 
     let tid = null;

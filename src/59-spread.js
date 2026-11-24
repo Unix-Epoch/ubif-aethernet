@@ -482,5 +482,6 @@ AE.shard({
     });
     addEventListener('resize', size);
     AE.trackDaily('spread:on');
+    this._test = { CSS, edgeOf }; // the client tests' way in (test-client/)
   },
 });

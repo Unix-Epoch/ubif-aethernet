@@ -236,6 +236,7 @@ AE.shard({
         showIntro();
       }
 
+      this._test = { collectData }; // the client tests' way in (test-client/)
       // Dev tools: the button + first-time explainer on the current WO, whatever it is.
       AE.hooks.galaxyDemo = () => {
         const woId = currentWoId();

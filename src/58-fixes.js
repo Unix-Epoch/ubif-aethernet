@@ -74,8 +74,8 @@
 
   - reportsRetry: Portal's Reports page (/reporting/metrics) shows its spinner
     until GET /api/reporting/metrics (RTK getMetricsConfig) has data, and has
-    no error state, so one blocked request spins forever. Cause confirmed by
-    Garrett (Oct 2026, Firefox): uBlock Origin blocks it (Firefox reports
+    no error state, so one blocked request spins forever. Cause confirmed
+    (Oct 2026, Firefox): uBlock Origin blocks it (Firefox reports
     "NetworkError when attempting to fetch resource"); turning it off for the
     page brings Reports back. Retrying can't beat a blocker, so after 8 s
     without the Reports card a warning says to turn off the ad blocker for
@@ -86,7 +86,7 @@
   - appcuesBoxes: Appcues announcement boxes on work orders (e.g. "ACTION
     REQUIRED: Apple iOS 27 and Repair Mode": <appcues data-pattern-type="shorty">
     inside <appcues-container>'s about:blank iframe). Appcues' own × dismisses
-    one for good, which Garrett doesn't want, so it's hidden; the box gets
+    one for good, which isn't wanted, so it's hidden; the box gets
     "– Collapse" (until brought back) and "Hide for today". Either leaves the
     XIV Active Help icon (assets/icons/info.jpg) bottom left; clicking it
     brings the box back. Remembered per box title (GM ae_appcues_boxes), so a
@@ -350,7 +350,7 @@ AE.shard({
         // Appcues' newer containers (<appcues-experience-container>, shadow DOM) also hold buttons like Support
         // Ticket; only ones with a heading or a dialog are bulletins.
         const isBulletin = (box) => { const sc = scopeOf(box); return !!sc.querySelector('h1, h2, h3, h4, [role="dialog"]') && !box.closest('.sg'); };
-        const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+        const today = () => AE.ymd(new Date());
         const store = () => GM_getValue(KEY, {});
         const put = (k, v) => { const all = store(); if (v) all[k] = v; else delete all[k]; GM_setValue(KEY, all); };
         const onPage = (R) => R.pages.some((src) => { const x = re(src); return x && x.test(location.pathname); });
@@ -1139,7 +1139,7 @@ AE.shard({
           .filter((d) => seen(d) && !d.closest('.sg') && d.getAttribute('aria-modal') !== 'false');
         const dialogOpen = () => openDialogs().length > 0;
         // Inventory, check-in and check-out are data entry: blocked, except the pages that are only lists or
-        // look-ups (Garrett, Oct 2, 2026). Pages Portal adds there later stay blocked until they're added here.
+        // look-ups (Oct 2, 2026). Pages Portal adds there later stay blocked until they're added here.
         const LIST_PAGES = [
           /^\/check-in\/arrivals(\/business)?\/?$/,                 // Arrivals (not the check-in steps, /check-in)
           /^\/check-in\/arrivals\/\d+\/?$/,                          // an arrival in the drawer
@@ -1187,7 +1187,7 @@ AE.shard({
           if (!itemPage()) return 'item scans belong to this page';
           const store = await AE.profile().then((p) => p.storeId).catch(() => null);
           // location=All: the item page as Portal opens it from "All items". Without it, only in-store labels are listed,
-          // so a sold label never shows (Garrett, Oct 14, 2026).
+          // so a sold label never shows (Oct 14, 2026).
           go('/boh/inventory/store-products/' + encodeURIComponent(item[1]) + '?location=All' + (store ? '&warehouseId=' + store : ''));
           AE.track('fixes:scanItem');
           openLabel(scan).catch(() => {});

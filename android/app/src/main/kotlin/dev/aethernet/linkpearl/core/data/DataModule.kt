@@ -8,8 +8,8 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /**
- * Owner: agent A. The real services: encrypted session storage, the Keystore device identity, the OkHttp API client, registration
- * ([RealAuth]), wrapped store keys, and Home on live data. The fakes stay in the package for tests and screenshots.
+ * The real services: encrypted session storage, the Keystore device identity, the OkHttp API client, registration
+ * ([RealAuth]), wrapped store keys, and Home on live data. The fakes for tests and screenshots are in the test source set.
  */
 object DataModule : FeatureModule {
     override fun install(c: AppContainer) {

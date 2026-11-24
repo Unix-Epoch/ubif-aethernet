@@ -11,10 +11,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.int
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.security.SecureRandom
 
@@ -60,7 +57,7 @@ class RealAuth(
         when (val r = transport.call("POST", "/v1/agents/register", body = body, credentials = null, notify = false)) {
             is ApiResult.Success -> {
                 val o = r.value as? JsonObject
-                val fingerprint = o?.str("fingerprint")
+                val fingerprint = o?.jsonStrOrNull("fingerprint")
                 if (fingerprint == null) { _issue.value = AuthIssue.Server; return false }
                 store.update { it.copy(fingerprint = fingerprint, status = "pending") }
                 publish()
@@ -137,19 +134,19 @@ class RealAuth(
     /** Reads a /me answer into the store; false when it is not a phone registration we understand. */
     private fun applyMe(json: JsonElement): Boolean {
         val o = json as? JsonObject ?: return false
-        val status = o.str("status") ?: return false
+        val status = o.jsonStrOrNull("status") ?: return false
         if (status != "pending" && status != "active") return false
         val ids = (o["stores"] as? JsonArray)?.mapNotNull { runCatching { it.jsonPrimitive.int }.getOrNull() } ?: emptyList()
         val keys = (o["keys"] as? JsonArray)?.mapNotNull { k ->
             val ko = k as? JsonObject ?: return@mapNotNull null
             val st = runCatching { ko["store"]?.jsonPrimitive?.int }.getOrNull() ?: return@mapNotNull null
-            val w = ko.str("wrapped") ?: return@mapNotNull null
+            val w = ko.jsonStrOrNull("wrapped") ?: return@mapNotNull null
             st to w
         }?.toMap() ?: emptyMap()
         store.update { s ->
             val known = s.stores.associate { it.id to it.name }
             s.copy(
-                status = status, name = o.str("name") ?: s.name, fingerprint = o.str("fingerprint") ?: s.fingerprint,
+                status = status, name = o.jsonStrOrNull("name") ?: s.name, fingerprint = o.jsonStrOrNull("fingerprint") ?: s.fingerprint,
                 stores = ids.map { StoreRef(it, known[it]) }, keys = keys, revoked = false,
             )
         }
@@ -183,7 +180,6 @@ class RealAuth(
         /** Control characters out, trimmed, 60 characters at most (the server's own limit). */
         fun cleanName(name: String): String = name.filter { !it.isISOControl() }.trim().take(60).trim()
 
-        private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
     }
 }
 

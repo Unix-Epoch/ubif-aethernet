@@ -7,7 +7,7 @@ import dev.aethernet.linkpearl.core.data.StoreKeys
 import dev.aethernet.linkpearl.core.di.AppContainer
 import dev.aethernet.linkpearl.core.di.FeatureModule
 
-/** Owner: agent B. The real AppLock (system prompt, Keystore unwrap, 30-minute idle and 60-second background re-lock). */
+/** The real AppLock (system prompt, Keystore unwrap, 30-minute idle and 60-second background re-lock). */
 object LockModule : FeatureModule {
     override fun install(c: AppContainer) {
         var lock: RealAppLock? = null
@@ -17,7 +17,7 @@ object LockModule : FeatureModule {
         c.provide<AppLock> {
             RealAppLock(
                 scope = c.appScope,
-                // Resolved on use: agent A's DataModule provides these.
+                // Resolved on use: DataModule provides these.
                 storeKeys = { c.get<StoreKeys>() },
                 identity = { c.get<DeviceIdentity>() },
                 auth = { c.get<Auth>() },

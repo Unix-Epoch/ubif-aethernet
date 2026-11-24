@@ -99,7 +99,7 @@ class MemoryAppPrefs(
     override fun appearanceNow(): Appearance = a.value
 }
 
-/** Provides [AppPrefs]; installed by SettingsModule (the one module list is not edited by feature agents). */
+/** Provides [AppPrefs]; installed by SettingsModule, so it is not in the module list itself. */
 object PrefsModule : FeatureModule {
     override fun install(c: AppContainer) {
         c.provide<AppPrefs> { DataStoreAppPrefs(c.application) }

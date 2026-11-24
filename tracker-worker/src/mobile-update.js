@@ -10,6 +10,7 @@
   No binding, no latest.json or an unreadable one: latest is null (never a 500), and the app keeps the build it has. min is the oldest build the server
   accepts (MIN_APP in mobile-prefs.js), so the app can tell a required update from an optional one.
 */
+import { json, fail } from './http.js';
 import { MIN_APP } from './mobile-prefs.js';
 
 export const LATEST_KEY = 'linkpearl/latest.json';
@@ -36,16 +37,16 @@ async function readLatest(env) {
 
 export async function updateApi(req, env, url, device, h) {
   const path = url.pathname.replace(/^\/v1\/agents\/m\/update/, '') || '/';
-  if (path !== '/' && path !== '/apk') return h.fail(404, 'not found');
-  if (req.method !== 'GET') return h.fail(405, 'GET only');
+  if (path !== '/' && path !== '/apk') return fail(404, 'not found');
+  if (req.method !== 'GET') return fail(405, 'GET only');
   const latest = await readLatest(env);
-  if (path === '/') return h.json({ latest, min: MIN_APP });
+  if (path === '/') return json({ latest, min: MIN_APP });
 
   const code = url.searchParams.get('code');
-  if (!code || !/^\d{1,9}$/.test(code)) return h.fail(400, 'code: a versionCode');
-  if (!latest || latest.code !== Number(code)) return h.fail(404, 'no such build');
+  if (!code || !/^\d{1,9}$/.test(code)) return fail(400, 'code: a versionCode');
+  if (!latest || latest.code !== Number(code)) return fail(404, 'no such build');
   const obj = await env.RELEASES.get(apkKey(latest.name));
-  if (!obj) return h.fail(404, 'no such build');
+  if (!obj) return fail(404, 'no such build');
   return new Response(obj.body, {
     status: 200,
     headers: {

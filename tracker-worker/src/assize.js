@@ -18,6 +18,7 @@
         version and the scope it comes from) or turned off (enabled false, graph null when there is none).
   Admin side: assizeAdmin() below, mounted by trackerAdmin at /api/tracker/assize/… (route list there).
 */
+import { json, fail, int, clean, readJson, now, parse } from './http.js';
 import * as RG from './rulegraph.js';
 import { makeRules, ruleId, CATALOG } from './assize-rules.js';
 import { GRAPHS } from './assize-graphs.js';
@@ -25,7 +26,6 @@ import { GRAPHS } from './assize-graphs.js';
 export const R = makeRules({ RG, graphs: GRAPHS });
 const CHECK_KEYS = R.CHECKS.map(([k]) => k);
 const MAX_BODY = R.MAX_GRAPH_BYTES + 20000;
-const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 // A stored graph as it leaves the Worker: node positions that aren't numbers (saved before they were checked) forced to numbers.
 const parseGraph = (t) => RG.normalizeCoords(parse(t));
 const sha = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].slice(0, 12).map((x) => x.toString(16).padStart(2, '0')).join('');
@@ -35,9 +35,9 @@ const storeOf = (scope) => (scope === 'all' ? null : Number(scope));
 const inCatalog = (rule) => CATALOG.find((x) => x.rule === rule) || null;
 
 // ------------------------------------------------------------------ store side
-export async function assizeStore(req, env, url, store, H) {
+export async function assizeStore(req, env, url, store) {
   const path = url.pathname.replace(/^\/v1\/\d+\/assize/, '');
-  if (path !== '/rules' || req.method !== 'GET') return H.fail(404, 'not found');
+  if (path !== '/rules' || req.method !== 'GET') return fail(404, 'not found');
   const T = env.TR, mine = String(store);
   const meta = (await T.prepare("SELECT rule, scope, published_version, published IS NOT NULL AS has, enabled FROM assize_rules WHERE scope IN ('all', ?) ORDER BY rule, scope").bind(mine).all()).results;
   const by = new Map();
@@ -50,7 +50,7 @@ export async function assizeStore(req, env, url, store, H) {
     pick.push({ rule, scope: from ? from.scope : null, version: from ? from.published_version : null, enabled: !!enabled });
   }
   const version = await sha(JSON.stringify(pick.map((x) => [x.rule, x.scope, x.version, x.enabled])));
-  if (url.searchParams.get('v') === version) return H.json({ version, same: true });
+  if (url.searchParams.get('v') === version) return json({ version, same: true });
   const want = pick.filter((x) => x.scope);
   const graphs = new Map();
   if (want.length) {
@@ -59,7 +59,7 @@ export async function assizeStore(req, env, url, store, H) {
   }
   const rules = {};
   for (const x of pick) rules[x.rule] = { graph: x.scope ? graphs.get(x.rule + '|' + x.scope) || null : null, version: x.version, scope: x.scope, enabled: x.enabled };
-  return H.json({ version, rules });
+  return json({ version, rules });
 }
 
 // ------------------------------------------------------------------ admin side
@@ -99,12 +99,12 @@ export async function assizeAdmin(req, env, url, path, me, email, H) {
   const T = env.TR, sub = path.replace(/^\/assize/, '');
   const canEdit = (scope) => me.owner || (scope === 'all' ? me.scope === 'all' : me.canSee(Number(scope)));
   const visible = (scope) => scope === 'all' || me.canSee(Number(scope));
-  const body = () => H.readJson(req, MAX_BODY);
+  const body = () => readJson(req, MAX_BODY);
   const rowsOf = async (rule) => (await T.prepare('SELECT * FROM assize_rules WHERE rule = ? ORDER BY scope').bind(rule).all()).results;
   const known = async (rule) => !!inCatalog(rule) || !!(await T.prepare("SELECT 1 FROM assize_rules WHERE rule = ? AND scope = 'all'").bind(rule).first());
   const history = (rule, scope, action, o = {}) => T.prepare('INSERT INTO assize_rule_history (rule, scope, version, graph, by_email, at, note, action) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(rule, scope, o.version ?? null, o.graph ?? null, email, H.now(), o.note || null, action);
-  const note = (b) => H.clean(b && b.note, 300) || null;
+    .bind(rule, scope, o.version ?? null, o.graph ?? null, email, now(), o.note || null, action);
+  const note = (b) => clean(b && b.note, 300) || null;
   const logIt = (action, rule, scope, detail) => H.log(env, email, 'assize:' + action, scope && scope !== 'all' ? Number(scope) : null, null, rule + ' · ' + (scope === 'all' ? 'all stores' : 'store ' + scope) + (detail ? ' · ' + detail : ''));
   // What a rule is, from the catalog or (graph-only) its graphs.
   const describe = (rule, rows) => {
@@ -122,35 +122,35 @@ export async function assizeAdmin(req, env, url, path, me, email, H) {
         scopes: mine.map((r) => ({ scope: r.scope, draft: !!r.has_draft, draftErrors: (parse(r.draft_errors) || []).length, draftBy: r.draft_by, draftAt: r.draft_at, published: !!r.has_pub, version: r.published_version,
           publishedBy: r.published_by, publishedAt: r.published_at, enabled: r.enabled, note: r.note })) };
     });
-    return H.json({ checks: R.CHECKS, rules }, 200, false);
+    return json({ checks: R.CHECKS, rules }, 200, false);
   }
   if (sub === '/rules' && req.method === 'POST') {
-    const b = await body(), rule = ruleId(b.rule), title = H.clean(b.title, 80), check = b.check;
-    if (!rule) return H.fail(400, 'rule id: lowercase letters, digits and dashes, 60 at most', false);
-    if (!title || !CHECK_KEYS.includes(check)) return H.fail(400, 'title and check (' + CHECK_KEYS.join(', ') + ') required', false);
-    if (!canEdit('all')) return H.fail(403, 'a new rule is for every store: it needs all-stores access', false);
-    if (inCatalog(rule) || (await T.prepare('SELECT 1 FROM assize_rules WHERE rule = ?').bind(rule).first())) return H.fail(409, 'there is already a rule ' + rule, false);
+    const b = await body(), rule = ruleId(b.rule), title = clean(b.title, 80), check = b.check;
+    if (!rule) return fail(400, 'rule id: lowercase letters, digits and dashes, 60 at most', false);
+    if (!title || !CHECK_KEYS.includes(check)) return fail(400, 'title and check (' + CHECK_KEYS.join(', ') + ') required', false);
+    if (!canEdit('all')) return fail(403, 'a new rule is for every store: it needs all-stores access', false);
+    if (inCatalog(rule) || (await T.prepare('SELECT 1 FROM assize_rules WHERE rule = ?').bind(rule).first())) return fail(409, 'there is already a rule ' + rule, false);
     const graph = { v: 1, rule, check, title, nodes: [], wires: [] };
     if (b.kind && R.KINDS.includes(b.kind)) graph.kind = b.kind; // the editor's default for new finding nodes
-    const at = H.now();
+    const at = now();
     await T.batch([
       T.prepare("INSERT INTO assize_rules (rule, scope, draft, draft_errors, draft_by, draft_at, created_by, created_at) VALUES (?, 'all', ?, ?, ?, ?, ?, ?)")
         .bind(rule, JSON.stringify(graph), JSON.stringify(R.checkGraph(graph, rule)), email, at, email, at),
       history(rule, 'all', 'create', { note: title }),
     ]);
     await logIt('create', rule, 'all', title);
-    return H.json({ ok: true, rule }, 200, false);
+    return json({ ok: true, rule }, 200, false);
   }
   if (sub === '/stores' && req.method === 'GET') {
     const r = (await T.prepare('SELECT store, MAX(store_name) AS name, SUM(is_open) AS open FROM workorders GROUP BY store ORDER BY store').all()).results.filter((x) => me.canSee(x.store));
     for (const s of me.scope === 'all' ? [] : me.stores) if (!r.some((x) => x.store === s)) r.push({ store: s, name: null, open: 0 });
-    return H.json({ stores: r.map((x) => ({ store: x.store, name: x.name || null, open: x.open || 0 })).sort((a, b) => a.store - b.store) }, 200, false);
+    return json({ stores: r.map((x) => ({ store: x.store, name: x.name || null, open: x.open || 0 })).sort((a, b) => a.store - b.store) }, 200, false);
   }
   if (sub === '/orders' && req.method === 'GET') {
-    const q = url.searchParams, store = H.int(q.get('store'));
-    if (!store || !me.canSee(store)) return H.fail(403, 'not your store', false);
-    const wos = (q.get('wos') || '').split(',').map(H.int).filter(Boolean).slice(0, 500);
-    const limit = Math.min(H.int(q.get('limit')) || 300, 500);
+    const q = url.searchParams, store = int(q.get('store'));
+    if (!store || !me.canSee(store)) return fail(403, 'not your store', false);
+    const wos = (q.get('wos') || '').split(',').map(int).filter(Boolean).slice(0, 500);
+    const limit = Math.min(int(q.get('limit')) || 300, 500);
     const [rows, scan] = await T.batch([
       T.prepare(`SELECT w.wo, w.status_id, w.status_name, w.program_name, w.device, w.api_updated_at, w.last_detail_at, s.id AS snapshot_id, s.fetched_at AS snapshot_at, s.plain${me.details ? ', s.sealed' : ''}
           FROM workorders w LEFT JOIN snapshots s ON s.id = (SELECT MAX(id) FROM snapshots WHERE store = w.store AND wo = w.wo)
@@ -158,18 +158,18 @@ export async function assizeAdmin(req, env, url, path, me, email, H) {
       T.prepare('SELECT MAX(at) AS at FROM scans WHERE store = ?').bind(store),
     ]);
     await H.log(env, email, 'assize:orders', store, null, rows.results.length + ' orders');
-    return H.json({ store, details: !!me.details, last_scan_at: scan.results[0].at || null, orders: rows.results.map((r) => Object.assign(r, { plain: parse(r.plain) })) }, 200, false);
+    return json({ store, details: !!me.details, last_scan_at: scan.results[0].at || null, orders: rows.results.map((r) => Object.assign(r, { plain: parse(r.plain) })) }, 200, false);
   }
 
   const m = sub.match(/^\/rules\/([a-z0-9-]{1,60})(?:\/(draft|discard|publish|revert|enabled|delete|history\/(\d{1,12})))?$/);
-  if (!m) return H.fail(404, 'not found', false);
+  if (!m) return fail(404, 'not found', false);
   const rule = ruleId(m[1]), action = m[2] && m[2].startsWith('history/') ? 'history' : m[2] || null;
-  if (!rule || !(await known(rule))) return H.fail(404, 'no rule ' + m[1], false);
+  if (!rule || !(await known(rule))) return fail(404, 'no rule ' + m[1], false);
 
   if (!action && req.method === 'GET') {
     const rows = await rowsOf(rule);
     const hist = (await T.prepare('SELECT id, scope, version, action, by_email, at, note, graph IS NOT NULL AS has_graph FROM assize_rule_history WHERE rule = ? ORDER BY id DESC LIMIT 500').bind(rule).all()).results;
-    return H.json(Object.assign(describe(rule, rows), {
+    return json(Object.assign(describe(rule, rows), {
       builtInGraph: GRAPHS[rule] || null,
       scopes: rows.filter((r) => visible(r.scope)).map((r) => ({ scope: r.scope, draft: parseGraph(r.draft), draftErrors: parse(r.draft_errors) || [], draftBy: r.draft_by, draftAt: r.draft_at,
         published: parseGraph(r.published), version: r.published_version, publishedBy: r.published_by, publishedAt: r.published_at, enabled: r.enabled, note: r.note })),
@@ -178,35 +178,35 @@ export async function assizeAdmin(req, env, url, path, me, email, H) {
   }
   if (action === 'history' && req.method === 'GET') {
     const h = await T.prepare('SELECT * FROM assize_rule_history WHERE id = ? AND rule = ?').bind(Number(m[3]), rule).first();
-    if (!h || !visible(h.scope)) return H.fail(404, 'no such version', false);
-    return H.json({ id: h.id, rule, scope: h.scope, version: h.version, action: h.action, by: h.by_email, at: h.at, note: h.note, graph: parseGraph(h.graph) }, 200, false);
+    if (!h || !visible(h.scope)) return fail(404, 'no such version', false);
+    return json({ id: h.id, rule, scope: h.scope, version: h.version, action: h.action, by: h.by_email, at: h.at, note: h.note, graph: parseGraph(h.graph) }, 200, false);
   }
-  if (req.method !== (action === 'draft' ? 'PUT' : 'POST')) return H.fail(405, 'method not allowed', false);
+  if (req.method !== (action === 'draft' ? 'PUT' : 'POST')) return fail(405, 'method not allowed', false);
   const b = await body(), scope = scopeOf(b.scope);
-  if (!scope) return H.fail(400, "scope required: 'all' or a store number", false);
-  if (!canEdit(scope)) return H.fail(403, scope === 'all' ? 'changing a rule for every store needs all-stores access' : 'no access to store ' + scope, false);
+  if (!scope) return fail(400, "scope required: 'all' or a store number", false);
+  if (!canEdit(scope)) return fail(403, scope === 'all' ? 'changing a rule for every store needs all-stores access' : 'no access to store ' + scope, false);
   const cat = inCatalog(rule);
   const row = await T.prepare('SELECT * FROM assize_rules WHERE rule = ? AND scope = ?').bind(rule, scope).first();
-  const at = H.now();
+  const at = now();
   const stale = () => b.ifDraftAt !== undefined && (b.ifDraftAt || null) !== ((row && row.draft_at) || null);
   // A row left with nothing in it goes (a code rule's, or a store's override); a graph-only rule keeps its 'all' row.
   const tidy = () => T.prepare("DELETE FROM assize_rules WHERE rule = ? AND scope = ? AND draft IS NULL AND published IS NULL AND enabled IS NULL AND (scope != 'all' OR ?)").bind(rule, scope, cat ? 1 : 0);
 
   if (action === 'draft' || action === 'revert') {
-    if (cat && !cat.perOrder) return H.fail(400, 'this rule looks across orders; graphs run one order at a time', false);
-    if (stale()) return H.fail(409, 'someone saved this draft since you opened it', false);
+    if (cat && !cat.perOrder) return fail(400, 'this rule looks across orders; graphs run one order at a time', false);
+    if (stale()) return fail(409, 'someone saved this draft since you opened it', false);
     let graph = b.graph, from = null;
     if (action === 'revert') {
-      from = await T.prepare("SELECT * FROM assize_rule_history WHERE id = ? AND rule = ? AND action = 'publish' AND graph IS NOT NULL").bind(H.int(b.id), rule).first();
-      if (!from || !visible(from.scope)) return H.fail(404, 'no such published version', false);
+      from = await T.prepare("SELECT * FROM assize_rule_history WHERE id = ? AND rule = ? AND action = 'publish' AND graph IS NOT NULL").bind(int(b.id), rule).first();
+      if (!from || !visible(from.scope)) return fail(404, 'no such published version', false);
       graph = parseGraph(from.graph); // an old version with bad positions is copied in with numbers
     }
-    if (!graph || typeof graph !== 'object' || Array.isArray(graph)) return H.fail(400, 'graph required', false);
+    if (!graph || typeof graph !== 'object' || Array.isArray(graph)) return fail(400, 'graph required', false);
     // Node positions are drawn straight into the editor's markup: refuse anything that isn't a number (other mistakes still save, with the error list).
     const badPos = RG.coordErrors(graph);
-    if (badPos.length) return H.fail(400, 'node positions must be numbers: ' + badPos.slice(0, 3).join('; ') + (badPos.length > 3 ? ' (+' + (badPos.length - 3) + ' more)' : ''), false);
+    if (badPos.length) return fail(400, 'node positions must be numbers: ' + badPos.slice(0, 3).join('; ') + (badPos.length > 3 ? ' (+' + (badPos.length - 3) + ' more)' : ''), false);
     const text = JSON.stringify(graph);
-    if (text.length > R.MAX_GRAPH_BYTES) return H.fail(413, 'the graph is over ' + R.MAX_GRAPH_BYTES / 1024 + ' KB', false);
+    if (text.length > R.MAX_GRAPH_BYTES) return fail(413, 'the graph is over ' + R.MAX_GRAPH_BYTES / 1024 + ' KB', false);
     const errors = R.checkGraph(graph, rule);
     const stmts = [T.prepare(`INSERT INTO assize_rules (rule, scope, draft, draft_errors, draft_by, draft_at, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (rule, scope) DO UPDATE SET draft = excluded.draft, draft_errors = excluded.draft_errors, draft_by = excluded.draft_by, draft_at = excluded.draft_at, note = COALESCE(excluded.note, note)`)
@@ -214,20 +214,20 @@ export async function assizeAdmin(req, env, url, path, me, email, H) {
     if (from) stmts.push(history(rule, scope, 'revert', { version: from.version, note: note(b) || 'draft from version ' + from.version + (from.scope !== scope ? ' (' + (from.scope === 'all' ? 'all stores' : 'store ' + from.scope) + ')' : '') }));
     await T.batch(stmts);
     await logIt(action, rule, scope, from ? 'version ' + from.version : errors.length ? errors.length + ' errors' : 'valid');
-    return H.json({ ok: true, errors, draftAt: at }, 200, false);
+    return json({ ok: true, errors, draftAt: at }, 200, false);
   }
   if (action === 'discard') {
-    if (!row || row.draft == null) return H.json({ ok: true }, 200, false);
+    if (!row || row.draft == null) return json({ ok: true }, 200, false);
     await T.batch([T.prepare('UPDATE assize_rules SET draft = NULL, draft_errors = NULL, draft_by = NULL, draft_at = NULL WHERE rule = ? AND scope = ?').bind(rule, scope), tidy()]);
     await logIt('discard', rule, scope);
-    return H.json({ ok: true }, 200, false);
+    return json({ ok: true }, 200, false);
   }
   if (action === 'publish') {
-    if (cat && !cat.perOrder) return H.fail(400, 'this rule looks across orders; graphs run one order at a time', false);
-    if (!row || row.draft == null) return H.fail(400, 'nothing to publish: no draft', false);
-    if (stale()) return H.fail(409, 'someone saved this draft since you opened it', false);
+    if (cat && !cat.perOrder) return fail(400, 'this rule looks across orders; graphs run one order at a time', false);
+    if (!row || row.draft == null) return fail(400, 'nothing to publish: no draft', false);
+    if (stale()) return fail(409, 'someone saved this draft since you opened it', false);
     const graph = parse(row.draft), errors = R.checkGraph(graph, rule);
-    if (errors.length) return H.json({ error: 'the draft has errors', errors }, 400, false);
+    if (errors.length) return json({ error: 'the draft has errors', errors }, 400, false);
     const version = (row.published_version || 0) + 1;
     await T.batch([
       T.prepare('UPDATE assize_rules SET published = draft, published_version = ?, published_by = ?, published_at = ?, draft = NULL, draft_errors = NULL, draft_by = NULL, draft_at = NULL WHERE rule = ? AND scope = ?')
@@ -235,25 +235,25 @@ export async function assizeAdmin(req, env, url, path, me, email, H) {
       history(rule, scope, 'publish', { version, graph: row.draft, note: note(b) }),
     ]);
     await logIt('publish', rule, scope, 'version ' + version);
-    return H.json({ ok: true, version }, 200, false);
+    return json({ ok: true, version }, 200, false);
   }
   if (action === 'enabled') {
     const v = b.enabled === true ? 1 : b.enabled === false ? 0 : b.enabled === null && scope !== 'all' ? null : undefined;
-    if (v === undefined) return H.fail(400, 'enabled: true or false (null: a store follows all stores)', false);
+    if (v === undefined) return fail(400, 'enabled: true or false (null: a store follows all stores)', false);
     const what = v === 1 ? 'enable' : v === 0 ? 'disable' : 'inherit';
     await T.batch([
       T.prepare('INSERT INTO assize_rules (rule, scope, enabled, created_by, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (rule, scope) DO UPDATE SET enabled = excluded.enabled').bind(rule, scope, v, email, at),
       history(rule, scope, what, { note: note(b) }), tidy(),
     ]);
     await logIt(what, rule, scope);
-    return H.json({ ok: true, enabled: v }, 200, false);
+    return json({ ok: true, enabled: v }, 200, false);
   }
   if (action === 'delete') {
-    if (scope === 'all') return H.fail(400, 'only a store override can be deleted', false);
-    if (!row) return H.json({ ok: true }, 200, false);
+    if (scope === 'all') return fail(400, 'only a store override can be deleted', false);
+    if (!row) return json({ ok: true }, 200, false);
     await T.batch([T.prepare('DELETE FROM assize_rules WHERE rule = ? AND scope = ?').bind(rule, scope), history(rule, scope, 'delete', { version: row.published_version || null, note: note(b) })]);
     await logIt('delete', rule, scope);
-    return H.json({ ok: true }, 200, false);
+    return json({ ok: true }, 200, false);
   }
-  return H.fail(404, 'not found', false);
+  return fail(404, 'not found', false);
 }

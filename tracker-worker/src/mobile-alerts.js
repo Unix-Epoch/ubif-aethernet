@@ -32,8 +32,10 @@
   No customer or staff names, phones or e-mails anywhere in an alert (facts are status name/id, days, count, times, due date, work order and
   sales order numbers, money totals).
 */
+import { json, fail, int, readJson, httpError, tzOf } from './http.js';
 import { local, localToUtc, addDays, hoursFor } from './metrics.js';
 import { buildHome, SPLH_TARGET } from './mobile.js';
+import { inStores, isDeviceStore } from './mobile-agent.js';
 
 export const TYPES = ['stuck', 'pickup', 'followup', 'quiet', 'digest', 'unlinked', 'coverage'];
 export const DEFAULTS = {
@@ -51,7 +53,6 @@ const BACKFILL_SECONDS = 3600;        // a stuck alert raised more than this lon
 const MAX_AGE_MS = 12 * 3600000;      // a poll never notifies an entry older than this (held during quiet hours, then too old)
 const MAX_NEW = 50, MAX_IDS = 100, DAY_S = 86400;
 
-const tzOf = (env) => env.STORE_TZ || 'America/New_York';
 const isInt = (v) => Number.isInteger(v);
 const parse = (s, d) => { try { const v = JSON.parse(s); return v && typeof v === 'object' ? v : d; } catch (_) { return d; } };
 const minuteOfDay = (ms, tz) => local(ms, tz).hour * 60 + new Date(ms).getUTCMinutes(); // US zones: whole-hour offsets
@@ -86,7 +87,7 @@ export const onStores = (stores, s) => stores.filter((x) => s.stores[x] !== fals
 // The digest's scope key: the phone's switched-on stores (sorted) and its stuck threshold (the digest lists stuck work orders at it).
 export const scopeKey = (stores, s) => [...stores].map(Number).sort((a, b) => a - b).join(',') + '|' + s.types.stuck.days;
 
-const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
+const bad = (msg) => httpError(400, msg);
 // Validates a PUT body against the ranges and merges it onto the stored settings. Unknown keys are refused (a typo must not silently do nothing).
 export function mergeSettings(stored, body, stores) {
   const known = (obj, keys, where) => { for (const k of Object.keys(obj)) if (!keys.includes(k)) throw bad(`unknown setting "${where}${k}"`); };
@@ -120,7 +121,7 @@ export function mergeSettings(stored, body, stores) {
     if (!isObj(body.stores)) throw bad('stores must be an object of store id: true or false');
     for (const [k, v] of Object.entries(body.stores)) {
       if (!/^\d{1,6}$/.test(k)) throw bad(`stores: "${k}" is not a store number`);
-      if (!stores.includes(Number(k))) throw Object.assign(new Error('not your store'), { status: 403 });
+      if (!inStores(stores, k)) throw httpError(403, 'not your store');
       if (typeof v !== 'boolean') throw bad(`stores.${k} must be true or false`);
       out.stores[Number(k)] = v;
     }
@@ -446,11 +447,11 @@ async function listApi(req, env, url, device, h) {
   const T = env.TR, st = await state(T, device, h), sw = switches(st), q = url.searchParams;
   let stores = device.stores;
   if (q.get('store') != null && q.get('store') !== 'all') {
-    if (!/^\d{1,6}$/.test(q.get('store'))) return h.fail(400, 'store: all or a store number');
-    if (!device.stores.includes(Number(q.get('store')))) return h.fail(403, 'not your store');
+    if (!/^\d{1,6}$/.test(q.get('store'))) return fail(400, 'store: all or a store number');
+    if (!isDeviceStore(device, q.get('store'))) return fail(403, 'not your store');
     stores = [Number(q.get('store'))];
   }
-  const lim = Math.min(Math.max(h.int(q.get('limit')) || 25, 1), 100);
+  const lim = Math.min(Math.max(int(q.get('limit')) || 25, 1), 100);
   const opt = (k) => { const v = q.get(k); if (v == null || v === '') return null; if (!/^\d{1,12}$/.test(v)) throw Object.assign(new Error(`${k}: a cursor number from an earlier answer`), { status: 400 }); return Number(v); };
   const after = opt('after'), before = opt('before');
   const rows = (await T.prepare(`SELECT a.id, a.store, a.type, a.wo, a.created_at, a.data, a.backfill, a.cleared_at, (a.id <= ?3 OR r.alert_id IS NOT NULL) AS read ${FEED_FROM}
@@ -466,7 +467,7 @@ async function listApi(req, env, url, device, h) {
     if (row.type === 'quiet') e.cleared = row.cleared_at || null;
     return e;
   });
-  return h.json({ v: 1, now: h.now(), cursor: top, unread, more, next: more ? rows[rows.length - 1].id : null, alerts });
+  return json({ v: 1, now: h.now(), cursor: top, unread, more, next: more ? rows[rows.length - 1].id : null, alerts });
 }
 
 // In quiet hours (store local time) a poll holds everything back and leaves the cursor where it is: the entries come out when quiet hours end,
@@ -474,24 +475,24 @@ async function listApi(req, env, url, device, h) {
 async function newApi(req, env, url, device, h) {
   const T = env.TR, tz = tzOf(env), nowMs = Date.parse(h.now()), st = await state(T, device, h), sw = switches(st);
   const raw = url.searchParams.get('since');
-  if (raw == null || raw === '') return h.json({ v: 1, cursor: (await T.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM alerts').first()).m, alerts: [] }); // first run: "from now on"
-  if (!/^\d{1,12}$/.test(raw)) return h.fail(400, 'since: a cursor from an earlier answer');
+  if (raw == null || raw === '') return json({ v: 1, cursor: (await T.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM alerts').first()).m, alerts: [] }); // first run: "from now on"
+  if (!/^\d{1,12}$/.test(raw)) return fail(400, 'since: a cursor from an earlier answer');
   const since = Number(raw), qh = st.settings.quietHours;
   if (qh.on) {
     const m = minuteOfDay(nowMs, tz), a = hm(qh.from), b = hm(qh.to);
-    if (a < b ? m >= a && m < b : m >= a || m < b) return h.json({ v: 1, cursor: since, alerts: [], held: true });
+    if (a < b ? m >= a && m < b : m >= a || m < b) return json({ v: 1, cursor: since, alerts: [], held: true });
   }
   const rows = (await T.prepare(`SELECT a.id, a.store, a.type, a.wo, a.created_at, a.data, a.backfill ${FEED_FROM} AND a.id > ?11 AND a.id > ?3 AND r.alert_id IS NULL ORDER BY a.id LIMIT ?12`)
     .bind(...feedBinds(device.stores, device.id, st), since, MAX_NEW).all()).results;
   const out = rows.filter((r) => !r.backfill && r.type !== 'back' && sw.type(r.type) && sw.row(r) && nowMs - Date.parse(r.created_at) <= MAX_AGE_MS).map(entry);
   const body = { v: 1, cursor: rows.length ? rows[rows.length - 1].id : since, alerts: out };
   if (rows.length === MAX_NEW) body.more = true; // poll again right away
-  return h.json(body);
+  return json(body);
 }
 
 async function readApi(req, env, url, device, h) {
-  const T = env.TR, st = await state(T, device, h), b = await h.readJson(req, 4000);
-  if (!b || typeof b !== 'object' || Array.isArray(b)) return h.fail(400, 'body must be { "ids": [...] } or { "all": true }');
+  const T = env.TR, st = await state(T, device, h), b = await readJson(req, 4000);
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return fail(400, 'body must be { "ids": [...] } or { "all": true }');
   if (b.all === true) {
     if (b.store === undefined) {
       await T.batch([
@@ -499,35 +500,35 @@ async function readApi(req, env, url, device, h) {
         T.prepare('DELETE FROM alert_reads WHERE device_id = ?1 AND alert_id <= (SELECT read_upto FROM alert_device WHERE device_id = ?1)').bind(device.id),
       ]);
     } else {
-      if (!isInt(b.store) || b.store < 0) return h.fail(400, 'store: a store number');
-      if (!device.stores.includes(b.store)) return h.fail(403, 'not your store');
+      if (!isInt(b.store) || b.store < 0) return fail(400, 'store: a store number');
+      if (!isDeviceStore(device, b.store)) return fail(403, 'not your store');
       await T.prepare('INSERT OR IGNORE INTO alert_reads (device_id, alert_id) SELECT ?1, a.id FROM alerts a WHERE a.store = ?2 AND a.id > ?3').bind(device.id, b.store, st.readUpto).run();
     }
   } else if (Array.isArray(b.ids)) {
-    if (!b.ids.length || b.ids.length > MAX_IDS || !b.ids.every((x) => isInt(x) && x > 0)) return h.fail(400, `ids: 1 to ${MAX_IDS} alert ids`);
+    if (!b.ids.length || b.ids.length > MAX_IDS || !b.ids.every((x) => isInt(x) && x > 0)) return fail(400, `ids: 1 to ${MAX_IDS} alert ids`);
     await T.prepare('INSERT OR IGNORE INTO alert_reads (device_id, alert_id) SELECT ?1, a.id FROM alerts a WHERE a.id IN (SELECT value FROM json_each(?2)) AND a.store IN (SELECT value FROM json_each(?3)) AND a.id > ?4')
       .bind(device.id, JSON.stringify(b.ids), JSON.stringify(device.stores), st.readUpto).run();
-  } else return h.fail(400, 'body must be { "ids": [...] } or { "all": true }');
-  return h.json({ ok: true, unread: await unreadOf(T, device, await state(T, device, h)) });
+  } else return fail(400, 'body must be { "ids": [...] } or { "all": true }');
+  return json({ ok: true, unread: await unreadOf(T, device, await state(T, device, h)) });
 }
 
 async function settingsApi(req, env, url, device, h) {
   const T = env.TR, st = await state(T, device, h);
   if (req.method === 'PUT') {
-    const merged = mergeSettings(st.settings, await h.readJson(req, 2000), device.stores);
+    const merged = mergeSettings(st.settings, await readJson(req, 2000), device.stores);
     await T.prepare('UPDATE alert_device SET settings = ?, updated_at = ? WHERE device_id = ?').bind(JSON.stringify(merged), h.now(), device.id).run();
     st.settings = normalize(merged, device.stores);
   }
-  return h.json({ v: 1, settings: st.settings, stores: device.stores, ranges: RANGES, defaults: DEFAULTS });
+  return json({ v: 1, settings: st.settings, stores: device.stores, ranges: RANGES, defaults: DEFAULTS });
 }
 
 export async function alertsApi(req, env, url, device, h) {
   const path = url.pathname.replace(/^\/v1\/agents\/m/, '').replace(/\/+$/, '');
-  if (/^\/push(\/|$)/.test(path)) return h.fail(404, 'no push service: poll GET /v1/agents/m/alerts/new');
-  const only = (method) => (req.method === method ? null : h.fail(405, 'method not allowed'));
+  if (/^\/push(\/|$)/.test(path)) return fail(404, 'no push service: poll GET /v1/agents/m/alerts/new');
+  const only = (method) => (req.method === method ? null : fail(405, 'method not allowed'));
   if (path === '/alerts') return only('GET') || listApi(req, env, url, device, h);
   if (path === '/alerts/new') return only('GET') || newApi(req, env, url, device, h);
   if (path === '/alerts/read') return only('POST') || readApi(req, env, url, device, h);
-  if (path === '/alerts/settings') return req.method === 'GET' || req.method === 'PUT' ? settingsApi(req, env, url, device, h) : h.fail(405, 'method not allowed');
-  return h.fail(404, 'not found');
+  if (path === '/alerts/settings') return req.method === 'GET' || req.method === 'PUT' ? settingsApi(req, env, url, device, h) : fail(405, 'method not allowed');
+  return fail(404, 'not found');
 }

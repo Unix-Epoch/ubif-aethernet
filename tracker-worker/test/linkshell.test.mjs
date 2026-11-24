@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { setup, C, worker } from './mobile-helpers.mjs';
+import { test } from 'node:test';
 import { LinkshellRoom, checkCode, LS, linkshellTrim } from '../src/linkshell.js';
 
 const T = await setup('.wrangler-test-linkshell');
@@ -16,24 +17,51 @@ T.E.LINKSHELL = {
     return new Response('connected ' + u.searchParams.get('side'));
   } }),
 };
+// ---- stand-ins for the relay's sockets and the Durable Object's ctx
+class FakeSocket {
+  constructor() { this.sent = []; this.readyState = 1; this.closedWith = null; }
+  send(s) { this.sent.push(s); }
+  close(code) { this.readyState = 3; this.closedWith = code; }
+  frames() { return this.sent.filter((s) => s !== 'pong').map((s) => JSON.parse(s)); }
+}
+function fakeCtx() {
+  const db = new DatabaseSync(':memory:'), kv = new Map(), sockets = [];
+  let alarm = null;
+  return {
+    sockets, get alarmAt() { return alarm; },
+    storage: {
+      sql: { exec: (q, ...a) => { const st = db.prepare(q); const rows = /^\s*select/i.test(q) ? st.all(...a) : (st.run(...a), []); return { toArray: () => rows }; } },
+      get: async (k) => kv.get(k), put: async (k, v) => { kv.set(k, v); }, deleteAll: async () => { kv.clear(); db.exec('DELETE FROM held'); },
+      getAlarm: async () => alarm, setAlarm: async (t) => { alarm = t; },
+    },
+    acceptWebSocket: (ws, tags) => { ws.tags = tags; sockets.push(ws); },
+    getWebSockets: (tag) => sockets.filter((w) => w.readyState === 1 && (!tag || w.tags.includes(tag))),
+    getTags: (ws) => ws.tags,
+  };
+}
 const pcKey = await C.newKeyPair(), phKey = await C.newKeyPair();
 const store = (path, body) => T.call('POST', '/v1/914/linkshell/' + path, body);
 const connect = (link, protos) => worker.fetch(new Request('https://t.test/v1/linkshell/connect?link=' + link, { headers: { upgrade: 'websocket', 'sec-websocket-protocol': protos } }), T.E, {});
 
+await test('linkshell', async () => {
 try {
   const phone = await T.registerPhone('Galaxy Z Fold 8 Ultra');
   await T.approve(phone, [914]);
   const other = await T.registerPhone('Other phone');
   await T.approve(other, [326]);
 
-  // PC starts a pairing
-  let r = await store('pair/start', { publicJwk: pcKey.publicJwk, name: 'Chrome · Mac' });
+  // PC starts a pairing, with a secret of its own that the QR code won't hold
+  const secret = 'pc-secret-0123456789ab';
+  assert.equal((await store('pair/start', { publicJwk: pcKey.publicJwk, name: 'PC', secret: 'short' })).status, 400, 'bad secret');
+  let r = await store('pair/start', { publicJwk: pcKey.publicJwk, name: 'Chrome · Mac', secret });
   assert.equal(r.status, 200);
   const { pairId, code } = r.j;
   assert.match(pairId, /^[0-9a-f]{32}$/); assert.match(code, /^[A-Za-z0-9_-]{22}$/);
-  assert.equal((await store('pair/status', { pairId, code })).j.state, 'waiting');
-  assert.equal((await store('pair/status', { pairId, code: 'A'.repeat(22) })).status, 404, 'wrong code');
-  assert.equal((await store('pair/finish', { pairId, code })).status, 409, 'not scanned yet');
+  assert.equal((await store('pair/status', { pairId, code, secret })).j.state, 'waiting');
+  assert.equal((await store('pair/status', { pairId, code: 'A'.repeat(22), secret })).status, 404, 'wrong code');
+  assert.equal((await store('pair/finish', { pairId, code, secret })).status, 409, 'not scanned yet');
+  const pairRow = await T.env.TR.prepare('SELECT * FROM linkshell_pairs WHERE id = ?').bind(pairId).first();
+  assert.match(pairRow.pc_secret_hash, /^[0-9a-f]{64}$/, 'only the hash is kept');
 
   // a phone without the store can't take it; the right phone can
   r = await T.authed(other, '/v1/agents/m/linkshell/pair', { method: 'POST', body: { pairId, code, publicJwk: phKey.publicJwk } });
@@ -41,17 +69,22 @@ try {
   r = await T.authed(phone, '/v1/agents/m/linkshell/pair', { method: 'POST', body: { pairId, code, publicJwk: phKey.publicJwk } });
   assert.equal(r.status, 200); assert.equal(r.j.store, 914); assert.equal(r.j.pcName, 'Chrome · Mac'); assert.equal(r.j.pcJwk.x, pcKey.publicJwk.x);
   const linkId = r.j.linkId;
-  r = await store('pair/status', { pairId, code });
+  // what the QR code holds (pairId and code) is not enough for the PC's calls: not status, not finish, not cancel
+  for (const what of ['pair/status', 'pair/finish', 'pair/cancel']) {
+    assert.equal((await store(what, { pairId, code })).status, 404, what + ' without the secret');
+    assert.equal((await store(what, { pairId, code, secret: 'x'.repeat(22) })).status, 404, what + ' with a wrong secret');
+  }
+  r = await store('pair/status', { pairId, code, secret });
   assert.equal(r.j.state, 'scanned'); assert.equal(r.j.linkId, linkId); assert.equal(r.j.phoneName, 'Galaxy Z Fold 8 Ultra'); assert.equal(r.j.phoneJwk.x, phKey.publicJwk.x);
   assert.equal(await checkCode(pcKey.publicJwk, r.j.phoneJwk), await checkCode(pcKey.publicJwk, phKey.publicJwk));
   assert.match(await checkCode(pcKey.publicJwk, phKey.publicJwk), /^[A-Z2-9]{3} [A-Z2-9]{3}$/);
   assert.notEqual(await checkCode(pcKey.publicJwk, phKey.publicJwk), await checkCode(phKey.publicJwk, pcKey.publicJwk), 'order matters');
 
   // the PC confirms: a token once, the pairing is gone
-  r = await store('pair/finish', { pairId, code });
+  r = await store('pair/finish', { pairId, code, secret });
   assert.equal(r.status, 200); assert.equal(r.j.linkId, linkId); assert.match(r.j.token, /^[0-9a-f]{64}$/);
   const token = r.j.token;
-  assert.equal((await store('pair/status', { pairId, code })).status, 404);
+  assert.equal((await store('pair/status', { pairId, code, secret })).status, 404);
   const row = await T.env.TR.prepare('SELECT * FROM linkshell_links WHERE id = ?').bind(linkId).first();
   assert.notEqual(row.pc_token_hash, token, 'only the hash is kept');
   assert.equal((await store('link', { linkId, token })).j.phoneName, 'Galaxy Z Fold 8 Ultra');
@@ -73,7 +106,50 @@ try {
   assert.equal((await connect('f'.repeat(32), 'linkshell, pc.' + token)).status, 404);
   assert.equal((await worker.fetch(new Request('https://t.test/v1/linkshell/connect?link=' + linkId), T.E, {})).status, 426);
 
-  // limits: 3 links per phone
+  // the relay asks D1 about a connected phone again once 5 minutes have passed since the last check
+  {
+    const ctx = fakeCtx(), room = new LinkshellRoom(ctx, T.E);
+    await ctx.storage.put('link', linkId);
+    const msg = (id) => JSON.stringify({ t: 'msg', id, kind: 'pullbacks.scan', iv: 'AAAAAAAAAAAAAAAA', ct: 'c2VhbGVk' });
+    const setStores = (v) => T.env.TR.prepare('UPDATE agents SET stores = ? WHERE id = ?').bind(v, phone.id).run();
+    const was = (await T.env.TR.prepare('SELECT stores FROM agents WHERE id = ?').bind(phone.id).first()).stores;
+    const pcS = new FakeSocket(), phS = new FakeSocket();
+    await room.accept(pcS, 'pc'); await room.accept(phS, 'phone'); await room.checked(Date.now());
+    await setStores('[326]'); // the phone loses the link's store
+    await room.webSocketMessage(phS, msg('s0000001'));
+    assert.equal(pcS.frames().at(-1).id, 's0000001', 'checked a moment ago: not asked again yet');
+    await room.checked(Date.now() - LS.STANDING_MS - 1000);
+    await room.webSocketMessage(phS, msg('s0000002'));
+    assert.equal(phS.closedWith, 1008);
+    assert.equal(pcS.frames().some((f) => f.id === 's0000002'), false, 'its message goes nowhere');
+    assert.equal(pcS.frames().at(-1).t, 'presence'); assert.equal(pcS.frames().at(-1).peer, false);
+    assert.equal(pcS.closedWith, null, 'the PC stays');
+    assert.equal((await connect(linkId, 'linkshell, ph.' + phone.id + '.' + phone.token)).status, 401, 'and it cannot connect again');
+    // allowed again: a check that passes is remembered, and the PC's messages never ask
+    await setStores(was);
+    const ph2 = new FakeSocket(); await room.accept(ph2, 'phone');
+    await room.checked(Date.now() - LS.STANDING_MS - 1000);
+    await room.webSocketMessage(pcS, msg('s0000003'));
+    assert.ok((await ctx.storage.get('standingAt')) < Date.now() - LS.STANDING_MS, 'a PC message is not a check');
+    await room.webSocketMessage(ph2, msg('s0000004'));
+    assert.equal(pcS.frames().at(-1).id, 's0000004'); assert.equal(ph2.closedWith, null);
+    assert.ok((await ctx.storage.get('standingAt')) > Date.now() - 5000);
+    // a phone that is no longer active
+    await T.env.TR.prepare("UPDATE agents SET status = 'revoked' WHERE id = ?").bind(phone.id).run();
+    await room.checked(Date.now() - LS.STANDING_MS - 1000);
+    await room.webSocketMessage(ph2, msg('s0000005'));
+    assert.equal(ph2.closedWith, 1008);
+    await T.env.TR.prepare("UPDATE agents SET status = 'active' WHERE id = ?").bind(phone.id).run();
+    // a link that is gone from D1: both ends closed as unlinked
+    const ctx2 = fakeCtx(), room2 = new LinkshellRoom(ctx2, T.E);
+    await ctx2.storage.put('link', 'e'.repeat(32));
+    const pc3 = new FakeSocket(), ph3 = new FakeSocket();
+    await room2.accept(pc3, 'pc'); await room2.accept(ph3, 'phone');
+    await room2.webSocketMessage(ph3, msg('s0000006'));
+    assert.equal(pc3.closedWith, 4001); assert.equal(ph3.closedWith, 4001);
+  }
+
+  // limits: 3 links per phone (pairings started without a secret, as scripts before it did, still finish by pairId and code)
   const pairAndFinish = async (st = 914) => {
     const s = await T.call('POST', `/v1/${st}/linkshell/pair/start`, { publicJwk: pcKey.publicJwk, name: 'PC' });
     await T.authed(phone, '/v1/agents/m/linkshell/pair', { method: 'POST', body: { pairId: s.j.pairId, code: s.j.code, publicJwk: phKey.publicJwk } });
@@ -98,33 +174,14 @@ try {
   await T.env.TR.prepare('UPDATE linkshell_links SET used_at = ? WHERE id = ?').bind(new Date(Date.now() - 31 * 86400000).toISOString(), left[1].id).run();
   assert.equal(await linkshellTrim(T.E), 1);
   assert.equal((await T.authed(phone, '/v1/agents/m/linkshell/links')).j.links.length, 0);
-  console.log('linkshell routes: all passed');
 } finally {
   await T.dispose();
 }
+});
+
+await test('the relay', async () => {
 
 // ------------------------------------------------------------------ the relay
-class FakeSocket {
-  constructor() { this.sent = []; this.readyState = 1; this.closedWith = null; }
-  send(s) { this.sent.push(s); }
-  close(code) { this.readyState = 3; this.closedWith = code; }
-  frames() { return this.sent.filter((s) => s !== 'pong').map((s) => JSON.parse(s)); }
-}
-function fakeCtx() {
-  const db = new DatabaseSync(':memory:'), kv = new Map(), sockets = [];
-  let alarm = null;
-  return {
-    sockets, get alarmAt() { return alarm; },
-    storage: {
-      sql: { exec: (q, ...a) => { const st = db.prepare(q); const rows = /^\s*select/i.test(q) ? st.all(...a) : (st.run(...a), []); return { toArray: () => rows }; } },
-      get: async (k) => kv.get(k), put: async (k, v) => { kv.set(k, v); }, deleteAll: async () => { kv.clear(); db.exec('DELETE FROM held'); },
-      getAlarm: async () => alarm, setAlarm: async (t) => { alarm = t; },
-    },
-    acceptWebSocket: (ws, tags) => { ws.tags = tags; sockets.push(ws); },
-    getWebSockets: (tag) => sockets.filter((w) => w.readyState === 1 && (!tag || w.tags.includes(tag))),
-    getTags: (ws) => ws.tags,
-  };
-}
 {
   const ctx = fakeCtx(), room = new LinkshellRoom(ctx, {});
   const msg = (id, kind = 'pullbacks.scan') => JSON.stringify({ t: 'msg', id, kind, iv: 'AAAAAAAAAAAAAAAA', ct: 'c2VhbGVk' });
@@ -184,5 +241,5 @@ function fakeCtx() {
   const res = await room.fetch(new Request('https://linkshell/close', { method: 'POST' }));
   assert.equal(await res.text(), 'ok');
   assert.equal(pc2.closedWith, 4001); assert.equal(ph2.closedWith, 4001);
-  console.log('linkshell relay: all passed');
 }
+});

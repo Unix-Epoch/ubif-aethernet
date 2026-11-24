@@ -15,7 +15,8 @@
     browsers that saved or scanned it, kept 3 days). The notes are encrypted
     with AES-GCM under a key made from it, and the Worker (/v1/:store/return)
     gets the ciphertext plus a token made from it, of which it keeps only a
-    hash. The Worker can't read the notes, and nobody without the label can
+    hash. The Worker can't read the notes (the digits are stretched before the
+    key and token are made from them), and nobody without the label can
     read, change or delete them.
   - Scan (Master's Mend's scan to open sends AER codes here): the arrival
     opens, and its notes show in a box in the drawer and in a panel on every
@@ -52,7 +53,7 @@ AE.shard({
     const CHECK_IN = /^check-?in$/i; // the arrival drawer's button that starts the check-in
     const INITIAL_CHECKIN = 1;       // work order status while the check-in isn't finished
     const KEEP_MS = 3 * 86400000;    // the Worker keeps notes 3 days; so do the browsers that know a label
-    const KEYS = 'ae_return_keys';   // GM: { [arrivalId]: { s, at, woId } }
+    const KEYS = 'ae_return_keys';   // GM: { [arrivalId]: { s, at, woId, v } } (v: how its notes are sealed, once known)
     const REASONS = [
       { label: 'Unable to use device', value: 'device', ticket: true },
       { label: 'Customer does not know carrier PIN', value: 'pin', ticket: true },
@@ -142,15 +143,30 @@ AE.shard({
       while (out.length < 16) for (const b of crypto.getRandomValues(new Uint8Array(24))) if (b < 250 && out.length < 16) out += String(b % 10);
       return out;
     }
-    const tokenOf = async (secret) => hex(await sha('ae-return-token:' + secret));
-    const keyOf = async (secret) => crypto.subtle.importKey('raw', await sha('ae-return-key:' + secret), 'AES-GCM', false, ['encrypt', 'decrypt']);
-    async function seal(secret, notes) {
+    /*
+      The label's 16 digits are stretched (PBKDF2-SHA256, 600,000 rounds) before the token and the key are cut from them, so the
+      rows the Worker keeps can't be searched for the secret. Notes saved before this (v 1: one SHA-256 of the digits) are still
+      read, changed and removed with their own token until they are gone (3 days at most); everything new is v 2.
+    */
+    const V = 2, ROUNDS = 600000;
+    const stretched = new Map(); // secret → promise of the stretched digits (hex), for this page
+    function stretch(secret) {
+      if (!stretched.has(secret)) stretched.set(secret, (async () => {
+        const k = await crypto.subtle.importKey('raw', enc.encode(secret), 'PBKDF2', false, ['deriveBits']);
+        return hex(new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode('ae-return v2'), iterations: ROUNDS }, k, 256)));
+      })());
+      return stretched.get(secret);
+    }
+    const rootOf = async (secret, v) => (v === 1 ? secret : stretch(secret));
+    const tokenOf = async (secret, v = V) => hex(await sha('ae-return-token:' + await rootOf(secret, v)));
+    const keyOf = async (secret, v = V) => crypto.subtle.importKey('raw', await sha('ae-return-key:' + await rootOf(secret, v)), 'AES-GCM', false, ['encrypt', 'decrypt']);
+    async function seal(secret, notes, v = V) {
       const iv = crypto.getRandomValues(new Uint8Array(12));
-      const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await keyOf(secret), enc.encode(JSON.stringify(notes))));
+      const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await keyOf(secret, v), enc.encode(JSON.stringify(notes))));
       return { iv: b64(iv), data: b64(data) };
     }
-    async function unseal(secret, row) {
-      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(row.iv) }, await keyOf(secret), unb64(row.data));
+    async function unseal(secret, row, v = V) {
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(row.iv) }, await keyOf(secret, v), unb64(row.data));
       const j = JSON.parse(new TextDecoder().decode(plain));
       return j && typeof j === 'object' ? j : {};
     }
@@ -168,7 +184,7 @@ AE.shard({
     const keyFor = (id) => keys()[id] || null;
     function remember(id, s, extra) {
       const all = keys(), old = all[id] && all[id].s === s ? all[id] : null;
-      all[id] = { s, at: old ? old.at : Date.now(), woId: old ? old.woId || null : null, ...(extra || {}) };
+      all[id] = { s, at: old ? old.at : Date.now(), woId: old ? old.woId || null : null, ...(old && old.v ? { v: old.v } : {}), ...(extra || {}) };
       GM_setValue(KEYS, all);
     }
     function forget(id) { const all = keys(); delete all[id]; GM_setValue(KEYS, all); notesCache.delete(Number(id)); }
@@ -184,8 +200,16 @@ AE.shard({
       if (!fresh && Date.now() - (readFailed.get(id) || 0) < 30000) throw new Error('the Worker failed just now');
       let v = null;
       try {
-        const row = await call('/read', { arrivalId: id, token: await tokenOf(k.s) });
-        v = { notes: await unseal(k.s, row), by: row.by, at: row.at, updatedAt: row.updatedAt };
+        // A label whose version isn't known yet (scanned here, or kept from before v 2) is tried both ways.
+        let row = null, ver = k.v || V;
+        try { row = await call('/read', { arrivalId: id, token: await tokenOf(k.s, ver) }); }
+        catch (e) {
+          if (k.v || !(e && e.status === 404)) throw e;
+          ver = 1;
+          row = await call('/read', { arrivalId: id, token: await tokenOf(k.s, 1) });
+        }
+        v = { notes: await unseal(k.s, row, ver), by: row.by, at: row.at, updatedAt: row.updatedAt };
+        if (k.v !== ver) remember(id, k.s, { v: ver });
       } catch (e) {
         if (e && e.status === 404) { forget(id); v = null; } // finished, discarded or past 3 days
         else { readFailed.set(id, Date.now()); throw e; }
@@ -194,8 +218,9 @@ AE.shard({
       return v;
     }
     async function saveNotes(id, secret, notes) {
-      await call('', { arrivalId: id, token: await tokenOf(secret), ...(await seal(secret, notes)) });
-      remember(id, secret);
+      const k = keyFor(id), ver = (k && k.s === secret && k.v) || V; // notes already saved keep the version their token was made with
+      await call('', { arrivalId: id, token: await tokenOf(secret, ver), ...(await seal(secret, notes, ver)) });
+      remember(id, secret, { v: ver });
       notesCache.set(id, { notes, by: null, at: null, updatedAt: new Date().toISOString() });
     }
 
@@ -476,8 +501,12 @@ AE.shard({
         // Only a real work order (numeric workorderStatusId) can say it left Initial check-in: a failed call or odd answer changes nothing.
         try { wo = AE.shape.workorder(await AE.api('GET', '/api/workorder/' + k.woId)); } catch (_) { continue; }
         if (Number(wo.workorderStatusId) === INITIAL_CHECKIN) continue;
-        try { await call('/remove', { arrivalId: Number(id), token: await tokenOf(k.s) }); }
-        catch (e) { if (!(e && e.status === 404)) continue; } // 404: already gone
+        let gone = true;
+        for (const ver of k.v ? [k.v] : [V, 1]) {
+          try { await call('/remove', { arrivalId: Number(id), token: await tokenOf(k.s, ver) }); break; }
+          catch (e) { if (!(e && e.status === 404)) { gone = false; break; } } // 404: already gone, or sealed the other way
+        }
+        if (!gone) continue;
         AE.track('checkinDrafts:finished');
         forget(id);
       }

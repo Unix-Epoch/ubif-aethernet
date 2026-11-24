@@ -91,7 +91,7 @@ class ScannerTest {
 
     @Test fun viewModelLoadsChangesAndSavesAfterAPause() = runTest(main) {
         val prefs = MemoryScannerPrefs(mapOf(ScanKind.Labels to ScanTuning.default(ScanKind.Labels).copy(zoom = 2f)))
-        val vm = ScannerViewModel(prefs, saveDelayMs = 300)
+        val vm = ScannerViewModel(prefs, backgroundScope, saveDelayMs = 300)
         advanceUntilIdle()
         assertEquals(2f, vm.state.value.tuning.zoom)
         vm.change(vm.state.value.tuning.copy(hold = 3))
@@ -104,7 +104,7 @@ class ScannerTest {
 
     @Test fun viewModelKeepsEachSetupApartAndCountsReads() = runTest(main) {
         val prefs = MemoryScannerPrefs()
-        val vm = ScannerViewModel(prefs)
+        val vm = ScannerViewModel(prefs, backgroundScope)
         advanceUntilIdle()
         vm.onCode("900101-1"); vm.onCode("900101-1")
         assertEquals("900101-1", vm.state.value.lastCode)
@@ -119,9 +119,19 @@ class ScannerTest {
         assertEquals(ScanArea(0.2f, 0.2f, 0.6f, 0.5f), prefs.tuning(ScanKind.Labels).first().area)
     }
 
+    @Test fun aChangeStillWaitingIsSavedWhenTheScreenGoesAway() = runTest(main) {
+        val prefs = MemoryScannerPrefs()
+        val vm = ScannerViewModel(prefs, appScope = this)
+        advanceUntilIdle()
+        vm.change(vm.state.value.tuning.copy(hold = 3))
+        androidx.lifecycle.ViewModelStore().apply { put("scanner", vm) }.clear() // what Android does when the screen is gone for good
+        advanceUntilIdle()
+        assertEquals(3, prefs.tuning(ScanKind.Labels).first().hold)
+    }
+
     @Test fun resetGoesBackToTheDefaults() = runTest(main) {
         val prefs = MemoryScannerPrefs()
-        val vm = ScannerViewModel(prefs)
+        val vm = ScannerViewModel(prefs, backgroundScope)
         advanceUntilIdle()
         vm.change(vm.state.value.tuning.copy(zoom = 3f, sound = true))
         vm.reset()

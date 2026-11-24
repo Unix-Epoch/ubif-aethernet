@@ -3,6 +3,8 @@ package dev.aethernet.linkpearl.feature.linkshell
 import dev.aethernet.linkpearl.core.data.Credentials
 import dev.aethernet.linkpearl.core.data.EncryptedFile
 import dev.aethernet.linkpearl.core.data.LinkpearlJson
+import dev.aethernet.linkpearl.core.data.boolOrNull
+import dev.aethernet.linkpearl.core.data.strOrNull
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,7 +19,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -77,6 +78,12 @@ interface LsSocket {
     fun send(text: String): Boolean
     fun close(code: Int, reason: String)
 }
+/**
+ * Close code made up here (the relay never sends it): the relay refused this phone's credential when connecting (401 or 403: the phone
+ * was deactivated, its token is no longer valid, or it lost the link's store).
+ */
+const val LS_CLOSE_REFUSED = 4401
+
 fun interface LsSockets { fun open(url: String, protocols: List<String>, listener: LsSocketListener): LsSocket }
 
 /** OkHttp's WebSocket. The credential goes in Sec-WebSocket-Protocol (the relay's rule, shared with browsers). */
@@ -87,11 +94,20 @@ class OkHttpSockets(private val client: OkHttpClient) : LsSockets {
             override fun onOpen(webSocket: WebSocket, response: Response) = listener.onOpen()
             override fun onMessage(webSocket: WebSocket, text: String) = listener.onMessage(text)
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(1000, null); listener.onClosed(code) }
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) = listener.onClosed(response?.code?.let { if (it == 404) 4001 else 1006 } ?: 1006)
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) = listener.onClosed(closeCodeFor(response?.code))
         })
         return object : LsSocket {
             override fun send(text: String) = ws.send(text)
             override fun close(code: Int, reason: String) { ws.close(code, reason) }
+        }
+    }
+
+    companion object {
+        /** The close code for a connect that failed with HTTP [status] (null = no answer): 404 = no such link, 401/403 = refused. */
+        fun closeCodeFor(status: Int?): Int = when (status) {
+            404 -> 4001
+            401, 403 -> LS_CLOSE_REFUSED
+            else -> 1006
         }
     }
 }
@@ -103,7 +119,8 @@ class OkHttpSockets(private val client: OkHttpClient) : LsSockets {
  * the socket closes after [idleMs] without messages. Every [send] goes to the outbox first and stays there until the browser acks it,
  * so a message sent while either end is away arrives later (the relay holds it up to 24 hours once it gets there). Received ids are
  * remembered, so a resend is handled once. Closes from the relay: 4001 = the link is gone (forgotten here), 4000 = this phone
- * connected again elsewhere. Handlers ([on]) run one at a time, in order; a message is acked after its handler returns.
+ * connected again elsewhere. [LS_CLOSE_REFUSED] = the relay refused this phone: the link is kept, and nothing reconnects until the next
+ * [wake] or [send] (retrying by itself would be refused for as long as the phone stays deactivated). Handlers ([on]) run one at a time, in order; a message is acked after its handler returns.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class LinkshellClient(
@@ -190,7 +207,7 @@ class LinkshellClient(
         _state.value = _state.value.copy(online = false, peer = false)
         when (code) {
             4001 -> update(LinkshellData())
-            4000, 1000 -> {}
+            4000, 1000, LS_CLOSE_REFUSED -> {}
             else -> if (data.link != null) {
                 val wait = retryMs
                 retryMs = (retryMs * 2).coerceAtMost(60_000L)
@@ -229,10 +246,10 @@ class LinkshellClient(
         if (text == "pong") return
         idle()
         val f = runCatching { LinkpearlJson.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
-        fun str(k: String) = (f[k] as? JsonPrimitive)?.contentOrNull
+        fun str(k: String) = f.strOrNull(k)
         when (str("t")) {
             "hello", "presence" -> {
-                _state.value = _state.value.copy(peer = (f["peer"] as? JsonPrimitive)?.booleanOrNull == true, seen = str("seen") ?: _state.value.seen)
+                _state.value = _state.value.copy(peer = f.boolOrNull("peer") == true, seen = str("seen") ?: _state.value.seen)
                 if (str("t") == "hello") flush()
             }
             "ack" -> {

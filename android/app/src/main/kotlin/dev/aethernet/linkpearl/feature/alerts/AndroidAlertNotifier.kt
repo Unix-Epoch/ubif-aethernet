@@ -38,7 +38,7 @@ class AndroidAlertNotifier(private val context: Context) : AlertNotifier {
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
     private fun tap(note: PlannedNote): PendingIntent =
-        PendingIntent.getActivity(context, note.id, NotificationTap.tag(intentFor(Routes.deepLink(note.tapRoute)), note.alertIds), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        PendingIntent.getActivity(context, note.id, NotificationTap.tag(intentFor(Routes.deepLink(note.tapRoute)), note.alertIds, NotificationTap.token(context)), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
     private fun build(note: PlannedNote): Notification {
         val digest = note.type == AlertType.Digest

@@ -13,13 +13,10 @@
   Uploaded daily numbers (labor hours, cleanings, Assize) come from daily_metrics (filled by Aethernet); when
   a key has no rows in the range the page shows its "no data yet" state.
 */
+import { json as httpJson, int, tzOf, DAY_RE } from './http.js';
+import { STORE_HOURS, hoursFor, CLOSED_STATUS } from './constants.js';
 
-const DAY_RE = /^\d{4}-\d\d-\d\d$/;
-const CLOSED = new Set([14, 15, 25]); // Sale complete, Closed, Cancelled
-// Store hours, same as Assize (src/65-assize.js STORE_HOURS / hoursFor): open 10–19 Monday–Saturday; Lexington every day.
-export const STORE_HOURS = { open: 10, close: 19, closedDays: [0] };
-const OPEN_DAILY = new Set([536]);
-export const hoursFor = (store) => (OPEN_DAILY.has(Number(store)) ? Object.assign({}, STORE_HOURS, { closedDays: [] }) : STORE_HOURS);
+export { STORE_HOURS, hoursFor }; // other modules and tests read them from here
 const H0 = 8, H1 = 20; // hourly buckets 8 AM … 8 PM (anything outside folds into the first/last)
 // Status → chart bucket (Open work orders by status).
 const BUCKETS = ['bench', 'parts', 'wait', 'rfp', 'other'];
@@ -27,9 +24,9 @@ export const bucketOf = (s) => (s === 2 || s === 3 ? 'parts' : s === 4 || s === 
   : [1, 5, 8, 9, 10, 11, 12, 24].includes(s) ? 'bench' : 'other');
 const DAILY = { labor_hours: 'labor', labor_hours_gm: 'laborGm', headcount: 'headcount', am_orders: 'am', cleanings_linked: 'cln', assize_fail: 'assizeFail', assize_flag: 'assizeFlag', assize_note: 'assizeNote' };
 
-const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+// The admin site's answers: no CORS headers.
+const json = (body, status = 200) => httpJson(body, status, false);
 const fail = (status, error) => json({ error }, status);
-const int = (v) => (Number.isInteger(v) ? v : (typeof v === 'string' && /^\d{1,12}$/.test(v) ? Number(v) : null));
 const r2 = (v) => (v == null ? null : Math.round(v * 100) / 100);
 // Any parseable time → ISO UTC (…Z), so text comparisons in SQL are time comparisons.
 export const isoZ = (v) => { if (typeof v !== 'string' || !/^\d{4}-\d\d-\d\d/.test(v)) return null; const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(v) || v.length <= 10 ? v : v + 'Z'); return isNaN(d) ? null : d.toISOString(); };
@@ -70,12 +67,12 @@ export function statusPeriodsOf(plain, at, events) {
   for (const e of trail) if (!ev.length || ev[ev.length - 1].s !== e.s) ev.push(e);
   const cur = int(w.statusId);
   if (cur != null && ev.length && ev[ev.length - 1].s !== cur) {
-    const sold = CLOSED.has(cur) ? isoZ(w.soldAt) || isoZ(w.updatedAt) : isoZ(w.updatedAt);
+    const sold = CLOSED_STATUS.has(cur) ? isoZ(w.soldAt) || isoZ(w.updatedAt) : isoZ(w.updatedAt);
     ev.push({ s: cur, t: sold && sold > ev[ev.length - 1].t ? sold : (at > ev[ev.length - 1].t ? at : ev[ev.length - 1].t) });
   }
   const out = [];
   for (let i = 0; i < ev.length; i++) {
-    if (CLOSED.has(ev[i].s)) continue;
+    if (CLOSED_STATUS.has(ev[i].s)) continue;
     const end = i + 1 < ev.length ? ev[i + 1].t : null;
     if (end && end <= ev[i].t) continue;
     out.push({ status_id: ev[i].s, start_at: ev[i].t, end_at: end });
@@ -110,7 +107,7 @@ export async function statusPeriodStmts(T, store, wo, plain, at) {
   const stmts = [];
   const t = open && upd <= open.start_at ? at : upd;
   if (open) stmts.push(T.prepare('UPDATE status_periods SET end_at = ? WHERE store = ? AND wo = ? AND start_at = ?').bind(t, store, wo, open.start_at));
-  if (!CLOSED.has(cur)) stmts.push(T.prepare('INSERT INTO status_periods (store, wo, status_id, start_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, wo, start_at) DO UPDATE SET status_id = excluded.status_id, end_at = NULL').bind(store, wo, cur, t));
+  if (!CLOSED_STATUS.has(cur)) stmts.push(T.prepare('INSERT INTO status_periods (store, wo, status_id, start_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, wo, start_at) DO UPDATE SET status_id = excluded.status_id, end_at = NULL').bind(store, wo, cur, t));
   return stmts;
 }
 // A WO recorded closed without a detail (Portal answered 404 twice): its open interval ends then.
@@ -143,7 +140,7 @@ async function backfill(env, after, email) {
     }
     const want = statusPeriodsOf(plain, at, events);
     const last = want[want.length - 1];
-    if (last && !last.end_at && (!r.is_open || CLOSED.has(r.status_id))) last.end_at = [isoZ(r.closed_at), isoZ(r.sold_at), at].find((t) => t && t > last.start_at) || at;
+    if (last && !last.end_at && (!r.is_open || CLOSED_STATUS.has(r.status_id))) last.end_at = [isoZ(r.closed_at), isoZ(r.sold_at), at].find((t) => t && t > last.start_at) || at;
     stmts.push(...syncStmts(T, r.store, r.wo, have.get(r.store + '|' + r.wo) || [], want));
   }
   for (let i = 0; i < stmts.length; i += 100) await T.batch(stmts.slice(i, i + 100));
@@ -179,7 +176,7 @@ export function deviceType(name) {
   Levels: open, bench, parts, wait, rfp, other (end of each bucket; weeks average their days), nto (at store close), active
 */
 async function build(env, q) {
-  const T = env.TR, A = env.DB || env.AE, tz = env.STORE_TZ || 'America/New_York';
+  const T = env.TR, A = env.DB || env.AE, tz = tzOf(env);
   const { from, to, stores, gran } = q, nowMs = q.now || Date.now(), nowIso = new Date(nowMs).toISOString(), today = local(nowMs, tz).day;
   const n = span(from, to), prevTo = addDays(from, -1), prevFrom = addDays(from, -n);
   const S = JSON.stringify(stores);
@@ -438,7 +435,7 @@ export async function metricsApi(req, env, url, path, me) {
     return json(await backfill(env, Number(url.searchParams.get('after')) || 0, me.email));
   }
   if (req.method !== 'GET' || path !== '/metrics') return fail(404, 'not found');
-  const A = env.DB || env.AE, qs = url.searchParams, tz = env.STORE_TZ || 'America/New_York';
+  const A = env.DB || env.AE, qs = url.searchParams, tz = tzOf(env);
   // Stores: Aethernet's store list (names), limited to what this person may see.
   const known = A ? (await A.prepare('SELECT store, name FROM store_access ORDER BY store').all().catch(() => ({ results: [] }))).results : [];
   const mine = (me.stores || []).map(Number);

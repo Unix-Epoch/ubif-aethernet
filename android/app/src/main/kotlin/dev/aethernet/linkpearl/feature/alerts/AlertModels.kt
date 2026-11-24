@@ -1,14 +1,19 @@
 package dev.aethernet.linkpearl.feature.alerts
 
 import dev.aethernet.linkpearl.core.design.Fmt
+import dev.aethernet.linkpearl.core.data.arrOrNull
+import dev.aethernet.linkpearl.core.data.boolOrNull
+import dev.aethernet.linkpearl.core.data.intOrNull
+import dev.aethernet.linkpearl.core.data.jsonStrOrNull
+import dev.aethernet.linkpearl.core.data.longOrNull
+import dev.aethernet.linkpearl.core.data.numOrNull
+import dev.aethernet.linkpearl.core.data.objOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.longOrNull
 import java.time.DateTimeException
 import java.time.Instant
 import java.time.LocalDate
@@ -108,61 +113,54 @@ data class PollResult(val cursor: Int, val alerts: List<Alert>, val held: Boolea
 
 // ---- JSON parsing (manual: unknown types are dropped, unknown fields ignored) ------------------------------------------------
 
-private fun JsonObject.str(k: String): String? = (this[k] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
-private fun JsonObject.int(k: String): Int? = (this[k] as? JsonPrimitive)?.intOrNull
-private fun JsonObject.long(k: String): Long? = (this[k] as? JsonPrimitive)?.longOrNull
-private fun JsonObject.bool(k: String): Boolean? = (this[k] as? JsonPrimitive)?.booleanOrNull
-private fun JsonObject.dbl(k: String): Double? = (this[k] as? JsonPrimitive)?.takeIf { !it.isString }?.doubleOrNull
-private fun JsonObject.obj(k: String): JsonObject? = this[k] as? JsonObject
-private fun JsonObject.arr(k: String): JsonArray? = this[k] as? JsonArray
 
-private fun digestWos(o: JsonObject?): List<DigestWo> = o?.arr("wos")?.mapNotNull { e ->
+private fun digestWos(o: JsonObject?): List<DigestWo> = o?.arrOrNull("wos")?.mapNotNull { e ->
     val w = e as? JsonObject ?: return@mapNotNull null
-    DigestWo(w.int("store") ?: return@mapNotNull null, w.long("wo") ?: return@mapNotNull null, w.str("status"), w.int("days"))
+    DigestWo(w.intOrNull("store") ?: return@mapNotNull null, w.longOrNull("wo") ?: return@mapNotNull null, w.jsonStrOrNull("status"), w.intOrNull("days"))
 } ?: emptyList()
 
 /** The digest facts; every part is optional (a missing part shows dashes, never zeros). */
 fun parseDigest(o: JsonObject): DigestFacts {
-    val rfp = o.obj("rfp"); val fu = o.obj("followups"); val st = o.obj("stuck")
-    val target = o.arr("target")?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> !p.isString }?.doubleOrNull?.toInt() }?.takeIf { it.size == 2 }
+    val rfp = o.objOrNull("rfp"); val fu = o.objOrNull("followups"); val st = o.objOrNull("stuck")
+    val target = o.arrOrNull("target")?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> !p.isString }?.doubleOrNull?.toInt() }?.takeIf { it.size == 2 }
     return DigestFacts(
-        day = o.str("day"), yesterday = o.str("yesterday"),
-        stores = o.arr("stores")?.mapNotNull { (it as? JsonPrimitive)?.intOrNull } ?: emptyList(),
-        sales = o.dbl("sales"), splh = o.dbl("splh"), hours = o.dbl("hours"), target = target,
-        rfpTotal = rfp?.dbl("total"), rfpCount = rfp?.int("count"), rfpOldestDays = rfp?.int("oldestDays"),
-        followupCount = fu?.int("count"), followups = digestWos(fu),
-        stuckDays = st?.int("days"), stuckCount = st?.int("count"), stuck = digestWos(st),
+        day = o.jsonStrOrNull("day"), yesterday = o.jsonStrOrNull("yesterday"),
+        stores = o.arrOrNull("stores")?.mapNotNull { (it as? JsonPrimitive)?.intOrNull } ?: emptyList(),
+        sales = o.numOrNull("sales"), splh = o.numOrNull("splh"), hours = o.numOrNull("hours"), target = target,
+        rfpTotal = rfp?.numOrNull("total"), rfpCount = rfp?.intOrNull("count"), rfpOldestDays = rfp?.intOrNull("oldestDays"),
+        followupCount = fu?.intOrNull("count"), followups = digestWos(fu),
+        stuckDays = st?.intOrNull("days"), stuckCount = st?.intOrNull("count"), stuck = digestWos(st),
     )
 }
 
 fun parseAlert(o: JsonObject): Alert? {
-    val type = AlertType.of(o.str("type")) ?: return null
+    val type = AlertType.of(o.jsonStrOrNull("type")) ?: return null
     val digest = type == AlertType.Digest
     return Alert(
-        id = o.int("id") ?: return null, store = o.int("store") ?: return null, type = type, wo = o.long("wo"),
-        at = o.str("at") ?: return null,
-        statusId = o.int("statusId"), status = o.str("status"), days = o.int("days"), since = o.str("since"),
-        count = o.int("count"), oldestDays = o.int("oldestDays"), due = o.str("due"), kind = o.str("kind"),
+        id = o.intOrNull("id") ?: return null, store = o.intOrNull("store") ?: return null, type = type, wo = o.longOrNull("wo"),
+        at = o.jsonStrOrNull("at") ?: return null,
+        statusId = o.intOrNull("statusId"), status = o.jsonStrOrNull("status"), days = o.intOrNull("days"), since = o.jsonStrOrNull("since"),
+        count = o.intOrNull("count"), oldestDays = o.intOrNull("oldestDays"), due = o.jsonStrOrNull("due"), kind = o.jsonStrOrNull("kind"),
         // A digest's "hours" is yesterday's labor hours (a decimal, inside [digest]), not a threshold.
-        hours = if (digest) null else o.int("hours"), resumedAt = o.str("resumedAt"),
-        oldestHours = o.int("oldestHours"),
-        salesOrders = o.arr("salesOrders")?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) } ?: emptyList(),
-        checkedAt = o.str("checkedAt"), countMisses = o.int("countMisses"), countItems = o.int("countItems"), missedItems = o.int("missedItems"),
-        qtyMisses = o.int("qtyMisses"), staleLabels = o.int("staleLabels"),
+        hours = if (digest) null else o.intOrNull("hours"), resumedAt = o.jsonStrOrNull("resumedAt"),
+        oldestHours = o.intOrNull("oldestHours"),
+        salesOrders = o.arrOrNull("salesOrders")?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) } ?: emptyList(),
+        checkedAt = o.jsonStrOrNull("checkedAt"), countMisses = o.intOrNull("countMisses"), countItems = o.intOrNull("countItems"), missedItems = o.intOrNull("missedItems"),
+        qtyMisses = o.intOrNull("qtyMisses"), staleLabels = o.intOrNull("staleLabels"),
         digest = if (digest) parseDigest(o) else null,
-        read = o.bool("read") ?: false, notify = o.bool("notify") ?: false, cleared = o.str("cleared"),
+        read = o.boolOrNull("read") ?: false, notify = o.boolOrNull("notify") ?: false, cleared = o.jsonStrOrNull("cleared"),
     )
 }
 
 private fun alertsOf(a: Any?): List<Alert> = (a as? JsonArray)?.mapNotNull { (it as? JsonObject)?.let(::parseAlert) } ?: emptyList()
 
 fun parseFeed(o: JsonObject): FeedPage? = FeedPage(
-    cursor = o.int("cursor") ?: return null, unread = o.int("unread") ?: 0, more = o.bool("more") ?: false, next = o.int("next"),
-    now = o.str("now"), alerts = alertsOf(o["alerts"]),
+    cursor = o.intOrNull("cursor") ?: return null, unread = o.intOrNull("unread") ?: 0, more = o.boolOrNull("more") ?: false, next = o.intOrNull("next"),
+    now = o.jsonStrOrNull("now"), alerts = alertsOf(o["alerts"]),
 )
 
 fun parsePoll(o: JsonObject): PollResult? = PollResult(
-    cursor = o.int("cursor") ?: return null, alerts = alertsOf(o["alerts"]), held = o.bool("held") ?: false, more = o.bool("more") ?: false,
+    cursor = o.intOrNull("cursor") ?: return null, alerts = alertsOf(o["alerts"]), held = o.boolOrNull("held") ?: false, more = o.boolOrNull("more") ?: false,
 )
 
 // ---- sentences ---------------------------------------------------------------------------------------------------------------

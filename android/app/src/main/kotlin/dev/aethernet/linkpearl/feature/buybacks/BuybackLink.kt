@@ -2,6 +2,10 @@ package dev.aethernet.linkpearl.feature.buybacks
 
 import dev.aethernet.linkpearl.feature.linkshell.LinkshellClient
 import dev.aethernet.linkpearl.feature.linkshell.LsMessage
+import dev.aethernet.linkpearl.feature.linkshell.Parts
+import dev.aethernet.linkpearl.core.data.intOrNull
+import dev.aethernet.linkpearl.core.data.str
+import dev.aethernet.linkpearl.core.data.strOrNull
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -9,7 +13,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -53,15 +56,15 @@ class BuybackLink(private val ls: LinkshellClient) {
     val state get() = ls.state
 
     private var joining: BbRun? = null
-    private var parts: Pair<String, MutableMap<Int, List<BbItem>>>? = null
-    private var meta: Triple<String, String, Int>? = null // order, store, parts
+    private val parts = Parts<BbItem>()
+    private var meta: Pair<String, String>? = null // order, store: as the first part to arrive gave them
 
     init {
         ls.on("buybacks.run", ::onRun)
         ls.on("buybacks.result") { m ->
             val b = m.body
-            val r = BbResult(b.str("run"), b.str("label"), (b["i"] as? JsonPrimitive)?.intOrNull ?: -1, BbState.of(b.str("state")),
-                (b["message"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() })
+            val r = BbResult(b.str("run"), b.str("label"), b.intOrNull("i") ?: -1, BbState.of(b.str("state")),
+                b.strOrNull("message")?.takeIf { it.isNotBlank() })
             _offer.value?.takeIf { it.run == r.run && r.i >= 0 }?.let { o -> _offer.value = o.copy(items = o.items.map { if (it.i == r.i) it.copy(state = r.state) else it }) }
             _results.tryEmit(r)
         }
@@ -72,25 +75,19 @@ class BuybackLink(private val ls: LinkshellClient) {
         }
     }
 
-    private fun JsonObject.str(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull.orEmpty()
-
     private fun onRun(m: LsMessage) {
         val b = m.body
-        val run = b.str("run").ifEmpty { return }
-        val part = (b["part"] as? JsonPrimitive)?.intOrNull ?: return
-        val count = (b["parts"] as? JsonPrimitive)?.intOrNull?.takeIf { it in 1..1000 } ?: return
-        if (parts?.first != run || meta?.third != count) { parts = run to mutableMapOf(); meta = Triple(b.str("order"), b.str("store"), count) }
+        val p = Parts.header(b) ?: return
         val rows = (b["items"] as? JsonArray).orEmpty().mapNotNull { row ->
             val r = row as? JsonArray ?: return@mapNotNull null
             fun s(k: Int) = (r.getOrNull(k) as? JsonPrimitive)?.contentOrNull.orEmpty()
             val i = (r.getOrNull(0) as? JsonPrimitive)?.intOrNull ?: return@mapNotNull null
             BbItem(i, s(1), s(2), BbState.of(s(3)))
         }
-        val got = parts!!.second.apply { put(part, rows) }
-        if (got.size == count) {
-            val (order, store, _) = meta!!
-            _offer.value = BbRun(run, order, store, (0 until count).flatMap { got[it].orEmpty() }.sortedBy { it.i })
-        }
+        if (parts.add(p, rows)) meta = b.str("order") to b.str("store")
+        val all = parts.complete() ?: return
+        val (order, store) = meta ?: return
+        _offer.value = BbRun(p.run, order, store, all.sortedBy { it.i })
     }
 
     /** Join from the Linkshell screen: Buybacks takes it once. */

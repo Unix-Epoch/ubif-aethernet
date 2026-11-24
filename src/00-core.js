@@ -87,6 +87,8 @@ const AE = (() => {
   const saveSettings = (next) => GM_setValue(SETTINGS_KEY, next);
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // A Date as the browser's local YYYY-MM-DD (the store's day; toISOString would give UTC's).
+  const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   // ---------------------------------------------------------------- API
@@ -1199,7 +1201,7 @@ const AE = (() => {
     names and counts — never page contents or customer details.
   */
   const USAGE_KEY = AE_DEMO ? '' : 'ae_usage_pending';
-  const localDay = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  const localDay = () => ymd(new Date());
   function track(feature) {
     if (AE_DEMO) return; // the demo build sends nothing anywhere
     try {
@@ -1298,7 +1300,7 @@ const AE = (() => {
     Resolves once Portal's first load has settled: the page's load event, then
     no new Portal API request for 600 ms (at most 8 s after load). Background
     fetches (Divination's count, Esuna, Waymark's scan) wait on it so they never
-    compete with Portal's own first requests (Garrett, Oct 6, 2026). Later
+    compete with Portal's own first requests (Oct 6, 2026). Later
     calls resolve at once.
   */
   let settledP = null;
@@ -1730,7 +1732,7 @@ const AE = (() => {
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every, onDom, watchDom, whenReady, addEarly, domStats, afterLoad, headerAnchor, headerIcon, headerIconBox, headerPanelOpening, woHeading, woHeadingRow, woChip, textEl, findButton, avatarItem,
     api, unwrap, Stopped, ApiError, BadShape, shape, health, workerCall, timedFetch, portal, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     settings, saveSettings, DEFAULTS, merge, config, CONFIG_KEY, shards, shard, start, every,
-    api, unwrap, Stopped, portal, sameStore, assertSameStore, halt, halted: () => !!halted, localCache, signedOut, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
+    api, unwrap, Stopped, portal, sameStore, assertSameStore, halt, halted: () => !!halted, localCache, signedOut, storeChanged: () => storeChanged, refreshView, profile, spellIcon, spellDone, holdPage, sleep, ymd, esc, h, icon, actionIcon, asset: (name) => ACTION_ICONS[name] || '', wordmark, ensureCss, progressPanel,
     hooks, now, nowDate,
     confirm: confirmDialog, toast, emit, on, data, track, trackDaily, noteError, recentErrors, pageErrors, scrubText, scrubFree, USAGE_KEY, localDay,
     PARENT_PROGRAM_ID, CLEANING_PROGRAMS,

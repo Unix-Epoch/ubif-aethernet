@@ -19,10 +19,12 @@
   (TRACKER_OWNERS) bypass. Refusals are 403 { error, page } and an access_log 'denied' row. Pages
   are only drawn for what GET /api/tracker/me says the person has.
     GET  /m, /m/…    Linkpearl, the phone app (src/m.js; data from /api/m/home, tracker-worker/src/mobile.js); developers only for now
+    GET  /esc.js         HTML escaping shared by the page's modules (src/esc.js)
     GET  /metrics-ui.js  the Metrics page (loaded by page.js on first use; data from /api/tracker/metrics)
     GET  /rulegraph.js, /assize-rules.js   the rule graph interpreter and Assize's rules engine as browser modules
                       (page 'rules'; the same files the tracker Worker imports and build.py inlines into Aethernet)
-    GET  /rules-ui.js    the Assize rules editor (page 'rules'; loaded by page.js on first use)
+    GET  /rules-ui.js    the Assize rules editor (page 'rules'; loaded by page.js on first use); ?part=<name> is one of its
+                      other modules (src/rules-ui/: style, words, state, edit, canvas, side, compare)
     GET  /retrace-ui.js  the Retrace page (page 'retrace'; loaded by page.js on first use; data from /api/tracker/retrace/…)
   Every request here is counted by area with its D1 rows (tracker-worker/src/usage.js; the top of the Usage page); the counter's reads
   (GET /api/tracker/usage-load) aren't.
@@ -38,14 +40,25 @@ import { shell as mShell } from './m.js';
 import { homeApi } from '../../tracker-worker/src/mobile.js';
 import CRYPTO_SRC from '../../tracker-worker/src/crypto.js';
 import WORDS from './words.txt';
+import ESC_SRC from './esc.js' with { type: 'text' };
 import TRACKER_UI from './tracker-ui.js';
 import METRICS_UI from './metrics-ui.js';
 import RULES_UI from './rules-ui.js';
 import RETRACE_UI from './retrace-ui.js';
+// The rules editor's other modules (src/rules-ui/): imported by rules-ui.js as /rules-ui.js?part=<name>, so they sit behind the same
+// gate line as the editor itself.
+import RULES_STYLE from './rules-ui/style.js' with { type: 'text' };
+import RULES_WORDS from './rules-ui/words.js' with { type: 'text' };
+import RULES_STATE from './rules-ui/state.js' with { type: 'text' };
+import RULES_EDIT from './rules-ui/edit.js' with { type: 'text' };
+import RULES_CANVAS from './rules-ui/canvas.js' with { type: 'text' };
+import RULES_SIDE from './rules-ui/side.js' with { type: 'text' };
+import RULES_COMPARE from './rules-ui/compare.js' with { type: 'text' };
 // Assize's rules engine and the graph interpreter, as text for the page (the Assize rules editor runs them in the
 // browser); the tracker Worker imports the same files as code.
 import RULEGRAPH_SRC from '../../tracker-worker/src/rulegraph.js' with { type: 'text' };
 import ASSIZE_RULES_SRC from '../../tracker-worker/src/assize-rules.js' with { type: 'text' };
+const RULES_PARTS = { style: RULES_STYLE, words: RULES_WORDS, state: RULES_STATE, edit: RULES_EDIT, canvas: RULES_CANVAS, side: RULES_SIDE, compare: RULES_COMPARE };
 const SHARED = { '/rulegraph.js': RULEGRAPH_SRC, '/assize-rules.js': ASSIZE_RULES_SRC, '/rules-ui.js': RULES_UI, '/retrace-ui.js': RETRACE_UI };
 
 const b64url = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
@@ -124,6 +137,8 @@ async function handle(req, env) {
   }
   // The tracker's encryption, as a module for the page (unlocking happens in the browser).
   if (url.pathname === '/crypto.js') return new Response(CRYPTO_SRC, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
+  // The shared HTML escaping the page's modules import (nothing private in it).
+  if (url.pathname === '/esc.js') return new Response(ESC_SRC, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
   if (url.pathname === '/tracker-ui.js') return new Response(TRACKER_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
   if (url.pathname === '/words.txt') return new Response(WORDS, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'max-age=86400' } });
   const isM = url.pathname === '/m' || url.pathname.startsWith('/m/');
@@ -143,6 +158,10 @@ async function handle(req, env) {
   if (url.pathname === '/metrics-ui.js') return new Response(METRICS_UI, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
   // The Assize rules editor and its engine (page 'rules'): import * as RG from '/rulegraph.js'; import { makeRules } from '/assize-rules.js'.
   // The Retrace page (page 'retrace'), the same way.
+  if (url.pathname === '/rules-ui.js' && url.searchParams.has('part')) {
+    const part = RULES_PARTS[url.searchParams.get('part')];
+    return part ? new Response(part, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } }) : new Response('Not found', { status: 404 });
+  }
   if (SHARED[url.pathname]) return new Response(SHARED[url.pathname], { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
   if (!url.pathname.startsWith('/api/')) return new Response('Not found', { status: 404 });
   // The next public version (status.json's latest, minor + 1): the default "fixed in" for quoting a report.

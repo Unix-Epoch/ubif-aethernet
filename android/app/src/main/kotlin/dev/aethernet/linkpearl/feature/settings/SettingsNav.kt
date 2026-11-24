@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
 const val ADMIN_SITE = "https://aethernet-admin.ubifaethernet.workers.dev/"
 
 /**
- * Settings' destinations (agent D). [navigate] opens another route by its string (e.g. `alerts/settings`); the shell passes
+ * Settings' destinations. [navigate] opens another route by its string (e.g. `alerts/settings`); the shell passes
  * `{ nav.navigate(it) }`. Without it Settings falls back to the route's `linkpearl://` deep link, which opens the same screen.
  */
 fun NavGraphBuilder.settingsGraph(navigate: ((String) -> Unit)? = null) {

@@ -40,7 +40,7 @@ import dev.aethernet.linkpearl.core.nav.Routes
 import kotlinx.coroutines.launch
 
 /**
- * Alerts' destinations (agent C). Notifications open `linkpearl://alerts` or a work order (`linkpearl://workorders/{store}-{wo}`).
+ * Alerts' destinations. Notifications open `linkpearl://alerts` or a work order (`linkpearl://workorders/{store}-{wo}`).
  *
  * [navigate] opens a route inside the app's own back stack (the shell passes `nav::navigate`), so Back from a work order or from Alert
  * settings returns to Alerts. Without it (screenshots, tests) settings open in place and work orders through the route's deep link.

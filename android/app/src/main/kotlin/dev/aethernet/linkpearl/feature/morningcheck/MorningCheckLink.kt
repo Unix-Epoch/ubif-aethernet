@@ -2,6 +2,9 @@ package dev.aethernet.linkpearl.feature.morningcheck
 
 import dev.aethernet.linkpearl.feature.linkshell.LinkshellClient
 import dev.aethernet.linkpearl.feature.linkshell.LsMessage
+import dev.aethernet.linkpearl.feature.linkshell.Parts
+import dev.aethernet.linkpearl.core.data.boolOrNull
+import dev.aethernet.linkpearl.core.data.str
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -12,7 +15,6 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -49,14 +51,16 @@ class MorningCheckLink(private val ls: LinkshellClient) {
     private val _results = MutableSharedFlow<McResult>(extraBufferCapacity = 64)
     val results: SharedFlow<McResult> = _results.asSharedFlow()
     private val _ended = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 8)
-    /** (run, reason): "declined", "stopped", "failed". */
+    /** (run, reason): "declined", "stopped", "failed", "store" (Portal isn't on the linked store). */
     val ended: SharedFlow<Pair<String, String>> = _ended.asSharedFlow()
     val state get() = ls.state
     /** The check in progress, kept here so leaving the screen doesn't lose it. */
     var saved: McSession? = null
 
-    private var parts: Triple<String, Int, MutableMap<Int, List<McRow>>>? = null
-    private var head: Triple<String, Boolean, Map<Int, McStatus>>? = null
+    /** What part 0 carries besides its rows. */
+    private class Head(val store: String, val bins: Boolean, val statuses: Map<Int, McStatus>)
+    private val parts = Parts<McRow>()
+    private var head: Head? = null
 
     init {
         ls.on("check.list", ::onList)
@@ -66,14 +70,21 @@ class MorningCheckLink(private val ls: LinkshellClient) {
 
     private fun onList(m: LsMessage) {
         val b = m.body
-        val run = b.str("run").ifEmpty { return }
-        val part = b.int("part") ?: return
-        val count = b.int("parts")?.takeIf { it in 1..1000 } ?: return
-        if (parts?.first != run || parts?.second != count) { parts = Triple(run, count, mutableMapOf()); head = null }
-        if (part == 0) head = Triple(b.str("store"), (b["bins"] as? JsonPrimitive)?.booleanOrNull == true, parseStatuses(b["statuses"]))
-        val got = parts!!.third.apply { put(part, parseRows(b["rows"])) }
+        val p = Parts.header(b) ?: return
+        val run = p.run
+        if (parts.add(p, parseRows(b["rows"]))) head = null
+        if (p.part == 0) head = Head(b.str("store"), b.boolOrNull("bins") == true, parseStatuses(b["statuses"]))
         val h = head
-        if (got.size == count && h != null) _list.value = McList(run, h.first, (0 until count).flatMap { got[it].orEmpty() }, h.third, h.second)
+        // A list from another store than this link's (Portal was switched on the PC): not shown, and the check ends.
+        val linked = ls.state.value.link?.store
+        if (h != null && linked != null && h.store != linked.toString()) {
+            parts.clear(); head = null
+            ls.send("check.end", buildJsonObject { put("run", run) })
+            _ended.tryEmit(run to "store")
+            return
+        }
+        val rows = parts.complete()
+        if (rows != null && h != null) _list.value = McList(run, h.store, rows, h.statuses, h.bins)
     }
 
     fun start(run: String) {
@@ -93,8 +104,6 @@ class MorningCheckLink(private val ls: LinkshellClient) {
     fun wake() = ls.wake()
 
     companion object {
-        private fun JsonObject.str(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull.orEmpty()
-        private fun JsonObject.int(k: String) = (this[k] as? JsonPrimitive)?.intOrNull
         private fun JsonElement?.s() = (this as? JsonPrimitive)?.contentOrNull.orEmpty()
         private fun JsonElement?.i() = (this as? JsonPrimitive)?.intOrNull
 
@@ -114,7 +123,7 @@ class MorningCheckLink(private val ls: LinkshellClient) {
         fun parseResult(b: JsonObject): McResult? {
             val after = (b["row"] as? JsonArray)?.let { r -> r.getOrNull(1).i()?.let { McAfter(it, r.getOrNull(2).s(), r.getOrNull(3).s(), r.getOrNull(4).s()) } }
             val failed = (b["failed"] as? JsonArray).orEmpty().mapNotNull { f -> (f as? JsonArray)?.let { it.getOrNull(0).s() to it.getOrNull(1).s() } }
-            return McResult(b.str("run"), b.str("cid").ifEmpty { return null }, b.str("wo"), (b["ok"] as? JsonPrimitive)?.booleanOrNull == true, failed, after)
+            return McResult(b.str("run"), b.str("cid").ifEmpty { return null }, b.str("wo"), b.boolOrNull("ok") == true, failed, after)
         }
     }
 }

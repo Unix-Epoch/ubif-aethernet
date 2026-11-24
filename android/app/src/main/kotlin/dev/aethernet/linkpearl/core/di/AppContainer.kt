@@ -24,7 +24,7 @@ class AppContainer(val application: Application) {
     private val factories = ConcurrentHashMap<KClass<*>, () -> Any>()
     private val instances = ConcurrentHashMap<KClass<*>, Any>()
 
-    /** WorkManager asks this factory for workers; a module adds its own with `workerFactory.addFactory(...)` (agent C). */
+    /** WorkManager asks this factory for workers; a module adds its own with `workerFactory.addFactory(...)`. */
     val workerFactory = DelegatingWorkerFactory()
 
     private val channels = mutableListOf<ChannelSpec>()
@@ -43,7 +43,7 @@ class AppContainer(val application: Application) {
 
     inline fun <reified T : Any> get(): T = get(T::class)
 
-    /** A notification channel to create at startup (agent C). */
+    /** A notification channel to create at startup. */
     fun channel(spec: ChannelSpec) { channels += spec }
 
     internal fun createNotificationChannels() {
