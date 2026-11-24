@@ -2,6 +2,7 @@ package dev.aethernet.linkpearl.feature.pullbacks
 
 import dev.aethernet.linkpearl.feature.linkshell.LinkshellClient
 import dev.aethernet.linkpearl.feature.linkshell.LsMessage
+import dev.aethernet.linkpearl.feature.linkshell.Parts
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -46,8 +47,8 @@ class PullbackLink(private val ls: LinkshellClient) {
     val state get() = ls.state
 
     private var joining: PcRun? = null
-    private var parts: Pair<String, MutableMap<Int, List<PcItem>>>? = null
-    private var meta: Triple<String, String, Int>? = null // file, store, parts
+    private val parts = Parts<PcItem>()
+    private var meta: Pair<String, String>? = null // file, store: as the first part to arrive gave them
 
     init {
         ls.on("pullbacks.run", ::onRun)
@@ -66,21 +67,17 @@ class PullbackLink(private val ls: LinkshellClient) {
 
     private fun onRun(m: LsMessage) {
         val b = m.body
-        val run = b.str("run").ifEmpty { return }
-        val part = (b["part"] as? JsonPrimitive)?.intOrNull ?: return
-        val count = (b["parts"] as? JsonPrimitive)?.intOrNull?.takeIf { it in 1..1000 } ?: return
-        if (parts?.first != run || meta?.third != count) { parts = run to mutableMapOf(); meta = Triple(b.str("file"), b.str("store"), count) }
+        val p = Parts.header(b) ?: return
         val rows = (b["items"] as? JsonArray).orEmpty().mapNotNull { row ->
             val r = row as? JsonArray ?: return@mapNotNull null
             fun s(k: Int) = (r.getOrNull(k) as? JsonPrimitive)?.contentOrNull.orEmpty()
             val i = (r.getOrNull(0) as? JsonPrimitive)?.intOrNull ?: return@mapNotNull null
             PcItem(i, s(1), s(2), s(3), PcState.of(s(4)))
         }
-        val got = parts!!.second.apply { put(part, rows) }
-        if (got.size == count) {
-            val (file, store, _) = meta!!
-            _offer.value = PcRun(run, file, store, (0 until count).flatMap { got[it].orEmpty() }.sortedBy { it.i })
-        }
+        if (parts.add(p, rows)) meta = b.str("file") to b.str("store")
+        val all = parts.complete() ?: return
+        val (file, store) = meta ?: return
+        _offer.value = PcRun(p.run, file, store, all.sortedBy { it.i })
     }
 
     /** Join from the Linkshell screen: Pullbacks takes it once. */
