@@ -54,7 +54,9 @@ export const ROUTES = [
   ['GET', /^\/api\/tracker\/retrace\/(search|coverage|pos|items)$/, 'retrace'],   // ?store= checked here (query); without it, their stores (src/retrace-api.js; items needs it)
   ['GET', /^\/api\/tracker\/retrace\/verify\/(\d{1,6})$/, 'retrace', 1],             // the coverage check: last result
   ['GET', /^\/api\/tracker\/retrace\/queue\/(\d{1,6})$/, 'retrace', 1],              // the collection queue (read only)
-  ['POST', /^\/api\/tracker\/retrace\/verify\/(\d{1,6})\/(run|tick)$/, 'retrace', 1],   // run again, a spot-check tick (the only writes on the page)
+  ['POST', /^\/api\/tracker\/retrace\/verify\/(\d{1,6})\/(run|tick)$/, 'retrace', 1],   // run again, a spot-check tick 
+  ['GET', /^\/api\/tracker\/retrace\/sources\/(\d{1,6})$/, 'retrace', 1],            // item sources (Distro / MS / Other) and the store's pause
+  ['POST', /^\/api\/tracker\/retrace\/sources\/(\d{1,6})\/set$/, 'retrace', 1],       // mark items by hand (src/retrace-source.js setSources)
   ['GET', /^\/(m(\/[\w.-]*)?|api\/m\/home)$/, 'owner'],                  // Linkpearl, the phone app (src/mobile.js + admin-worker/src/m-*): developers only for now
   ['GET', /^\/retrace-ui\.js$/, 'retrace'],                         // the Retrace page, served to the page
 ];

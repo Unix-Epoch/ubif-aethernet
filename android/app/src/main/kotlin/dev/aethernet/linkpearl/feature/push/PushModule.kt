@@ -32,10 +32,12 @@ import kotlinx.coroutines.launch
  */
 object PushModule : FeatureModule {
     const val CHANNEL = "linkshell"
+    const val ORDERING = "ordering"
 
     override fun install(c: AppContainer) {
         val app = c.application
         c.channel(AppContainer.ChannelSpec(CHANNEL, "Linkshell", NotificationManager.IMPORTANCE_HIGH))
+        c.channel(AppContainer.ChannelSpec(ORDERING, "Ordering", NotificationManager.IMPORTANCE_DEFAULT))
         c.provide<PushCenter> {
             val session = c.get<SessionStore>()
             val prefs = app.getSharedPreferences("lp-push", Context.MODE_PRIVATE)
@@ -79,18 +81,21 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
         if (!nm.areNotificationsEnabled()) return
         val tap = Intent(Intent.ACTION_VIEW, Uri.parse(Routes.deepLink(note.route))).setPackage(context.packageName)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        val n = NotificationCompat.Builder(context, PushModule.CHANNEL)
+        val linkshell = note.channel == PushModule.CHANNEL
+        val n = NotificationCompat.Builder(context, note.channel)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setContentTitle(note.title).setContentText(note.text)
-            .setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setAutoCancel(true).setTimeoutAfter(TIMEOUT_MS)
+            .setPriority(if (linkshell) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(if (linkshell) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_STATUS)
+            .setAutoCancel(true).apply { if (linkshell) setTimeoutAfter(TIMEOUT_MS) }
             .setContentIntent(PendingIntent.getActivity(context, NOTE_ID, tap, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
             .build()
-        try { nm.notify(TAG, NOTE_ID, n) } catch (_: SecurityException) {}
+        try { nm.notify(if (linkshell) TAG else ORDERING_TAG, NOTE_ID, n) } catch (_: SecurityException) {}
     }
 
     companion object {
         const val TAG = "linkshell"
+        const val ORDERING_TAG = "ordering" // its own slot: never replaces a Linkshell request
         const val NOTE_ID = 1 // one at a time: a newer request replaces the last
         const val TIMEOUT_MS = 30 * 60_000L
     }

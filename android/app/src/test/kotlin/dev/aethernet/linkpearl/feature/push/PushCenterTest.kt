@@ -46,6 +46,21 @@ class PushCenterTest {
         assertEquals("Linkshell request", noteFor(PushPing(linkId, "buybacks.start", "m"), "PC").title)
     }
 
+    @Test fun orderingPaused() = runTest {
+        val data = mapOf("t" to "retrace", "kind" to "source.paused", "id" to "rs914-mgx1a2b3", "store" to "914", "n" to "12")
+        assertEquals(OrderingPing("rs914-mgx1a2b3", 914, 12), OrderingPing.parse(data))
+        assertNull(OrderingPing.parse(data + ("kind" to "other")))
+        assertNull(OrderingPing.parse(data + ("store" to "nine")))
+        assertNull(OrderingPing.parse(data + ("id" to "x")))
+        assertEquals(PushNote("m", "Ordering paused", "914 · 1 item not marked", Routes.RETRACE, PushModule.ORDERING), noteFor(OrderingPing("m", 914, 1)))
+        val shown = mutableListOf<PushNote>()
+        val c = PushCenter(FakeApi(), { null }, { null }, { }, { shown += it }, Memo(), this)
+        val n = c.onPing(data)!!
+        assertEquals("914 · 12 items not marked", n.text)
+        assertEquals(listOf(n), shown)
+        assertNull("once per pause", c.onPing(data))
+    }
+
     @Test fun backgroundNotifiesForegroundBanners() = runTest {
         val shown = mutableListOf<PushNote>()
         var wakes = 0

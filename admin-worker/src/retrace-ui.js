@@ -125,6 +125,16 @@ const CSS = `
 .rt .empty .ic{width:56px;height:56px;border-radius:50%;background:var(--ps);color:var(--p);display:inline-flex;align-items:center;justify-content:center}
 .rt .empty h2{margin:4px 0 0;font-size:18px} .rt .empty p{margin:0;color:var(--soft);max-width:520px} .rt .empty .steps{display:flex;flex-wrap:wrap;gap:8px 18px;justify-content:center;font-size:12.5px;color:var(--soft);margin-top:6px}
 .rt .loading{padding:14px;color:var(--soft);font-size:12.5px}
+/* item sources (Distro / MS / Other) */
+.rt .kd.src-distro{background:var(--kc);color:var(--kcf)} .rt .kd.src-ms{background:var(--kwo);color:var(--kwof)} .rt .kd.src-other{background:var(--kout);color:var(--koutf)} .rt .kd.src-unset{background:var(--kq);color:var(--kqf)} .rt .kd.src-conflict{background:var(--kbad);color:var(--kbadf)}
+.rt .srcf{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.rt .items .it .s2{grid-column:1/-1;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--soft)} .rt .items .it .s2 .kd{margin-left:auto}
+.rt .items .it.sel{grid-template-columns:22px 1fr auto} .rt .items .it.sel input{grid-row:1/3;align-self:center} .rt .items .it.sel .s2,.rt .items .it.sel .s{grid-column:2/-1}
+.rt input[type=checkbox]{width:16px;height:16px;margin:0;accent-color:var(--p)}
+.rt .bulk{display:flex;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--ps);font-size:13px} .rt .bulk b{white-space:nowrap} .rt .bulk .r{margin-left:auto;display:flex;gap:6px}
+.rt .srcrow{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center} .rt .basis{font-size:11.5px;color:var(--muted)}
+.rt .srcwhy{font-size:12.5px;display:grid;gap:4px;background:var(--kbad);color:var(--kbadf);border-radius:10px;padding:10px 12px}
+.rt .paused{border-color:color-mix(in srgb,#d9a400 45%,var(--line))} .rt .ptop{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px} .rt .ptop .t{font-weight:700} .rt .ptop b.big{font-size:22px;font-variant-numeric:tabular-nums} .rt .ptop .r{margin-left:auto}
 @media (max-width:880px){.rt .rgrid{grid-template-columns:1fr}.rt .two{grid-template-columns:1fr}.rt .two > div + div{border-left:0;border-top:1px solid var(--line)}.rt .filters .r{margin-left:0}}
 @media (prefers-reduced-motion:no-preference){.rt .fchip,.rt .items .it{transition:background .12s}}
 `;
@@ -152,7 +162,7 @@ const PAUSED_MS = 25 * 60000;
 const EMPTY_SVG = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg>';
 
 let ui = null, S = null, el = {};
-const fresh = () => ({ store: null, view: 'items', item: null, po: null, group: 'all', range: 'all', q: '', stores: [], coverage: [], items: null, itemsTotal: 0, pos: null, posTotal: 0, data: null, sr: null, serials: [], label: null, results: null, vopen: false, verify: null, vbusy: false, qopen: false, queue: null, qbusy: false, qreason: 'all', qitem: '', qat: null });
+const fresh = () => ({ src: 'all', srcData: null, sel: new Set(), store: null, view: 'items', item: null, po: null, group: 'all', range: 'all', q: '', stores: [], coverage: [], items: null, itemsTotal: 0, pos: null, posTotal: 0, data: null, sr: null, serials: [], label: null, results: null, vopen: false, verify: null, vbusy: false, qopen: false, queue: null, qbusy: false, qreason: 'all', qitem: '', qat: null });
 
 // ------------------------------------------------------------------ formatting
 const pad = (n) => String(n).padStart(2, '0');
@@ -243,6 +253,7 @@ export async function draw(m, helpers) {
       el.q = h('input', { type: 'search', placeholder: 'Search an item, label, PO, work order, sales order or transfer', 'aria-label': 'Search Retrace', value: S.q,
         onkeydown: (e) => { if (e.key === 'Enter') search(el.q.value.trim()); }, onsearch: (e) => { if (!e.target.value) search(''); } }),
       el.storeSel = h('select', { 'aria-label': 'Store', onchange: (e) => switchStore(Number(e.target.value)) }, S.stores.map((s) => { const o = h('option', { value: s.store }, storeName(s.store)); o.selected = s.store === S.store; return o; }))),
+    el.pause = h('div', { hidden: true }),
     el.body = h('div'));
   m.replaceChildren(el.root);
   if (!document.querySelector('.rt-drawer')) document.body.append(el.drawer); else { document.querySelector('.rt-drawer').replaceWith(el.drawer); }
@@ -502,6 +513,7 @@ async function openQueue() { if (!S.qopen) await toggleQueue(); el.queue.scrollI
 // ------------------------------------------------------------------ store: list + right side
 async function switchStore(st) {
   S.store = st; S.item = null; S.po = null; S.data = null; S.label = null; S.results = null; S.q = ''; el.q.value = '';
+  S.src = 'all'; S.srcData = null; S.sel = new Set(); el.pause.hidden = true;
   S.vopen = false; S.verify = null; el.verify.hidden = true;
   S.qopen = false; S.queue = null; S.qreason = 'all'; S.qitem = ''; el.queue.hidden = true;
   closeDrawer(); drawHealth(); refreshStrip();
@@ -511,7 +523,7 @@ async function switchStore(st) {
 async function loadStore(want) {
   const h = ui.h;
   el.body.replaceChildren(h('div', { class: 'loading' }, 'Loading…'));
-  const [items, pos] = await Promise.all([ui.api('GET', '/tracker/retrace/items?store=' + S.store + '&limit=100'), ui.api('GET', '/tracker/retrace/pos?store=' + S.store + '&limit=100')]);
+  const [items, pos] = await Promise.all([ui.api('GET', '/tracker/retrace/items?store=' + S.store + '&limit=100'), ui.api('GET', '/tracker/retrace/pos?store=' + S.store + '&limit=100'), loadSources()]);
   S.items = items.items; S.itemsTotal = items.total; S.pos = pos.pos; S.posTotal = pos.total;
   const c = S.coverage.find((x) => x.store === S.store);
   if (!S.items.length && !S.pos.length && !(c && (c.labels || c.movements))) {
@@ -523,6 +535,7 @@ async function loadStore(want) {
     h('div', { class: 'rcard' },
       h('div', { class: 'chd' }, el.seg = h('span', { class: 'seg' }, h('button', { type: 'button', 'data-v': 'items', onclick: () => setView('items') }, 'Items'), h('button', { type: 'button', 'data-v': 'pos', onclick: () => setView('pos') }, 'Purchase orders')),
         el.segnote = h('span', { class: 'r rsoft rsm' })),
+      el.srcf = h('div', { class: 'srcf', hidden: true }), el.bulk = h('div', { class: 'bulk', hidden: true }),
       el.list = h('div', { class: 'items' })),
     h('div', null, el.item = h('div', { class: 'rcard' }), el.po = h('div', { class: 'rcard', hidden: true }))));
   if (want.po) { drawList(); await openPo(want.po); }
@@ -543,8 +556,9 @@ function setView(v) {
 
 function drawList() {
   el.seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === S.view && !S.results));
+  drawSrcFilters();
   if (S.results) return drawResults();
-  el.segnote.textContent = S.view === 'pos' ? 'newest first · Store ' + S.store : 'most recent movement first';
+  el.segnote.textContent = S.view === 'pos' ? 'newest first · Store ' + S.store : S.src !== 'all' ? '' : 'most recent movement first';
   if (S.view === 'pos') drawPoList(); else drawItemList();
 }
 
@@ -552,10 +566,11 @@ function itemRow(x) {
   const h = ui.h;
   return h('button', { class: 'it' + (x.item === S.item && el.po.hidden ? ' on' : ''), type: 'button', 'data-id': x.item, onclick: () => { el.po.hidden = true; el.item.hidden = false; openItem(x.item); } },
     h('b', null, x.name || 'Item ' + x.item), h('span', { class: 'n' }, x.on_hand != null ? num(x.on_hand) + ' on hand' : ''),
-    h('span', { class: 's mono' }, x.item), x.available != null ? h('span', { class: 's' }, num(x.available) + ' available') : null);
+    h('span', { class: 's2' }, h('span', { class: 'mono' }, x.item), srcChip(x.source)), x.available != null ? h('span', { class: 's' }, num(x.available) + ' available') : null);
 }
 function drawItemList() {
   const h = ui.h;
+  if (S.src !== 'all') return drawSourceList();
   if (!S.items.length) return el.list.replaceChildren(h('div', { class: 'rnote' }, 'No item movements yet. Items show up here as their labels move.'));
   el.list.replaceChildren(...[...S.items.map(itemRow),
     S.items.length < S.itemsTotal ? h('div', { class: 'more' }, h('button', { class: 'rbtn', type: 'button', onclick: async (e) => {
@@ -593,6 +608,93 @@ function drawPoList() {
 function showPoEmpty() {
   el.item.hidden = true; el.po.hidden = false;
   el.po.replaceChildren(ui.h('div', { class: 'rnote' }, 'No purchase orders seen at this store yet.'));
+}
+
+// ------------------------------------------------------------------ item sources (tracker-worker/src/retrace-source.js)
+// Distro / MS / Other per item number (every store shares it); Not set and Conflict pause the store's ordering until marked.
+const SRC_NAMES = { distro: 'Distro', ms: 'MS', other: 'Other', unset: 'Not set', conflict: 'Conflict' };
+const SRC_FILTERS = [['all', 'All'], ['distro', 'Distro'], ['ms', 'MS'], ['other', 'Other'], ['unset', 'Not set'], ['conflict', 'Conflict']];
+const BASIS = { manual: 'Set by hand', vendor: 'From labels', po: 'From POs', name: 'From name' };
+const srcChip = (s) => (s && SRC_NAMES[s] ? ui.h('span', { class: 'kd src-' + s }, SRC_NAMES[s]) : null);
+// The store's counts and pause, plus the filtered list (All asks for the unmarked ones: small, and the counts come with any list).
+// 'unmarked' (Show items on the paused card): Not set and Conflict together, both chips lit.
+async function loadSources() {
+  const st = S.store;
+  try { const j = await ui.api('GET', '/tracker/retrace/sources/' + st + '?source=' + (S.src === 'all' ? 'unmarked' : S.src)); if (st === S.store) S.srcData = j; }
+  catch (_) { if (st === S.store) S.srcData = null; }
+  drawPause();
+}
+function drawPause() {
+  const h = ui.h, p = S.srcData && S.srcData.pause;
+  el.pause.hidden = !(p && p.paused);
+  if (el.pause.hidden) return el.pause.replaceChildren();
+  el.pause.replaceChildren(h('div', { class: 'rcard pg paused' }, h('div', { class: 'ptop' }, h('span', { class: 'dot old' }), h('span', { class: 't' }, 'Ordering paused'),
+    h('b', { class: 'big' }, num(p.unmarked)), h('span', { class: 'rsoft' }, p.unmarked === 1 ? 'item not marked' : 'items not marked'),
+    h('span', { class: 'r' }, h('button', { class: 'vbtn p', type: 'button', onclick: () => { if (S.view !== 'items' || S.results) { S.results = null; S.q = ''; el.q.value = ''; setView('items'); } setSrc('unmarked'); } }, 'Show items')))));
+}
+function drawSrcFilters() {
+  const h = ui.h, c = S.srcData && S.srcData.counts;
+  el.srcf.hidden = !c || !c.all || S.view !== 'items' || !!S.results;
+  if (el.srcf.hidden) { el.bulk.hidden = true; return; }
+  el.srcf.replaceChildren(...SRC_FILTERS.map(([k, label]) => h('button', { type: 'button', class: 'fchip' + (k === S.src || (S.src === 'unmarked' && (k === 'unset' || k === 'conflict')) ? ' on' : ''), onclick: () => setSrc(k) }, label, ' ', h('small', null, num(c[k] || 0)))));
+  drawBulk();
+}
+async function setSrc(k) {
+  S.src = k; S.sel = new Set();
+  if (k !== 'all') el.list.replaceChildren(ui.h('div', { class: 'loading' }, 'Loading…'));
+  await loadSources(); drawList();
+}
+// A source filter's list: every in-scope item with that source (not only items that moved). Unmarked items can be ticked and marked together.
+function drawSourceList() {
+  const h = ui.h, rows = (S.srcData && S.srcData.items) || [];
+  if (!rows.length) return el.list.replaceChildren(h('div', { class: 'rnote' }, 'No items.'));
+  el.list.replaceChildren(...rows.map((x) => {
+    const pick = x.source !== 'conflict';
+    const box = h('input', { type: 'checkbox', 'aria-label': 'Select ' + (x.name || x.item), disabled: !pick || null, onclick: (e) => { e.stopPropagation(); if (e.target.checked) S.sel.add(x.item); else S.sel.delete(x.item); drawBulk(); } });
+    box.checked = S.sel.has(x.item);
+    return h('button', { class: 'it sel' + (x.item === S.item && el.po.hidden ? ' on' : ''), type: 'button', 'data-id': x.item, onclick: () => { el.po.hidden = true; el.item.hidden = false; openItem(x.item); } },
+      box, h('b', null, x.name || 'Item ' + x.item), h('span', { class: 'n' }, x.on_hand != null ? num(x.on_hand) + ' on hand' : ''),
+      h('span', { class: 's2' }, h('span', { class: 'mono' }, x.item), srcChip(x.source)));
+  }));
+}
+function drawBulk() {
+  const h = ui.h, n = S.sel.size;
+  el.bulk.hidden = !n || S.src === 'all' || el.srcf.hidden;
+  if (el.bulk.hidden) return el.bulk.replaceChildren();
+  const all = h('input', { type: 'checkbox', 'aria-label': 'Select all', onclick: (e) => {
+    const rows = ((S.srcData && S.srcData.items) || []).filter((x) => x.source !== 'conflict');
+    S.sel = e.target.checked ? new Set(rows.map((x) => x.item)) : new Set(); drawSourceList(); drawBulk();
+  } });
+  all.checked = true;
+  el.bulk.replaceChildren(all, h('b', null, num(n) + ' selected'),
+    h('span', { class: 'r' }, ['distro', 'ms', 'other'].map((k) => h('button', { class: 'vbtn', type: 'button', onclick: () => mark([...S.sel], k) }, SRC_NAMES[k]))));
+}
+// Mark items by hand (source null: back to the rules), for every store. The list, counts, pause, item list chips and open item follow.
+async function mark(items, source) {
+  if (!items.length) return;
+  let j;
+  try { j = await ui.api('POST', '/tracker/retrace/sources/' + S.store + '/set', { items, source, view: S.src === 'all' ? 'unmarked' : S.src }); }
+  catch (e) { return ui.toast("Couldn't save: " + e.message); }
+  S.srcData = j; S.sel = new Set();
+  try { const it = await ui.api('GET', '/tracker/retrace/items?store=' + S.store + '&limit=' + Math.max(100, S.items.length)); S.items = it.items; S.itemsTotal = it.total; } catch (_) {}
+  drawPause(); drawList();
+  if (S.data && items.includes(S.data.item)) openItem(S.data.item);
+}
+// The item view's source: Distro / MS / Other (a click sets it by hand), then Conflict with what disagrees, or where it came from.
+function sourceRow(d) {
+  const h = ui.h, s = d.source;
+  if (!s) return null;
+  const on = s.manual || (s.conflict ? null : s.auto);
+  const seg = h('span', { class: 'seg' }, ['distro', 'ms', 'other'].map((k) => h('button', { type: 'button', class: k === on ? 'on' : null, onclick: () => (k === s.manual ? null : mark([d.item], k)) }, SRC_NAMES[k])));
+  const tag = s.source === 'conflict' ? srcChip('conflict') : s.basis ? h('span', { class: 'basis' }, BASIS[s.basis] || '') : null;
+  const reset = s.manual ? h('button', { class: 'linkish', type: 'button', onclick: () => mark([d.item], null) }, 'Reset') : null;
+  const ev = s.evidence || {}, why = [];
+  if (s.conflict && !s.manual) {
+    if (ev.vendors && ev.vendors.length) why.push('Labels: ' + ev.vendors.map((v) => 'Vendor ' + v.vendor + ' (' + num(v.n) + ')').join(', '));
+    for (const p of ev.pos || []) why.push('PO ' + p.id + ': ' + (p.distro ? 'Distro' : p.distro === false ? 'Not Distro' : '—'));
+    if (ev.ms) why.push('Name: MS');
+  }
+  return h('div', { style: 'display:grid;gap:10px' }, h('div', { class: 'srcrow' }, seg, tag, reset), why.length ? h('div', { class: 'srcwhy' }, why.map((w) => h('span', null, w))) : null);
 }
 
 // ------------------------------------------------------------------ search
@@ -693,6 +795,7 @@ function drawItem() {
       h('div', null, h('h2', null, name),
         h('div', { class: 'imeta' }, h('span', { class: 'mono' }, d.item), d.info && d.info.category ? h('span', null, d.info.category) : null,
           h('span', null, num(d.all_total) + (d.all_total === 1 ? ' movement' : ' movements') + ' recorded' + (d.first_at ? ' since ' + dayOnly(d.first_at) : '')), h('span', null, 'Store ' + S.store))),
+      sourceRow(d),
       h('div', { class: 'counts' }, itemCounts(d).map(([k, v]) => h('div', { class: 'cnt' }, h('b', null, num(v)), h('span', null, k))))),
     h('div', { class: 'filters' },
       GROUPS.map(([g, label]) => h('button', { type: 'button', class: 'fchip' + (g === S.group ? ' on' : ''), onclick: () => { S.group = g; refilter(); } }, label, ' ', h('small', null, num(S.sr.groups[g] || 0)))),
