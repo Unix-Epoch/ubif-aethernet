@@ -62,7 +62,7 @@ app/src/main/kotlin/dev/aethernet/linkpearl/
   core/design   theme, colours (dark + light), typography, icons (every icon of every feature), Components.kt, Charts.kt, Format.kt
   core/nav      Routes/TopLevel, AdaptiveState + HingeTwoPane, LpNavScaffold (bar/rail), LpListDetail, NavBadges, AppNavHost (the one NavHost)
   core/data     ApiClient (OkHttp), RealAuth (register, approve, sign out), DeviceIdentity (Keystore P-256), SessionStore (encrypted), StoreZone,
-                HomeRepository; the Fake* classes are for tests and screenshots
+                HomeRepository (the Fake* classes for tests and screenshots are under app/src/test, same packages)
   core/lock     RealAppLock (system prompt, in-memory store keys, 30-minute idle and 60-second background re-lock), SealedBox crypto
   core/prefs    app preferences (appearance, notification-ask flag) on DataStore
   core/di       AppContainer (service locator), FeatureModule, Modules.kt (the one list of modules)

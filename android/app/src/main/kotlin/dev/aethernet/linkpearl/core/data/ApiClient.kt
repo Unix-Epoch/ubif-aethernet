@@ -1,6 +1,5 @@
 package dev.aethernet.linkpearl.core.data
 
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.json.Json
@@ -72,7 +71,7 @@ sealed interface AuthState {
     data class Registered(val name: String, val stores: List<StoreRef>) : AuthState
 }
 
-/** Why onboarding shows a line. Extra to [Auth] so its shape stays as agreed; implemented by [RealAuth] and [FakeAuth]. */
+/** Why onboarding shows a line. Extra to [Auth] so its shape stays as agreed; implemented by [RealAuth]. */
 enum class AuthIssue { Offline, Server, Limit, Refused, Revoked }
 
 interface AuthIssues {
@@ -80,25 +79,10 @@ interface AuthIssues {
     fun dismissIssue()
 }
 
-/** Test and screenshot double: reports whatever it is given. [register] moves to Pending. */
-class FakeAuth(initial: AuthState = AuthState.Registered("Test phone", listOf(StoreRef(999999, "Sandbox Store"), StoreRef(326, "Lynnhaven")))) : Auth, AuthIssues {
-    override val state = MutableStateFlow(initial)
-    override val issue = MutableStateFlow<AuthIssue?>(null)
-    override suspend fun register(name: String): Boolean { state.value = AuthState.Pending("3F2A-91C0-7B44-0DDE", name); return true }
-    override suspend fun refresh() {}
-    override suspend fun signOut() { state.value = AuthState.Unregistered }
-    override fun dismissIssue() { issue.value = null }
-}
-
 /** Store id -> this phone's wrapped copy of that store's private key (see [DeviceIdentity]). */
 interface StoreKeys {
     /** The sealed "v1.…" strings from GET /v1/agents/me, additional data `agentkey|<deviceId>|<store>`. Empty until approved with keys. */
     suspend fun wrapped(refresh: Boolean = false): Map<Int, String>
-}
-
-/** Convenience for tests of other features. */
-class FakeStoreKeys(private val keys: Map<Int, String> = emptyMap()) : StoreKeys {
-    override suspend fun wrapped(refresh: Boolean): Map<Int, String> = keys
 }
 
 internal val EmptyObject = JsonObject(emptyMap())

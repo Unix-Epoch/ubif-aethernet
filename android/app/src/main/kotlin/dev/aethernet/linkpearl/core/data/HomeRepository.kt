@@ -28,7 +28,7 @@ sealed interface HomeResult {
 
 /**
  * Source of Home's numbers. [RealHomeRepository] calls `GET /v1/agents/m/home` through [ApiClient] and keeps the last answer per scope
- * (in memory and encrypted on disk) so it can be returned with `cached = true` when offline. [FakeHomeRepository] drives tests and screenshots.
+ * (in memory and encrypted on disk) so it can be returned with `cached = true` when offline. The tests and screenshots use a fake.
  */
 interface HomeRepository {
     /** [fresh] = the refresh button was pressed: skip any server-side cache (`&fresh=1`). */
