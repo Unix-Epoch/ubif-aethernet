@@ -3,6 +3,8 @@ package dev.aethernet.linkpearl.feature.morningcheck
 import dev.aethernet.linkpearl.feature.linkshell.LinkshellClient
 import dev.aethernet.linkpearl.feature.linkshell.LsMessage
 import dev.aethernet.linkpearl.feature.linkshell.Parts
+import dev.aethernet.linkpearl.core.data.boolOrNull
+import dev.aethernet.linkpearl.core.data.str
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -13,7 +15,6 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -72,7 +73,7 @@ class MorningCheckLink(private val ls: LinkshellClient) {
         val p = Parts.header(b) ?: return
         val run = p.run
         if (parts.add(p, parseRows(b["rows"]))) head = null
-        if (p.part == 0) head = Head(b.str("store"), (b["bins"] as? JsonPrimitive)?.booleanOrNull == true, parseStatuses(b["statuses"]))
+        if (p.part == 0) head = Head(b.str("store"), b.boolOrNull("bins") == true, parseStatuses(b["statuses"]))
         val h = head
         // A list from another store than this link's (Portal was switched on the PC): not shown, and the check ends.
         val linked = ls.state.value.link?.store
@@ -103,7 +104,6 @@ class MorningCheckLink(private val ls: LinkshellClient) {
     fun wake() = ls.wake()
 
     companion object {
-        private fun JsonObject.str(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull.orEmpty()
         private fun JsonElement?.s() = (this as? JsonPrimitive)?.contentOrNull.orEmpty()
         private fun JsonElement?.i() = (this as? JsonPrimitive)?.intOrNull
 
@@ -123,7 +123,7 @@ class MorningCheckLink(private val ls: LinkshellClient) {
         fun parseResult(b: JsonObject): McResult? {
             val after = (b["row"] as? JsonArray)?.let { r -> r.getOrNull(1).i()?.let { McAfter(it, r.getOrNull(2).s(), r.getOrNull(3).s(), r.getOrNull(4).s()) } }
             val failed = (b["failed"] as? JsonArray).orEmpty().mapNotNull { f -> (f as? JsonArray)?.let { it.getOrNull(0).s() to it.getOrNull(1).s() } }
-            return McResult(b.str("run"), b.str("cid").ifEmpty { return null }, b.str("wo"), (b["ok"] as? JsonPrimitive)?.booleanOrNull == true, failed, after)
+            return McResult(b.str("run"), b.str("cid").ifEmpty { return null }, b.str("wo"), b.boolOrNull("ok") == true, failed, after)
         }
     }
 }

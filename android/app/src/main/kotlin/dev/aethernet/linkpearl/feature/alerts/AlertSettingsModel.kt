@@ -1,10 +1,13 @@
 package dev.aethernet.linkpearl.feature.alerts
 
+import dev.aethernet.linkpearl.core.data.boolOrNull
+import dev.aethernet.linkpearl.core.data.intOrNull
+import dev.aethernet.linkpearl.core.data.jsonStrOrNull
+import dev.aethernet.linkpearl.core.data.objOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import java.time.DateTimeException
@@ -59,10 +62,6 @@ data class Ranges(
 
 data class SettingsBundle(val settings: AlertSettings, val ranges: Ranges, val storeIds: List<Int>)
 
-private fun JsonObject.obj(k: String) = this[k] as? JsonObject
-private fun JsonObject.int(k: String) = (this[k] as? JsonPrimitive)?.intOrNull
-private fun JsonObject.bool(k: String) = (this[k] as? JsonPrimitive)?.booleanOrNull
-private fun JsonObject.str(k: String) = (this[k] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 
 private fun range(o: JsonObject?, k: String, d: IntRange): IntRange {
     val a = (o?.get(k) as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.intOrNull }
@@ -70,11 +69,11 @@ private fun range(o: JsonObject?, k: String, d: IntRange): IntRange {
 }
 
 fun parseSettings(o: JsonObject): SettingsBundle? {
-    val s = o.obj("settings") ?: return null
-    val t = s.obj("types") ?: return null
+    val s = o.objOrNull("settings") ?: return null
+    val t = s.objOrNull("types") ?: return null
     fun type(type: AlertType, key: String): TypeSetting? {
-        val x = t.obj(type.key) ?: return null
-        return TypeSetting(x.bool("on") ?: true, x.int(key) ?: return null)
+        val x = t.objOrNull(type.key) ?: return null
+        return TypeSetting(x.boolOrNull("on") ?: true, x.intOrNull(key) ?: return null)
     }
     val types = buildMap {
         put(AlertType.Stuck, type(AlertType.Stuck, "days") ?: return null)
@@ -84,13 +83,13 @@ fun parseSettings(o: JsonObject): SettingsBundle? {
         // Newer types: optional (a server without them simply has no row for them).
         type(AlertType.Digest, "hour")?.let { put(AlertType.Digest, it) }
         type(AlertType.Unlinked, "hours")?.let { put(AlertType.Unlinked, it) }
-        t.obj(AlertType.Coverage.key)?.let { put(AlertType.Coverage, TypeSetting(it.bool("on") ?: true)) }
+        t.objOrNull(AlertType.Coverage.key)?.let { put(AlertType.Coverage, TypeSetting(it.boolOrNull("on") ?: true)) }
     }
-    val q = s.obj("quietHours") ?: return null
-    val quiet = QuietHours(q.bool("on") ?: true, q.str("from") ?: return null, q.str("to") ?: return null)
-    val stores = s.obj("stores")?.mapNotNull { (k, v) -> k.toIntOrNull()?.let { id -> id to ((v as? JsonPrimitive)?.booleanOrNull ?: true) } }?.toMap() ?: emptyMap()
+    val q = s.objOrNull("quietHours") ?: return null
+    val quiet = QuietHours(q.boolOrNull("on") ?: true, q.jsonStrOrNull("from") ?: return null, q.jsonStrOrNull("to") ?: return null)
+    val stores = s.objOrNull("stores")?.mapNotNull { (k, v) -> k.toIntOrNull()?.let { id -> id to ((v as? JsonPrimitive)?.booleanOrNull ?: true) } }?.toMap() ?: emptyMap()
     val ids = (o["stores"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.intOrNull } ?: stores.keys.toList()
-    val r = o.obj("ranges")
+    val r = o.objOrNull("ranges")
     val ranges = Ranges(range(r, "stuckDays", Ranges.Default.stuckDays), range(r, "pickupDays", Ranges.Default.pickupDays),
         range(r, "quietHours", Ranges.Default.quietHours), range(r, "followupHour", Ranges.Default.followupHour),
         range(r, "digestHour", Ranges.Default.digestHour), range(r, "unlinkedHours", Ranges.Default.unlinkedHours))

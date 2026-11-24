@@ -3,6 +3,8 @@ package dev.aethernet.linkpearl.feature.linkshell
 import dev.aethernet.linkpearl.core.data.Credentials
 import dev.aethernet.linkpearl.core.data.EncryptedFile
 import dev.aethernet.linkpearl.core.data.LinkpearlJson
+import dev.aethernet.linkpearl.core.data.boolOrNull
+import dev.aethernet.linkpearl.core.data.strOrNull
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,7 +19,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -245,10 +246,10 @@ class LinkshellClient(
         if (text == "pong") return
         idle()
         val f = runCatching { LinkpearlJson.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
-        fun str(k: String) = (f[k] as? JsonPrimitive)?.contentOrNull
+        fun str(k: String) = f.strOrNull(k)
         when (str("t")) {
             "hello", "presence" -> {
-                _state.value = _state.value.copy(peer = (f["peer"] as? JsonPrimitive)?.booleanOrNull == true, seen = str("seen") ?: _state.value.seen)
+                _state.value = _state.value.copy(peer = f.boolOrNull("peer") == true, seen = str("seen") ?: _state.value.seen)
                 if (str("t") == "hello") flush()
             }
             "ack" -> {

@@ -3,6 +3,9 @@ package dev.aethernet.linkpearl.feature.pullbacks
 import dev.aethernet.linkpearl.feature.linkshell.LinkshellClient
 import dev.aethernet.linkpearl.feature.linkshell.LsMessage
 import dev.aethernet.linkpearl.feature.linkshell.Parts
+import dev.aethernet.linkpearl.core.data.intOrNull
+import dev.aethernet.linkpearl.core.data.str
+import dev.aethernet.linkpearl.core.data.strOrNull
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -10,7 +13,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -53,8 +55,8 @@ class PullbackLink(private val ls: LinkshellClient) {
     init {
         ls.on("pullbacks.run", ::onRun)
         ls.on("pullbacks.result") { m ->
-            val i = (m.body["i"] as? JsonPrimitive)?.intOrNull ?: return@on
-            _results.tryEmit(PcResult(m.body.str("run"), i, PcState.of(m.body.str("state")), m.body["message"]?.let { (it as? JsonPrimitive)?.contentOrNull }))
+            val i = m.body.intOrNull("i") ?: return@on
+            _results.tryEmit(PcResult(m.body.str("run"), i, PcState.of(m.body.str("state")), m.body.strOrNull("message")))
         }
         ls.on("pullbacks.end") { m ->
             val run = m.body.str("run")
@@ -62,8 +64,6 @@ class PullbackLink(private val ls: LinkshellClient) {
             _ended.tryEmit(run)
         }
     }
-
-    private fun JsonObject.str(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull.orEmpty()
 
     private fun onRun(m: LsMessage) {
         val b = m.body

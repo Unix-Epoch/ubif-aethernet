@@ -1,6 +1,9 @@
 package dev.aethernet.linkpearl.feature.workorders
 
-import kotlinx.serialization.json.JsonArray
+import dev.aethernet.linkpearl.core.data.arr
+import dev.aethernet.linkpearl.core.data.intLenientOrNull
+import dev.aethernet.linkpearl.core.data.objOrNull
+import dev.aethernet.linkpearl.core.data.strOrNull
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -28,12 +31,12 @@ class Card(
         fun from(e: JsonElement): Card {
             val o = e as? JsonObject ?: JsonObject(emptyMap())
             return Card(
-                name = o.str("name"),
+                name = o.strOrNull("name"),
                 phones = o.arr("phones").mapNotNull { (it as? JsonPrimitive)?.contentOrNullSafe()?.let(::digitsOf)?.takeIf { d -> d.isNotEmpty() } }.distinct(),
                 emails = o.arr("emails").mapNotNull { (it as? JsonPrimitive)?.contentOrNullSafe() },
-                imei = o.str("imei"),
-                serial = o.str("serial"),
-                claim = o.str("claim"),
+                imei = o.strOrNull("imei"),
+                serial = o.strOrNull("serial"),
+                claim = o.strOrNull("claim"),
             )
         }
     }
@@ -64,21 +67,21 @@ class Unsealed(
         /** Defensive: every field optional; a broken note is skipped, never a crash. */
         fun from(card: Card?, snapshot: JsonElement?, fetchedAt: String?): Unsealed {
             val s = snapshot as? JsonObject
-            val cust = s?.obj("customer_data")
-            val dev = s?.obj("workorder")?.obj("workorder")?.obj("CustomerDevice")
-            val notesObj = s?.obj("notes")
+            val cust = s?.objOrNull("customer_data")
+            val dev = s?.objOrNull("workorder")?.objOrNull("workorder")?.objOrNull("CustomerDevice")
+            val notesObj = s?.objOrNull("notes")
             val notes = notesObj?.arr("notes").orEmpty().mapNotNull { noteOf(it) }
             return Unsealed(
-                name = card?.name ?: cust?.obj("CustomerDatum")?.str("fullName")
-                    ?: listOfNotNull(cust?.obj("CustomerDatum")?.str("givenName"), cust?.obj("CustomerDatum")?.str("familyName")).joinToString(" ").ifBlank { null },
+                name = card?.name ?: cust?.objOrNull("CustomerDatum")?.strOrNull("fullName")
+                    ?: listOfNotNull(cust?.objOrNull("CustomerDatum")?.strOrNull("givenName"), cust?.objOrNull("CustomerDatum")?.strOrNull("familyName")).joinToString(" ").ifBlank { null },
                 phones = card?.phones?.takeIf { it.isNotEmpty() }
-                    ?: cust?.arr("CustomerDataPhones").orEmpty().mapNotNull { (it as? JsonObject)?.str("phone")?.let(::digitsOf)?.takeIf { d -> d.isNotEmpty() } }.distinct(),
+                    ?: cust?.arr("CustomerDataPhones").orEmpty().mapNotNull { (it as? JsonObject)?.strOrNull("phone")?.let(::digitsOf)?.takeIf { d -> d.isNotEmpty() } }.distinct(),
                 emails = card?.emails?.takeIf { it.isNotEmpty() }
-                    ?: cust?.arr("CustomerDataEmails").orEmpty().mapNotNull { (it as? JsonObject)?.str("email")?.lowercase() }.distinct(),
-                imei = card?.imei ?: dev?.str("imei"),
-                serial = card?.serial ?: dev?.str("serial"),
+                    ?: cust?.arr("CustomerDataEmails").orEmpty().mapNotNull { (it as? JsonObject)?.strOrNull("email")?.lowercase() }.distinct(),
+                imei = card?.imei ?: dev?.strOrNull("imei"),
+                serial = card?.serial ?: dev?.strOrNull("serial"),
                 notes = sortNewestFirst(notes),
-                notesTotal = notesObj?.int("total"),
+                notesTotal = notesObj?.intLenientOrNull("total"),
                 fetchedAt = fetchedAt,
                 hasSnapshot = s != null,
             )
@@ -86,18 +89,18 @@ class Unsealed(
 
         fun noteOf(e: JsonElement): Note? {
             val o = e as? JsonObject ?: return null
-            val text = o.str("noteText")?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-            val kind = when (o.int("noteType")) { 1 -> NoteKind.Automatic; 2 -> NoteKind.Manual; else -> NoteKind.Unknown }
-            val user = o.obj("UserDatum")
-            val given = user?.str("givenName")?.trim().orEmpty()
-            val family = user?.str("familyName")?.trim().orEmpty()
+            val text = o.strOrNull("noteText")?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            val kind = when (o.intLenientOrNull("noteType")) { 1 -> NoteKind.Automatic; 2 -> NoteKind.Manual; else -> NoteKind.Unknown }
+            val user = o.objOrNull("UserDatum")
+            val given = user?.strOrNull("givenName")?.trim().orEmpty()
+            val family = user?.strOrNull("familyName")?.trim().orEmpty()
             val author = when {
                 given.isNotEmpty() && family.isNotEmpty() -> "$given ${family.first()}."
                 given.isNotEmpty() -> given
                 family.isNotEmpty() -> family
                 else -> null
             }
-            return Note(text, o.str("createdAt"), kind, o.str("noteTag"), author)
+            return Note(text, o.strOrNull("createdAt"), kind, o.strOrNull("noteTag"), author)
         }
 
         /** Newest first by createdAt; notes without a readable time keep their place after the dated ones. */
@@ -148,10 +151,4 @@ object CardMatch {
 
 fun digitsOf(s: String): String = s.filter { it.isDigit() }
 
-// ---- JSON helpers that never throw ------------------------------------------------------------------------------------------------
-
 private fun JsonPrimitive.contentOrNullSafe(): String? = if (this is JsonNull) null else content
-internal fun JsonObject.str(k: String): String? = (this[k] as? JsonPrimitive)?.let { if (it is JsonNull) null else it.content }
-internal fun JsonObject.int(k: String): Int? = (this[k] as? JsonPrimitive)?.let { if (it is JsonNull) null else it.content.toDoubleOrNull()?.toInt() }
-internal fun JsonObject.obj(k: String): JsonObject? = this[k] as? JsonObject
-internal fun JsonObject.arr(k: String): List<JsonElement> = (this[k] as? JsonArray)?.toList().orEmpty()

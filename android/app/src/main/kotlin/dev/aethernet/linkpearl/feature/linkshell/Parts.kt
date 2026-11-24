@@ -1,9 +1,8 @@
 package dev.aethernet.linkpearl.feature.linkshell
 
+import dev.aethernet.linkpearl.core.data.intOrNull
+import dev.aethernet.linkpearl.core.data.str
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
 
 /**
  * Puts a list back together that the browser sent in parts. Every part's message carries `run`, `part` (from 0) and `parts`
@@ -33,9 +32,9 @@ class Parts<T> {
     companion object {
         /** Null when [body] isn't a part: no run, no part number, or a part count outside 1..1000. */
         fun header(body: JsonObject): Header? {
-            val run = (body["run"] as? JsonPrimitive)?.contentOrNull.orEmpty().ifEmpty { return null }
-            val part = (body["part"] as? JsonPrimitive)?.intOrNull ?: return null
-            val count = (body["parts"] as? JsonPrimitive)?.intOrNull?.takeIf { it in 1..1000 } ?: return null
+            val run = body.str("run").ifEmpty { return null }
+            val part = body.intOrNull("part") ?: return null
+            val count = body.intOrNull("parts")?.takeIf { it in 1..1000 } ?: return null
             return Header(run, part, count)
         }
     }

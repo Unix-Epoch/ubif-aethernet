@@ -3,6 +3,9 @@ package dev.aethernet.linkpearl.feature.buybacks
 import dev.aethernet.linkpearl.feature.linkshell.LinkshellClient
 import dev.aethernet.linkpearl.feature.linkshell.LsMessage
 import dev.aethernet.linkpearl.feature.linkshell.Parts
+import dev.aethernet.linkpearl.core.data.intOrNull
+import dev.aethernet.linkpearl.core.data.str
+import dev.aethernet.linkpearl.core.data.strOrNull
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -10,7 +13,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -61,8 +63,8 @@ class BuybackLink(private val ls: LinkshellClient) {
         ls.on("buybacks.run", ::onRun)
         ls.on("buybacks.result") { m ->
             val b = m.body
-            val r = BbResult(b.str("run"), b.str("label"), (b["i"] as? JsonPrimitive)?.intOrNull ?: -1, BbState.of(b.str("state")),
-                (b["message"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() })
+            val r = BbResult(b.str("run"), b.str("label"), b.intOrNull("i") ?: -1, BbState.of(b.str("state")),
+                b.strOrNull("message")?.takeIf { it.isNotBlank() })
             _offer.value?.takeIf { it.run == r.run && r.i >= 0 }?.let { o -> _offer.value = o.copy(items = o.items.map { if (it.i == r.i) it.copy(state = r.state) else it }) }
             _results.tryEmit(r)
         }
@@ -72,8 +74,6 @@ class BuybackLink(private val ls: LinkshellClient) {
             _ended.tryEmit(run)
         }
     }
-
-    private fun JsonObject.str(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull.orEmpty()
 
     private fun onRun(m: LsMessage) {
         val b = m.body
