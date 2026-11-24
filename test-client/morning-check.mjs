@@ -14,9 +14,9 @@ function make(wo, store = 914, link = null) {
       if (method === 'GET') return { workorder: JSON.parse(JSON.stringify(state.wo)) };
       if (method === 'PUT' && /^\/api\/workorder\/\d+$/.test(path)) {
         if (body.workorderStatusId) state.wo.workorderStatusId = body.workorderStatusId;
-        if (state.keepsBin && body.workorderBin != null) state.wo.WorkorderBinDeviceLocation = { WorkorderBin: { name: body.workorderBin } };
         state.wo.updatedAt = 'later';
       }
+      if (method === 'POST' && path === '/api/workorder/attribute' && state.keepsBin && body.workorderBin != null) state.wo.WorkorderBinDeviceLocation = { WorkorderBin: { name: body.workorderBin } };
       if (method === 'PATCH') state.wo.workorderStatusId = body.workorderStatusId;
       return {};
     },
@@ -118,11 +118,12 @@ await t('note: the customer comes from the device record; without one, from the 
   await mc.addNote(1, 'Hi');
   assert.equal(calls.find((x) => x.path === '/api/note').body.customerId, '77');
 });
-await t('location: PUT with the new bin, then read back; refused if Portal kept the old one', async () => {
-  const a = make(WO); a.state.keepsBin = true;
-  assert.equal((await a.mc.setBin(1, ' A1 ')).bin, 'A1');
-  const put = a.calls.find((c) => c.method === 'PUT');
-  assert.equal(put.path, '/api/workorder/1'); assert.equal(put.body.workorderBin, 'A1'); assert.equal(put.body.binLocation, 'A1'); assert.equal(put.body.sendComms, false);
+await t('location (recorded): the attribute call with the status unchanged, then read back; refused if Portal kept the old one', async () => {
+  const a = make(Object.assign({}, WO, { workorderStatusId: 3 })); a.state.keepsBin = true;
+  assert.equal((await a.mc.setBin(1, ' c12 ')).bin, 'c12');
+  const w = a.calls.filter((c) => c.method !== 'GET');
+  assert.deepEqual(w, [{ method: 'POST', path: '/api/workorder/attribute', body: { workorderId: 1, workorderStatusId: 3, WorkorderAttribute: [], workorderBin: 'c12' } }]);
+  await assert.rejects(a.mc.setBin(1, '  '), /Empty location/);
   const b = make(WO);
   await assert.rejects(b.mc.setBin(1, 'A1'), /didn't take/);
 });
@@ -148,7 +149,7 @@ await t('Linkshell: changes run in order; a bin Portal did not keep and a Portal
   const r = sent.find((x) => x[0] === 'check.result')[1];
   assert.equal(r.ok, false);
   assert.deepEqual(r.failed.map((f) => f[0]), ['bin', 'status']);
-  assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => c.method + ' ' + c.path), ['PUT /api/customer-devices/9', 'POST /api/note', 'PUT /api/workorder/1']);
+  assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => c.method + ' ' + c.path), ['PUT /api/customer-devices/9', 'POST /api/note', 'POST /api/workorder/attribute']);
 });
 await t('Linkshell: a note with a status menu move goes between the move and Portal\'s note', async () => {
   const { sent, handlers, calls } = make(Object.assign({}, WO, { workorderStatusId: 24 }), 914, { host: true, rows: [] });

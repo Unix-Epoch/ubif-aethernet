@@ -15,8 +15,8 @@
               note if any (type 2, the new status's tag), then "{name} changed the WO status to {Status}"
               (type 1, same tag)                                                                   proven (recorded Nov 24: → 24, 24 → 7, 7 → 8)
               any other move                                                                       GUESS: same PUT, no note
-    bin       GUESS: the PUT with workorderBin (the attribute call's name) and binLocation (check-in's name),
-              then the order is read again and the change fails unless Portal kept the new bin
+    bin       POST /api/workorder/attribute { workorderId, workorderStatusId (unchanged), WorkorderAttribute: [],
+              workorderBin }, then the order is read again and must show the new bin                proven (recorded Nov 24)
   Guesses are dev-only test buttons until the dev recorder (dev tools → Portal request recorder) has Portal's real call.
   Customer texts: every status call sends sendComms: false.
 */
@@ -104,13 +104,14 @@ AE.morningCheck = (() => {
     return read(woId);
   }
 
-  // GUESS (see top): the order PUT back with the new bin.
+  // Recorded (see top): Portal's location field sends the attribute call with no attributes.
   async function setBin(woId, bin, opts = {}) {
     const wo = await raw(woId);
     await sameStore(wo);
     if (opts.updatedAt && wo.updatedAt && opts.updatedAt !== wo.updatedAt) throw Object.assign(new Error('Changed in Portal since'), { stale: true });
     const to = String(bin || '').trim();
-    await api('PUT', '/api/workorder/' + woId, putBody(wo, { workorderBin: to, binLocation: to, sendComms: false }));
+    if (!to) throw new Error('Empty location');
+    await api('POST', '/api/workorder/attribute', { workorderId: Number(woId), workorderStatusId: wo.workorderStatusId, WorkorderAttribute: [], workorderBin: to });
     changed(woId, 'bin');
     const after = await read(woId);
     if (after.bin.trim().toLowerCase() !== to.toLowerCase()) throw new Error('Portal didn\'t take the new location');
@@ -169,7 +170,7 @@ AE.morningCheck.link = (() => {
   if (typeof AE.linkshell === 'undefined' || !AE_ON_PORTAL) return null;
   const L = AE.linkshell, MC = AE.morningCheck;
   const PART = 15;
-  const LIVE = { bin: true }; // bin changes: the guessed call, checked by reading the order back (see top)
+  const LIVE = { bin: true }; // bin changes: the recorded call (see top)
   let run = null; // { id, total, done, changed, log: [] , panel }
 
   // The moves the phone may make from each status: proven calls only, and never past Work in progress.
