@@ -13,7 +13,7 @@
 // no capture covers yet. Nothing here is evidence of a Portal shape beyond what the fixture it is copied from proves.
 // Exit code 0 = all passed. Needs Node 18+ and nothing from npm. No Portal, no Worker, no browser is touched.
 import assert from 'node:assert/strict';
-import { load, retraceFx, fixture, extractFn, ROOT } from './harness.mjs';
+import { load, retraceFx, fixture, runShard, ROOT } from './harness.mjs';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -777,23 +777,20 @@ await t('Waymark scan: skipped while Portal is down (no list read); runs when it
   await env2.AE.waymark.scan().catch(() => {});
   assert.ok(env2.requests(/^\/api\/workorders$/).length >= 1, 'the list is read when Portal is up');
 });
-const assizePassSrc = extractFn('65-assize.js', 'async function pass(force, full)');
-const assizePass = (env) => vm.runInContext(`(function () {
-  let busy = false, lastError = null, progress = null, result = null;
-  const SCAN_MS = 600000, GAP_MS = 1, DETAIL_TTL = 1800000, key = (k) => 'ae_assize_test_' + k;
-  const render = () => {}, renderPanel = () => {}, loadDismissed = () => {}, compute = () => {}, uploadDaily = () => {}, readDetails = () => ({}), trimRow = (r) => r, inScope = () => false;
-  const detailOf = async () => { throw new Error('not reached'); };
-  ${assizePassSrc}
-  return pass; })()`, env.ctx);
+const ASSIZE_FILES = ['00-core.js', '27-tracker.js', '55-waymark.js', '65-assize.js'];
+// Assize started on a signed-in page (its first pass, which every start makes, is over): its own pass(force, full) and readDetails().
+const assize = async (env) => { const a = runShard(env, 'assize'); await env.advance(15000); return a; };
 await t('Assize pass: skipped while Portal is down; reads the list when it is up (control)', async () => {
-  const routes = router([['GET', /^\/api\/auth\/user$/, ok(USER)], ['POST', /^\/api\/workorders$/, ok({ workOrders: [], rowCount: 0 })]]);
-  const env = load(['00-core.js'], { fetch: routes });
-  for (let i = 0; i < 3; i++) env.AE.health.fail('http', { status: 504, message: 'x' });
-  await assizePass(env)(false);
-  assert.deepEqual(env.requests(/^\/api\/workorders$/), []);
-  const env2 = load(['00-core.js'], { fetch: routes });
-  await assizePass(env2)(false);
-  assert.ok(env2.requests(/^\/api\/workorders$/).length >= 1);
+  const run = async (down) => {
+    const env = load(ASSIZE_FILES, { timers: 'fake', fetch: router([['GET', /^\/api\/auth\/user$/, ok(USER)], ['POST', /^\/api\/workorders$/, ok({ workOrders: [], rowCount: 0 })]]) });
+    const a = await assize(env), before = env.requests(/^\/api\/workorders$/).length;
+    assert.ok(before >= 1, 'the first pass read the list');
+    if (down) for (let i = 0; i < 3; i++) env.AE.health.fail('http', { status: 504, message: 'x' });
+    env.gm.delete('ae_assize_scan_at_914'); // the next pass is due
+    const p = a.pass(false); await env.advance(15000); await p;
+    return env.requests(/^\/api\/workorders$/).length - before;
+  };
+  assert.equal(await run(true), 0); assert.ok(await run(false) >= 1);
 });
 
 // ================================================================== Retrace
@@ -1365,53 +1362,48 @@ await t('Retrace watcher: a fetch(Request) write is seen with its body, and goes
 });
 
 // ================================================================== the shards' Portal readers
-// Each reader's real code (extractFn) runs in the vm with the real core; only its UI neighbours are stand-ins.
+// Each reader is the shard's own function (runShard: its run(), then what it exposes as _test) on the real core; the DOM is the harness's stand-in.
 const BAD_WO = [ok({}), ok({ workorder: {} }), ok('Gateway'), { status: 200, body: 'plain text' }, ok({ data: {} })]; // SYNTHETIC malformed answers
 const cleaningWo = { ...WO_ANSWER, workorder: { ...WO_ANSWER.workorder, programId: 9470 } }; // the captured answer as a cleaning (no list lookups)
-const woEnv = (answer, more = []) => load(['00-core.js'], { fetch: router([['GET', /^\/api\/auth\/user$/, ok(USER)], ['GET', /^\/api\/workorder\/123$/, answer], ...more]) });
+const woEnv = (answer, more = [], files = [], pathname = '/') => load([...new Set(['00-core.js', ...files])], { pathname, fetch: router([['GET', /^\/api\/auth\/user$/, ok(USER)], ['GET', /^\/api\/workorder\/123$/, answer], ...more]) });
 
 // Esuna
-const esunaLoadSrc = extractFn('15-wo-cleanings.js', 'async function load(woId, quiet = false)');
-const esuna = (env) => vm.runInContext(`(function () { let state = null, loadingFor = null; const WINDOW_MS = 60000, POP_ID = 'x'; const render = () => {}, renderPop = () => {};
-  ${esunaLoadSrc}
-  return async (woId) => { await load(woId); return state; }; })()`, env.ctx);
+const ESUNA = ['00-core.js', '15-wo-cleanings.js'];
+const esuna = (env) => { const e = runShard(env, 'woCleanings'); return async (woId) => { await e.load(woId); return e.state(); }; };
 const listRoutes = [['POST', /^\/api\/workorders$/, ok({ workOrders: [], rowCount: 0 })], ['GET', /^\/api\/arrivals\/upcoming-arrivals/, ok({ data: [], rowCount: 0 })]]; // SYNTHETIC empty lists
 await t('Esuna: a malformed work order answer is an error, never a work order with nothing in it', async () => {
-  for (const a of BAD_WO) { const s = await esuna(woEnv(a, listRoutes))('123'); assert.equal(s.status, 'error', JSON.stringify(a)); assert.match(s.error, /unexpected shape|not JSON/); }
-  const s = await esuna(woEnv(ok(cleaningWo)))('123');
+  for (const a of BAD_WO) { const s = await esuna(woEnv(a, listRoutes, ESUNA, '/repair/workorder/123'))('123'); assert.equal(s.status, 'error', JSON.stringify(a)); assert.match(s.error, /unexpected shape|not JSON/); }
+  const s = await esuna(woEnv(ok(cleaningWo), [], ESUNA, '/repair/workorder/123'))('123');
   assert.equal(s.status, 'ready'); assert.equal(s.wo.workorderStatusId, 14);
 });
-const esunaTick = extractFn('15-wo-cleanings.js', 'AE.every(1000, () => {').replace(/^AE\.every\(1000, /, '');
 await t('Esuna: the background refresh waits while Portal is down', async () => {
-  const run = (down) => {
-    const env = load(['00-core.js']);
+  const run = async (down) => {
+    const env = load(ESUNA, { timers: 'fake', pathname: '/repair/workorder/123', fetch: router([['GET', /^\/api\/auth\/user$/, ok(USER)], ['GET', /^\/api\/workorder\/123$/, ok(cleaningWo)]]) });
+    const e = runShard(env, 'woCleanings');
+    await env.advance(1000); // the 1 s loop finds the work order and reads it
+    assert.equal(e.state().status, 'ready'); assert.equal(env.requests(/^\/api\/workorder\/123$/).length, 1);
+    await env.advance(118000); // just short of the 2 min refresh
     if (down) for (let i = 0; i < 3; i++) env.AE.health.fail('http', { status: 504, message: 'x' });
-    const loads = [];
-    const tick = vm.runInContext(`(function (loads) { let state = { woId: '123', status: 'ready', at: Date.now() - 3600000 }, loadingFor = null; const REFRESH_MS = 60000, PILL_ID = 'p', POP_ID = 'q';
-      const currentWoId = () => '123', render = () => {}, load = (w, q) => loads.push([w, q]);
-      return (${esunaTick}); })`, env.ctx)(loads);
-    tick();
-    return loads;
+    await env.advance(3000); // stale now
+    return env.requests(/^\/api\/workorder\/123$/).length - 1;
   };
-  assert.deepEqual(run(true), []); assert.deepEqual(plain(run(false)), [['123', true]]);
+  assert.equal(await run(true), 0); assert.equal(await run(false), 1);
 });
 
 // Recitation
-const recitationSrc = extractFn('17-text-notes.js', 'async function logRecentTexts(woId)');
-const recitation = (env) => vm.runInContext(`(function () { const STATUS_TAG = { 14: 'sale_complete' }, WINDOW_MS = 180000, LOGGED_KEY = 'ae_text_notes_logged'; const loadLogged = () => ({});
-  ${recitationSrc}
-  return logRecentTexts; })()`, env.ctx);
+const RECITATION = ['00-core.js', '17-text-notes.js'];
+const recitation = (env) => { runShard(env, 'textNotes'); return env.AE.textNotesDebug.logRecentTexts; }; // the shard's own way in for tests
 const textRoutes = (env) => [['GET', /customer-data$/, ok({ customerId: 77, CustomerDatum: {} })], // SYNTHETIC customer record
   ['GET', /\/api\/messages\/v1\/customers\/77/, () => ok({ messages: [{ direction: 'OUTBOUND', senderId: 1, contactDate: new Date(env.clock.now).toISOString(), messageId: 'm1', content: 'Your device is ready', customerName: 'Test Customer' }] })], // SYNTHETIC message
   ['POST', /^\/api\/note$/, ok({})]];
 await t('Recitation: a malformed work order answer adds no note; the captured one adds it with its status tag', async () => {
   for (const a of BAD_WO) {
-    const env = load(['00-core.js']);
+    const env = load(RECITATION);
     env.setFetch(router([['GET', /^\/api\/auth\/user$/, ok(USER)], ['GET', /^\/api\/workorder\/123$/, a], ...textRoutes(env)])); // everything else answers: only the work order is bad
     await assert.rejects(recitation(env)('123'), (e) => /BadShape|ApiError/.test(e.name) && /Recitation work order|not JSON/.test(e.message));
     assert.deepEqual(env.requests(/^\/api\/note$/, 'POST'), []);
   }
-  const env = load(['00-core.js']);
+  const env = load(RECITATION);
   env.setFetch(router([['GET', /^\/api\/auth\/user$/, ok(USER)], ['GET', /^\/api\/workorder\/123$/, ok(WO_ANSWER)], ...textRoutes(env)]));
   assert.equal(await recitation(env)('123'), 1);
   const n = env.requests(/^\/api\/note$/, 'POST');
@@ -1419,20 +1411,25 @@ await t('Recitation: a malformed work order answer adds no note; the captured on
 });
 
 // Provoke
-const provokeSrc = extractFn('24-provoke.js', 'async function statusOf(woId)') + '\n' + extractFn('24-provoke.js', 'async function chat()');
-const provoke = (env) => {
-  const ui = { row: null, built: [] };
-  const fn = vm.runInContext(`(function (ui) {
-    let chatStatus = null, chatBuilding = false; const statusMiss = new Map(); const STATUS_RETRY_MS = 30000, STATUS_RETRY_MAX = 600000, CHAT_ID = 'ae-chat';
-    const document = { getElementById: () => ui.row };
-    const woIdNow = () => '123', msgBox = () => ({ disabled: false, readOnly: false });
-    const sheet = async () => ({ data: { items: [{ title: 'Ready', texts: ['x'] }] } });
-    const byStatus = (name, id) => (id === 13 ? 'ready' : null);
-    const unplace = () => { ui.row = null; }, place = (row) => { ui.row = row; return true; };
-    const renderChat = (items, leads, woId) => { ui.built.push(chatStatus); return { dataset: { wo: woId }, remove() {} }; };
-    ${provokeSrc}
-    return chat; })`, env.ctx)(ui);
-  return { chat: fn, ui };
+const PROVOKE = ['00-core.js', '23-price-sheet.js', '24-provoke.js', '55-waymark.js'];
+const LEAD_SHEET = { data: { items: [{ title: 'Pickup', group: 'Special Circumstances', texts: ['x'] }] } }; // SYNTHETIC lead sheet: one message, the one "Ready for pickup" puts first
+// Provoke on a work order page whose Customer Chat panel is open: the message box inside its form inside the panel (only what the row's
+// placing reads). chat() is the shard's own 1 s tick; built lists the status each placed row was built with (null = no status ordering).
+const provoke = async (woAnswer) => {
+  const env = load(PROVOKE, { pathname: '/repair/workorder/123', fetch: router([['GET', /^\/api\/auth\/user$/, ok(USER)], ['GET', /^\/api\/workorder\/123$/, woAnswer], ['GET', /\/v1\/914\/sheets\/leads$/, ok(LEAD_SHEET)]]) });
+  const ui = { row: null, built: [] }, doc = env.ctx.document;
+  let p = null;
+  const panel = { insertBefore(row) {
+    if (ui.row !== row) ui.built.push(p.chatStatus());
+    ui.row = row; row.parentElement = panel; row.nextElementSibling = form; row.previousElementSibling = null; row.remove = () => { ui.row = null; };
+  } };
+  const form = { parentElement: panel };
+  const box = { disabled: false, readOnly: false, offsetParent: panel, getAttribute: () => 'Message Test Customer...', closest: () => form };
+  doc.querySelectorAll = (sel) => (/^textarea\[placeholder\]/.test(sel) ? [box] : []);
+  doc.getElementById = (id) => (id === 'ae-provoke-chat' ? ui.row : null);
+  p = runShard(env, 'leadReplies');
+  for (let i = 0; i < 200 && !ui.built.length; i++) await env.settle(); // the shard's own first tick places the row
+  return { env, chat: p.chat, ui };
 };
 await t('Provoke: the arrival box draws (a Mobility lead, with the sheet edit date)', async () => {
   const env = load(['00-core.js', '23-price-sheet.js', '24-provoke.js'], { pathname: '/' });
@@ -1443,8 +1440,7 @@ await t('Provoke: the arrival box draws (a Mobility lead, with the sheet edit da
 });
 await t('Provoke: a failed work order read still places the row (no status order) and is retried with a backoff, not every second', async () => {
   for (const status of [404, 504]) {
-    const env = load(['00-core.js'], { fetch: router([['GET', /^\/api\/workorder\/123$/, { status, body: 'x' }]]) });
-    const { chat, ui } = provoke(env);
+    const { env, chat, ui } = await provoke({ status, body: 'x' });
     for (let s = 0; s < 29; s++) { await chat(); env.clock.now += 1000; } // the 1 s timer, for 29 s
     assert.equal(ui.built.length, 1, 'the row is placed once'); assert.equal(ui.built[0], null, 'without status ordering');
     assert.equal(env.requests(/^\/api\/workorder\/123$/).length, 1, 'one read in 29 s, not one a second');
@@ -1457,24 +1453,19 @@ await t('Provoke: a failed work order read still places the row (no status order
   }
 });
 await t('Provoke: a malformed answer places the row without status; the captured one orders by status and is not read again', async () => {
-  let env = load(['00-core.js'], { fetch: router([['GET', /^\/api\/workorder\/123$/, ok({})]]) }); // SYNTHETIC
-  let p = provoke(env); await p.chat();
+  let p = await provoke(ok({})); await p.chat(); // SYNTHETIC
   assert.equal(p.ui.built.length, 1); assert.equal(p.ui.built[0], null);
-  env = load(['00-core.js'], { fetch: router([['GET', /^\/api\/workorder\/123$/, ok(withStatus(13))]]) });
-  p = provoke(env);
-  for (let s = 0; s < 5; s++) { await p.chat(); env.clock.now += 1000; }
-  assert.equal(p.ui.built.length, 1); assert.equal(p.ui.built[0].key, 'ready');
-  assert.equal(env.requests(/^\/api\/workorder\/123$/).length, 1);
+  p = await provoke(ok(withStatus(13)));
+  for (let s = 0; s < 5; s++) { await p.chat(); p.env.clock.now += 1000; }
+  assert.equal(p.ui.built.length, 1); assert.equal(p.ui.built[0].key, 'pickup');
+  assert.equal(p.env.requests(/^\/api\/workorder\/123$/).length, 1);
 });
 
 // Macrocosmos
-const macroSrc = extractFn('30-galaxy.js', 'async function collectData(woId)');
-const macro = (env) => vm.runInContext(`(function () { const gspnTicketOnPage = () => null;
-  ${macroSrc}
-  return collectData; })()`, env.ctx);
+const macro = (env) => runShard(env, 'galaxy').collectData;
 await t('Macrocosmos: a malformed work order answer stops the filing; the captured one is read', async () => {
-  for (const a of BAD_WO) await assert.rejects(macro(woEnv(a))('123'), (e) => /BadShape|ApiError/.test(e.name));
-  const d = await macro(woEnv(ok(WO_ANSWER)))('123');
+  for (const a of BAD_WO) await assert.rejects(macro(woEnv(a, [], ['30-galaxy.js']))('123'), (e) => /BadShape|ApiError/.test(e.name));
+  const d = await macro(woEnv(ok(WO_ANSWER), [], ['30-galaxy.js']))('123');
   assert.equal(d.woId, '123'); assert.equal(typeof d.imei, 'string');
 });
 
@@ -1494,15 +1485,8 @@ await t('Decipher: a malformed work order answer records nothing; a real one rec
 });
 
 // Swiftcast
-const swiftSrc = ['async function api(method, path, body, opts)', 'async function retrying(fn, log, what)', 'async function run(arrivalId, log)'].map((h) => extractFn('20-auto-close.js', h)).join('\n');
-const swiftcast = (env) => vm.runInContext(`(function () {
-  const STEP_DELAY_MS = 1, DEVICE_ISSUES = ['Cleaning'], BIN = '', REFRESH_PROGRAM = 11759, SP_SKU = '101516', SP_NAME = 'Verizon screen protector';
-  let laborNote = null, stopRequested = false;
-  const unwrap = AE.unwrap, stepsFor = () => 9, laborOnNow = () => false;
-  const cartOf = (r) => { const c = unwrap(r); return (c && (c.cartItems ? c : c.cart)) || c || {}; };
-  const skuOf = (i) => String(i.sku || i.itemNumber || i.ItemId || '');
-  ${swiftSrc}
-  return run; })()`, env.ctx);
+const SWIFT = ['00-core.js', '20-auto-close.js'];
+const swiftcast = (env) => runShard(env, 'autoClose').run; // the run itself: arrival → work order → sale, every call through the stubbed fetch
 const ARRIVAL = { program: { programId: 9470 }, customerDevice: { imei: '356938035643809', customerDeviceId: 9 }, customer: { customerId: 77 }, clientId: 3, storeId: STORE }; // SYNTHETIC arrival (fields run() reads)
 const swiftRoutes = (wo, checkout) => router([
   ['GET', /^\/api\/auth\/user$/, ok(USER)], ['GET', /^\/api\/arrivals\/50$/, ok(ARRIVAL)], ['POST', /validate-imei$/, ok({ valid: true })],
@@ -1511,14 +1495,14 @@ const swiftRoutes = (wo, checkout) => router([
   ['GET', /^\/api\/checkout\/workorder\/555$/, checkout], ['GET', /get-cart/, ok({ payment: { total: 0 } })], // SYNTHETIC $0 cart
   ['POST', /demographic\/customer-data$/, ok({})], ['POST', /complete-order$/, ok({ salesOrder: { salesId: 'S1' } })]]);
 await t('Swiftcast: a text answer to the (unused) checkout GET doesn\'t stop the run before complete-order', async () => {
-  const env = load(['00-core.js'], { fetch: swiftRoutes(ok(WO_ANSWER), { status: 200, body: 'OK' }) }); // SYNTHETIC text 2xx (the answer is uncaptured)
+  const env = load(SWIFT, { fetch: swiftRoutes(ok(WO_ANSWER), { status: 200, body: 'OK' }) }); // SYNTHETIC text 2xx (the answer is uncaptured)
   const log = Object.assign(() => {}, { plan() {} });
   assert.equal(await swiftcast(env)(50, log), 555);
   assert.equal(env.requests(/complete-order$/, 'POST').length, 1);
 });
 await t('Swiftcast: a malformed work order answer stops the run before any status PUT is built from it', async () => {
   for (const a of BAD_WO) {
-    const env = load(['00-core.js'], { fetch: swiftRoutes(a, ok({})) });
+    const env = load(SWIFT, { fetch: swiftRoutes(a, ok({})) });
     await assert.rejects(swiftcast(env)(50, Object.assign(() => {}, { plan() {} })));
     assert.deepEqual(env.requests(/^\/api\/workorder\/555$/, 'PUT'), [], JSON.stringify(a));
     assert.deepEqual(env.requests(/complete-order$/, 'POST'), []);
@@ -1526,25 +1510,24 @@ await t('Swiftcast: a malformed work order answer stops the run before any statu
 });
 
 // Divination, Tactician: background reloads wait while Portal is down
-const divSrc = extractFn('10-cleaning-rate.js', 'const autoRefresh = () =>');
 await t('Divination: the timed refresh waits while Portal is down', async () => {
-  const run = (down) => { const env = load(['00-core.js']); if (down) for (let i = 0; i < 3; i++) env.AE.health.fail('http', { status: 504, message: 'x' }); const calls = []; vm.runInContext(`(function (calls) { const refresh = () => calls.push(1); ${divSrc}; autoRefresh(); })`, env.ctx)(calls); return calls.length; };
-  assert.equal(run(true), 0); assert.equal(run(false), 1);
+  // The shard's first refresh, its 30 s timer and the tab coming back all go through the same gate; a refresh reads the work order list.
+  const run = async (down) => {
+    const env = load(['00-core.js', '10-cleaning-rate.js'], { timers: 'fake', fetch: router([['GET', /^\/api\/auth\/user$/, ok(USER)], ...listRoutes]) });
+    if (down) for (let i = 0; i < 3; i++) env.AE.health.fail('http', { status: 504, message: 'x' });
+    runShard(env, 'cleaningRate');
+    await env.advance(10000); // past core's wait for Portal's own first load
+    return env.requests(/^\/api\/workorders$/, 'POST').length;
+  };
+  assert.equal(await run(true), 0); assert.ok(await run(false) >= 1);
 });
-const tacTick = extractFn('62-tactician.js', 'AE.every(1000, () => {').replace(/^AE\.every\(1000, /, '');
 await t('Tactician: the stale reload waits while Portal is down', async () => {
   const run = (down) => {
-    const env = load(['00-core.js']);
+    const env = load(['00-core.js', '62-tactician.js']);
     if (down) for (let i = 0; i < 3; i++) env.AE.health.fail('http', { status: 504, message: 'x' });
-    const shown = [];
-    const tick = vm.runInContext(`(function (shown) { const reports = { parentElement: null }; let shownFor = reports, busy = false, loadedAt = 0; const STALE_MS = 60000, RP = 'rp';
-      const location = { pathname: '/reporting/metrics' }, document = { querySelector: () => reports, getElementById: () => ({ parentElement: null }), querySelectorAll: () => [] };
-      const showSplh = () => shown.push(1), getComputedStyle = () => ({});
-      return (${tacTick}); })`, env.ctx)(shown);
-    tick();
-    return shown.length;
+    return runShard(env, 'timeSheet').stale(); // nothing loaded yet: due, unless Portal is down
   };
-  assert.equal(run(true), 0); assert.equal(run(false), 1);
+  assert.equal(run(true), false); assert.equal(run(false), true);
 });
 
 
@@ -1936,16 +1919,15 @@ await t('Tracker cache: wiped when Portal switched to another store; unaffected 
 });
 await t('Assize cache: details older than 2 hours are dropped on first read, and its rows/details keys are listed for wiping', async () => {
   const now = Date.now();
-  const env = load(['00-core.js'], { gm: { ae_assize_details_914: { 1: { at: now - 3 * 3600000, d: {} }, 2: { at: now - 60000, d: {} } } } });
-  const src = extractFn('65-assize.js', 'const key = (k) => {') + ';\n' + 'let detailsPruned = false;\n' + extractFn('65-assize.js', 'const readDetails = () => {');
-  const readDetails = vm.runInContext(`(function () { const storeId = 914; ${src}; return readDetails; })`, env.ctx)();
+  const env = load(ASSIZE_FILES, { fetch: router([['GET', /^\/api\/auth\/user$/, ok(USER)]]), gm: { ae_assize_details_914: { 1: { at: now - 3 * 3600000, d: {} }, 2: { at: now - 60000, d: {} } } } });
+  const { readDetails } = await assize(env);
   assert.deepEqual(Object.keys(readDetails()), ['2']); assert.deepEqual(Object.keys(env.gm.get('ae_assize_details_914')), ['2']);
   env.AE.signedOut(); assert.equal(env.gm.has('ae_assize_details_914'), false);
 });
 // ---- Spread on dark themes: every colour in Spread's CSS comes from Portal's design tokens (Glamour sets them), with today's light value as the fallback.
 // A hard-coded neutral (white, light grey, near-black) next to a theme-coloured text is what made the board a light island on a dark theme.
-const spSrc = readFileSync(path.join(ROOT, 'src/59-spread.js'), 'utf8');
-const spCss = spSrc.slice(spSrc.indexOf('const CSS = `') + 13, spSrc.indexOf('\n    `;', spSrc.indexOf('const CSS = `'))).replace(/\/\*[\s\S]*?\*\//g, '');
+const SP_SHARD = runShard(load(['00-core.js', '59-spread.js']), 'spread'); // the stylesheet the shard really adds, and its card edge colour
+const spCss = SP_SHARD.CSS.replace(/\/\*[\s\S]*?\*\//g, '');
 // the text with every var(...) group (fallbacks included) cut out, parens balanced
 const spNoVar = (str) => { let out = '', i = 0; while (i < str.length) { if (str.startsWith('var(', i)) { let d = 0; i += 3; do { if (str[i] === '(') d++; else if (str[i] === ')') d--; i++; } while (d > 0 && i < str.length); } else out += str[i++]; } return out; };
 // The colours Spread keeps on purpose, by "selector | property": status amber and red (Attention, Urgent, the old-age text and dot) and their dark-theme variants; shadows are black.
@@ -1990,8 +1972,8 @@ await t('Spread: the board, columns, cards, chips and tags take their colours fr
 await t('Spread: the amber age text, the Attention badge, the WO link and the card shadow have dark-theme variants; the edge falls back to a token', () => {
   for (const sel of ['.sp-age.old', '.sp-att.warning', '.sp-card:hover']) assert.ok(spCss.includes(':is(.asurion-dark, .partner-dark) ' + sel + ' {'), sel);
   assert.ok(spCss.includes(':is(.asurion-dark, .partner-dark) :is(.sp-wo,'));
-  const edge = spSrc.split('\n').find((l) => l.includes('const edgeOf'));
-  assert.ok(edge && spLiterals(edge.replace(/\/\/.*$/, '')).length === 0, 'the edge colour used when Rainbow Drip is off is a token: ' + edge);
+  const edge = SP_SHARD.edgeOf('Ready for pickup'); // Rainbow Drip is not loaded here: the fallback
+  assert.ok(edge && spLiterals(edge).length === 0, 'the edge colour used when Rainbow Drip is off is a token: ' + edge);
 });
 
 

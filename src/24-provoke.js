@@ -459,5 +459,6 @@ AE.shard({
       if (!b || !b.isConnected) box();
     });
     AE.leadReplies = { pick, pricesFor, screenPrices, byStatus, render };
+    this._test = { chat, chatStatus: () => chatStatus }; // the client tests' way in (test-client/)
   },
 });

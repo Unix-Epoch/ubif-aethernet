@@ -521,6 +521,7 @@ AE.shard({
     const money = (n) => (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     let range = GM_getValue(RANGE_KEY, '7'), dataFor = null, data = null, busy = null, err = null, shownFor = null, loadedAt = 0, fresh = false;
     const STALE_MS = 10 * 60000; // the card's numbers are refreshed when older than this (on the page or coming back to it)
+    const stale = () => !busy && Date.now() - loadedAt > STALE_MS && !AE.health.down(); // the timed reload waits while Portal is down
     async function loadSplh(fresh) {
       const [f, t] = rangeDates(range), from = T.ymd(f), to = T.ymd(t);
       const p = await AE.profile(), store = Number(p.storeId);
@@ -654,7 +655,7 @@ AE.shard({
       AE.every(1000, () => {
         if (!/^\/reporting\/metrics/.test(location.pathname)) { shownFor = null; document.querySelectorAll('.ae-splh-scroll').forEach((x) => x.classList.remove('ae-splh-scroll')); return; }
         const reports = document.querySelector('.reports-card');
-        if (reports && (!document.getElementById(RP) || shownFor !== reports || (!busy && Date.now() - loadedAt > STALE_MS && !AE.health.down()))) { shownFor = reports; showSplh(); }
+        if (reports && (!document.getElementById(RP) || shownFor !== reports || stale())) { shownFor = reports; showSplh(); }
         const card = document.getElementById(RP); // Portal's Reports page clips anything taller than the window: let it scroll
         for (let x = card && card.parentElement; x; x = x.parentElement) {
           const oy = getComputedStyle(x).overflowY, over = x.scrollHeight > x.clientHeight + 1;
@@ -675,5 +676,6 @@ AE.shard({
       if (!lastPath) { lastPath = location.pathname; AE.profile().then((p) => { if (p && p.storeId) { home = Number(p.storeId); homeName = p.storeName || ''; sync(); } }).catch(() => {}); }
       sync();
     });
+    this._test = { stale }; // the client tests' way in (test-client/)
   },
 });

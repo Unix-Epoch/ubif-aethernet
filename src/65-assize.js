@@ -734,6 +734,7 @@ AE.shard({
     if (!/^\/login/.test(location.pathname)) start();
     else AE.every(2000, () => { if (!started && !/^\/login/.test(location.pathname)) start(); });
     AE.hooks.assizePass = () => pass(true); // dev tools
+    this._test = { pass, readDetails }; // the client tests' way in (test-client/)
     AE.on('text-sent', ({ woId }) => { if (woId) invalidate(woId); });
     AE.on('wo-changed', ({ woId }) => { if (woId) invalidate(woId); }); // Recitation's note, Waymark's nickname
   },

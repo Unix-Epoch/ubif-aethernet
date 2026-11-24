@@ -492,6 +492,7 @@ AE.shard({
       if (items.length > 1) castIntro(b, items);
     }
     AE.every(1000, tick);
+    this._test = { run }; // the client tests' way in (test-client/)
     // The drawer's footer, the frame it appears (2.23): tick returns early off arrival pages and for non-cleanings.
     AE.onDom(() => { const on = /^\/check-in\/arrivals\/\d+$/.test(location.pathname), b = document.getElementById(BTN_ID); if (on ? !b : !!b) tick(); });
   },
