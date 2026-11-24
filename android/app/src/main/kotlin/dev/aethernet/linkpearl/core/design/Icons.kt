@@ -80,6 +80,8 @@ object LpIcons {
     val Link = icon("link", "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1", "M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1")
     val Share = icon("share", "M12 3v12M8 7l4-4 4 4", "M5 12v8h14v-8")
     val Outbox = icon("outbox", "M4 14v6h16v-6M12 15V4M8 8l4-4 4 4")
+    /** Work orders: the device's location (bin). */
+    val Pin = icon("pin", "M20 10c0 5-5.5 10.2-7.4 11.8a1 1 0 0 1-1.2 0C9.5 20.2 4 15 4 10a8 8 0 0 1 16 0", "M9 10a3 3 0 1 0 6 0a3 3 0 1 0-6 0")
     val Tag = icon("tag", "M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z", "M7.5 7.5h.01")
     val Download = icon("download", "M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4", "M12 4v11M7 10l5 5 5-5")
     val ArrowRight = icon("arrowRight", "M5 12h14M13 6l6 6-6 6")
