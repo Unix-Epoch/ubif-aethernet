@@ -21,6 +21,7 @@ object Routes {
     const val PULLBACKS = "pullbacks"
     const val LINKSHELL = "linkshell"
     const val BUYBACKS = "buybacks"
+    const val MORNING_CHECK = "morningcheck"
     const val SCAN = "scan"
     const val ONBOARDING = "onboarding"
 

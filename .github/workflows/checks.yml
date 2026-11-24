@@ -28,6 +28,7 @@ jobs:
       - run: node test-client/pullbacks.mjs
       - run: node test-client/linkshell.mjs
       - run: node test-client/buybacks.mjs
+      - run: node test-client/morning-check.mjs
 
   guards:
     name: Build guards and Aethernet Worker

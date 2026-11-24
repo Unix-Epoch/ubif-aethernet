@@ -8,9 +8,10 @@
   Auto-Waymark scan (dry run, or for real), a shifted clock for the 7 PM and
   morning rules, and demo panels/toasts.
 
-  Portal cart recorder: while on, Portal's own cart requests (add/remove
-  items, repair-code lookups) are saved with their body and Portal's answer,
-  to copy exactly what Portal sends (e.g. for the Verizon screen protector).
+  Portal request recorder: while on, Portal's own cart requests (add/remove
+  items, repair-code lookups) and work order writes (status, bin location,
+  notes, device nickname) are saved with their body and Portal's answer,
+  customer details removed (AE.scrubText), to copy exactly what Portal sends.
   Watches window.fetch from inside the page; records only, changes nothing.
 
   Simulations only change what this browser shows. Two exceptions write to
@@ -22,29 +23,52 @@
   const { h, icon } = AE;
   const CLOCK_KEY = 'ae_dev_clock_offset';
 
-  // ---------------------------------------------------- Portal cart recorder
+  // ---------------------------------------------------- Portal request recorder
   const REC_KEY = 'ae_dev_record_cart', REC_LOG = 'ae_dev_cart_log', REC_EVT = 'aethernet:cart-rec';
   function recorderHook() {
     if (document.getElementById('ae-cart-rec-hook')) return;
     const code = [
       '(function (evt) {',
-      '  var WATCH = /\\/api\\/order\\/(cart\\/|repair-codes)/;',
+      // Cart: every call. Work orders (status, bin, notes, device nickname): writes only, so Portal's many reads don't flood it.
+      // fetch and XHR both; a Request's body is read from a clone made before the call goes out. Calls always go out unchanged.
+      '  var CART = /\\/api\\/order\\/(cart\\/|repair-codes)/;',
+      '  var WO = /\\/api\\/(v1\\/)?(workorder|checkin|customer-devices|notes?(\\/|$|\\?)|bins?(\\/|$|\\?)|workorder-bin)/i;',
+      '  var watched = function (m, u) { u = String(u || ""); return CART.test(u) || (WO.test(u) && !/^(GET|HEAD|OPTIONS)$/i.test(String(m || "GET"))); };',
+      '  var emit = function (m, u, body, status, text) {',
+      '    try { document.dispatchEvent(new CustomEvent(evt, { detail: JSON.stringify({ at: new Date().toISOString(), method: String(m || "GET").toUpperCase(), url: String(u), body: typeof body === "string" ? body.slice(0, 20000) : "", status: status, response: String(text || "").slice(0, 3000) }) })); } catch (_) {}',
+      '  };',
       '  var orig = window.fetch;',
-      '  window.fetch = function (input, init) {',
-      '    var url = typeof input === "string" ? input : (input && input.url) || "";',
+      '  if (orig) window.fetch = function (input, init) {',
+      '    var w = null;',
+      '    try {',
+      '      var url = typeof input === "string" ? input : (input && input.url) || String(input || "");',
+      '      var method = (init && init.method) || (input && input.method) || "GET";',
+      '      if (watched(method, url)) w = { m: method, u: url, bodyP: init && init.body != null ? Promise.resolve(typeof init.body === "string" ? init.body : "") : (input && typeof input.clone === "function" ? input.clone().text().catch(function () { return ""; }) : Promise.resolve("")) };',
+      '    } catch (_) { w = null; }',
       '    var p = orig.apply(this, arguments);',
-      '    if (!WATCH.test(url)) return p;',
-      '    var method = (init && init.method) || (input && input.method) || "GET";',
-      '    var bodyP = init && typeof init.body === "string" ? Promise.resolve(init.body) : (input && input.clone ? input.clone().text().catch(function () { return ""; }) : Promise.resolve(""));',
-      '    p.then(function (res) {',
-      '      Promise.all([bodyP, res.clone().text().catch(function () { return ""; })]).then(function (v) {',
-      '        document.dispatchEvent(new CustomEvent(evt, { detail: JSON.stringify({ at: new Date().toISOString(), method: method, url: url, body: v[0], status: res.status, response: v[1].slice(0, 3000) }) }));',
-      '      });',
-      '    }, function (err) {',
-      '      bodyP.then(function (b) { document.dispatchEvent(new CustomEvent(evt, { detail: JSON.stringify({ at: new Date().toISOString(), method: method, url: url, body: b, status: 0, response: String(err) }) })); });',
-      '    });',
+      '    if (w) {',
+      '      try {',
+      '        p.then(function (res) { var t; try { t = res.clone().text(); } catch (_) { t = Promise.resolve(""); } Promise.all([w.bodyP, t.catch(function () { return ""; })]).then(function (v) { emit(w.m, w.u, v[0], res.status, v[1]); }); },',
+      '          function (err) { w.bodyP.then(function (b) { emit(w.m, w.u, b, 0, String(err)); }); });',
+      '      } catch (_) {}',
+      '    }',
       '    return p;',
       '  };',
+      '  var X = window.XMLHttpRequest && window.XMLHttpRequest.prototype;',
+      '  if (X) {',
+      '    var xopen = X.open, xsend = X.send;',
+      '    X.open = function (m, u) { try { this.__aeRec = watched(m, u) ? { m: m, u: u } : null; } catch (_) {} return xopen.apply(this, arguments); };',
+      '    X.send = function (body) {',
+      '      try {',
+      '        var w = this.__aeRec, x = this;',
+      '        if (w) x.addEventListener("loadend", function () {',
+      '          var t = ""; try { t = x.responseType === "" || x.responseType === "text" ? x.responseText : x.responseType === "json" ? JSON.stringify(x.response) : ""; } catch (_) {}',
+      '          emit(w.m, w.u, body, x.status, t);',
+      '        });',
+      '      } catch (_) {}',
+      '      return xsend.apply(this, arguments);',
+      '    };',
+      '  }',
       '})(' + JSON.stringify(REC_EVT) + ');',
     ].join('\n');
     const el = document.createElement('script');
@@ -54,8 +78,9 @@
   }
   document.addEventListener(REC_EVT, (e) => {
     let rec; try { rec = JSON.parse(e.detail); } catch (_) { return; }
+    rec.body = AE.scrubText(rec.body); rec.response = AE.scrubText(rec.response); // customer details never kept
     GM_setValue(REC_LOG, [rec, ...GM_getValue(REC_LOG, [])].slice(0, 15));
-    AE.toast('Recorded Portal cart request', rec.method + ' ' + rec.url.replace(/^https?:\/\/[^/]+/, '') + ' → ' + rec.status + '. Copy it from the dev tools.', rec.status && rec.status < 400 ? 'ok' : 'err', 6000);
+    AE.toast('Recorded Portal request', rec.method + ' ' + rec.url.replace(/^https?:\/\/[^/]+/, '') + ' → ' + rec.status + '. Copy it from the dev tools.', rec.status && rec.status < 400 ? 'ok' : 'err', 6000);
   });
   if (GM_getValue(REC_KEY, false)) recorderHook();
 
@@ -222,17 +247,57 @@
     };
     drawRec();
     const recording = GM_getValue(REC_KEY, false);
-    const recorder = section('Portal cart recorder',
-      row(btn(recording ? 'Stop recording' : 'Record Portal\'s cart requests', () => {
+    const recorder = section('Portal request recorder',
+      row(btn(recording ? 'Stop recording' : 'Record Portal\'s cart and work order requests', () => {
         const on = !GM_getValue(REC_KEY, false);
         GM_setValue(REC_KEY, on);
         if (on) recorderHook();
-        AE.toast('Cart recorder ' + (on ? 'on' : 'off'), on ? 'Add the item in Portal\'s cart as usual; the request is saved here. Reload to stop watching completely.' : 'Reload the page to stop watching completely.', 'ok', 6000);
+        AE.toast('Recorder ' + (on ? 'on' : 'off'), on ? 'Make the change in Portal as usual; the request is saved here. Reload to stop watching completely.' : 'Reload the page to stop watching completely.', 'ok', 6000);
         open(); // redraw with the new state
-      }, { title: 'Saves Portal\'s own add/remove-item and repair-code requests (body + answer). Records only.' }),
+      }, { title: 'Saves Portal\'s own cart requests and work order changes (status, location, notes, nickname), body + answer, customer details removed. Records only.' }),
         btn('Clear', () => { GM_deleteValue(REC_LOG); drawRec(); })),
-      note(recording ? 'Recording: add the item in Portal\'s cart by hand, then copy the request below.' : 'Off.'),
+      note(recording ? 'Recording: make the change in Portal by hand, then copy the request below.' : 'Off.'),
       recOut);
+
+    // Morning check tests: the changes Linkpearl's morning check makes, on the work order open here, for real. Each shows its
+    // calls first (proven ones, or a guess to check against the recorder) and asks before writing.
+    const mc = AE.morningCheck;
+    const woHere = () => { const m = location.pathname.match(/^\/repair\/workorder\/(\d+)/); return m ? m[1] : null; };
+    const mcOut = h('div', { class: 'out' });
+    const mcNow = async () => { const w = woHere(); if (!w) throw new Error('Open a work order first.'); const r = await mc.read(w); mcOut.textContent = 'WO ' + r.wo + ' · ' + (r.status || 'status ' + r.statusId) + ' · bin "' + r.bin + '" · nickname "' + r.nickname + '"'; return r; };
+    const mcRun = async (title, lines, fn) => {
+      const ok = await AE.confirm({ danger: true, title, message: lines.map((l) => AE.esc(l)).join('<br>') + '<br><br>This changes the <b>real</b> work order. Turn on the recorder below first to keep Portal\'s answers.', confirmLabel: 'Run it' });
+      if (!ok) return;
+      try { await fn(); AE.toast('Done', title, 'ok'); } catch (e) { AE.toast(title + ' failed', (e && e.message) || String(e), 'err', 10000); }
+      await mcNow().catch(() => {});
+    };
+    const mcSel = h('select', { 'aria-label': 'Status' }, Object.entries(mc.STATUS).map(([id, n]) => h('option', { value: id }, n + (mc.PHONE_STATUSES.includes(Number(id)) ? '' : ' (Portal only)'))));
+    const mcHow = h('select', { 'aria-label': 'Call' }, h('option', { value: 'auto' }, 'Auto'), h('option', { value: 'put' }, 'PUT work order'), h('option', { value: 'patch' }, 'PATCH status'));
+    const mcBin = h('input', { type: 'text', placeholder: 'Bin', style: 'width:110px' });
+    const mcNick = h('input', { type: 'text', placeholder: 'Nickname', style: 'width:140px' });
+    const mcNote = h('input', { type: 'text', placeholder: 'Note', style: 'width:180px' });
+    const morning = mc ? section('Morning check tests',
+      row(btn('Read this work order', mcNow)),
+      row(mcSel, mcHow, btn('Move', async () => {
+        const r = await mcNow(), to = Number(mcSel.value), plan = mc.statusPlan(r.statusId, to, { method: mcHow.value });
+        await mcRun('Move ' + r.wo + ' to ' + mc.STATUS[to], [(mc.STATUS[r.statusId] || r.statusId) + ' → ' + mc.STATUS[to],
+          (plan.rfp ? 'POST workorder/attribute (service outcome Completed), then ' : '') + (plan.kind === 'patch' ? 'PATCH workorder/' + r.wo + '/status' : 'PUT workorder/' + r.wo + ' (the order back with the new status, sendComms false)'),
+          plan.proven ? 'Proven move (Swiftcast\'s), with its step note.' : 'GUESS: this move hasn\'t been recorded from Portal. No note is added.'],
+        () => mc.setStatus(r.wo, to, { method: mcHow.value }));
+      }, { write: true })),
+      row(mcBin, btn('Set location', async () => {
+        const r = await mcNow();
+        await mcRun('Set ' + r.wo + '\'s location', ['"' + r.bin + '" → "' + mcBin.value + '"', 'GUESS: PUT workorder/' + r.wo + ' with workorderBin.'], () => mc.setBin(r.wo, mcBin.value));
+      }, { write: true })),
+      row(mcNick, btn('Set nickname', async () => {
+        const r = await mcNow();
+        await mcRun('Set ' + r.wo + '\'s nickname', ['"' + r.nickname + '" → "' + mcNick.value + '"', 'PUT customer-devices (Waymark\'s call).'], () => mc.setNickname(r.wo, mcNick.value));
+      }, { write: true })),
+      row(mcNote, btn('Add note', async () => {
+        const r = await mcNow();
+        await mcRun('Add a note to ' + r.wo, [mcNote.value, 'POST note (Recitation\'s call).'], () => mc.addNote(r.wo, mcNote.value));
+      }, { write: true })),
+      mcOut) : null;
 
     // SharePoint download test: can this browser fetch Provoke's sheets itself (its own
     // Microsoft sign-in, through Tampermonkey), so the sync can move off Garrett's Mac?
@@ -452,7 +517,7 @@
     const card = h('div', { class: 'sg sg-card sg-dev', role: 'dialog', 'aria-modal': 'true', 'aria-label': AE_NAME + ' dev tools' },
       h('div', { class: 'head ae-head' }, h('span', { style: 'color:#e0761a;line-height:0', html: icon('aetheryte', 28) }), h('h2', null, 'Dev tools'), h('span', { class: 'tag' }, 'DEV v' + AE_VERSION),
         h('button', { class: 'sg-x', title: 'Close', onclick: () => close() }, '✕')),
-      h('div', { class: 'scroll' }, portalHealth, updates, tracker, retrace, assizeGraphs, sharepoint, notices, access, settings, macro, waymark, rows, scans, recorder, perf, general));
+      h('div', { class: 'scroll' }, portalHealth, updates, tracker, retrace, assizeGraphs, sharepoint, notices, access, settings, macro, waymark, rows, scans, morning, recorder, perf, general));
     const scrim = h('div', { class: 'sg sg-about-scrim', id: 'sg-dev', onclick: (e) => { if (e.target === scrim) close(); } }, card);
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
