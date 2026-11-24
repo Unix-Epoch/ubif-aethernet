@@ -133,7 +133,8 @@ AE.morningCheck = (() => {
     phone → PC  check.set     { run, cid, wo, updatedAt, status?, bin?, nickname?, note? }   one work order's changes
     PC → phone  check.result  { run, cid, wo, ok, row, failed: [[field, message], …] }        what Portal took, and the order after
     phone → PC  check.progress { run, done, total }                         the panel's count
-    either      check.end     { run, reason? }                              finished, stopped, or declined on the PC
+    either      check.end     { run, reason? }                              finished, stopped, or declined on the PC; reason "store":
+                                                                            Portal isn't on the store the phone was linked for
   Changes run in a fixed order (nickname, note, bin, status) and each is reported on its own; the first write is refused when the
   order changed in Portal since the phone's copy (updatedAt). Only proven calls run from the phone (see the top of this file).
 */
@@ -227,9 +228,21 @@ AE.morningCheck.link = (() => {
       el.replaceChildren(head(), AE.h('div', { class: 'sg-actions' }, btn('Decline', () => { close(); resolve(false); }), btn('Allow', () => resolve(true), true)));
     });
   }
+  // The run lives in this tab, so the tab holds the Linkshell socket while it lasts (another tab in use would answer "not running").
+  let unhold = null;
+  function clear() {
+    run = null; close();
+    if (unhold) { unhold(); unhold = null; }
+  }
   function stop(reason) {
     if (run) L.send('check.end', { run: run.id, reason: reason || 'stopped' });
-    run = null; close();
+    clear();
+  }
+  // A check is for the store the phone was linked for, on a page still showing that store (not paused, not switched).
+  async function storeOk() {
+    if (!(await AE.sameStore(true))) return false;
+    const store = (L.linked() || {}).store;
+    return store == null || Number(store) === Number((await AE.profile()).storeId);
   }
 
   // ---------------------------------------------------------------- messages
@@ -237,6 +250,7 @@ AE.morningCheck.link = (() => {
     const id = String((b && b.run) || '').slice(0, 40);
     if (!id) return;
     if (run && run.id === id) { await sendList(id); return; } // the phone reopened it
+    if (!(await storeOk())) { L.send('check.end', { run: id, reason: 'store' }); return; }
     const link = L.linked() || {};
     if (!link.host) {
       const ok = await ask(id);
@@ -244,11 +258,14 @@ AE.morningCheck.link = (() => {
     }
     AE.track('morningCheck');
     run = { id, total: 0, done: 0, changed: 0, log: [] };
-    try { run.total = await sendList(id); } catch (e) { L.send('check.end', { run: id, reason: 'failed' }); run = null; close(); AE.noteError('morning check list', e); return; }
+    if (unhold) unhold();
+    unhold = L.hold(() => { unhold = null; clear(); });
+    try { run.total = await sendList(id); } catch (e) { L.send('check.end', { run: id, reason: 'failed' }); clear(); AE.noteError('morning check list', e); return; }
     draw();
   });
   L.on('check.set', async (b) => {
     if (!run || !b || b.run !== run.id) { L.send('check.result', { run: b && b.run, cid: b && b.cid, wo: b && b.wo, ok: false, failed: [['check', 'Not running on the PC']] }); return; }
+    if (!(await storeOk())) { L.send('check.result', { run: run.id, cid: b.cid, wo: b.wo, ok: false, failed: [['check', 'Portal is on another store']] }); stop('store'); return; }
     const { failed, row } = await apply(b);
     const what = [b.bin != null ? b.bin : null, b.status != null ? MC.STATUS[b.status] : null, b.nickname != null ? 'Nickname' : null, b.note ? 'Note' : null].filter(Boolean).join(' · ');
     if (!failed.length) run.changed++;
@@ -257,7 +274,7 @@ AE.morningCheck.link = (() => {
     draw();
   });
   L.on('check.progress', (b) => { if (run && b && b.run === run.id) { run.done = Math.max(0, Number(b.done) || 0); run.total = Number(b.total) || run.total; draw(); } });
-  L.on('check.end', (b) => { if (run && b && b.run === run.id) { run = null; close(); } });
+  L.on('check.end', (b) => { if (run && b && b.run === run.id) clear(); });
 
   return { _test: { apply, movesFrom, rowOf, LIVE }, state: () => run };
 })();

@@ -172,15 +172,55 @@ await test('dropped connection retries with backoff; replaced (4000) does not', 
   assert.ok(L.linked());
 });
 
-await test('unlinked elsewhere (4001): the link, its key and the outbox are forgotten', async () => {
+await test('two copies of a phone message arriving together are applied once', async () => {
   L.wake(true); ws = sockets[3]; ws.open(); await settle();
+  let ran = 0;
+  L.on('t.twice', async () => { ran++; await new Promise((r) => setTimeout(r, 5)); });
+  const f = await fromPhone('twice-0000001', 't.twice', { a: 1 });
+  ws.push(f); ws.push(f); // the phone flushes on open and again on hello
+  await settle(); await settle();
+  assert.equal(ran, 1);
+  ws.push(f); await settle();
+  assert.equal(ran, 1);
+  assert.ok(ws.frames().filter((x) => x.t === 'ack' && x.ids[0] === 'twice-0000001').length >= 2);
+});
+
+await test('hold: a run keeps the socket here (no idle close, taken back after 4000); a run in another tab keeps this tab off it', async () => {
+  let lost = 0;
+  const release = L.hold(() => { lost++; });
+  await advance(6 * 60 * 1000);
+  assert.equal(ws.readyState, 1, 'still open past the idle time');
+  ws.drop(4000); await settle();
+  await advance(1000);
+  assert.equal(sockets.length, 5, 'connected again');
+  ws = sockets[4]; ws.open(); await settle();
+  // another tab starts a run of its own
+  gm.set('ae_linkshell_hold', { tab: 'another-tab', at: now });
+  await advance(20000);
+  assert.equal(lost, 1);
+  ws.close(1000, 'idle'); await settle();
+  gm.set('ae_linkshell_hold', { tab: 'another-tab', at: now });
+  L.wake(true);
+  assert.equal(sockets.length, 5, 'the other tab\'s run has the phone');
+  await advance(91 * 1000); // that tab is gone: its hold goes stale
+  L.wake(true);
+  assert.equal(sockets.length, 6);
+  ws = sockets[5]; ws.open(); await settle();
+  const again = L.hold();
+  again();
+  assert.equal(gm.has('ae_linkshell_hold'), false);
+  ws.close(1000, 'idle'); await settle();
+});
+
+await test('unlinked elsewhere (4001): the link, its key and the outbox are forgotten', async () => {
+  L.wake(true); ws = sockets[6]; ws.open(); await settle();
   gm.set('ae_linkshell_out', [{ id: 'x-00000001', kind: 'a.b', body: {}, at: now }]);
   ws.drop(4001); await settle();
   assert.equal(L.linked(), null);
   assert.equal(gm.has('ae_linkshell'), false);
   assert.deepEqual(gm.get('ae_linkshell_out'), []);
   L.wake(true);
-  assert.equal(sockets.length, 4);
+  assert.equal(sockets.length, 7);
 });
 
 console.log(n + ' Linkshell tests passed');

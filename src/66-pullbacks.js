@@ -658,9 +658,13 @@ AE.shard({
       const parts = Math.max(1, Math.ceil(rows.length / RUN_PART));
       for (let p = 0; p < parts; p++) L.send('pullbacks.run', { run: S.phone, file: S.file, store: P.storeNum(S.store) || String(S.store), part: p, parts, items: rows.slice(p * RUN_PART, (p + 1) * RUN_PART) }, { wake: wake && p === 0 });
     }
+    // While the phone scans, this tab keeps the Linkshell socket (its session is the one in memory here).
+    let unhold = null;
+    function phoneHold() { const L = link(); if (L && !unhold) unhold = L.hold(() => { unhold = null; }); }
     function phoneStart() {
       if (!S || !link()) return;
       S.phone = [...crypto.getRandomValues(new Uint8Array(8))].map((x) => x.toString(16).padStart(2, '0')).join('');
+      phoneHold();
       save(S); sendRun(true); setChip();
     }
     function phoneEnd() {
@@ -668,6 +672,7 @@ AE.shard({
       const L = link();
       if (L) L.send('pullbacks.end', { run: S.phone });
       S.phone = null; save(S); setChip();
+      if (unhold) { unhold(); unhold = null; }
     }
     function tellPhone(i, message) {
       const L = link(), it = S && S.items[i];

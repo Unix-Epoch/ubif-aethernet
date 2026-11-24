@@ -525,6 +525,23 @@ await t('Return notes: scanning a label remembers its secret and reads the notes
   assert.equal(sent[0].path, '/return/read'); assert.equal(sent[0].body.token, await R.tokenOf(s));
   assert.ok(!JSON.stringify(sent).includes(s), 'the secret never goes to the Worker');
 });
+await t('Return notes: the token and key come from the stretched digits; notes sealed the old way are still read and keep their token', async () => {
+  const s = '1234567890123456';
+  const sha = async (x) => Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(x))).toString('hex');
+  const A = (await notesEnv()).R;
+  assert.equal(await A.tokenOf(s, 1), await sha('ae-return-token:' + s));
+  assert.notEqual(await A.tokenOf(s), await A.tokenOf(s, 1));
+  await assert.rejects(A.unseal(s, await A.seal(s, NOTES), 1), 'the old key cannot open new notes');
+  // An old row: found by the old token after the new one misses, then saved again under the old token.
+  const old = await A.seal(s, NOTES, 1), t1 = await A.tokenOf(s, 1);
+  const { R, sent, gm } = await notesEnv({ worker: (path, body) => {
+    if (path === '/return/read') { if (body.token !== t1) throw Object.assign(new Error('HTTP 404'), { status: 404 }); return { ...old, by: 'Erin Baker', at: '2026-11-17T12:00:00Z' }; }
+    return {};
+  } });
+  assert.equal(await R.open(50, s), 'opened arrival 50');
+  assert.deepEqual(sent.filter((x) => x.path === '/return/read').map((x) => x.body.token), [await R.tokenOf(s), t1]);
+  assert.equal(gm.get('ae_return_keys')['50'].v, 1);
+});
 async function sweepWith(status) {
   const now = Date.now();
   const r = await notesEnv({ gm: { ae_return_keys: { 50: { s: '1234567890123456', at: now, woId: 123 } } }, routes: [['GET', /^\/api\/workorder\/123$/, status]] });

@@ -49,7 +49,7 @@ class MorningCheckLink(private val ls: LinkshellClient) {
     private val _results = MutableSharedFlow<McResult>(extraBufferCapacity = 64)
     val results: SharedFlow<McResult> = _results.asSharedFlow()
     private val _ended = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 8)
-    /** (run, reason): "declined", "stopped", "failed". */
+    /** (run, reason): "declined", "stopped", "failed", "store" (Portal isn't on the linked store). */
     val ended: SharedFlow<Pair<String, String>> = _ended.asSharedFlow()
     val state get() = ls.state
     /** The check in progress, kept here so leaving the screen doesn't lose it. */
@@ -73,6 +73,14 @@ class MorningCheckLink(private val ls: LinkshellClient) {
         if (part == 0) head = Triple(b.str("store"), (b["bins"] as? JsonPrimitive)?.booleanOrNull == true, parseStatuses(b["statuses"]))
         val got = parts!!.third.apply { put(part, parseRows(b["rows"])) }
         val h = head
+        // A list from another store than this link's (Portal was switched on the PC): not shown, and the check ends.
+        val linked = ls.state.value.link?.store
+        if (h != null && linked != null && h.first != linked.toString()) {
+            parts = null; head = null
+            ls.send("check.end", buildJsonObject { put("run", run) })
+            _ended.tryEmit(run to "store")
+            return
+        }
         if (got.size == count && h != null) _list.value = McList(run, h.first, (0 until count).flatMap { got[it].orEmpty() }, h.third, h.second)
     }
 

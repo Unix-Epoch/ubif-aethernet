@@ -3,6 +3,7 @@ package dev.aethernet.linkpearl.feature.morningcheck
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -13,6 +14,8 @@ import androidx.navigation.navDeepLink
 import dev.aethernet.linkpearl.core.di.AppContainer
 import dev.aethernet.linkpearl.core.di.FeatureModule
 import dev.aethernet.linkpearl.core.di.LocalAppContainer
+import dev.aethernet.linkpearl.core.lock.AppLock
+import dev.aethernet.linkpearl.core.lock.SecureWindow
 import dev.aethernet.linkpearl.core.nav.Routes
 import dev.aethernet.linkpearl.feature.linkshell.LinkshellClient
 import dev.aethernet.linkpearl.feature.pullbacks.PullbackCamera
@@ -36,6 +39,9 @@ fun MorningCheckRoute(navigate: (String) -> Unit) {
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     val vm: MorningCheckViewModel = viewModel(factory = viewModelFactory { initializer { MorningCheckViewModel(c.get<MorningCheckLink>()) } })
     val ui by vm.state.collectAsStateWithLifecycle()
+    val unlocked by remember { c.get<AppLock>() }.isUnlocked.collectAsStateWithLifecycle()
+    // The PC's list is on screen: no screenshots, no Recents thumbnail. Customer names only while unlocked.
+    SecureWindow(enabled = ui is McUi.Checking)
     MorningCheckScreen(
         ui,
         McActions(
@@ -45,5 +51,6 @@ fun MorningCheckRoute(navigate: (String) -> Unit) {
         ),
         // Work order labels only: Code 128, the WO number.
         camera = { onCode -> PullbackCamera("", onCode, SCAN_FORMATS) },
+        names = unlocked,
     )
 }

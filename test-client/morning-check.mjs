@@ -17,13 +17,13 @@ function make(wo, store = 914, link = null) {
     },
     shape: { workorder: (j) => { if (!j || !j.workorder || typeof j.workorder.workorderStatusId !== 'number') throw new Error('bad shape'); return j.workorder; } },
     profile: async () => ({ storeId: store, name: 'Sam Tech' }),
-    emit: (n, d) => events.push([n, d]), refreshView: () => {},
+    emit: (n, d) => events.push([n, d]), refreshView: () => {}, sameStore: async () => !state.switched,
   };
-  const sent = [], handlers = {};
+  const sent = [], handlers = {}, held = [];
   if (link) {
     const el = () => ({ replaceChildren() {}, remove() {}, append() {} });
     Object.assign(AE, {
-      linkshell: { on: (k, fn) => { handlers[k] = fn; }, send: (k, b) => { sent.push([k, JSON.parse(JSON.stringify(b))]); return 'id'; }, linked: () => link },
+      linkshell: { on: (k, fn) => { handlers[k] = fn; }, send: (k, b) => { sent.push([k, JSON.parse(JSON.stringify(b))]); return 'id'; }, linked: () => link, hold: (fn) => { held.push(fn); return () => { held.length = 0; }; } },
       data: { workorders: async () => link.rows || [], nameOf: (r) => (r.customer && r.customer.fullName) || '' },
       h: el, actionIcon: () => '', icon: () => '', track: () => {}, noteError: () => {},
     });
@@ -31,7 +31,7 @@ function make(wo, store = 914, link = null) {
   const document = { getElementById: () => null, head: { append() {} }, body: { append() {} } };
   const ctx = vm.createContext({ AE, AE_ON_PORTAL: true, document, location: { pathname: '/repair/workorder/1' }, console });
   vm.runInContext(fs.readFileSync(new URL('../src/68-morning-check.js', import.meta.url), 'utf8'), ctx);
-  return { mc: AE.morningCheck, calls, events, state, sent, handlers };
+  return { mc: AE.morningCheck, calls, events, state, sent, handlers, held };
 }
 const WO = { workorderId: 1, workorderStatusId: 8, storeId: 914, customerId: 55, updatedAt: 'u1',
   CustomerDevice: { customerDeviceId: 9, customerId: 55, passcode: 'x', serial: 's', imei: 'i', deviceCatalogId: 3, name: 'Blue case' },
@@ -124,5 +124,19 @@ await t('Linkshell: stale order or no check running: nothing written', async () 
   await handlers['check.set']({ run: 'r1', cid: 'c1', wo: '1', updatedAt: 'older', nickname: 'x' });
   assert.equal(sent.find((x) => x[0] === 'check.result' && x[1].cid === 'c1')[1].failed[0][1], 'Changed in Portal since');
   assert.equal(calls.filter((c) => c.method !== 'GET').length, 0);
+});
+await t('Linkshell: a check is only for the linked store, on a page still on it; the run holds the socket until it ends', async () => {
+  const other = make(WO, 536, { host: true, store: 914, rows: [] });
+  await other.handlers['check.start']({ run: 'r1' });
+  assert.deepEqual(other.sent, [['check.end', { run: 'r1', reason: 'store' }]]);
+  const { sent, handlers, calls, state, held, mc } = make(WO, 914, { host: true, store: 914, rows: [] });
+  await handlers['check.start']({ run: 'r1' });
+  assert.equal(sent[0][0], 'check.list'); assert.equal(held.length, 1);
+  state.switched = true; // Portal changed stores under the page
+  await handlers['check.set']({ run: 'r1', cid: 'c1', wo: '1', updatedAt: 'u1', nickname: 'x' });
+  assert.equal(sent.find((x) => x[0] === 'check.result')[1].failed[0][1], 'Portal is on another store');
+  assert.deepEqual(sent[sent.length - 1], ['check.end', { run: 'r1', reason: 'store' }]);
+  assert.equal(calls.filter((c) => c.method !== 'GET').length, 0);
+  assert.equal(mc.link.state(), null); assert.equal(held.length, 0);
 });
 console.log('\n' + n + ' Morning check tests passed');

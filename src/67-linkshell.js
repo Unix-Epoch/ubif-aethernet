@@ -15,6 +15,10 @@
   it: a tab connects when someone is using it, and a newer tab's socket replaces an older one's. It closes after 5 minutes without
   messages and opens again on the next keypress, click or return to the tab, so the phone can reach this browser while it is in
   use. Messages for a closed end wait on the relay (24 hours).
+  Hold: a shard whose run lives in this tab's memory (a morning check, a buyback or pullback scan) holds the connection for as
+  long as the run lasts (AE.linkshell.hold). Other tabs then leave the socket alone, however much they are used, and this tab's
+  stays open past the idle time. One tab holds at a time: a newer hold takes over and the older run is told (onLost). A hold whose
+  tab is gone goes stale after 90 seconds (ae_linkshell_hold).
   Delivery: every send goes to an outbox (ae_linkshell_out) and stays there until the phone acknowledges it; it is sent again on
   every connect. Received ids are remembered (ae_linkshell_seen), so a resend is never applied twice.
 
@@ -26,12 +30,15 @@
                                       notification to the phone, for a message that asks it to start something
     AE.linkshell.onState(fn)          fn(state) on every change; returns an unsubscribe function
     AE.linkshell.wake()               connect now if linked (a shard that is about to need the phone)
+    AE.linkshell.hold(onLost)         keep the connection in this tab for a run; returns the release function. onLost() runs if
+                                      another tab starts a run of its own
     AE.linkshell.open()               the Linkshell dialog (link a phone, or the linked phone)
 */
 AE.linkshell = (() => {
   const API = '__TRACKER_API__', KEY = '__WAYMARK_KEY__';
-  const LINK_KEY = 'ae_linkshell', OUT_KEY = 'ae_linkshell_out', SEEN_KEY = 'ae_linkshell_seen';
+  const LINK_KEY = 'ae_linkshell', OUT_KEY = 'ae_linkshell_out', SEEN_KEY = 'ae_linkshell_seen', HOLD_KEY = 'ae_linkshell_hold';
   const IDLE_MS = 5 * 60 * 1000, HOLD_MS = 24 * 3600 * 1000, SEEN_MAX = 400;
+  const BEAT_MS = 20000, STALE_MS = 90000; // a hold is written again every 20 s; 90 s allows for a background tab's slowed timers
   const configured = () => /^(https:\/\/|http:\/\/localhost[:/])/.test(API);
 
   // ---------------------------------------------------------------- crypto
@@ -101,7 +108,33 @@ AE.linkshell = (() => {
 
   // ---------------------------------------------------------------- the socket
   let ws = null, idleTimer = null, retryTimer = null, retryMs = 2000, lastWake = 0;
-  const idle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => { if (ws) ws.close(1000, 'idle'); }, IDLE_MS); };
+  const idle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => { if (holding) return idle(); if (ws) ws.close(1000, 'idle'); }, IDLE_MS); };
+
+  // ---------------------------------------------------------------- the hold (see top)
+  const TAB = newId();
+  let holding = null; // { timer, onLost } while a run in this tab holds the connection
+  const heldElsewhere = () => { try { const h = GM_getValue(HOLD_KEY, null); return !!(h && h.tab && h.tab !== TAB && Date.now() - h.at < STALE_MS); } catch (_) { return false; } };
+  const beat = () => { try { GM_setValue(HOLD_KEY, { tab: TAB, at: Date.now() }); } catch (_) {} };
+  function release() {
+    if (!holding) return;
+    clearInterval(holding.timer); holding = null;
+    try { const h = GM_getValue(HOLD_KEY, null); if (h && h.tab === TAB) GM_deleteValue(HOLD_KEY); } catch (_) {}
+    if (ws) idle();
+  }
+  function hold(onLost) {
+    release();
+    beat();
+    const timer = setInterval(() => {
+      if (!holding || holding.timer !== timer) return;
+      if (!heldElsewhere()) return beat();
+      clearInterval(timer); holding = null; // another tab started a run: it has the phone now
+      if (ws) idle();
+      if (typeof onLost === 'function') { try { onLost(); } catch (e) { console.error('[Linkshell]', e); } }
+    }, BEAT_MS);
+    holding = { timer, onLost };
+    if (!ws) { lastWake = Date.now(); connect(); }
+    return release;
+  }
   function connect() {
     const l = getLink();
     if (!l || ws || !configured() || typeof WebSocket === 'undefined') return;
@@ -123,6 +156,7 @@ AE.linkshell = (() => {
       clearTimeout(idleTimer);
       st.online = false; st.peer = false; changed();
       if (e.code === 4001) { forget(); return; }        // unlinked on the phone or the admin site
+      if (e.code === 4000 && holding) { beat(); retryTimer = setTimeout(connect, 1000); return; } // taken from a run: taken back
       if (e.code === 4000) return;                       // another tab took over; this one waits until it's used again
       if (e.code === 1000) return;                       // idle: waits for the next wake
       if (getLink()) { retryTimer = setTimeout(connect, retryMs); retryMs = Math.min(retryMs * 2, 60000); }
@@ -131,12 +165,14 @@ AE.linkshell = (() => {
   // Someone is using this tab: (re)connect, at most every few seconds.
   function wake(force) {
     if (!getLink() || ws) return;
+    if (heldElsewhere()) return; // another tab's run has the phone
     if (!force && (document.visibilityState === 'hidden' || Date.now() - lastWake < 3000)) return;
     lastWake = Date.now();
     connect();
   }
   function forget() {
     setLink(null); setOutbox([]); keyCache = null;
+    release();
     if (ws) { const s = ws; ws = null; try { s.close(1000, 'unlinked'); } catch (_) {} }
     st.online = false; st.peer = false; changed();
   }
@@ -164,6 +200,7 @@ AE.linkshell = (() => {
     } else wake(true);
     return id;
   }
+  const busy = new Set(); // ids being opened or handled right now
   async function receive(text) {
     let f;
     try { f = JSON.parse(text); } catch (_) { return; }
@@ -174,12 +211,16 @@ AE.linkshell = (() => {
     if (!l) return;
     const ack = () => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'ack', ids: [f.id] })); };
     if (seenIds().includes(f.id)) return ack();
-    let body;
-    try { body = await unseal(await keyOf(l), l.linkId, 'phone', f.id, f.kind, f.iv, f.ct); } catch (_) { return ack(); } // not ours to read: dropped
-    remember(f.id);
-    const fn = handlers.get(f.kind);
-    if (fn) { try { await fn(body, { id: f.id, kind: f.kind }); } catch (e) { console.error('[Linkshell]', e); } }
-    ack();
+    if (busy.has(f.id)) return; // a second copy while the first is still being opened or handled: acked when that one is done
+    busy.add(f.id);
+    try {
+      let body;
+      try { body = await unseal(await keyOf(l), l.linkId, 'phone', f.id, f.kind, f.iv, f.ct); } catch (_) { return ack(); } // not ours to read: dropped
+      remember(f.id);
+      const fn = handlers.get(f.kind);
+      if (fn) { try { await fn(body, { id: f.id, kind: f.kind }); } catch (e) { console.error('[Linkshell]', e); } }
+      ack();
+    } finally { busy.delete(f.id); }
   }
 
   // ---------------------------------------------------------------- QR code (byte mode, error correction M, versions 1–10)
@@ -430,7 +471,7 @@ AE.linkshell = (() => {
   }
 
   return { linked: () => { const l = getLink(); return l ? { linkId: l.linkId, store: l.store, phoneName: l.phoneName } : null; },
-    state, onState, on, send, wake, open, verify,
+    state, onState, on, send, wake, hold, open, verify,
     _test: { seal, unseal, linkKey, newKeys, checkCode, qr, receive, flush } };
 })();
 

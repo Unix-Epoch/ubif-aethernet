@@ -329,7 +329,7 @@ AE.shard({
     // ---------- Scan with phone (Linkshell; the messages are listed above AE.buybacks) ----------
     const link = () => (AE.linkshell && AE.settings.crystals.linkshell !== false && AE.linkshell.linked() ? AE.linkshell : null);
     const orderNo = () => (location.pathname.match(/^\/boh\/inventory\/buyback-order\/([^/?#]+)/) || [])[1] || null;
-    const phone = { run: null, order: null, store: '', items: [], added: 0, last: '' };
+    const phone = { run: null, order: null, store: '', items: [], added: 0, last: '', unhold: null };
     let chain = Promise.resolve();
     async function call(method, path, body) {
       const init = { method, credentials: 'include', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body) };
@@ -356,6 +356,8 @@ AE.shard({
       phone.order = order; phone.added = 0; phone.last = '';
       phone.store = String((link().linked() || {}).store || '');
       phone.items = getRows(table).map((r, i) => [i, r.serial, r.dest, 'pending']);
+      // The run lives in this tab: other tabs leave the Linkshell socket alone until it ends.
+      phone.unhold = link().hold(() => { phone.unhold = null; phone.run = null; refreshToolbar(); });
       sendRun(true); refreshToolbar();
     }
     function phoneEnd() {
@@ -363,6 +365,7 @@ AE.shard({
       const L = link();
       if (L) L.send('buybacks.end', { run: phone.run });
       phone.run = null; refreshToolbar();
+      if (phone.unhold) { phone.unhold(); phone.unhold = null; }
     }
     // Bounce the tabs so the list drops what was just added (read-only, as recover()).
     async function refreshList() {
