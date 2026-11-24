@@ -53,6 +53,7 @@
   pruned on every run, archive or not: they hold no customer data and need no cold copy.
 */
 import { CORS, json, fail, readJson, now, int, iso, clean, parse, tzOf, DAY_RE } from './http.js';
+import { CLOSED_STATUS } from './constants.js';
 import { daily } from './daily.js';
 
 import { PAGES, WIDE_PAGES, owners, cleanPages, presetOf, accessOf, check, stripSealed } from './access.js';
@@ -70,7 +71,6 @@ import { over, charge, spend, pruneBudget, PER_WO_HOUR } from './budget.js';
 const TICK_CRON = '*/10 * * * *'; // must match wrangler.toml
 const KEEP_DAYS = 183, LOG_DAYS = 400, GONE_MIN = 10;
 const STALE_MIN = 60, CLAIM_MIN = 5, NEED_MAX = 25, STALE_MAX = 10;
-const CLOSED_IDS = new Set([14, 15, 25]); // Sale complete, Closed, Cancelled
 const MAX = { scan: 400000, wo: 2000000, plain: 400000, sealed: 1800000, card: 8000 };
 
 const later = (min) => new Date(Date.now() + min * 60000).toISOString();
@@ -598,7 +598,7 @@ async function storeApi(req, env, url, store) {
     const w = plain.workorder, pay = (plain.cart && plain.cart.payment) || {}, value = cartValue(plain);
     // Portal empties a WO's cart at Sale complete: keep the last non-empty one (sales items, estimates).
     const hasItems = !!(plain.cart && plain.cart.items && plain.cart.items.length), soldAt = soldAtOf(plain);
-    const statusId = int(w.statusId), closed = CLOSED_IDS.has(statusId);
+    const statusId = int(w.statusId), closed = CLOSED_STATUS.has(statusId);
     const prevPlain = prev.plain ? JSON.parse(prev.plain) : null;
     const changes = prevPlain ? diff(prevPlain, plain) : [];
     // Write budgets (src/budget.js): one work order's snapshots an hour, then the store's snapshots, bytes and change rows. Over → 429, nothing stored.

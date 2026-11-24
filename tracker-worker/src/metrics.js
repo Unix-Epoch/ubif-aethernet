@@ -14,12 +14,9 @@
   a key has no rows in the range the page shows its "no data yet" state.
 */
 import { json as httpJson, int, tzOf, DAY_RE } from './http.js';
+import { STORE_HOURS, hoursFor, CLOSED_STATUS } from './constants.js';
 
-const CLOSED = new Set([14, 15, 25]); // Sale complete, Closed, Cancelled
-// Store hours, same as Assize (src/65-assize.js STORE_HOURS / hoursFor): open 10–19 Monday–Saturday; Lexington every day.
-export const STORE_HOURS = { open: 10, close: 19, closedDays: [0] };
-const OPEN_DAILY = new Set([536]);
-export const hoursFor = (store) => (OPEN_DAILY.has(Number(store)) ? Object.assign({}, STORE_HOURS, { closedDays: [] }) : STORE_HOURS);
+export { STORE_HOURS, hoursFor }; // other modules and tests read them from here
 const H0 = 8, H1 = 20; // hourly buckets 8 AM … 8 PM (anything outside folds into the first/last)
 // Status → chart bucket (Open work orders by status).
 const BUCKETS = ['bench', 'parts', 'wait', 'rfp', 'other'];
@@ -70,12 +67,12 @@ export function statusPeriodsOf(plain, at, events) {
   for (const e of trail) if (!ev.length || ev[ev.length - 1].s !== e.s) ev.push(e);
   const cur = int(w.statusId);
   if (cur != null && ev.length && ev[ev.length - 1].s !== cur) {
-    const sold = CLOSED.has(cur) ? isoZ(w.soldAt) || isoZ(w.updatedAt) : isoZ(w.updatedAt);
+    const sold = CLOSED_STATUS.has(cur) ? isoZ(w.soldAt) || isoZ(w.updatedAt) : isoZ(w.updatedAt);
     ev.push({ s: cur, t: sold && sold > ev[ev.length - 1].t ? sold : (at > ev[ev.length - 1].t ? at : ev[ev.length - 1].t) });
   }
   const out = [];
   for (let i = 0; i < ev.length; i++) {
-    if (CLOSED.has(ev[i].s)) continue;
+    if (CLOSED_STATUS.has(ev[i].s)) continue;
     const end = i + 1 < ev.length ? ev[i + 1].t : null;
     if (end && end <= ev[i].t) continue;
     out.push({ status_id: ev[i].s, start_at: ev[i].t, end_at: end });
@@ -110,7 +107,7 @@ export async function statusPeriodStmts(T, store, wo, plain, at) {
   const stmts = [];
   const t = open && upd <= open.start_at ? at : upd;
   if (open) stmts.push(T.prepare('UPDATE status_periods SET end_at = ? WHERE store = ? AND wo = ? AND start_at = ?').bind(t, store, wo, open.start_at));
-  if (!CLOSED.has(cur)) stmts.push(T.prepare('INSERT INTO status_periods (store, wo, status_id, start_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, wo, start_at) DO UPDATE SET status_id = excluded.status_id, end_at = NULL').bind(store, wo, cur, t));
+  if (!CLOSED_STATUS.has(cur)) stmts.push(T.prepare('INSERT INTO status_periods (store, wo, status_id, start_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, wo, start_at) DO UPDATE SET status_id = excluded.status_id, end_at = NULL').bind(store, wo, cur, t));
   return stmts;
 }
 // A WO recorded closed without a detail (Portal answered 404 twice): its open interval ends then.
@@ -143,7 +140,7 @@ async function backfill(env, after, email) {
     }
     const want = statusPeriodsOf(plain, at, events);
     const last = want[want.length - 1];
-    if (last && !last.end_at && (!r.is_open || CLOSED.has(r.status_id))) last.end_at = [isoZ(r.closed_at), isoZ(r.sold_at), at].find((t) => t && t > last.start_at) || at;
+    if (last && !last.end_at && (!r.is_open || CLOSED_STATUS.has(r.status_id))) last.end_at = [isoZ(r.closed_at), isoZ(r.sold_at), at].find((t) => t && t > last.start_at) || at;
     stmts.push(...syncStmts(T, r.store, r.wo, have.get(r.store + '|' + r.wo) || [], want));
   }
   for (let i = 0; i < stmts.length; i += 100) await T.batch(stmts.slice(i, i + 100));

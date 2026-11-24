@@ -17,12 +17,11 @@
   Cached for a minute (caches.default) so repeat opens and auto-refresh cost no D1 reads.
 */
 import { tzOf } from './http.js';
+import { SPLH_TARGET } from './constants.js';
 import { buildMetrics, local, addDays, hoursFor } from './metrics.js';
 import { AGENT_DEFAULTS } from './agent-defaults.js';
 
-// Sales per labor hour target band, dollars. Same band as Tactician's TARGET.withoutGm (src/62-tactician.js, Oct 12, 2026):
-// the userscript's constant can't be imported by a Worker, so it is repeated here, once. labor_hours excludes general managers.
-export const SPLH_TARGET = [160, 180];
+export { SPLH_TARGET }; // the sales per labor hour target band (constants.js)
 // Stale = no store scan for this long during store hours: the audit agent's own staleMinutes default (tracker-worker/src/index.js).
 export const STALE_MINUTES = AGENT_DEFAULTS.staleMinutes;
 // Open work orders by lane: Spread's columns (src/59-spread.js COLUMNS). Any other open status counts as Waiting, like Spread.

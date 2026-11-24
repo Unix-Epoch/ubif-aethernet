@@ -22,6 +22,7 @@
   (store, wo, id) for the one latest snapshot of a detail, wo_closed (store, is_open, closed_at) for states recent and closed, chg_wo (store, wo, id).
 */
 import { json, fail, int, httpError, parse } from './http.js';
+import { CLOSED_STATUS } from './constants.js';
 import { laneOf, LANES } from './mobile.js';
 import { storesOf, isDeviceStore } from './mobile-agent.js';
 import { marksFor, dueMarks, dueCond, todayOf } from './mobile-waymark.js';
@@ -30,7 +31,7 @@ const DEFAULT_LIMIT = 25, MAX_LIMIT = 100;      // list page
 const FIND_LIMIT = 20, FIND_MAX = 50;           // number lookup
 const RECENT_DEFAULT = 7, RECENT_MAX = 14;      // days closed work orders stay in "recent" (the Mac audit route's maximum is the same 14)
 const TIMELINE_MAX = 100, LINES_MAX = 60, CHANGES_MAX = 100, PARTS_MAX = 100;
-const CLOSED_STATUS = new Set([14, 15, 25]);    // Sale complete, Closed, Cancelled: no status_periods rows of their own
+// CLOSED_STATUS (Sale complete, Closed, Cancelled): no status_periods rows of their own
 const LANE_IDS = LANES.map((l) => l.id);
 const LANE_KNOWN = new Set(LANES.flatMap((l) => l.ids));
 
