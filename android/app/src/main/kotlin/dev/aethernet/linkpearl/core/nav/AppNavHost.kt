@@ -23,6 +23,7 @@ import dev.aethernet.linkpearl.feature.home.homeGraph
 import dev.aethernet.linkpearl.feature.onboarding.OnboardingScreen
 import dev.aethernet.linkpearl.feature.prices.pricesGraph
 import dev.aethernet.linkpearl.feature.pullbacks.pullbacksGraph
+import dev.aethernet.linkpearl.feature.morningcheck.morningCheckGraph
 import dev.aethernet.linkpearl.feature.linkshell.linkshellGraph
 import dev.aethernet.linkpearl.feature.trends.trendsGraph
 import dev.aethernet.linkpearl.feature.retrace.retraceGraph
@@ -79,6 +80,7 @@ private fun MainShell() {
             pricesGraph()
             pullbacksGraph()
             linkshellGraph(navigate = { nav.navigate(it) })
+            morningCheckGraph(navigate = { nav.navigate(it) })
             // Alerts and Settings open each other's screens (alert settings, a work order) inside this one back stack, so Back returns to them.
             alertsGraph(navigate = nav::navigate)
             workOrdersGraph(navigate = nav::navigate)

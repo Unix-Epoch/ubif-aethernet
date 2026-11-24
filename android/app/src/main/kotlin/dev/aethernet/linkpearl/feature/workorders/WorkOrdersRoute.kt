@@ -98,6 +98,7 @@ fun WorkOrdersRoute(initialId: String? = null, navigate: ((String) -> Unit)? = n
         onPickStore = listVm::pickStore, onPickFilter = listVm::pickFilter, onPickSort = listVm::pickSort,
         onRefresh = listVm::refresh, onLoadMore = listVm::loadMore,
         onScan = navigate?.let { { it(Routes.SCAN) } },
+        onMorningCheck = navigate?.let { { it(Routes.MORNING_CHECK) } },
     )
     val detailActions = WoDetailActions(
         onRefresh = detailVm::refresh, onUnlock = lock::unlock, onLock = lock::lock,
