@@ -179,6 +179,37 @@ class LinkshellTest {
         assertNull(r.client.state.value.link)
     }
 
+    @Test fun aRefusedPhoneKeepsItsLinkAndStopsRetryingUntilWoken() = runTest {
+        val store = MemoryLinkshellStore(LinkshellData(link = link()))
+        val r = Rig(this, store)
+        assertEquals(LS_CLOSE_REFUSED, OkHttpSockets.closeCodeFor(401))
+        assertEquals(LS_CLOSE_REFUSED, OkHttpSockets.closeCodeFor(403))
+        assertEquals(4001, OkHttpSockets.closeCodeFor(404))
+        assertEquals(1006, OkHttpSockets.closeCodeFor(503))
+        assertEquals(1006, OkHttpSockets.closeCodeFor(null))
+        // deactivated, or its token no longer valid: the relay answers 401 to the connect
+        r.client.wake(); runCurrent()
+        r.sockets[0].l.onClosed(LS_CLOSE_REFUSED); runCurrent()
+        advanceTimeBy(10 * 60_000L); runCurrent()
+        assertEquals(1, r.sockets.size)
+        assertNotNull(store.data.link)
+        assertNotNull(r.client.state.value.link)
+        assertTrue(!r.client.state.value.online)
+        // also when it follows ordinary drops (a retry was already counting up)
+        r.client.wake(); runCurrent()
+        r.sockets[1].l.onClosed(1006); runCurrent()
+        advanceTimeBy(2_001L); runCurrent()
+        r.sockets[2].l.onClosed(LS_CLOSE_REFUSED); runCurrent()
+        advanceTimeBy(10 * 60_000L); runCurrent()
+        assertEquals(3, r.sockets.size)
+        // a send tries again, and its message is still waiting when the phone is let back in
+        val id = r.client.send("pullbacks.scan", buildJsonObject { put("i", 0) }); runCurrent()
+        assertEquals(4, r.sockets.size)
+        r.sockets[3].l.onOpen(); runCurrent()
+        assertTrue(r.client.state.value.online)
+        assertEquals(id, r.sockets[3].frames().single().s("id"))
+    }
+
     // ---------------------------------------------------------------- pairing
     private class FakeApi(val answers: MutableMap<String, ApiResult<JsonElement>> = mutableMapOf()) : ApiClient {
         val posts = mutableListOf<Pair<String, JsonElement?>>()
