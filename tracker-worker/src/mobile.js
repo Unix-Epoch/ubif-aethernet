@@ -16,12 +16,12 @@
   synced sales days). A day with no data is null (the app shows a dash), never 0. Plain columns only: no customer details, no staff names.
   Cached for a minute (caches.default) so repeat opens and auto-refresh cost no D1 reads.
 */
+import { tzOf } from './http.js';
+import { SPLH_TARGET } from './constants.js';
 import { buildMetrics, local, addDays, hoursFor } from './metrics.js';
 import { AGENT_DEFAULTS } from './agent-defaults.js';
 
-// Sales per labor hour target band, dollars. Same band as Tactician's TARGET.withoutGm (src/62-tactician.js, Oct 12, 2026):
-// the userscript's constant can't be imported by a Worker, so it is repeated here, once. labor_hours excludes general managers.
-export const SPLH_TARGET = [160, 180];
+export { SPLH_TARGET }; // the sales per labor hour target band (constants.js)
 // Stale = no store scan for this long during store hours: the audit agent's own staleMinutes default (tracker-worker/src/index.js).
 export const STALE_MINUTES = AGENT_DEFAULTS.staleMinutes;
 // Open work orders by lane: Spread's columns (src/59-spread.js COLUMNS). Any other open status counts as Waiting, like Spread.
@@ -35,7 +35,7 @@ const sum = (a) => { const x = a.filter((v) => v != null); return x.length ? x.r
 
 // The numbers for the chosen stores (ids, all visible to the caller). `names`: Map id → name. Exported for tests.
 export async function buildHome(env, ids, names, nowMs = Date.now()) {
-  const T = env.TR, tz = env.STORE_TZ || 'America/New_York', today = local(nowMs, tz).day, from = addDays(today, -(DAYS - 1));
+  const T = env.TR, tz = tzOf(env), today = local(nowMs, tz).day, from = addDays(today, -(DAYS - 1));
   const days = Array.from({ length: DAYS }, (_, i) => addDays(from, i));
   const S = JSON.stringify(ids), IN = 'IN (SELECT value FROM json_each(?))';
   const [m, wos, dm, sd] = await Promise.all([

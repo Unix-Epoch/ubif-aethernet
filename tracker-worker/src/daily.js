@@ -5,14 +5,14 @@
   Upserts (store, day, metric); a later upload for the same day replaces it. Store access and the sandbox
   guard are checked by index.js before this runs. Nothing here is customer data.
 */
+import { json, fail, readJson, clean, DAY_RE, tzOf } from './http.js';
 export const METRICS = ['labor_hours', 'labor_hours_gm', 'headcount', 'am_orders', 'cleanings_linked', 'assize_fail', 'assize_flag', 'assize_note'];
 const SOURCES = ['tactician', 'divination', 'assize'];
-const DAY_RE = /^\d{4}-\d\d-\d\d$/;
 const dayIn = (ms, tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
 
-export async function daily(req, env, store, { readJson, json, fail, clean }) {
+export async function daily(req, env, store) {
   const b = await readJson(req, 4000);
-  const tz = env.STORE_TZ || 'America/New_York';
+  const tz = tzOf(env);
   const day = typeof b.day === 'string' ? b.day : '';
   const today = dayIn(Date.now(), tz), oldest = dayIn(Date.now() - 14 * 86400000, tz);
   if (!DAY_RE.test(day) || isNaN(Date.parse(day)) || day > today || day < oldest) return fail(400, 'day must be within the last 14 days');

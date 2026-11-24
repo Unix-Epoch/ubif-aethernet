@@ -23,13 +23,13 @@
   queued turns to empty once 30 minutes have passed since it was asked for, so the panel follows the collector without pressing Run.
   Passing all five is strong evidence, not proof: Portal stays the only source of truth.
 */
+import { parse } from './http.js';
 import { IGNORED_ITEMS, NON_STOCK, NOW_KIND } from './retrace.js';
 import { TARGET_LISTED, LISTED_JOIN_SQL } from './retrace-listed.js';
 import { nowCols, rowNow, nowCounts, availRes, lastStatusSql, isQuar } from './retrace-now.js';
 
 export const SPOT = 10;
 const ROWS = 50, STALE_SHOW = 5, ASK_MAX = 20, EMPTY_AFTER_MS = 30 * 60000, RESULT_MAX = 60000, SEEN_MAX = 3;
-const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many || one + 's');
 // The label list's quarantine warehouse reads 914Q (the lookup's too); Retrace stores it as wh_type Quarantine when it can tell.
 const QUAR = "(lower(COALESCE(wh_type, '')) = 'quarantine' OR upper(COALESCE(wh_id, '')) LIKE '%Q')";

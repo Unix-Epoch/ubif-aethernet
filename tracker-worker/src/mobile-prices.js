@@ -14,6 +14,9 @@
   Repairs: each priced column goes under the first of Screen, Battery, Charge port, Back glass whose column test it passes (Reassemble's mapping), else
   under its own column name when it has a price. The Notes column is left out.
 */
+import { json, fail, cleanAny } from './http.js';
+import { storeOf } from './mobile-agent.js';
+
 // ---------------------------------------------------------------- the userscript's parser (src/23-price-sheet.js), ported
 const DROP = new Set(['apple', 'samsung', 'google', 'galaxy', '5g', 'motorola', 'nintendo', 'microsoft', 'sony']);
 // Retail tabs only: Eagle of Va (contract prices), Refurb, BER, etc. are synced but never quoted from.
@@ -90,13 +93,6 @@ export function repairsOf(cells) {
 }
 
 // ---------------------------------------------------------------- the route
-const err = (status, message) => Object.assign(new Error(message), { status });
-const clean = (v, max) => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
-function storeOf(device, v) {
-  if (v == null || !/^\d{1,6}$/.test(v)) throw err(400, 'store: a store number');
-  if (!device.stores.map(Number).includes(Number(v))) throw err(403, 'not your store');
-  return Number(v);
-}
 const noTable = (e) => /no such table/i.test(String(e && e.message));
 
 // Parsed sheets, per store, until the sync job pushes a new one (synced_at changes). Per isolate; the sheet itself is a few hundred KB at most.
@@ -118,14 +114,14 @@ async function sheetOf(env, store) {
 
 export async function pricesApi(req, env, url, device, h) {
   const path = url.pathname.replace(/^\/v1\/agents\/m\/prices/, '') || '/';
-  if (path !== '/') return h.fail(404, 'not found');
-  if (req.method !== 'GET') return h.fail(405, 'GET only');
+  if (path !== '/') return fail(404, 'not found');
+  if (req.method !== 'GET') return fail(405, 'GET only');
   const store = storeOf(device, url.searchParams.get('store'));
-  const q = clean(url.searchParams.get('q'), 80);
+  const q = cleanAny(url.searchParams.get('q'), 80);
   const sheet = await sheetOf(env, store);
-  if (!q) return h.json({ store, syncedAt: sheet ? sheet.syncedAt : null, devices: sheet ? sheet.devices : [] });
+  if (!q) return json({ store, syncedAt: sheet ? sheet.syncedAt : null, devices: sheet ? sheet.devices : [] });
   const rows = sheet ? pricesFor(q, sheet.idx) || [] : [];
-  return h.json({
+  return json({
     store, syncedAt: sheet ? sheet.syncedAt : null,
     matches: rows.map((r) => ({ name: String(r.name), tab: r.tab, variant: r.variant || null, repairs: repairsOf(r.cells) })),
   });
