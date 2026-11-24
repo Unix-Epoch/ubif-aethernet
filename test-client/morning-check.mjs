@@ -58,11 +58,24 @@ await t('8 → 9: PATCH status and the start note (proven)', async () => {
 });
 await t('a move nobody recorded: the PUT back, no note, sendComms false', async () => {
   const { mc, calls } = make(Object.assign({}, WO, { workorderStatusId: 10 }));
-  assert.equal(mc.statusPlan(10, 7).proven, false);
-  await mc.setStatus(1, 7);
+  assert.equal(mc.statusPlan(10, 3).proven, false);
+  await mc.setStatus(1, 3);
   const w = calls.filter((c) => c.method !== 'GET');
-  assert.equal(w.length, 1); assert.equal(w[0].method, 'PUT'); assert.equal(w[0].body.workorderStatusId, 7); assert.equal(w[0].body.sendComms, false);
+  assert.equal(w.length, 1); assert.equal(w[0].method, 'PUT'); assert.equal(w[0].body.workorderStatusId, 3); assert.equal(w[0].body.sendComms, false);
   assert.equal(w[0].body.markCurrentStepCompleted, false); assert.equal('workorderId' in w[0].body, false);
+});
+await t('Portal\'s status menu (recorded): → Ready for Diag, Awaiting callback, Ready for work is the PATCH, then the typed note, then Portal\'s note', async () => {
+  for (const [from, to, tag, name] of [[8, 24, 'ready_for_diag', 'Ready for Diag'], [24, 7, 'awaiting_callback', 'Awaiting callback'], [7, 8, 'ready_for_work', 'Ready for work'], [10, 8, 'ready_for_work', 'Ready for work']]) {
+    const { mc, calls } = make(Object.assign({}, WO, { workorderStatusId: from }));
+    assert.equal(mc.statusPlan(from, to).proven, true);
+    await mc.setStatus(1, to, { note: 'On the shelf' });
+    const w = calls.filter((c) => c.method !== 'GET');
+    assert.deepEqual(w.map((c) => c.method + ' ' + c.path), ['PATCH /api/workorder/1/status', 'POST /api/note', 'POST /api/note']);
+    assert.deepEqual(w[0].body, { workorderStatusId: to });
+    assert.deepEqual(w[1].body, { noteText: 'On the shelf', customerId: '55', workorderId: 1, noteTag: tag, noteType: 2 });
+    assert.deepEqual(w[2].body, { noteText: 'Sam Tech changed the WO status to ' + name, customerId: '55', workorderId: 1, noteTag: tag, noteType: 1 });
+  }
+  assert.equal(make(WO).mc.statusPlan(12, 8).proven, false); // past WIP stays in Portal
 });
 await t('12 → 13: attribute call first, then the PUT and its note', async () => {
   const { mc, calls } = make(Object.assign({}, WO, { workorderStatusId: 12 }));
@@ -125,7 +138,7 @@ await t('Linkshell: a host link lists open work orders with the moves the phone 
   const [kind, b] = sent[0];
   assert.equal(kind, 'check.list'); assert.equal(b.parts, 1); assert.equal(b.bins, true);
   assert.deepEqual(b.rows[0], ['1', 8, 'B2', 'Blue case', 'iPhone 14', 'Screen', 'Riley Price', 'Retail', 'u1']);
-  assert.deepEqual(b.statuses.find((x) => x[0] === 8)[2], [9]);
+  assert.deepEqual(b.statuses.find((x) => x[0] === 8)[2], [24, 9, 7]);
   assert.deepEqual(b.statuses.find((x) => x[0] === 12)[2], []);
 });
 await t('Linkshell: changes run in order; a bin Portal did not keep and a Portal-only move fail, the rest saved', async () => {
@@ -136,6 +149,15 @@ await t('Linkshell: changes run in order; a bin Portal did not keep and a Portal
   assert.equal(r.ok, false);
   assert.deepEqual(r.failed.map((f) => f[0]), ['bin', 'status']);
   assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => c.method + ' ' + c.path), ['PUT /api/customer-devices/9', 'POST /api/note', 'PUT /api/workorder/1']);
+});
+await t('Linkshell: a note with a status menu move goes between the move and Portal\'s note', async () => {
+  const { sent, handlers, calls } = make(Object.assign({}, WO, { workorderStatusId: 24 }), 914, { host: true, rows: [] });
+  await handlers['check.start']({ run: 'r1' });
+  await handlers['check.set']({ run: 'r1', cid: 'c1', wo: '1', updatedAt: 'u1', note: 'Called, no answer', status: 7 });
+  assert.equal(sent.find((x) => x[0] === 'check.result')[1].ok, true);
+  const w = calls.filter((c) => c.method !== 'GET');
+  assert.deepEqual(w.map((c) => c.method + ' ' + c.path + (c.body.noteType ? ' ' + c.body.noteType : '')), ['PATCH /api/workorder/1/status', 'POST /api/note 2', 'POST /api/note 1']);
+  assert.equal(w[1].body.noteTag, 'awaiting_callback');
 });
 await t('Linkshell: stale order or no check running: nothing written', async () => {
   const { sent, handlers, calls } = make(WO, 914, { host: true, rows: [] });
