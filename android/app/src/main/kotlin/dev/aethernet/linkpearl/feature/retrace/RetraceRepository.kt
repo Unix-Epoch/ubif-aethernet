@@ -1,8 +1,8 @@
 package dev.aethernet.linkpearl.feature.retrace
 
 import dev.aethernet.linkpearl.core.data.ApiClient
-import dev.aethernet.linkpearl.core.data.ApiError
 import dev.aethernet.linkpearl.core.data.ApiResult
+import dev.aethernet.linkpearl.core.data.decode
 import dev.aethernet.linkpearl.feature.workorders.WoJson
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.json.JsonElement
@@ -35,10 +35,7 @@ class RetraceRepository(private val api: ApiClient) {
 
     private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
-    private fun <T> decode(r: ApiResult<JsonElement>, s: DeserializationStrategy<T>): ApiResult<T> = when (r) {
-        is ApiResult.Success -> try { ApiResult.Success(WoJson.decodeFromJsonElement(s, r.value)) } catch (_: Exception) { ApiResult.Failure(ApiError.Server, message = "bad answer") }
-        is ApiResult.Failure -> if (r.error == ApiError.NotFound) ApiResult.Failure(ApiError.Server, r.status, r.message) else r
-    }
+    private fun <T> decode(r: ApiResult<JsonElement>, s: DeserializationStrategy<T>): ApiResult<T> = r.decode(s, WoJson, notFoundAsServer = true)
 
     companion object {
         const val BASE = "/v1/agents/m/retrace"

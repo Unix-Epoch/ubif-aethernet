@@ -2,6 +2,8 @@ package dev.aethernet.linkpearl.core.data
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.serialization.DeserializationStrategy
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
@@ -26,6 +28,21 @@ sealed interface ApiResult<out T> {
 }
 
 enum class ApiError { NotConfigured, Offline, Unauthorized, Forbidden, NotFound, RateLimited, Server }
+
+/**
+ * Reads an answer as [T] with [json]; one that doesn't decode is a [ApiError.Server] failure. [notFoundAsServer]: see
+ * [ApiResult.Failure.notFoundAsServer].
+ */
+fun <T> ApiResult<JsonElement>.decode(s: DeserializationStrategy<T>, json: Json = LinkpearlJson, notFoundAsServer: Boolean = false): ApiResult<T> = when (this) {
+    is ApiResult.Success -> try { ApiResult.Success(json.decodeFromJsonElement(s, value)) } catch (_: Exception) { ApiResult.Failure(ApiError.Server, message = "bad answer") }
+    is ApiResult.Failure -> if (notFoundAsServer) notFoundAsServer() else this
+}
+
+/**
+ * A 404 reported as a [ApiError.Server] failure, for routes where it means a tracker that predates the route (or something it has not
+ * seen): the screens then show their generic "Couldn't load".
+ */
+fun ApiResult.Failure.notFoundAsServer(): ApiResult.Failure = if (error == ApiError.NotFound) ApiResult.Failure(ApiError.Server, status, message) else this
 
 /** Answers every call with [ApiError.NotConfigured]. */
 object UnconfiguredApiClient : ApiClient {

@@ -1,9 +1,8 @@
 package dev.aethernet.linkpearl.feature.prices
 
 import dev.aethernet.linkpearl.core.data.ApiClient
-import dev.aethernet.linkpearl.core.data.ApiError
 import dev.aethernet.linkpearl.core.data.ApiResult
-import kotlinx.serialization.json.JsonElement
+import dev.aethernet.linkpearl.core.data.notFoundAsServer
 import java.util.concurrent.ConcurrentHashMap
 
 /** The store's Price sheet. [RealPricesRepository] asks the server; [FakePricesRepository] answers for tests and screenshots. */
@@ -25,7 +24,7 @@ class RealPricesRepository(private val api: ApiClient) : PricesRepository {
         if (!fresh) lists[store]?.let { return ApiResult.Success(it) }
         return when (val r = api.get(PATH, mapOf("store" to store.toString()))) {
             is ApiResult.Success -> ApiResult.Success(PriceParse.devices(r.value).also { lists[store] = it })
-            is ApiResult.Failure -> failure(r)
+            is ApiResult.Failure -> r.notFoundAsServer()
         }
     }
 
@@ -36,10 +35,8 @@ class RealPricesRepository(private val api: ApiClient) : PricesRepository {
                 lists[store]?.let { if (it.syncedAt != m.syncedAt) lists.remove(store) }
                 ApiResult.Success(m)
             }
-            is ApiResult.Failure -> failure(r)
+            is ApiResult.Failure -> r.notFoundAsServer()
         }
-
-    private fun failure(r: ApiResult.Failure) = if (r.error == ApiError.NotFound) ApiResult.Failure(ApiError.Server, r.status, r.message) else r
 
     companion object {
         const val PATH = "/v1/agents/m/prices"

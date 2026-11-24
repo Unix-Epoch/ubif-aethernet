@@ -1,8 +1,8 @@
 package dev.aethernet.linkpearl.feature.workorders
 
 import dev.aethernet.linkpearl.core.data.ApiClient
-import dev.aethernet.linkpearl.core.data.ApiError
 import dev.aethernet.linkpearl.core.data.ApiResult
+import dev.aethernet.linkpearl.core.data.decode
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -105,10 +105,7 @@ class WoRepository(private val api: ApiClient) {
 
     private fun cacheKey(q: ListQuery) = "${q.store}|${q.filter}|${q.sort}"
 
-    private fun <T> decode(r: ApiResult<JsonElement>, s: DeserializationStrategy<T>): ApiResult<T> = when (r) {
-        is ApiResult.Success -> try { ApiResult.Success(WoJson.decodeFromJsonElement(s, r.value)) } catch (_: Exception) { ApiResult.Failure(ApiError.Server, message = "bad answer") }
-        is ApiResult.Failure -> r
-    }
+    private fun <T> decode(r: ApiResult<JsonElement>, s: DeserializationStrategy<T>): ApiResult<T> = r.decode(s, WoJson)
 
     companion object {
         const val BASE = "/v1/agents/m/wo"

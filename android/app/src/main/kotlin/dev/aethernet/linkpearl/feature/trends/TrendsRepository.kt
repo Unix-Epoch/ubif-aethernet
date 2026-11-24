@@ -1,11 +1,9 @@
 package dev.aethernet.linkpearl.feature.trends
 
 import dev.aethernet.linkpearl.core.data.ApiClient
-import dev.aethernet.linkpearl.core.data.ApiError
 import dev.aethernet.linkpearl.core.data.ApiResult
-import dev.aethernet.linkpearl.core.data.LinkpearlJson
 import dev.aethernet.linkpearl.core.data.StoreScope
-import kotlinx.serialization.json.JsonElement
+import dev.aethernet.linkpearl.core.data.decode
 
 /** Where Trends gets its numbers. [RealTrendsRepository] asks the server; [FakeTrendsRepository] answers for tests and screenshots. */
 interface TrendsRepository {
@@ -24,12 +22,7 @@ class RealTrendsRepository(private val api: ApiClient) : TrendsRepository {
             if (at != null) put("at", at)
             if (fresh) put("fresh", "1")
         }
-        return decode(api.get(PATH, query))
-    }
-
-    private fun decode(r: ApiResult<JsonElement>): ApiResult<TrendsData> = when (r) {
-        is ApiResult.Success -> try { ApiResult.Success(LinkpearlJson.decodeFromJsonElement(TrendsData.serializer(), r.value)) } catch (_: Exception) { ApiResult.Failure(ApiError.Server, message = "bad answer") }
-        is ApiResult.Failure -> if (r.error == ApiError.NotFound) ApiResult.Failure(ApiError.Server, r.status, r.message) else r
+        return api.get(PATH, query).decode(TrendsData.serializer(), notFoundAsServer = true)
     }
 
     companion object {
