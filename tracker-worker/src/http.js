@@ -26,6 +26,15 @@ export async function readJson(req, max) {
   try { return text ? JSON.parse(text) : {}; } catch (_) { throw httpError(400, 'bad JSON'); }
 }
 
+// Two secrets (a token's hash, a key) compared without stopping at the first difference, so the time taken says nothing about
+// where they differ. Only strings of the same length can match; the length itself is not a secret here.
+export function safeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 export const now = () => new Date().toISOString();
 export const int = (v) => (Number.isInteger(v) ? v : (typeof v === 'string' && /^\d{1,12}$/.test(v) ? Number(v) : null));
 export const iso = (v) => (typeof v === 'string' && /^\d{4}-\d\d-\d\dT[\d:.]+(Z|[+-]\d\d:?\d\d)?$/.test(v) ? v.slice(0, 40) : null);

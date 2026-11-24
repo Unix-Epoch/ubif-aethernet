@@ -52,7 +52,7 @@
   storage is set up) unless TRIM_WITHOUT_ARCHIVE is set. The log tables (scans, access_log, write budget counters) are
   pruned on every run, archive or not: they hold no customer data and need no cold copy.
 */
-import { CORS, json, fail, readJson, now, int, iso, clean, parse, tzOf, DAY_RE } from './http.js';
+import { CORS, json, fail, readJson, safeEqual, now, int, iso, clean, parse, tzOf, DAY_RE } from './http.js';
 import { CLOSED_STATUS } from './constants.js';
 import { daily } from './daily.js';
 
@@ -288,7 +288,7 @@ async function agentApi(req, env, url) {
   }
   const m = /^Bearer ([0-9a-f]{32})\.([0-9a-f]{64})$/.exec(req.headers.get('authorization') || '');
   const a = m && await agentRow(T, m[1]);
-  if (!a || (await sha256hex(m[2])) !== a.token_hash) return fail(401, 'unknown program or wrong token');
+  if (!a || !safeEqual(await sha256hex(m[2]), a.token_hash)) return fail(401, 'unknown program or wrong token');
   // "Last seen" is for the admin site's list: written at most every SEEN_MIN minutes, not on every request.
   if (!a.last_seen_at || Date.now() - Date.parse(a.last_seen_at) > SEEN_MIN * 60000) await T.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').bind(now(), a.id).run();
   const stores = JSON.parse(a.stores || '[]'), jwk = JSON.parse(a.public_jwk), active = a.status === 'active';
@@ -1052,7 +1052,7 @@ async function handle(req, env) {
   if (url.pathname === '/v1/linkshell/connect') {
     try { return await linkshellConnect(req, env, url, { json, fail, allowed }); } catch (e) { return serverError(e, req); }
   }
-  if (!env.APP_KEY || req.headers.get('x-aethernet-key') !== env.APP_KEY) return fail(403, 'app key required');
+  if (!env.APP_KEY || !safeEqual(req.headers.get('x-aethernet-key'), env.APP_KEY)) return fail(403, 'app key required');
   try {
     const sg = await sandboxGuard(req, url);
     if (sg) return sg;
