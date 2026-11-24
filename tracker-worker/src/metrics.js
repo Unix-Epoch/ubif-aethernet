@@ -13,8 +13,8 @@
   Uploaded daily numbers (labor hours, cleanings, Assize) come from daily_metrics (filled by Aethernet); when
   a key has no rows in the range the page shows its "no data yet" state.
 */
+import { json as httpJson, int, tzOf, DAY_RE } from './http.js';
 
-const DAY_RE = /^\d{4}-\d\d-\d\d$/;
 const CLOSED = new Set([14, 15, 25]); // Sale complete, Closed, Cancelled
 // Store hours, same as Assize (src/65-assize.js STORE_HOURS / hoursFor): open 10–19 Monday–Saturday; Lexington every day.
 export const STORE_HOURS = { open: 10, close: 19, closedDays: [0] };
@@ -27,9 +27,9 @@ export const bucketOf = (s) => (s === 2 || s === 3 ? 'parts' : s === 4 || s === 
   : [1, 5, 8, 9, 10, 11, 12, 24].includes(s) ? 'bench' : 'other');
 const DAILY = { labor_hours: 'labor', labor_hours_gm: 'laborGm', headcount: 'headcount', am_orders: 'am', cleanings_linked: 'cln', assize_fail: 'assizeFail', assize_flag: 'assizeFlag', assize_note: 'assizeNote' };
 
-const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+// The admin site's answers: no CORS headers.
+const json = (body, status = 200) => httpJson(body, status, false);
 const fail = (status, error) => json({ error }, status);
-const int = (v) => (Number.isInteger(v) ? v : (typeof v === 'string' && /^\d{1,12}$/.test(v) ? Number(v) : null));
 const r2 = (v) => (v == null ? null : Math.round(v * 100) / 100);
 // Any parseable time → ISO UTC (…Z), so text comparisons in SQL are time comparisons.
 export const isoZ = (v) => { if (typeof v !== 'string' || !/^\d{4}-\d\d-\d\d/.test(v)) return null; const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(v) || v.length <= 10 ? v : v + 'Z'); return isNaN(d) ? null : d.toISOString(); };
@@ -179,7 +179,7 @@ export function deviceType(name) {
   Levels: open, bench, parts, wait, rfp, other (end of each bucket; weeks average their days), nto (at store close), active
 */
 async function build(env, q) {
-  const T = env.TR, A = env.DB || env.AE, tz = env.STORE_TZ || 'America/New_York';
+  const T = env.TR, A = env.DB || env.AE, tz = tzOf(env);
   const { from, to, stores, gran } = q, nowMs = q.now || Date.now(), nowIso = new Date(nowMs).toISOString(), today = local(nowMs, tz).day;
   const n = span(from, to), prevTo = addDays(from, -1), prevFrom = addDays(from, -n);
   const S = JSON.stringify(stores);
@@ -438,7 +438,7 @@ export async function metricsApi(req, env, url, path, me) {
     return json(await backfill(env, Number(url.searchParams.get('after')) || 0, me.email));
   }
   if (req.method !== 'GET' || path !== '/metrics') return fail(404, 'not found');
-  const A = env.DB || env.AE, qs = url.searchParams, tz = env.STORE_TZ || 'America/New_York';
+  const A = env.DB || env.AE, qs = url.searchParams, tz = tzOf(env);
   // Stores: Aethernet's store list (names), limited to what this person may see.
   const known = A ? (await A.prepare('SELECT store, name FROM store_access ORDER BY store').all().catch(() => ({ results: [] }))).results : [];
   const mine = (me.stores || []).map(Number);

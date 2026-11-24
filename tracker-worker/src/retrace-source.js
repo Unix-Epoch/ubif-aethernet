@@ -17,6 +17,7 @@
   Pause: a store whose in-scope items aren't all marked (Not set or Conflict, unless set by hand) has its ordering paused
   (inv_source_pause). The first time it pauses, the store's Linkpearl phones get one push; it clears when the last item is marked.
 */
+import { parse } from './http.js';
 import { sendPush } from './push.js';
 import { IGNORED_ITEMS } from './retrace.js';
 
@@ -62,7 +63,6 @@ export function decide({ name, vendors = [], pos = [] }) {
 // The source an item shows: by hand, else the rules; 'conflict' / 'unset' when neither gives one.
 export const effective = (row) => (row && row.manual) || (row && row.conflict ? 'conflict' : (row && row.auto) || 'unset');
 
-const parse = (s) => { try { return s ? JSON.parse(s) : null; } catch (_) { return null; } };
 const inJson = (list) => JSON.stringify([...new Set(list)]);
 
 // The store's in-scope items: its stock lookup items (inv_items) in Mobility or Reportable Consumables, never BB0001.

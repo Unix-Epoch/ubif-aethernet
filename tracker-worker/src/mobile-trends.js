@@ -21,6 +21,7 @@
   period when the chosen one is over. RFP: rfp_periods at an instant (Tactician's "RFP table at the end of a day"), null before the
   store's history exists. Plain columns only: no customer details, no staff names. Cached a minute like Home; fresh=1 skips the read.
 */
+import { fail, httpError, DAY_RE, tzOf } from './http.js';
 import { buildMetrics, local, addDays, localToUtc } from './metrics.js';
 import { SPLH_TARGET } from './mobile.js';
 import { deviceStores, isDeviceStore } from './mobile-agent.js';
@@ -33,8 +34,6 @@ export const RFP_SINCE = '2026-10-13';
 const r2 = (v) => (v == null ? null : Math.round(v * 100) / 100);
 const r1 = (v) => (v == null ? null : Math.round(v * 10) / 10);
 const pct = (cur, prev) => (cur != null && prev != null && prev > 0 ? r1(((cur - prev) / prev) * 100) : null);
-const err = (status, message) => Object.assign(new Error(message), { status });
-const DAY_RE = /^\d{4}-\d\d-\d\d$/;
 const validDay = (s) => DAY_RE.test(s) && !isNaN(Date.parse(s + 'T12:00:00Z')) && addDays(s, 0) === s;
 const pad = (n) => String(n).padStart(2, '0');
 const monthEnd = (ym) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); };
@@ -58,9 +57,9 @@ export function samePoint(period, day, b) {
 
 // The numbers for the chosen stores (ids, all approved). `names`: Map id → name. Exported for tests.
 export async function buildTrends(env, ids, names, q, nowMs = Date.now()) {
-  const T = env.TR, tz = env.STORE_TZ || 'America/New_York', today = local(nowMs, tz).day;
+  const T = env.TR, tz = tzOf(env), today = local(nowMs, tz).day;
   const period = q.period, at = q.at || today, b = periodBounds(period, at);
-  if (b.from > today) throw err(400, 'at: a day up to today');
+  if (b.from > today) throw httpError(400, 'at: a day up to today');
   const cut = b.to < today ? b.to : today, prevThrough = b.to < today ? b.prevTo : samePoint(period, today, b);
   const S = JSON.stringify(ids), IN = 'IN (SELECT value FROM json_each(?))';
   const tEnd = Math.min(localToUtc(addDays(b.to, 1), 0, tz) - 1, nowMs), tPrev = localToUtc(b.from, 0, tz) - 1;
@@ -129,17 +128,17 @@ export async function buildTrends(env, ids, names, q, nowMs = Date.now()) {
 }
 
 export async function trendsApi(req, env, url, device, h) {
-  if (req.method !== 'GET' || url.pathname !== '/v1/agents/m/trends') return h.fail(404, 'not found');
-  const qs = url.searchParams, tz = env.STORE_TZ || 'America/New_York', mine = deviceStores(device);
+  if (req.method !== 'GET' || url.pathname !== '/v1/agents/m/trends') return fail(404, 'not found');
+  const qs = url.searchParams, tz = tzOf(env), mine = deviceStores(device);
   const ask = String(qs.get('store') || 'all'), period = String(qs.get('period') || 'week'), atQ = qs.get('at');
   let ids;
   if (ask === 'all') ids = mine;
-  else if (/^\d{1,6}$/.test(ask)) { if (!isDeviceStore(device, ask)) return h.fail(403, 'not your store'); ids = [Number(ask)]; }
-  else return h.fail(400, 'store: all or a store number');
-  if (!PERIODS.includes(period)) return h.fail(400, 'period: week, month or year');
+  else if (/^\d{1,6}$/.test(ask)) { if (!isDeviceStore(device, ask)) return fail(403, 'not your store'); ids = [Number(ask)]; }
+  else return fail(400, 'store: all or a store number');
+  if (!PERIODS.includes(period)) return fail(400, 'period: week, month or year');
   const nowMs = Date.now(), today = local(nowMs, tz).day, at = atQ == null || atQ === '' ? today : String(atQ);
-  if (!validDay(at) || at < '2000-01-01') return h.fail(400, 'at: a day YYYY-MM-DD');
-  if (periodBounds(period, at).from > today) return h.fail(400, 'at: a day up to today');
+  if (!validDay(at) || at < '2000-01-01') return fail(400, 'at: a day YYYY-MM-DD');
+  if (periodBounds(period, at).from > today) return fail(400, 'at: a day up to today');
   const hdr = { 'content-type': 'application/json', 'cache-control': 'private, max-age=' + CACHE_SECONDS };
   if (!ids.length) return new Response(JSON.stringify({ v: 1, stores: [], empty: true }), { headers: hdr });
   const A = env.DB || env.AE;

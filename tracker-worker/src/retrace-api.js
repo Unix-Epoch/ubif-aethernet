@@ -96,6 +96,7 @@
 
   Admin side: retraceAdmin() below, mounted by trackerRoutes at /api/tracker/retrace/… (page 'retrace'; route list there).
 */
+import { json, fail, int, clean, readJson, now, parse, cleanText, cleanKeep } from './http.js';
 import { spend } from './budget.js';
 import { passStmts } from './usage.js';
 import { TARGET_LISTED, LISTED_JOIN_SQL } from './retrace-listed.js';
@@ -123,7 +124,6 @@ const NONE_RETRY_MS = 7 * 86400000;
 // The order the sweep hands labels out to read (and the Collection queue panel lists them in): changed > touched > backfill, most recently seen first.
 const QUEUE_ORDER = 'need_history DESC, last_seen DESC, label';
 
-const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 // Statements left out (an ignored item's insert / touch is null) are dropped here.
 export const chunks = async (T, list) => { const out = [], stmts = list.filter(Boolean); for (let i = 0; i < stmts.length; i += 100) out.push(...(await T.batch(stmts.slice(i, i + 100)))); return out; };
 const lc = (v) => (v == null ? null : String(v).toLowerCase());
@@ -181,7 +181,7 @@ const PRUNE_BUYBACK = `DELETE FROM inv_labels WHERE store = ?1 AND label >= 'B-'
 export async function listedWrite(T, store, listed, at) {
   const rows = [];
   for (const x of Array.isArray(listed) ? listed : []) {
-    const item = H_clean(x && x.item != null ? String(x.item) : '', 40), total = nInt(x && x.total);
+    const item = cleanKeep(x && x.item != null ? String(x.item) : '', 40), total = nInt(x && x.total);
     if (!item || total == null || ignoredItem(item) || !Array.isArray(x.labels) || x.labels.length > LISTED_LABELS_MAX) continue;
     // An entry is a label, or { label, store } (store = the row's Store text, as sent): a row naming another store is never stored here
     // (the label snapshot write skips it the same way: its leading number), so it can't count toward what the item can reach.
@@ -197,7 +197,6 @@ export async function listedWrite(T, store, listed, at) {
     .bind(store, r.item, r.total, r.labels.filter((l) => !dead.has(l)).length, at)));
   return rows.length;
 }
-const H_clean = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, '').trim().slice(0, max) : '');
 // Per baseline item, the labels it can still reach: Portal's frozen count, lowered to what the latest full listing since the freeze can be
 // stored as (a label Portal stopped listing, or one Retrace drops: a BB0001 buyback). Never raised (labels newer than the baseline aren't owed).
 // (TARGET_LISTED / LISTED_JOIN_SQL: retrace-listed.js; before its migration the table is missing and progress reads the frozen counts as they are)
@@ -349,8 +348,7 @@ export function resetCaches() { settledAt.clear(); progressAt.clear(); }
   here (the item lookup's RetailCategory keeps that; the WO hook's 'Labor / service' marks non-stock items). A row made here has no quantities (qty / qty_hash NULL), which
   the item lookup's diff reads as a new item, never a change. Ignored items get no row.
 */
-// index.js clean(): the WO hook has no H. Numbers (an item id sent as one) read as their text.
-const cleanText = (v, max) => (typeof v === 'string' || typeof v === 'number' ? String(v).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, max) : '');
+// Numbers (an item id sent as one) read as their text: cleanText, not clean.
 // Names gathered over one request, one per item: the first authoritative one wins, else the first one.
 function nameBook() {
   const map = new Map();
@@ -440,71 +438,71 @@ export async function woRetraceStmts(T, store, wo, prevPlain, plain, at) {
 }
 
 // ------------------------------------------------------------------ store side
-export async function retraceStore(req, env, url, store, path, H) {
+export async function retraceStore(req, env, url, store, path) {
   const T = env.TR;
-  if (path.startsWith('/retrace/wo-sold')) { const r = await woSoldRoute(req, T, store, path, H); if (r) return r; } // sold WOs' parts (retrace-wo-parts.js)
+  if (path.startsWith('/retrace/wo-sold')) { const r = await woSoldRoute(req, T, store, path); if (r) return r; } // sold WOs' parts (retrace-wo-parts.js)
 
   if (path === '/retrace/cursor' && req.method === 'GET') {
     const r = await T.prepare('SELECT sweep, value, updated_at FROM inv_cursors WHERE store = ?').bind(store).all();
     const cursors = {};
     for (const x of r.results) cursors[x.sweep] = { value: parse(x.value), at: x.updated_at };
     const b = await T.prepare('SELECT counted_at, expected_items, expected_pos FROM inv_baseline WHERE store = ?').bind(store).first();
-    return H.json({ cursors, baseline: { frozen: !!(b && b.counted_at && b.expected_items > 0), posKnown: !!(b && b.expected_pos != null) } });
+    return json({ cursors, baseline: { frozen: !!(b && b.counted_at && b.expected_items > 0), posKnown: !!(b && b.expected_pos != null) } });
   }
 
   if (path === '/retrace/progress' && req.method === 'GET') {
-    const p = (await progress(T, store)).out, seen = H.clean(url.searchParams.get('seen'), 40);
-    return H.json({ store, state: p.state, pct: p.pct, done_at: p.done_at, announce: !!p.done_at && p.done_at !== seen }, 200);
+    const p = (await progress(T, store)).out, seen = clean(url.searchParams.get('seen'), 40);
+    return json({ store, state: p.state, pct: p.pct, done_at: p.done_at, announce: !!p.done_at && p.done_at !== seen }, 200);
   }
 
   // The collector's summary of a finished pass (src/usage.js passStmts): the Usage page's Retrace and Portal load. Optional: older collectors never send it.
   if (path === '/retrace/pass' && req.method === 'POST') {
-    const stmts = passStmts(T, store, await H.readJson(req, 2000));
-    if (!stmts) return H.fail(400, 'portalCalls, workerCalls and seconds (whole numbers) required');
+    const stmts = passStmts(T, store, await readJson(req, 2000));
+    if (!stmts) return fail(400, 'portalCalls, workerCalls and seconds (whole numbers) required');
     await T.batch(stmts);
-    return H.json({ ok: true });
+    return json({ ok: true });
   }
 
   if (path === '/retrace/watch' && req.method === 'POST') {
     const over = await spend(T, store, [['rt_watch', 1]]); // per-store request budget (src/budget.js)
-    if (over) return H.fail(429, over);
-    const b = await H.readJson(req, MAX.watch);
-    if (!Array.isArray(b.movements) || !b.movements.length || b.movements.length > WATCH_MAX) return H.fail(400, 'movements required (1 to ' + WATCH_MAX + ')');
-    const at = H.now(), moves = b.movements.map((m) => normalize.watch(m, { sources: ['watch'] })).filter(Boolean);
+    if (over) return fail(429, over);
+    const b = await readJson(req, MAX.watch);
+    if (!Array.isArray(b.movements) || !b.movements.length || b.movements.length > WATCH_MAX) return fail(400, 'movements required (1 to ' + WATCH_MAX + ')');
+    const at = now(), moves = b.movements.map((m) => normalize.watch(m, { sources: ['watch'] })).filter(Boolean);
     const rejected = b.movements.length - moves.length;
-    if (!moves.length) return H.fail(400, 'no valid movement (' + rejected + ' refused)');
+    if (!moves.length) return fail(400, 'no valid movement (' + rejected + ' refused)');
     const { stmts, added } = await movementStmts(T, store, moves, at, NEED.touched);
     await chunks(T, stmts);
-    return H.json({ ok: true, added, rejected });
+    return json({ ok: true, added, rejected });
   }
 
   if (path === '/retrace/history' && req.method === 'POST') {
     const over = await spend(T, store, [['rt_history', 1]]); // per-store request budget (src/budget.js)
-    if (over) return H.fail(429, over);
-    const b = await H.readJson(req, MAX.history), label = cleanLabel(b.label);
+    if (over) return fail(429, over);
+    const b = await readJson(req, MAX.history), label = cleanLabel(b.label);
     const all = Array.isArray(b.rows) ? b.rows : b.rows && Array.isArray(b.rows.value) ? b.rows.value : null;
-    if (!label || !all || all.length > LIMIT.rows) return H.fail(400, 'label and rows required');
+    if (!label || !all || all.length > LIMIT.rows) return fail(400, 'label and rows required');
     // Each row names its store and label (Store "914", InventSerialId): another store's or label's rows are never written here.
     const rows = all.filter((r) => r && typeof r === 'object' && (storeNo(r.Store) == null || storeNo(r.Store) === store) && (r.InventSerialId == null || cleanLabel(r.InventSerialId) === label));
     const skipped = all.length - rows.length;
     // A label whose CURRENT item (the newest history row's ItemId) is an ignored one (Portal's BB0001: a buyback device) isn't stock: dropped with
     // what was stored for it, and remembered (inv_ignored_labels) so no sweep queues it again. A device that later became a stock SKU stays (its
     // BB0001 rows are skipped on insert), and its tombstone, if it had one, goes.
-    const now = currentItem(rows);
-    if (ignoredItem(now)) {
-      const at = H.now(), r = await T.batch([
+    const current = currentItem(rows);
+    if (ignoredItem(current)) {
+      const at = now(), r = await T.batch([
         T.prepare('DELETE FROM inv_labels WHERE store = ? AND label = ?').bind(store, label),
         T.prepare('DELETE FROM inv_movements WHERE store = ? AND label = ?').bind(store, label),
         T.prepare(`INSERT INTO inv_ignored_labels (store, label, reason, at) VALUES (?, ?, ?, ?)
-            ON CONFLICT (store, label) DO UPDATE SET reason = excluded.reason, at = excluded.at`).bind(store, label, 'item ' + now, at),
+            ON CONFLICT (store, label) DO UPDATE SET reason = excluded.reason, at = excluded.at`).bind(store, label, 'item ' + current, at),
       ]);
-      return H.json({ ok: true, added: 0, ignored: true, deletedLabels: (r[0].meta && r[0].meta.changes) || 0, skipped });
+      return json({ ok: true, added: 0, ignored: true, deletedLabels: (r[0].meta && r[0].meta.changes) || 0, skipped });
     }
     // none: 404 with no rows = Portal answered 404 for this label's history several times in a row (the collector counts them; the status only,
     // never a 404 body). Recorded as read with the NONE_404 marker, so it leaves the queue and stops holding up progress / Verify check 3;
     // the sweep queues it again after NONE_RETRY_MS in case Portal has it by then.
     const none = b.none === 404 && !all.length;
-    const at = H.now(), hash = none ? NONE_404 : hash53(JSON.stringify(rows.map(({ ['@odata.etag']: _e, ...r }) => r)));
+    const at = now(), hash = none ? NONE_404 : hash53(JSON.stringify(rows.map(({ ['@odata.etag']: _e, ...r }) => r)));
     const row = await T.prepare('SELECT history_hash FROM inv_labels WHERE store = ? AND label = ?').bind(store, label).first();
     // Clears the queue only when nothing queued the label after this read's claim began (queued_at newer than claimed_until - CLAIM_MIN: a sweep
     // or a movement named it meanwhile); then it stays queued, unclaimed, for another read. No claim (a read nobody handed out) always clears.
@@ -512,23 +510,23 @@ export async function retraceStore(req, env, url, store, path, H) {
         ON CONFLICT (store, label) DO UPDATE SET last_history_at = excluded.last_history_at, history_hash = excluded.history_hash, claimed_until = NULL,
           need_history = CASE WHEN claimed_until IS NOT NULL AND queued_at IS NOT NULL AND queued_at > strftime('%Y-%m-%dT%H:%M:%fZ', claimed_until, '-${CLAIM_MIN} minutes') THEN need_history ELSE 0 END,
           item = COALESCE(item, excluded.item), serial_status = COALESCE(serial_status, excluded.serial_status)`)
-      .bind(store, label, now || labelSnapshot({ label }).item || null, latest, at, at, at, hash);
-    if (row && row.history_hash === hash) { await done(null).run(); await settleAfterHistory(T, store, at); return H.json({ ok: true, added: 0, same: true, skipped }); }
+      .bind(store, label, current || labelSnapshot({ label }).item || null, latest, at, at, at, hash);
+    if (row && row.history_hash === hash) { await done(null).run(); await settleAfterHistory(T, store, at); return json({ ok: true, added: 0, same: true, skipped }); }
     const moves = normalize.historyRows(label, rows);
     const fresh = await newOnly(T, store, moves);
     const latest = moves.length ? moves[moves.length - 1].raw_status : null;
     await chunks(T, [...fresh.map((m) => insertMv(T, store, m, at)), done(latest), T.prepare('DELETE FROM inv_ignored_labels WHERE store = ? AND label = ?').bind(store, label)]);
     await settleAfterHistory(T, store, at);
-    return H.json({ ok: true, added: fresh.length, same: false, skipped });
+    return json({ ok: true, added: fresh.length, same: false, skipped });
   }
 
   if (path === '/retrace/sweep' && req.method === 'POST') {
     const over = await spend(T, store, [['rt_sweep', 1]]); // per-store request budget (src/budget.js)
-    if (over) return H.fail(429, over);
-    const b = await H.readJson(req, MAX.sweep);
-    for (const k of ['items', 'labels', 'docs', 'movements', 'touched', 'pos', 'names', 'labelTotals', 'listed']) if (b[k] != null && (!Array.isArray(b[k]) || b[k].length > LIMIT[k])) return H.fail(400, k + ': a list of at most ' + LIMIT[k]);
-    if (b.cursors != null && (typeof b.cursors !== 'object' || Array.isArray(b.cursors) || Object.keys(b.cursors).length > LIMIT.cursors)) return H.fail(400, 'cursors: { sweep: value }');
-    const at = H.now(), by = H.clean(b.by, 60) || null, stmts = [], book = nameBook();
+    if (over) return fail(429, over);
+    const b = await readJson(req, MAX.sweep);
+    for (const k of ['items', 'labels', 'docs', 'movements', 'touched', 'pos', 'names', 'labelTotals', 'listed']) if (b[k] != null && (!Array.isArray(b[k]) || b[k].length > LIMIT[k])) return fail(400, k + ': a list of at most ' + LIMIT[k]);
+    if (b.cursors != null && (typeof b.cursors !== 'object' || Array.isArray(b.cursors) || Object.keys(b.cursors).length > LIMIT.cursors)) return fail(400, 'cursors: { sweep: value }');
+    const at = now(), by = clean(b.by, 60) || null, stmts = [], book = nameBook();
     let written = 0, skipped = 0;
 
     /*
@@ -538,15 +536,15 @@ export async function retraceStore(req, env, url, store, path, H) {
     */
     const items = new Map();
     for (const r of b.items || []) {
-      const item = H.clean(r && (r.ItemNumber ?? r.itemNumber ?? r.item) != null ? String(r.ItemNumber ?? r.itemNumber ?? r.item) : '', 40);
+      const item = clean(r && (r.ItemNumber ?? r.itemNumber ?? r.item) != null ? String(r.ItemNumber ?? r.itemNumber ?? r.item) : '', 40);
       if (!item || ignoredItem(item)) continue;
       const x = items.get(item) || { name: null, category: null, qty: {} };
-      x.name = x.name || H.clean(r.ProductName ?? r.name, 120) || null;
-      x.category = x.category || H.clean(r.RetailCategory ?? r.category, 60) || null;
-      const wh = H.clean(r.WarehouseId != null ? String(r.WarehouseId) : '', 40) || '-';
+      x.name = x.name || clean(r.ProductName ?? r.name, 120) || null;
+      x.category = x.category || clean(r.RetailCategory ?? r.category, 60) || null;
+      const wh = clean(r.WarehouseId != null ? String(r.WarehouseId) : '', 40) || '-';
       const n = (v) => (typeof v === 'number' && isFinite(v) ? v : typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : 0);
       x.qty[wh] = { onHand: n(r.OnHandQuantity), available: n(r.AvailableQuantity), reserved: n(r.ReservedQuantity), inTransit: n(r.InTransitQuantity), salesOnOrder: n(r.SalesOnOrder),
-        van: H.clean(r.VanNickName, 40) || null };
+        van: clean(r.VanNickName, 40) || null };
       items.set(item, x);
     }
     const changedItems = [], seenToday = [];
@@ -717,7 +715,7 @@ export async function retraceStore(req, env, url, store, path, H) {
     const base = await T.prepare('SELECT counted_at, expected_pos FROM inv_baseline WHERE store = ?').bind(store).first(), frozen = !!(base && base.counted_at);
     if (!frozen) {
       for (const x of b.labelTotals || []) {
-        const item = H.clean(x && x.item != null ? String(x.item) : '', 40), total = nInt(x && x.total);
+        const item = clean(x && x.item != null ? String(x.item) : '', 40), total = nInt(x && x.total);
         if (!item || total == null || ignoredItem(item)) continue;
         stmts.push(T.prepare(`INSERT INTO inv_item_counts (store, item, labels, counted_at) VALUES (?, ?, ?, ?)
             ON CONFLICT (store, item) DO UPDATE SET labels = excluded.labels, counted_at = excluded.counted_at`).bind(store, item, total, at));
@@ -730,7 +728,7 @@ export async function retraceStore(req, env, url, store, path, H) {
     }
     for (const [name, value] of Object.entries(b.cursors || {})) {
       const v = JSON.stringify(value === undefined ? null : value);
-      if (!CURSOR_RE.test(name) || name === LAST_SWEEP || v.length > 4000) return H.fail(400, 'bad cursor ' + String(name).slice(0, 40));
+      if (!CURSOR_RE.test(name) || name === LAST_SWEEP || v.length > 4000) return fail(400, 'bad cursor ' + String(name).slice(0, 40));
       if (name === 'lookup' && value && value.rows === 0) continue; // an empty lookup is a failed one: not recorded
       stmts.push(T.prepare('INSERT INTO inv_cursors (store, sweep, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (store, sweep) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at').bind(store, name, v, at));
     }
@@ -803,9 +801,9 @@ export async function retraceStore(req, env, url, store, path, H) {
     await sweepRefresh(T, env, store, at);
     let vendorItems = [];
     try { vendorItems = await vendorNeed(T, store, vendorWant); } catch (_) {}
-    return H.json({ need, more, changedItems, added, rejected, skipped, written, prunedLabels, named: nameW.length, unnamed, countNeed, missedItems, shortItems, soNeed, vendorItems, pos: poOut });
+    return json({ need, more, changedItems, added, rejected, skipped, written, prunedLabels, named: nameW.length, unnamed, countNeed, missedItems, shortItems, soNeed, vendorItems, pos: poOut });
   }
-  return H.fail(404, 'not found');
+  return fail(404, 'not found');
 }
 
 /*
@@ -964,82 +962,82 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
   const vm = path.match(/^\/retrace\/verify\/(\d{1,6})(?:\/(run|tick))?$/);
   if (vm) {
     const store = Number(vm[1]), act = vm[2] || null;
-    if (req.method !== (act ? 'POST' : 'GET')) return H.fail(404, 'not found', false);
-    if (!canSee(store)) return H.fail(403, 'not your store', false);
+    if (req.method !== (act ? 'POST' : 'GET')) return fail(404, 'not found', false);
+    if (!canSee(store)) return fail(403, 'not your store', false);
     const at = new Date().toISOString();
-    if (!act) { await H.log(env, email, 'retrace:verify', store); return H.json(await verifyView(T, store), 200, false); }
+    if (!act) { await H.log(env, email, 'retrace:verify', store); return json(await verifyView(T, store), 200, false); }
     if (act === 'run') {
-      if (!(await verifyRun(T, store, at, email))) return H.fail(409, 'the store\'s baseline is not frozen yet', false);
+      if (!(await verifyRun(T, store, at, email))) return fail(409, 'the store\'s baseline is not frozen yet', false);
       await H.log(env, email, 'retrace:verify-run', store);
     } else {
-      const b = await H.readJson(req, 2000), label = cleanLabel(b.label);
-      if (!label || typeof b.matches !== 'boolean') return H.fail(400, 'label and matches (true or false) required', false);
-      if (!(await verifyTick(T, store, label, b.matches, email, at))) return H.fail(400, 'not one of the labels to check', false);
+      const b = await readJson(req, 2000), label = cleanLabel(b.label);
+      if (!label || typeof b.matches !== 'boolean') return fail(400, 'label and matches (true or false) required', false);
+      if (!(await verifyTick(T, store, label, b.matches, email, at))) return fail(400, 'not one of the labels to check', false);
       await H.log(env, email, 'retrace:verify-tick', store, null, label + (b.matches ? ' matches' : ' unticked'));
     }
-    return H.json(await verifyView(T, store), 200, false);
+    return json(await verifyView(T, store), 200, false);
   }
   // Item sources (retrace-source.js): GET the store's in-scope items with their source; POST /set marks items by hand (source null = back to the rules).
   const srm = path.match(/^\/retrace\/sources\/(\d{1,6})(\/set)?$/);
   if (srm) {
     const store = Number(srm[1]), set = !!srm[2];
-    if (req.method !== (set ? 'POST' : 'GET')) return H.fail(404, 'not found', false);
-    if (!canSee(store)) return H.fail(403, 'not your store', false);
+    if (req.method !== (set ? 'POST' : 'GET')) return fail(404, 'not found', false);
+    if (!canSee(store)) return fail(403, 'not your store', false);
     if (!set) {
       const f = q.get('source') || 'all';
-      if (!['all', 'unmarked', 'unset', 'conflict', ...SOURCES].includes(f)) return H.fail(400, 'source: all, distro, ms, other, unset, conflict, unmarked', false);
-      return H.json(await sourcesView(T, store, f, { limit: Math.min(H.int(q.get('limit')) || 500, 2000), offset: H.int(q.get('offset')) || 0 }), 200, false);
+      if (!['all', 'unmarked', 'unset', 'conflict', ...SOURCES].includes(f)) return fail(400, 'source: all, distro, ms, other, unset, conflict, unmarked', false);
+      return json(await sourcesView(T, store, f, { limit: Math.min(int(q.get('limit')) || 500, 2000), offset: int(q.get('offset')) || 0 }), 200, false);
     }
-    const b = await H.readJson(req, 40000);
-    const items = Array.isArray(b.items) ? b.items.map((x) => H.clean(x == null ? '' : String(x), 40)).filter(Boolean) : [];
-    if (!items.length || items.length > 1000) return H.fail(400, 'items: 1 to 1000 item numbers', false);
-    if (!(b.source === null || SOURCES.includes(b.source))) return H.fail(400, 'source: distro, ms, other or null', false);
+    const b = await readJson(req, 40000);
+    const items = Array.isArray(b.items) ? b.items.map((x) => clean(x == null ? '' : String(x), 40)).filter(Boolean) : [];
+    if (!items.length || items.length > 1000) return fail(400, 'items: 1 to 1000 item numbers', false);
+    if (!(b.source === null || SOURCES.includes(b.source))) return fail(400, 'source: distro, ms, other or null', false);
     const r = await setSources(T, env, items, b.source, email || null, new Date().toISOString());
     await H.log(env, email, 'retrace:source', store, null, (b.source || 'reset') + ' ' + items.slice(0, 20).join(',') + (items.length > 20 ? ' +' + (items.length - 20) : ''));
-    return H.json(Object.assign(r, await sourcesView(T, store, H.clean(b.view, 20) || 'all')), 200, false);
+    return json(Object.assign(r, await sourcesView(T, store, clean(b.view, 20) || 'all')), 200, false);
   }
-  if (req.method !== 'GET') return H.fail(404, 'not found', false);
+  if (req.method !== 'GET') return fail(404, 'not found', false);
 
   // One work order's parts and labels (retrace-wo-parts.js woPartsView): a work order view, so page 'wos' too (the gate checked 'retrace').
   const wpm = path.match(/^\/retrace\/wo\/(\d{1,6})\/(\d{1,12})$/);
   if (wpm) {
     const store = Number(wpm[1]), wo = wpm[2];
-    if (!canSee(store)) return H.fail(403, 'not your store', false);
-    if (!me.owner && !(me.pages || []).includes('wos')) return H.fail(403, 'no access to this page', false);
+    if (!canSee(store)) return fail(403, 'not your store', false);
+    if (!me.owner && !(me.pages || []).includes('wos')) return fail(403, 'no access to this page', false);
     await H.log(env, email, 'retrace:wo', store, Number(wo));
-    return H.json(await woPartsView(T, store, wo), 200, false);
+    return json(await woPartsView(T, store, wo), 200, false);
   }
 
   const qm = path.match(/^\/retrace\/queue\/(\d{1,6})$/);
   if (qm) {
     const store = Number(qm[1]);
-    if (!canSee(store)) return H.fail(403, 'not your store', false);
+    if (!canSee(store)) return fail(403, 'not your store', false);
     await H.log(env, email, 'retrace:queue', store);
-    return H.json(await queueView(T, store, { reason: q.get('reason'), item: H.clean(q.get('item'), 40), limit: q.get('limit'), offset: q.get('offset') }), 200, false);
+    return json(await queueView(T, store, { reason: q.get('reason'), item: clean(q.get('item'), 40), limit: q.get('limit'), offset: q.get('offset') }), 200, false);
   }
 
   const im = path.match(/^\/retrace\/item\/(\d{1,6})\/([^/]{1,80})$/);
   if (im) {
-    const store = Number(im[1]), item = H.clean(unesc(im[2]), 40);
-    if (!canSee(store)) return H.fail(403, 'not your store', false);
-    if (!item) return H.fail(400, 'item required', false);
+    const store = Number(im[1]), item = clean(unesc(im[2]), 40);
+    if (!canSee(store)) return fail(403, 'not your store', false);
+    if (!item) return fail(400, 'item required', false);
     const where = ['m.store = ?', 'm.item = ?'], args = [store, item];
     const from = q.get('from') ? dayFrom(q.get('from')) : null, to = q.get('to') ? dayTo(q.get('to')) : null;
-    if (q.get('from') && !from) return H.fail(400, 'from: YYYY-MM-DD or ISO', false);
-    if (q.get('to') && !to) return H.fail(400, 'to: YYYY-MM-DD or ISO', false);
+    if (q.get('from') && !from) return fail(400, 'from: YYYY-MM-DD or ISO', false);
+    if (q.get('to') && !to) return fail(400, 'to: YYYY-MM-DD or ISO', false);
     if (from) { where.push('m.at >= ?'); args.push(from); }
     if (to) { where.push('m.at <= ?'); args.push(to); }
     // The date range alone (by_kind adds the user, users adds the kinds; the movement list has all three).
     const base = [...where], baseArgs = [...args], kw = [], kwArgs = [], uw = [], uwArgs = [];
     if (q.get('kinds')) {
       const kinds = q.get('kinds').split(',').map((k) => k.trim()).filter(Boolean);
-      if (!kinds.length || kinds.some((k) => !KINDS.includes(k))) return H.fail(400, 'kinds: ' + KINDS.join(', '), false);
+      if (!kinds.length || kinds.some((k) => !KINDS.includes(k))) return fail(400, 'kinds: ' + KINDS.join(', '), false);
       kw.push('m.kind IN (SELECT value FROM json_each(?))'); kwArgs.push(JSON.stringify(kinds));
     }
-    const user = H.clean(q.get('user'), 80);
+    const user = clean(q.get('user'), 80);
     if (user) { uw.push('m.user_name = ?'); uwArgs.push(user); }
     where.push(...kw, ...uw); args.push(...kwArgs, ...uwArgs);
-    const limit = Math.min(H.int(q.get('limit')) || 200, 1000), offset = H.int(q.get('offset')) || 0;
+    const limit = Math.min(int(q.get('limit')) || 200, 1000), offset = int(q.get('offset')) || 0;
     const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
     const [info, counts, labels, moves, total, byKind, users, all] = await T.batch([
       T.prepare('SELECT name, category, qty, last_seen, changed_at FROM inv_items WHERE store = ? AND item = ?').bind(store, item),
@@ -1059,21 +1057,21 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     // its source (retrace-source.js) when the item is one that has one (Mobility, Reportable Consumables); null before the migration
     let source = null;
     if (i && IN_SCOPE.test(i.category || '')) try { source = await itemSource(T, item); } catch (_) {}
-    return H.json({ store, item, source, info: i && Object.assign(i, { qty: parse(i.qty) }), counts: [...cmap.values()].sort((a, b) => b.n - a.n), labels: labels.results, movements: moves.results, total: total.results[0].n,
+    return json({ store, item, source, info: i && Object.assign(i, { qty: parse(i.qty) }), counts: [...cmap.values()].sort((a, b) => b.n - a.n), labels: labels.results, movements: moves.results, total: total.results[0].n,
       by_kind: byKind.results, users: users.results, first_at: a.first_at || null, all_total: a.n || 0, sold90: a.sold90 || 0 }, 200, false);
   }
 
   const sm = path.match(/^\/retrace\/serials\/(\d{1,6})\/([^/]{1,80})$/);
   if (sm) {
-    const store = Number(sm[1]), item = H.clean(unesc(sm[2]), 40);
-    if (!canSee(store)) return H.fail(403, 'not your store', false);
-    if (!item) return H.fail(400, 'item required', false);
+    const store = Number(sm[1]), item = clean(unesc(sm[2]), 40);
+    if (!canSee(store)) return fail(403, 'not your store', false);
+    if (!item) return fail(400, 'item required', false);
     const group = q.get('group') || 'all';
-    if (!['all', 'in', 'wo', 'out', 'q', 'bad'].includes(group)) return H.fail(400, 'group: all, in, wo, out, q, bad', false);
-    const days = q.get('days') ? H.int(q.get('days')) : null;
-    if (q.get('days') && (days == null || days < 1 || days > 3650)) return H.fail(400, 'days: 1 to 3650', false);
+    if (!['all', 'in', 'wo', 'out', 'q', 'bad'].includes(group)) return fail(400, 'group: all, in, wo, out, q, bad', false);
+    const days = q.get('days') ? int(q.get('days')) : null;
+    if (q.get('days') && (days == null || days < 1 || days > 3650)) return fail(400, 'days: 1 to 3650', false);
     const since = days ? new Date(Date.now() - days * 86400000).toISOString() : null;
-    const limit = Math.min(H.int(q.get('limit')) || 200, 500), offset = H.int(q.get('offset')) || 0;
+    const limit = Math.min(int(q.get('limit')) || 200, 500), offset = int(q.get('offset')) || 0;
     // One row per serial: the labels the item's movements name plus the labels stored for it (a label with no movements yet is a serial too, `last` null),
     // each with its newest movement of this item.
     const [last, loose, looseN] = await T.batch([
@@ -1094,39 +1092,39 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     });
     const shown = group === 'all' ? rows : rows.filter((r) => r.group === group);
     await H.log(env, email, 'retrace:serials', store, null, item);
-    return H.json({ store, item, serials: shown.slice(offset, offset + limit), total: shown.length, groups, loose: loose.results, loose_total: looseN.results[0].n }, 200, false);
+    return json({ store, item, serials: shown.slice(offset, offset + limit), total: shown.length, groups, loose: loose.results, loose_total: looseN.results[0].n }, 200, false);
   }
 
   const lm = path.match(/^\/retrace\/label\/(\d{1,6})\/([^/]{1,80})$/);
   if (lm) {
     const store = Number(lm[1]), label = cleanLabel(unesc(lm[2]));
-    if (!canSee(store)) return H.fail(403, 'not your store', false);
-    if (!label) return H.fail(400, 'not a label', false);
+    if (!canSee(store)) return fail(403, 'not your store', false);
+    if (!label) return fail(400, 'not a label', false);
     const [row, moves] = await T.batch([
       T.prepare(`SELECT l.*, ${nowCols('l')} FROM inv_labels l WHERE l.store = ? AND l.label = ?`).bind(store, label),
       T.prepare(`SELECT ${MV_COLS} FROM ${MV_FROM} WHERE m.store = ? AND m.label = ? ORDER BY m.at, m.id LIMIT 2000`).bind(store, label),
     ]);
-    if (!row.results.length && !moves.results.length) return H.fail(404, 'label not seen at this store', false);
+    if (!row.results.length && !moves.results.length) return fail(404, 'label not seen at this store', false);
     await H.log(env, email, 'retrace:label', store, null, label);
     const lr = row.results[0] || null;
     let now = null;
     if (lr) { const [text, group] = rowNow(lr); now = { status: text, group }; delete lr.now_kind; delete lr.now_at; }
-    return H.json({ label: lr, now, movements: moves.results }, 200, false);
+    return json({ label: lr, now, movements: moves.results }, 200, false);
   }
 
   // Store filter for the cross-store routes: ?store= (gated already), else the person's stores.
   const scope = () => {
-    if (q.get('store')) { const st = H.int(q.get('store')); return st != null && canSee(st) ? { sql: 'store = ?', args: [st] } : null; }
+    if (q.get('store')) { const st = int(q.get('store')); return st != null && canSee(st) ? { sql: 'store = ?', args: [st] } : null; }
     if (me.scope === 'all') return { sql: '1 = 1', args: [] };
     return { sql: 'store IN (SELECT value FROM json_each(?))', args: [JSON.stringify(me.stores)] };
   };
 
   // Items with movements at a store, most recent movement first (the page's item list).
   if (path === '/retrace/items') {
-    const store = H.int(q.get('store'));
-    if (store == null) return H.fail(400, 'store required', false);
-    if (!canSee(store)) return H.fail(403, 'not your store', false);
-    const limit = Math.min(H.int(q.get('limit')) || 100, 500), offset = H.int(q.get('offset')) || 0;
+    const store = int(q.get('store'));
+    if (store == null) return fail(400, 'store required', false);
+    if (!canSee(store)) return fail(403, 'not your store', false);
+    const limit = Math.min(int(q.get('limit')) || 100, 500), offset = int(q.get('offset')) || 0;
     const [rows, total] = await T.batch([
       T.prepare(`SELECT m.item, m.moves, m.last_at, i.name, i.category, i.qty, lb.n AS label_n,
           (SELECT l.product FROM inv_labels l WHERE l.store = ?1 AND l.item = m.item AND l.product IS NOT NULL LIMIT 1) AS product
@@ -1158,13 +1156,13 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
       const src = new Map((await T.prepare('SELECT item, manual, auto, conflict FROM inv_item_source WHERE item IN (SELECT value FROM json_each(?))').bind(JSON.stringify(scoped.map((x) => x.item))).all()).results.map((r) => [r.item, r]));
       for (const x of scoped) x.source = effective(src.get(x.item));
     } catch (_) {}
-    return H.json({ items, total: total.results[0].n }, 200, false);
+    return json({ items, total: total.results[0].n }, 200, false);
   }
 
   if (path === '/retrace/search') {
-    const s = scope(), term = H.clean(q.get('q'), 60);
-    if (!s) return H.fail(403, 'not your store', false);
-    if (!term || term.length < 2) return H.fail(400, 'q (2 characters or more) required', false);
+    const s = scope(), term = clean(q.get('q'), 60);
+    if (!s) return fail(403, 'not your store', false);
+    if (!term || term.length < 2) return fail(400, 'q (2 characters or more) required', false);
     const like = likeEsc(term) + '%', label = cleanLabel(term) || term;
     const [labels, items, refs, docs] = await T.batch([
       T.prepare(`SELECT store, label, item, product, serial_status, wh_type, consignment, wo, po, last_seen, ${nowCols('inv_labels')} FROM inv_labels
@@ -1176,23 +1174,23 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
           GROUP BY store, ref_type, ref_id ORDER BY last_at DESC LIMIT 30`).bind(...s.args, term, term),
       T.prepare(`SELECT store, type, id, status, at, counterpart FROM inv_docs WHERE ${s.sql} AND id = ? LIMIT 30`).bind(...s.args, term),
     ]);
-    await H.log(env, email, 'retrace:search', q.get('store') ? H.int(q.get('store')) : null, null, term);
+    await H.log(env, email, 'retrace:search', q.get('store') ? int(q.get('store')) : null, null, term);
     for (const x of labels.results) { x.now = rowNow(x)[0]; delete x.now_kind; delete x.now_at; }
-    return H.json({ labels: labels.results, items: items.results, refs: refs.results, docs: docs.results }, 200, false);
+    return json({ labels: labels.results, items: items.results, refs: refs.results, docs: docs.results }, 200, false);
   }
 
   const pm = path.match(/^\/retrace\/po\/(\d{1,6})\/([^/]{1,80})$/);
   if (pm) {
-    const store = Number(pm[1]), po = H.clean(unesc(pm[2]), 40);
-    if (!canSee(store)) return H.fail(403, 'not your store', false);
-    if (!po) return H.fail(400, 'po required', false);
+    const store = Number(pm[1]), po = clean(unesc(pm[2]), 40);
+    if (!canSee(store)) return fail(403, 'not your store', false);
+    if (!po) return fail(400, 'po required', false);
     const [doc, events, moves] = await T.batch([
       T.prepare("SELECT status, at, counterpart, data, need_detail, first_seen, updated_at FROM inv_docs WHERE store = ? AND type = 'po' AND id = ?").bind(store, po),
       T.prepare("SELECT at, field, old, new, by_source FROM inv_doc_events WHERE store = ? AND type = 'po' AND id = ? ORDER BY at, rowid").bind(store, po),
       T.prepare(`SELECT ${MV_COLS} FROM ${MV_FROM} WHERE m.store = ? AND m.ref_type = 'po' AND m.ref_id = ? ORDER BY m.at, m.id LIMIT 2000`).bind(store, po),
     ]);
     const d = doc.results[0] || null;
-    if (!d && !moves.results.length) return H.fail(404, 'PO not seen at this store', false);
+    if (!d && !moves.results.length) return fail(404, 'PO not seen at this store', false);
     const data = (d && parse(d.data)) || { id: po };
     const { lines: rawLines, labels: rawLabels, ...header } = data;
     const num = (v) => (typeof v === 'number' ? v : null);
@@ -1206,21 +1204,21 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     }
     const labels = list.map((l) => Object.assign({}, l, { receive_status: l.status, now: now.get(l.label) || null }));
     await H.log(env, email, 'retrace:po', store, null, po);
-    return H.json({ po, header: Object.assign(header, d ? { status: d.status, at: d.at, counterpart: d.counterpart, need_detail: d.need_detail, first_seen: d.first_seen, updated_at: d.updated_at } : {}),
+    return json({ po, header: Object.assign(header, d ? { status: d.status, at: d.at, counterpart: d.counterpart, need_detail: d.need_detail, first_seen: d.first_seen, updated_at: d.updated_at } : {}),
       lines, labels, events: events.results, movements: moves.results }, 200, false);
   }
 
   if (path === '/retrace/pos') {
     const s = scope();
-    if (!s) return H.fail(403, 'not your store', false);
+    if (!s) return fail(403, 'not your store', false);
     const where = [s.sql.replace(/\bstore\b/g, 'd.store'), "d.type = 'po'"], args = [...s.args];
     const from = q.get('from') ? dayFrom(q.get('from')) : null, to = q.get('to') ? dayTo(q.get('to')) : null;
-    if ((q.get('from') && !from) || (q.get('to') && !to)) return H.fail(400, 'from / to: YYYY-MM-DD or ISO', false);
+    if ((q.get('from') && !from) || (q.get('to') && !to)) return fail(400, 'from / to: YYYY-MM-DD or ISO', false);
     if (from) { where.push('d.at >= ?'); args.push(from); }
     if (to) { where.push('d.at <= ?'); args.push(to); }
-    const status = H.clean(q.get('status'), 40);
+    const status = clean(q.get('status'), 40);
     if (status) { where.push('d.status = ?'); args.push(status); }
-    const limit = Math.min(H.int(q.get('limit')) || 100, 500), offset = H.int(q.get('offset')) || 0;
+    const limit = Math.min(int(q.get('limit')) || 100, 500), offset = int(q.get('offset')) || 0;
     const [rows, total] = await T.batch([
       T.prepare(`SELECT d.store, d.id, d.status, d.at, d.counterpart, d.data, d.need_detail, d.updated_at,
           (SELECT MAX(e.at) FROM inv_doc_events e WHERE e.store = d.store AND e.type = 'po' AND e.id = d.id) AS last_change
@@ -1234,12 +1232,12 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
         labels: x.labels ? x.labels.length : null, received: x.labels ? x.labels.filter((l) => /^received$/i.test(l.status || '')).length : null,
         need_detail: r.need_detail, updated_at: r.updated_at, last_change: r.last_change || null };
     });
-    return H.json({ pos, total: total.results[0].n }, 200, false);
+    return json({ pos, total: total.results[0].n }, 200, false);
   }
 
   if (path === '/retrace/coverage') {
     const s = scope();
-    if (!s) return H.fail(403, 'not your store', false);
+    if (!s) return fail(403, 'not your store', false);
     const at = new Date().toISOString();
     const [labels, items, moves, sweeps] = await T.batch([
       T.prepare(`SELECT store, COUNT(*) AS labels, SUM(CASE WHEN last_history_at IS NOT NULL THEN 1 ELSE 0 END) AS histories, SUM(CASE WHEN need_history > 0 THEN 1 ELSE 0 END) AS backlog,
@@ -1257,7 +1255,7 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     for (const r of sweeps.results) Object.assign(row(r.store), { last_sweep_at: r.updated_at, last_sweep: parse(r.value) });
     const list = [...by.values()].filter((x) => canSee(x.store)).sort((a, b) => a.store - b.store);
     for (const x of list) x.progress = await cachedProgress(T, x.store);
-    return H.json({ stores: list }, 200, false);
+    return json({ stores: list }, 200, false);
   }
-  return H.fail(404, 'not found', false);
+  return fail(404, 'not found', false);
 }

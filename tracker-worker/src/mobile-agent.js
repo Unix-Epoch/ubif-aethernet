@@ -17,9 +17,11 @@
   `Authorization: Bearer <id>.<token>` against the agents table, then the agent must be a phone (agent_kind row) and approved
   ('active'). A pending, unknown, removed or wrong-token device never reaches this file (401 / 403). `device` is:
     { id, name, kind: 'phone', stores: [approved store ids, numbers], active: true, publicJwk }
-  `h` is the Worker's own helpers: { json(body, status, cors), fail(status, message), readJson(req, maxChars), int, clean(str, max), iso, now(), log(env, who, action, store, wo, detail), serverError }.
+  json, fail, readJson, int and clean come from http.js. `h` carries what a module cannot import: now() (the clock, so a test can fix it) and
+  log(env, who, action, store, wo, detail) (the access log, index.js). It still holds the rest for linkshell.js.
   A handler may throw: index.js turns anything but a deliberate 4xx (an Error with .status < 500) into a generic 500 with a short id, and logs the real error.
 */
+import { fail, httpError } from './http.js';
 import { homeApi } from './mobile.js';
 import { woApi } from './mobile-wo.js';
 import { alertsApi } from './mobile-alerts.js';
@@ -41,7 +43,6 @@ export const meOf = (device) => ({ owner: false, scope: 'stores', stores: device
   LANES while loading, so Home gets the device's stores through meOf instead.
 */
 const STORE_ID = /^\d{1,6}$/;
-const err = (status, message) => Object.assign(new Error(message), { status });
 // A stores list as store numbers. Anything that is not a positive whole number is dropped: it can never match an asked store.
 export function storeIds(stores) {
   return (Array.isArray(stores) ? stores : []).map(Number).filter((s) => Number.isInteger(s) && s > 0);
@@ -55,15 +56,15 @@ export function inStores(stores, store) {
 export function isDeviceStore(device, store) { return inStores(device && device.stores, store); }
 // The one store a request names. Throws 400 (missing or not a store number) / 403 (not this device's).
 export function storeOf(device, v) {
-  if (v == null || !STORE_ID.test(v)) throw err(400, 'store: a store number');
-  if (!isDeviceStore(device, v)) throw err(403, 'not your store');
+  if (v == null || !STORE_ID.test(v)) throw httpError(400, 'store: a store number');
+  if (!isDeviceStore(device, v)) throw httpError(403, 'not your store');
   return Number(v);
 }
 // The stores a request is about: ?store=<id> (must be an approved one), or all of the device's when it is missing, empty or "all". Throws 400 / 403.
 export function storesOf(device, ask) {
   if (ask == null || ask === '' || ask === 'all') return deviceStores(device);
-  if (!STORE_ID.test(ask)) throw err(400, 'store: all or a store number');
-  if (!isDeviceStore(device, ask)) throw err(403, 'not your store');
+  if (!STORE_ID.test(ask)) throw httpError(400, 'store: all or a store number');
+  if (!isDeviceStore(device, ask)) throw httpError(403, 'not your store');
   return [Number(ask)];
 }
 
@@ -80,5 +81,5 @@ export async function mobileAgentApi(req, env, url, device, h) {
   if (/^\/update(\/|$)/.test(path)) return updateApi(req, env, url, device, h);
   if (/^\/waymark(\/|$)/.test(path)) return waymarkApi(req, env, url, device, h);
   if (/^\/linkshell(\/|$)/.test(path)) return linkshellPhone(req, env, url, device, h);
-  return h.fail(404, 'not found');
+  return fail(404, 'not found');
 }

@@ -24,6 +24,7 @@
               so the backfill always ends. A WO this store's tracker doesn't hold is rejected.
           State per WO: inv_wo_sold (migrations/2026-10-26-retrace-wo-parts.sql).
 */
+import { json, fail, readJson, now } from './http.js';
 import { cleanLabel, itemOfLabel, isoAt, ignoredItem, NOW_KIND } from './retrace.js';
 import { nowCols, rowNow } from './retrace-now.js';
 import { insertMv, soWo, tombs, chunks } from './retrace-api.js';
@@ -54,10 +55,10 @@ export function partLines(order) {
   return out;
 }
 
-export async function woSoldRoute(req, T, store, path, H) {
+export async function woSoldRoute(req, T, store, path) {
   if (path === '/retrace/wo-sold/need' && req.method === 'POST') {
-    const b = await H.readJson(req, 2000);
-    const want = Math.min(Math.max(Number.isInteger(b.want) ? b.want : WOS_ASK, 0), WOS_ASK), at = H.now();
+    const b = await readJson(req, 2000);
+    const want = Math.min(Math.max(Number.isInteger(b.want) ? b.want : WOS_ASK, 0), WOS_ASK), at = now();
     const open = `${SOLD} AND typeof(${CART}) = 'text' AND ${CART} <> '' AND (s.wo IS NULL OR s.state NOT IN ${DONE_STATES})`;
     const rows = want ? (await T.prepare(`SELECT CAST(w.wo AS TEXT) AS wo, ${CART} AS cart_id FROM workorders w
         LEFT JOIN inv_wo_sold s ON s.store = w.store AND s.wo = CAST(w.wo AS TEXT)
@@ -69,13 +70,13 @@ export async function woSoldRoute(req, T, store, path, H) {
           ON CONFLICT (store, wo) DO UPDATE SET claimed_until = excluded.claimed_until, cart_id = excluded.cart_id, updated_at = excluded.updated_at`).bind(store, r.wo, r.cart_id, until, at)));
     }
     const left = (await T.prepare(`SELECT COUNT(*) AS n FROM workorders w LEFT JOIN inv_wo_sold s ON s.store = w.store AND s.wo = CAST(w.wo AS TEXT) WHERE w.store = ?1 AND ${open}`).bind(store).first()).n;
-    return H.json({ wos: rows.map((r) => ({ wo: r.wo, cart_id: r.cart_id })), left });
+    return json({ wos: rows.map((r) => ({ wo: r.wo, cart_id: r.cart_id })), left });
   }
 
   if (path === '/retrace/wo-sold' && req.method === 'POST') {
-    const b = await H.readJson(req, 1000000);
-    if (!Array.isArray(b.results) || b.results.length > RESULTS_MAX) return H.fail(400, 'results: a list of at most ' + RESULTS_MAX);
-    const at = H.now(), out = { done: 0, empty: 0, failed: 0, gave_up: 0, rejected: 0, labels: 0 };
+    const b = await readJson(req, 1000000);
+    if (!Array.isArray(b.results) || b.results.length > RESULTS_MAX) return fail(400, 'results: a list of at most ' + RESULTS_MAX);
+    const at = now(), out = { done: 0, empty: 0, failed: 0, gave_up: 0, rejected: 0, labels: 0 };
     for (const r of b.results) {
       const wo = woId(r && r.wo);
       const w = wo ? await T.prepare(`SELECT CAST(wo AS TEXT) AS wo, sold_at, ${CART.replace('w.plain', 'plain')} AS cart_id FROM workorders WHERE store = ? AND wo = ?`).bind(store, Number(wo)).first() : null;
@@ -120,7 +121,7 @@ export async function woSoldRoute(req, T, store, path, H) {
       await chunks(T, stmts);
       out[parts.length ? 'done' : 'empty']++; out.labels += parts.length;
     }
-    return H.json(out);
+    return json(out);
   }
   return null;
 }

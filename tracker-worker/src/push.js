@@ -14,6 +14,7 @@
   skipped and everything else works as before. iOS: FCM forwards to APNs, so an iPhone's FCM token works here too; the message
   for 'ios' carries an alert (mutable, so the app can reword it) because iOS doesn't run an app for a data-only ping.
 */
+import { json, fail, readJson } from './http.js';
 
 export const PUSH = { SCOPE: 'https://www.googleapis.com/auth/firebase.messaging', TOKEN_URL: 'https://oauth2.googleapis.com/token', TTL_S: 600 };
 const TOKEN = /^[A-Za-z0-9_:.\-]{20,4096}$/, PLATFORMS = ['android', 'ios'];
@@ -21,18 +22,18 @@ const TOKEN = /^[A-Za-z0-9_:.\-]{20,4096}$/, PLATFORMS = ['android', 'ios'];
 // ------------------------------------------------------------------ phone routes
 export async function pushApi(req, env, url, device, h) {
   const T = env.TR, what = url.pathname.replace(/^\/v1\/agents\/m\/push\/?/, '');
-  if (what !== '') return h.fail(404, 'not found');
+  if (what !== '') return fail(404, 'not found');
   if (req.method === 'DELETE') {
     await T.prepare('DELETE FROM push_tokens WHERE agent_id = ?').bind(device.id).run();
-    return h.json({ ok: true });
+    return json({ ok: true });
   }
-  if (req.method !== 'POST') return h.fail(405, 'method not allowed');
-  const b = await h.readJson(req, 5000);
-  if (typeof b.token !== 'string' || !TOKEN.test(b.token)) return h.fail(400, 'token required');
+  if (req.method !== 'POST') return fail(405, 'method not allowed');
+  const b = await readJson(req, 5000);
+  if (typeof b.token !== 'string' || !TOKEN.test(b.token)) return fail(400, 'token required');
   const platform = PLATFORMS.includes(b.platform) ? b.platform : 'android';
   await T.prepare('INSERT INTO push_tokens (agent_id, platform, token, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(agent_id) DO UPDATE SET platform = excluded.platform, token = excluded.token, updated_at = excluded.updated_at')
     .bind(device.id, platform, b.token, new Date().toISOString()).run();
-  return h.json({ ok: true });
+  return json({ ok: true });
 }
 
 // ------------------------------------------------------------------ sending

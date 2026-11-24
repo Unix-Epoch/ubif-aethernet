@@ -10,14 +10,14 @@
   Lookups are batched per page: one tags statement and one marks statement per store on the page (primary-key seeks, the work order numbers
   travel as one JSON parameter, so D1's bound-parameter limit never matters). A failed read is logged and answers "no marks" (never an error).
 */
+import { json, fail, int, readJson, httpError, DAY_RE, tzOf } from './http.js';
 import { local, addDays } from './metrics.js';
 import { isDeviceStore } from './mobile-agent.js';
 
 export const DUE_MAX = 2000;  // most due work orders read for the follow-ups filter
 const TAGS_MAX = 20;          // tags returned per work order
-const DAY = /^\d{4}-\d\d-\d\d$/;
 
-export const tzOf = (env) => env.STORE_TZ || 'America/New_York';
+export { tzOf };
 // The store-local date (YYYY-MM-DD), the way the follow-up alert computes it (metrics.js local, one zone for every store).
 export const todayOf = (env, ms = Date.now()) => local(ms, tzOf(env)).day;
 
@@ -42,7 +42,7 @@ export async function marksFor(env, rows) {
     const res = await env.AE.batch(stmts);
     for (let i = 0; i < res.length; i += 2) {
       for (const t of res[i].results) { const e = out.get(t.store + '|' + t.wo); if (e && e.tags.length < TAGS_MAX) e.tags.push({ tag: t.tag, color: t.color || null }); }
-      for (const m of res[i + 1].results) { const e = out.get(m.store + '|' + m.wo); if (e && DAY.test(m.due || '')) e.followUp = { kind: kindOf(m.kind), due: m.due }; }
+      for (const m of res[i + 1].results) { const e = out.get(m.store + '|' + m.wo); if (e && DAY_RE.test(m.due || '')) e.followUp = { kind: kindOf(m.kind), due: m.due }; }
     }
     for (const r of rows) if (!r.open) out.get(r.store + '|' + r.wo).followUp = null;
   } catch (e) { console.error('waymark: marks read failed:', e && e.message); }
@@ -101,12 +101,11 @@ export const WRITES_PER_HOUR = 120;           // accepted Waymark writes per pho
 const AHEAD_DAYS = 366;                       // a follow-up at most this far after today (store-local)
 const WO_MIN = 10000, WO_MAX = 999999999999;  // the Waymark Worker's /wo/(\d{5,12})
 
-const fail = (status, message) => Object.assign(new Error(message), { status });
 // The Waymark Worker's tagName: control characters out, whitespace collapsed, trimmed, cut to 32.
 const tagName = (v) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, TAG_LEN) : '');
 const author = (device) => ({ name: ('Linkpearl (' + device.name + ')').slice(0, 60), id: null });
 const actor = (device) => 'device:' + device.name;
-const realDay = (d) => DAY.test(d) && !isNaN(Date.parse(d + 'T12:00:00Z')) && new Date(d + 'T12:00:00Z').toISOString().slice(0, 10) === d;
+const realDay = (d) => DAY_RE.test(d) && !isNaN(Date.parse(d + 'T12:00:00Z')) && new Date(d + 'T12:00:00Z').toISOString().slice(0, 10) === d;
 const nowIso = () => new Date().toISOString();
 
 // The Waymark Worker's logHistory, statement for statement.
@@ -115,25 +114,25 @@ const history = (env, store, wo, action, tag, detail, by) => env.AE.prepare('INS
 
 // store: an approved store of this phone that has Aethernet access. Throws 400 / 403.
 async function storeOf(env, device, h, v) {
-  const store = h.int(v);
-  if (store == null || store < 1 || store > 999999) throw fail(400, 'store required');
-  if (!isDeviceStore(device, store)) throw fail(403, 'not your store');
-  if (!(await env.AE.prepare('SELECT 1 FROM store_access WHERE store = ?').bind(store).first())) throw fail(403, 'this store does not have access to Aethernet');
+  const store = int(v);
+  if (store == null || store < 1 || store > 999999) throw httpError(400, 'store required');
+  if (!isDeviceStore(device, store)) throw httpError(403, 'not your store');
+  if (!(await env.AE.prepare('SELECT 1 FROM store_access WHERE store = ?').bind(store).first())) throw httpError(403, 'this store does not have access to Aethernet');
   return store;
 }
 // wo: a work order the tracker holds in that store → { wo, open }. Throws 400 / 404.
 async function woOf(env, h, store, v) {
-  const wo = h.int(v);
-  if (wo == null || wo < WO_MIN || wo > WO_MAX) throw fail(400, 'wo required');
+  const wo = int(v);
+  if (wo == null || wo < WO_MIN || wo > WO_MAX) throw httpError(400, 'wo required');
   const r = await env.TR.prepare('SELECT is_open FROM workorders WHERE store = ? AND wo = ?').bind(store, wo).first();
-  if (!r) throw fail(404, 'no such work order');
+  if (!r) throw httpError(404, 'no such work order');
   return { wo, open: r.is_open === 1 };
 }
 // The per-phone bound, counted from the access_log rows these routes write (log_at index: one hour of the log).
 async function bound(env, device) {
   const since = new Date(Date.now() - 3600000).toISOString();
   const { n } = await env.TR.prepare("SELECT COUNT(*) AS n FROM access_log WHERE at >= ? AND email = ? AND action LIKE 'waymark:%'").bind(since, actor(device)).first();
-  if (n >= WRITES_PER_HOUR) throw fail(429, 'too many Waymark changes from this phone, try again later');
+  if (n >= WRITES_PER_HOUR) throw httpError(429, 'too many Waymark changes from this phone, try again later');
 }
 // The work order's tags as the phone's other routes show them: [{ tag, color }] (colour from the managed list; one-off = null). No authors.
 async function tagsOf(env, store, wo) {
@@ -144,43 +143,43 @@ const managed = async (env, store) => (await env.AE.prepare('SELECT name, color 
 
 export async function waymarkApi(req, env, url, device, h) {
   const path = url.pathname.replace(/^\/v1\/agents\/m\/waymark/, '') || '/';
-  if (path !== '/tags' && path !== '/tag' && path !== '/followup') return h.fail(404, 'not found');
-  if (req.method !== (path === '/tags' ? 'GET' : 'POST')) return h.fail(405, 'method not allowed');
-  if (!env.AE) return h.fail(503, 'Waymark is not available');
+  if (path !== '/tags' && path !== '/tag' && path !== '/followup') return fail(404, 'not found');
+  if (req.method !== (path === '/tags' ? 'GET' : 'POST')) return fail(405, 'method not allowed');
+  if (!env.AE) return fail(503, 'Waymark is not available');
   try {
     if (path === '/tags') {
       const store = await storeOf(env, device, h, url.searchParams.get('store'));
       const list = await managed(env, store);
-      return h.json({ v: 1, store, tags: list.map((t) => ({ name: t.name, color: t.color || null })), oneOff: true, maxTags: MAX_TAGS_PER_WO, maxLength: TAG_LEN });
+      return json({ v: 1, store, tags: list.map((t) => ({ name: t.name, color: t.color || null })), oneOff: true, maxTags: MAX_TAGS_PER_WO, maxLength: TAG_LEN });
     }
-    const b = await h.readJson(req, 2000);
-    if (!b || typeof b !== 'object' || Array.isArray(b)) throw fail(400, 'bad JSON');
+    const b = await readJson(req, 2000);
+    if (!b || typeof b !== 'object' || Array.isArray(b)) throw httpError(400, 'bad JSON');
     const store = await storeOf(env, device, h, b.store);
     const { wo, open } = await woOf(env, h, store, b.wo);
     await bound(env, device);
     const by = author(device);
-    return h.json(path === '/tag' ? await setTag(env, h, device, by, store, wo, open, b) : await followUp(env, h, device, by, store, wo, open, b));
+    return json(path === '/tag' ? await setTag(env, h, device, by, store, wo, open, b) : await followUp(env, h, device, by, store, wo, open, b));
   } catch (e) {
-    if (e && e.status && e.status < 500) return h.fail(e.status, e.message);
+    if (e && e.status && e.status < 500) return fail(e.status, e.message);
     throw e;
   }
 }
 
 // POST /tag { store, wo, tag, on } → { ok, store, wo, tag, on, changed, tags }
 async function setTag(env, h, device, by, store, wo, open, b) {
-  if (typeof b.on !== 'boolean') throw fail(400, 'on: true or false');
+  if (typeof b.on !== 'boolean') throw httpError(400, 'on: true or false');
   let tag = tagName(b.tag);
-  if (!tag) throw fail(400, 'tag required');
+  if (!tag) throw httpError(400, 'tag required');
   let changed;
   if (b.on) {
-    if (!open) throw fail(409, 'work order is closed');
+    if (!open) throw httpError(409, 'work order is closed');
     const same = (await managed(env, store)).find((t) => t.name.toLowerCase() === tag.toLowerCase());
     if (same) tag = same.name; // the phone's keyboard capitalises: "priority" is the store's "Priority", not a one-off
     const [{ n }, has] = await Promise.all([
       env.AE.prepare('SELECT COUNT(*) AS n FROM wo_tags WHERE store = ? AND wo = ?').bind(store, wo).first(),
       env.AE.prepare('SELECT 1 FROM wo_tags WHERE store = ? AND wo = ? AND tag = ?').bind(store, wo, tag).first(),
     ]);
-    if (!has && n >= MAX_TAGS_PER_WO) throw fail(400, 'too many tags on this work order');
+    if (!has && n >= MAX_TAGS_PER_WO) throw httpError(400, 'too many tags on this work order');
     const r = await env.AE.prepare('INSERT OR IGNORE INTO wo_tags (store, wo, tag, by_name, by_id, at) VALUES (?, ?, ?, ?, ?, ?)').bind(store, wo, tag, by.name, by.id, nowIso()).run();
     changed = !!r.meta.changes;
     if (changed) await history(env, store, wo, 'add', tag, null, by);
@@ -196,25 +195,25 @@ async function setTag(env, h, device, by, store, wo, open, b) {
 
 // POST /followup { store, wo, due } | { store, wo, remove: true } → { ok, store, wo, followUp: { kind, due } | null }
 async function followUp(env, h, device, by, store, wo, open, b) {
-  if (b.remove != null && typeof b.remove !== 'boolean') throw fail(400, 'remove: true');
+  if (b.remove != null && typeof b.remove !== 'boolean') throw httpError(400, 'remove: true');
   const remove = b.remove === true;
-  if (remove === (b.due != null)) throw fail(400, 'due or remove: true (one of them)');
-  if (!open) throw fail(409, 'work order is closed');
+  if (remove === (b.due != null)) throw httpError(400, 'due or remove: true (one of them)');
+  if (!open) throw httpError(409, 'work order is closed');
   const cur = await env.AE.prepare('SELECT due, kind FROM auto_marks WHERE store = ? AND wo = ? AND removed_at IS NULL').bind(store, wo).first();
-  if (!cur) throw fail(404, 'no follow-up on this work order');
+  if (!cur) throw httpError(404, 'no follow-up on this work order');
   if (remove) {
     const r = await env.AE.prepare('UPDATE auto_marks SET removed_at = ? WHERE store = ? AND wo = ? AND removed_at IS NULL').bind(nowIso(), store, wo).run();
-    if (!r.meta.changes) throw fail(404, 'no follow-up on this work order');
+    if (!r.meta.changes) throw httpError(404, 'no follow-up on this work order');
     await history(env, store, wo, 'unmark', null, cur.due, by);
     await h.log(env, actor(device), 'waymark:unmark', store, wo, cur.due + ' ' + device.id.slice(0, 8));
     return { ok: true, store, wo, followUp: null };
   }
   const due = typeof b.due === 'string' ? b.due : '';
-  if (!realDay(due)) throw fail(400, 'due: YYYY-MM-DD');
-  if (due <= cur.due) throw fail(400, 'follow-ups can only move later');
-  if (due > addDays(todayOf(env), AHEAD_DAYS)) throw fail(400, 'due: at most a year ahead');
+  if (!realDay(due)) throw httpError(400, 'due: YYYY-MM-DD');
+  if (due <= cur.due) throw httpError(400, 'follow-ups can only move later');
+  if (due > addDays(todayOf(env), AHEAD_DAYS)) throw httpError(400, 'due: at most a year ahead');
   const r = await env.AE.prepare('UPDATE auto_marks SET due = ? WHERE store = ? AND wo = ? AND due = ? AND removed_at IS NULL').bind(due, store, wo, cur.due).run();
-  if (!r.meta.changes) throw fail(409, 'the follow-up changed meanwhile, reload it');
+  if (!r.meta.changes) throw httpError(409, 'the follow-up changed meanwhile, reload it');
   await history(env, store, wo, 'push', null, cur.due + ' → ' + due, by);
   await h.log(env, actor(device), 'waymark:push', store, wo, cur.due + ' -> ' + due + ' ' + device.id.slice(0, 8));
   return { ok: true, store, wo, followUp: { kind: kindOf(cur.kind), due } };
