@@ -2,6 +2,7 @@ package dev.aethernet.linkpearl.feature.scanner
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,9 +22,12 @@ data class ScannerUi(
     val reads: Int = 0,
 )
 
-/** Changes apply to the viewfinder at once and are saved shortly after the last one (a drag changes the area many times a second). */
+/**
+ * Changes apply to the viewfinder at once and are saved shortly after the last one (a drag changes the area many times a second).
+ * [appScope] outlives this view model: a change still waiting when the screen goes away is saved there.
+ */
 @OptIn(FlowPreview::class)
-class ScannerViewModel(private val prefs: ScannerPrefs, private val saveDelayMs: Long = 300) : ViewModel() {
+class ScannerViewModel(private val prefs: ScannerPrefs, private val appScope: CoroutineScope, private val saveDelayMs: Long = 300) : ViewModel() {
     private val _state = MutableStateFlow(ScannerUi())
     val state: StateFlow<ScannerUi> = _state.asStateFlow()
 
@@ -72,6 +76,7 @@ class ScannerViewModel(private val prefs: ScannerPrefs, private val saveDelayMs:
     }
 
     override fun onCleared() {
-        pending.value?.let { (k, t) -> kotlinx.coroutines.runBlocking { prefs.set(k, t) } }
+        // viewModelScope is already cancelled here, and the main thread must not wait for the disk.
+        pending.value?.let { (k, t) -> appScope.launch { prefs.set(k, t) } }
     }
 }
