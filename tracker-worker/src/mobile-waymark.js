@@ -11,6 +11,7 @@
   travel as one JSON parameter, so D1's bound-parameter limit never matters). A failed read is logged and answers "no marks" (never an error).
 */
 import { local, addDays } from './metrics.js';
+import { isDeviceStore } from './mobile-agent.js';
 
 export const DUE_MAX = 2000;  // most due work orders read for the follow-ups filter
 const TAGS_MAX = 20;          // tags returned per work order
@@ -116,7 +117,7 @@ const history = (env, store, wo, action, tag, detail, by) => env.AE.prepare('INS
 async function storeOf(env, device, h, v) {
   const store = h.int(v);
   if (store == null || store < 1 || store > 999999) throw fail(400, 'store required');
-  if (!device.stores.map(Number).includes(store)) throw fail(403, 'not your store');
+  if (!isDeviceStore(device, store)) throw fail(403, 'not your store');
   if (!(await env.AE.prepare('SELECT 1 FROM store_access WHERE store = ?').bind(store).first())) throw fail(403, 'this store does not have access to Aethernet');
   return store;
 }

@@ -34,6 +34,7 @@
 */
 import { local, localToUtc, addDays, hoursFor } from './metrics.js';
 import { buildHome, SPLH_TARGET } from './mobile.js';
+import { inStores, isDeviceStore } from './mobile-agent.js';
 
 export const TYPES = ['stuck', 'pickup', 'followup', 'quiet', 'digest', 'unlinked', 'coverage'];
 export const DEFAULTS = {
@@ -120,7 +121,7 @@ export function mergeSettings(stored, body, stores) {
     if (!isObj(body.stores)) throw bad('stores must be an object of store id: true or false');
     for (const [k, v] of Object.entries(body.stores)) {
       if (!/^\d{1,6}$/.test(k)) throw bad(`stores: "${k}" is not a store number`);
-      if (!stores.includes(Number(k))) throw Object.assign(new Error('not your store'), { status: 403 });
+      if (!inStores(stores, k)) throw Object.assign(new Error('not your store'), { status: 403 });
       if (typeof v !== 'boolean') throw bad(`stores.${k} must be true or false`);
       out.stores[Number(k)] = v;
     }
@@ -447,7 +448,7 @@ async function listApi(req, env, url, device, h) {
   let stores = device.stores;
   if (q.get('store') != null && q.get('store') !== 'all') {
     if (!/^\d{1,6}$/.test(q.get('store'))) return h.fail(400, 'store: all or a store number');
-    if (!device.stores.includes(Number(q.get('store')))) return h.fail(403, 'not your store');
+    if (!isDeviceStore(device, q.get('store'))) return h.fail(403, 'not your store');
     stores = [Number(q.get('store'))];
   }
   const lim = Math.min(Math.max(h.int(q.get('limit')) || 25, 1), 100);
@@ -500,7 +501,7 @@ async function readApi(req, env, url, device, h) {
       ]);
     } else {
       if (!isInt(b.store) || b.store < 0) return h.fail(400, 'store: a store number');
-      if (!device.stores.includes(b.store)) return h.fail(403, 'not your store');
+      if (!isDeviceStore(device, b.store)) return h.fail(403, 'not your store');
       await T.prepare('INSERT OR IGNORE INTO alert_reads (device_id, alert_id) SELECT ?1, a.id FROM alerts a WHERE a.store = ?2 AND a.id > ?3').bind(device.id, b.store, st.readUpto).run();
     }
   } else if (Array.isArray(b.ids)) {

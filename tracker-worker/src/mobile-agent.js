@@ -33,7 +33,39 @@ import { linkshellPhone } from './linkshell.js';
 import { pushApi } from './push.js';
 
 // The device as the `me` that homeApi expects: limited to its approved stores, never an owner.
-export const meOf = (device) => ({ owner: false, scope: 'stores', stores: device.stores, email: 'device:' + device.id });
+export const meOf = (device) => ({ owner: false, scope: 'stores', stores: deviceStores(device), email: 'device:' + device.id });
+
+/*
+  The tenant boundary: a phone only ever reads or writes its approved stores. Every phone route asks here, so the rule is in one place.
+  Function declarations (hoisted) because the route modules above import this file back. mobile.js must not: mobile-wo.js reads its
+  LANES while loading, so Home gets the device's stores through meOf instead.
+*/
+const STORE_ID = /^\d{1,6}$/;
+const err = (status, message) => Object.assign(new Error(message), { status });
+// A stores list as store numbers. Anything that is not a positive whole number is dropped: it can never match an asked store.
+export function storeIds(stores) {
+  return (Array.isArray(stores) ? stores : []).map(Number).filter((s) => Number.isInteger(s) && s > 0);
+}
+export function deviceStores(device) { return storeIds(device && device.stores); }
+// Is `store` (a number, or a string of digits) in the list / one of the device's approved stores?
+export function inStores(stores, store) {
+  const n = typeof store === 'number' ? store : (typeof store === 'string' && STORE_ID.test(store) ? Number(store) : NaN);
+  return Number.isInteger(n) && storeIds(stores).includes(n);
+}
+export function isDeviceStore(device, store) { return inStores(device && device.stores, store); }
+// The one store a request names. Throws 400 (missing or not a store number) / 403 (not this device's).
+export function storeOf(device, v) {
+  if (v == null || !STORE_ID.test(v)) throw err(400, 'store: a store number');
+  if (!isDeviceStore(device, v)) throw err(403, 'not your store');
+  return Number(v);
+}
+// The stores a request is about: ?store=<id> (must be an approved one), or all of the device's when it is missing, empty or "all". Throws 400 / 403.
+export function storesOf(device, ask) {
+  if (ask == null || ask === '' || ask === 'all') return deviceStores(device);
+  if (!STORE_ID.test(ask)) throw err(400, 'store: all or a store number');
+  if (!isDeviceStore(device, ask)) throw err(403, 'not your store');
+  return [Number(ask)];
+}
 
 export async function mobileAgentApi(req, env, url, device, h) {
   const path = url.pathname.replace(/^\/v1\/agents\/m/, '') || '/';

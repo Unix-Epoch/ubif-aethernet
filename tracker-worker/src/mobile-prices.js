@@ -14,6 +14,8 @@
   Repairs: each priced column goes under the first of Screen, Battery, Charge port, Back glass whose column test it passes (Reassemble's mapping), else
   under its own column name when it has a price. The Notes column is left out.
 */
+import { storeOf } from './mobile-agent.js';
+
 // ---------------------------------------------------------------- the userscript's parser (src/23-price-sheet.js), ported
 const DROP = new Set(['apple', 'samsung', 'google', 'galaxy', '5g', 'motorola', 'nintendo', 'microsoft', 'sony']);
 // Retail tabs only: Eagle of Va (contract prices), Refurb, BER, etc. are synced but never quoted from.
@@ -92,11 +94,6 @@ export function repairsOf(cells) {
 // ---------------------------------------------------------------- the route
 const err = (status, message) => Object.assign(new Error(message), { status });
 const clean = (v, max) => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
-function storeOf(device, v) {
-  if (v == null || !/^\d{1,6}$/.test(v)) throw err(400, 'store: a store number');
-  if (!device.stores.map(Number).includes(Number(v))) throw err(403, 'not your store');
-  return Number(v);
-}
 const noTable = (e) => /no such table/i.test(String(e && e.message));
 
 // Parsed sheets, per store, until the sync job pushes a new one (synced_at changes). Per isolate; the sheet itself is a few hundred KB at most.

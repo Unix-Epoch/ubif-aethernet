@@ -14,6 +14,7 @@
   inv_docs PK (store, type, id), inv_cursors PK. No migration needed.
 */
 import { cleanLabel, parseLabel } from './retrace.js';
+import { storeOf } from './mobile-agent.js';
 import { nowCols, rowNow, nowCountsRows, nowCountsStmt, availRes } from './retrace-now.js';
 
 const DEFAULT_LIMIT = 25, MAX_LIMIT = 100;
@@ -28,12 +29,6 @@ const likeEsc = (s) => s.replace(/[\\%_]/g, (c) => '\\' + c);
 const clean = (v, max) => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
 const GROUPS = ['in', 'wo', 'out', 'q', 'bad'];
 
-// The one store this request is about. Throws 400 / 403.
-function storeOf(device, v) {
-  if (v == null || !/^\d{1,6}$/.test(v)) throw err(400, 'store: a store number');
-  if (!device.stores.map(Number).includes(Number(v))) throw err(403, 'not your store');
-  return Number(v);
-}
 const limitOf = (h, v) => Math.min(Math.max(h.int(v) || DEFAULT_LIMIT, 1), MAX_LIMIT);
 const movement = (m) => ({ at: m.at, kind: m.kind, refType: m.ref_type || null, refId: m.ref_id || null, label: m.label || null });
 

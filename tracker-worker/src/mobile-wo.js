@@ -22,6 +22,7 @@
   (store, wo, id) for the one latest snapshot of a detail, wo_closed (store, is_open, closed_at) for states recent and closed, chg_wo (store, wo, id).
 */
 import { laneOf, LANES } from './mobile.js';
+import { storesOf, isDeviceStore } from './mobile-agent.js';
 import { marksFor, dueMarks, dueCond, todayOf } from './mobile-waymark.js';
 
 const DEFAULT_LIMIT = 25, MAX_LIMIT = 100;      // list page
@@ -39,14 +40,6 @@ const numOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null
 const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 const secs = (a, b) => (a && b ? Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 1000)) : null);
 
-// The stores this request is about: ?store=<id> (must be an approved one) or all of the device's. Throws 400 / 403.
-function storesOf(device, ask) {
-  const mine = device.stores.map(Number);
-  if (ask == null || ask === '' || ask === 'all') return mine;
-  if (!/^\d{1,6}$/.test(ask)) throw err(400, 'store: all or a store number');
-  if (!mine.includes(Number(ask))) throw err(403, 'not your store');
-  return [Number(ask)];
-}
 // Stores (of those asked) that this device holds a wrapped key for: the only ones whose sealed blobs it may have.
 async function keyedStores(env, device, ids) {
   if (!ids.length) return [];
@@ -250,7 +243,7 @@ function changeOf(c) {
 
 async function detail(env, url, device, h, store, wo) {
   const T = env.TR, sealed = url.searchParams.get('sealed') === '1';
-  if (!device.stores.map(Number).includes(store)) throw err(403, 'not your store');
+  if (!isDeviceStore(device, store)) throw err(403, 'not your store');
   const nowMs = Date.now();
   const [wr, sp, partsR, soldR, chg] = await T.batch([
     T.prepare(`SELECT ${ROW_COLS}, w.plain AS plain_json, w.cart_total, w.cart_paid, w.closed_reason, w.sold_at FROM workorders w WHERE w.store = ? AND w.wo = ?`).bind(store, wo),

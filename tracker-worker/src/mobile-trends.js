@@ -23,6 +23,7 @@
 */
 import { buildMetrics, local, addDays, localToUtc } from './metrics.js';
 import { SPLH_TARGET } from './mobile.js';
+import { deviceStores, isDeviceStore } from './mobile-agent.js';
 
 const CACHE_SECONDS = 60, PERIODS = ['week', 'month', 'year'];
 // rfp_periods started recording on Oct 12, 2026 (migrations/2026-10-12e.sql) and was never backfilled: before the first full day,
@@ -129,11 +130,11 @@ export async function buildTrends(env, ids, names, q, nowMs = Date.now()) {
 
 export async function trendsApi(req, env, url, device, h) {
   if (req.method !== 'GET' || url.pathname !== '/v1/agents/m/trends') return h.fail(404, 'not found');
-  const qs = url.searchParams, tz = env.STORE_TZ || 'America/New_York', mine = (device.stores || []).map(Number);
+  const qs = url.searchParams, tz = env.STORE_TZ || 'America/New_York', mine = deviceStores(device);
   const ask = String(qs.get('store') || 'all'), period = String(qs.get('period') || 'week'), atQ = qs.get('at');
   let ids;
   if (ask === 'all') ids = mine;
-  else if (/^\d{1,6}$/.test(ask)) { if (!mine.includes(Number(ask))) return h.fail(403, 'not your store'); ids = [Number(ask)]; }
+  else if (/^\d{1,6}$/.test(ask)) { if (!isDeviceStore(device, ask)) return h.fail(403, 'not your store'); ids = [Number(ask)]; }
   else return h.fail(400, 'store: all or a store number');
   if (!PERIODS.includes(period)) return h.fail(400, 'period: week, month or year');
   const nowMs = Date.now(), today = local(nowMs, tz).day, at = atQ == null || atQ === '' ? today : String(atQ);
