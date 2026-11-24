@@ -27,7 +27,7 @@
 import { json, fail, readJson, now } from './http.js';
 import { cleanLabel, itemOfLabel, isoAt, ignoredItem, NOW_KIND } from './retrace.js';
 import { nowCols, rowNow } from './retrace-now.js';
-import { insertMv, soWo, tombs, chunks } from './retrace-api.js';
+import { insertMv, soWo, tombs, chunks } from './retrace-core.js';
 
 export const WOS_ASK = 25, TRIES_MAX = 5;
 const CLAIM_MIN = 10, RESULTS_MAX = 50, LINES_MAX = 200;
