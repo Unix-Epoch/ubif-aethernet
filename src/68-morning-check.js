@@ -5,12 +5,15 @@
   Which Portal calls are proven (captured from Portal's own UI) and which are still guesses:
     nickname  PUT /api/customer-devices/{id}, the device record back unchanged apart from name   proven (Waymark)
     note      POST /api/note { noteText, customerId, workorderId, noteTag, noteType: 2 }           proven (Recitation, Provoke)
+              customerId: the order's CustomerDevice.customerId (the detail has none at the top), else
+              GET /api/v1/workorder/{id}/demographic/customer-data (Recitation)
     status    8 → 9: PATCH /api/workorder/{id}/status { workorderStatusId }                         proven (Swiftcast)
               9 → 10 → 11 → 12: PUT /api/workorder/{id} (the order back, + workorderStatusId,
               markCurrentStepCompleted), then the step's note                                       proven (Swiftcast)
               12 → 13: POST /api/workorder/attribute (service_outcome, workorderBin), then the PUT  proven (Swiftcast)
               any other move                                                                       GUESS: same PUT, no note
-    bin       GUESS: the PUT with workorderBin (the name Portal's attribute call uses)
+    bin       GUESS: the PUT with workorderBin (the attribute call's name) and binLocation (check-in's name),
+              then the order is read again and the change fails unless Portal kept the new bin
   Guesses are dev-only test buttons until the dev recorder (dev tools → Portal request recorder) has Portal's real call.
   Customer texts: every status call sends sendComms: false.
 */
@@ -38,8 +41,15 @@ AE.morningCheck = (() => {
   // The order to PUT back: Portal's own answer, never one built from a malformed answer.
   const putBody = (wo, extra) => { const b = Object.assign({}, wo, extra); delete b.workorderId; return b; };
   // noteType 1: Portal's automatic step notes (Swiftcast); 2: a note typed by hand (Recitation, Provoke).
+  async function customerOf(wo, woId) {
+    const id = wo.CustomerDevice && wo.CustomerDevice.customerId;
+    if (id != null && id !== '') return String(id);
+    const c = await api('GET', '/api/v1/workorder/' + woId + '/demographic/customer-data');
+    if (c && c.customerId != null && c.customerId !== '') return String(c.customerId);
+    throw new Error('No customer on this work order');
+  }
   async function note(wo, woId, tag, text, type) {
-    return api('POST', '/api/note', { noteText: text, customerId: String(wo.customerId), workorderId: Number(woId), noteTag: tag || null, noteType: type || 1 });
+    return api('POST', '/api/note', { noteText: text, customerId: await customerOf(wo, woId), workorderId: Number(woId), noteTag: tag || null, noteType: type || 1 });
   }
   const sameStore = async (wo) => { const p = await AE.profile(); if (wo.storeId != null && p && Number(wo.storeId) !== Number(p.storeId)) throw new Error('Another store\'s work order'); return p; };
 
@@ -84,9 +94,12 @@ AE.morningCheck = (() => {
     const wo = await raw(woId);
     await sameStore(wo);
     if (opts.updatedAt && wo.updatedAt && opts.updatedAt !== wo.updatedAt) throw Object.assign(new Error('Changed in Portal since'), { stale: true });
-    await api('PUT', '/api/workorder/' + woId, putBody(wo, { workorderBin: String(bin || ''), sendComms: false }));
+    const to = String(bin || '').trim();
+    await api('PUT', '/api/workorder/' + woId, putBody(wo, { workorderBin: to, binLocation: to, sendComms: false }));
     changed(woId, 'bin');
-    return read(woId);
+    const after = await read(woId);
+    if (after.bin.trim().toLowerCase() !== to.toLowerCase()) throw new Error('Portal didn\'t take the new location');
+    return after;
   }
 
   // Proven (Waymark): the device record back unchanged apart from name.
@@ -141,7 +154,7 @@ AE.morningCheck.link = (() => {
   if (typeof AE.linkshell === 'undefined' || !AE_ON_PORTAL) return null;
   const L = AE.linkshell, MC = AE.morningCheck;
   const PART = 15;
-  const LIVE = { bin: false }; // bin changes: on once Portal's call is recorded
+  const LIVE = { bin: true }; // bin changes: the guessed call, checked by reading the order back (see top)
   let run = null; // { id, total, done, changed, log: [] , panel }
 
   // The moves the phone may make from each status: proven calls only, and never past Work in progress.
