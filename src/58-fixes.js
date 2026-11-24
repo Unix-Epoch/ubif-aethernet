@@ -518,34 +518,50 @@ AE.shard({
           read (lists, then each PO once) and the newest one with a line for that SKU and part name is the PO.
         */
         const norm = (x) => String(x == null ? '' : x).replace(/\s+/g, ' ').trim().toLowerCase();
-        let openPos = null; // Promise<[{ po, lines }]>, newest first, once per page visit
+        // The store's open POs, newest first: the list is read at once, then each PO's lines, 6 at a time.
+        // Kept for 5 minutes, so going back to the WO (or another one) doesn't read them all again.
+        let openPos = null, openPosAt = 0; // { list: Promise<[{ po, lines: Promise<[]> }]> }
+        const headers = new Map(); // PO number → Promise<lines>
+        const linesOf = (po) => {
+          if (!headers.has(po)) {
+            headers.set(po, AE.api('GET', '/api/boh/purchase-orders/' + encodeURIComponent(po))
+              .then((h) => (h && Array.isArray(h.PurchaseOrderLinesV2) ? h.PurchaseOrderLinesV2 : []))
+              .catch((e) => { headers.delete(po); throw e; }));
+          }
+          return headers.get(po);
+        };
         const readOpenPos = () => {
-          if (openPos) return openPos;
+          if (openPos && Date.now() - openPosAt < 5 * 60000) return openPos;
+          openPosAt = Date.now();
           openPos = (async () => {
-            const out = [];
-            for (const orderType of ['in-transit', 'draft']) {
+            const lists = await Promise.all(['in-transit', 'draft'].map(async (orderType) => {
+              const out = [];
               for (let page = 1; page <= 4; page++) {
                 const j = await AE.api('POST', '/api/boh/purchase-orders?pageSize=50&page=' + page + '&searchTerm=', { orderType });
                 const rows = j && Array.isArray(j.value) ? j.value : [];
                 for (const r of rows) {
                   const po = r && typeof r.PurchaseOrderNumber === 'string' ? r.PurchaseOrderNumber.trim() : '';
-                  if (/^[A-Za-z0-9-]{1,40}$/.test(po) && !out.some((x) => x.po === po)) out.push({ po });
+                  if (/^[A-Za-z0-9-]{1,40}$/.test(po)) out.push(po);
                 }
                 if (rows.length < 50) break;
               }
-            }
-            for (const x of out) {
-              const h = await AE.api('GET', '/api/boh/purchase-orders/' + encodeURIComponent(x.po)).catch(() => null);
-              x.lines = h && Array.isArray(h.PurchaseOrderLinesV2) ? h.PurchaseOrderLinesV2 : [];
-            }
-            return out;
+              return out;
+            }));
+            const pos = [...new Set(lists.flat())];
+            // 6 reads at a time, in list order, so the newest POs are read first.
+            const slots = pos.map((po) => { let go; const start = new Promise((r) => { go = r; }); return { po, start, go, lines: start.then(() => linesOf(po)) }; });
+            let next = 0;
+            const run = () => { if (next < slots.length) { const x = slots[next++]; x.go(); x.lines.catch(() => {}).then(run); } };
+            for (let i = 0; i < 6; i++) run();
+            return slots;
           })();
           openPos.catch(() => { openPos = null; }); // tried again next time
           return openPos;
         };
         const genericPo = async (sku, name) => {
           for (const x of await readOpenPos()) {
-            if (x.lines.some((l) => l && String(l.ItemNumber) === sku && l.Metadata && norm(l.Metadata.PartName) === norm(name))) return x.po;
+            const lines = await x.lines.catch(() => []);
+            if (lines.some((l) => l && String(l.ItemNumber) === sku && l.Metadata && norm(l.Metadata.PartName) === norm(name))) return x.po;
           }
           return '';
         };
@@ -586,12 +602,24 @@ AE.shard({
           const text = item.querySelector('[data-aui="text"]') || item;
           text.textContent = 'View PO';
           if (text !== item) text.style.color = 'var(--aui-on-surface)'; // the copy may come from a disabled View item
+          let busy = false;
           const open = async (e) => {
             e.preventDefault(); e.stopPropagation();
+            if (busy) return;
             const tab = e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1;
+            const from = location.pathname;
             closeMenu();
-            let po;
-            try { po = await find(); } catch (err) { AE.toast('View PO', "Couldn't read the PO.", 'err', 6000); return; }
+            // Portal's menu closes on a pick, so a search that takes a moment shows Aethernet's busy toast (bottom left).
+            busy = true;
+            let note = null;
+            const wait = setTimeout(() => { note = AE.toast('Finding PO…', '', 'busy'); }, 300);
+            let po, err;
+            try { po = await find(); } catch (x) { err = x; }
+            clearTimeout(wait);
+            busy = false;
+            if (note) note.remove();
+            if (location.pathname !== from) return; // they moved on meanwhile
+            if (err) { AE.toast('View PO', "Couldn't read the PO.", 'err', 6000); return; }
             if (!po) { AE.toast('View PO', 'No PO found for this part.', 'err', 6000); return; }
             AE.track('fixes:viewPo');
             if (tab) window.open(poUrl(po), '_blank', 'noopener'); else go(poUrl(po));
@@ -601,9 +629,8 @@ AE.shard({
           item.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // no autoscroll on middle click
           view.after(item);
         }
-        let seen = '', path = '';
+        let seen = '';
         AE.onDom(() => {
-          if (location.pathname !== path) { path = location.pathname; openPos = null; } // POs change; read again on another visit
           if (WO_PAGE.test(location.pathname)) {
             // Read ahead, so the item is ready as the menu opens and a label without a PO gets none.
             const rows = [...document.querySelectorAll('tbody tr')].filter((r) => r.querySelector('td.--actions'));
