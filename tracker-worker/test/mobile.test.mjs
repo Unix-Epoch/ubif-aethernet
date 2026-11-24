@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, rmSync } from 'node:fs';
 import { register } from 'node:module';
 import { getPlatformProxy } from 'wrangler';
+import { test } from 'node:test';
 
 register('data:text/javascript,' + encodeURIComponent(`
 import { readFileSync } from 'node:fs';
@@ -61,137 +62,146 @@ await W.prepare("INSERT INTO store_access (store, name, added_at) VALUES (914, '
 const home = (ids, now = NOW) => buildHome(E, ids, names, now);
 const near = (a, b, why) => assert.ok(Math.abs(a - b) < 0.006, why + ': ' + a + ' vs ' + b);
 
-// ------------------------------------------------------------------ constants
-assert.deepEqual(SPLH_TARGET, [160, 180]); assert.equal(STALE_MINUTES, 45);
-assert.deepEqual([2, 8, 24, 9, 12, 3, 4, 7, 5, 1, 99, 13].map(laneOf), ['order', 'start', 'start', 'work', 'work', 'wait', 'wait', 'wait', 'wait', 'wait', 'wait', 'rfp'], 'lanes (Spread columns; unknown open statuses → Waiting)');
+await test('constants', async () => {
+  assert.deepEqual(SPLH_TARGET, [160, 180]); assert.equal(STALE_MINUTES, 45);
+  assert.deepEqual([2, 8, 24, 9, 12, 3, 4, 7, 5, 1, 99, 13].map(laneOf), ['order', 'start', 'start', 'work', 'work', 'wait', 'wait', 'wait', 'wait', 'wait', 'wait', 'rfp'], 'lanes (Spread columns; unknown open statuses → Waiting)');
+});
 
-// ------------------------------------------------------------------ one store
-{
-  const h = await home([914]);
-  assert.equal(h.today, '2026-10-15'); assert.equal(h.days.length, 7); assert.equal(h.days[0], '2026-10-09'); assert.equal(h.days[6], '2026-10-15');
-  assert.equal(h.scope, 914);
-  assert.deepEqual(h.sales.week, [null, null, null, 70, 130, 200, 85], 'days with no data are null (a dash), never 0; the 11:30 PM sale is Oct 14');
-  assert.equal(h.sales.today, 85); assert.equal(h.sales.yesterday, 200);
-  near(h.splh.today, 8.5, 'sales per labor hour = sales ÷ hours'); assert.equal(h.splh.hours, 10);
-  assert.deepEqual(h.splh.week, [null, null, null, null, null, 10, 8.5], 'only days with sales and hours');
-  assert.deepEqual(h.splh.target, [160, 180]);
-  assert.deepEqual(h.lanes, { order: 2, start: 2, work: 4, wait: 4, rfp: 2, total: 14 });
-  assert.equal(h.rfp.total, 150); assert.equal(h.rfp.count, 2); assert.equal(h.rfp.oldestDays, 12, 'oldest Ready for pickup: Oct 3 10:00 to Oct 15 16:00 is 12 days');
-  assert.deepEqual(h.rfp.ages.map((a) => a.n), [1, 0, 1, 0, 0], 'ages: 1 day, 12 days');
-  assert.equal(h.cleaning.cln, 14); assert.equal(h.cleaning.am, 18); near(h.cleaning.rate, 0.78, 'cleaning rate = linked cleanings ÷ Asurion Mobility orders');
-  assert.deepEqual(h.cleaning.week.slice(0, 5), [null, null, null, null, null]); near(h.cleaning.week[5], 0.5, 'yesterday');
-  assert.equal(h.asOf, new Date(NOW - 5 * 60000).toISOString()); assert.equal(h.stale, false); assert.equal(h.behind, null); assert.equal(h.byStore, undefined);
-  assert.deepEqual(h.stores.map((s) => s.id), [914, 326, 536]);
-}
-
-// ------------------------------------------------------------------ missing labor hours, missing cleaning data
-{
-  const h = await home([536]);
-  assert.equal(h.sales.today, 50); assert.equal(h.splh.today, null, 'no hours: a dash, not 0 or Infinity'); assert.equal(h.splh.hours, null);
-  assert.ok(h.splh.week.every((v) => v == null));
-  assert.equal(h.cleaning.rate, null); assert.equal(h.cleaning.cln, null);
-  assert.equal(h.rfp.total, 0); assert.equal(h.rfp.oldestDays, null); assert.deepEqual(h.lanes, { order: 0, start: 0, work: 0, wait: 0, rfp: 0, total: 0 });
-  const z = await home([326]); // orders uploaded as 0: no rate (not 0%, not NaN)
-  assert.equal(z.cleaning.rate, null); assert.equal(z.cleaning.am, null);
-  assert.doesNotMatch(JSON.stringify(h) + JSON.stringify(z), /Infinity|NaN/);
-}
-
-// ------------------------------------------------------------------ all stores
-{
-  const h = await home([914, 326, 536]);
-  assert.equal(h.scope, 'all');
-  assert.equal(h.sales.today, 175, 'sales summed: 85 + 40 + 50'); assert.equal(h.sales.yesterday, 300, '200 + 100 (326 estimated)');
-  near(h.splh.today, 125 / 18, 'total sales of stores with hours ÷ their total hours (not an average of ratios, and 536 without hours is left out)'); assert.equal(h.splh.hours, 18);
-  assert.deepEqual(h.lanes, { order: 2, start: 2, work: 4, wait: 5, rfp: 3, total: 16 }, 'lanes summed, the unknown status 99 is Waiting');
-  assert.equal(h.rfp.total, 180); assert.equal(h.rfp.count, 3); assert.equal(h.rfp.oldestDays, 14);
-  assert.equal(h.rfp.ages.reduce((s, a) => s + a.n, 0), 3);
-  assert.equal(h.cleaning.cln, 14); assert.equal(h.cleaning.am, 18, 'combined');
-  // freshness is the oldest store's, naming the store that is behind
-  assert.equal(h.asOf, new Date(NOW - 200 * 60000).toISOString()); assert.equal(h.stale, true); assert.deepEqual(h.behind, { id: 536, name: 'Lexington' });
-  assert.deepEqual(h.byStore.map((s) => [s.id, s.sales, s.stale]), [[914, 85, false], [326, 40, true], [536, 50, true]]);
-  near(h.byStore[0].splh, 8.5, 'by store'); assert.equal(h.byStore[2].splh, null);
-}
-
-// ------------------------------------------------------------------ staleness: more than 45 minutes during store hours only
-{
-  const at = (min) => home([326], NOW + min * 60000); // 326's last scan is 50 minutes before NOW
-  assert.equal((await at(-6)).stale, false, '44 minutes: fresh'); assert.equal((await at(-5)).stale, false, 'exactly 45: not yet');
-  assert.equal((await at(0)).stale, true, '50 minutes: stale');
-  const night = Date.parse(Z('2026-10-15', 20)); assert.equal((await home([326], night)).stale, false, 'after store hours the stopped scan is not "stale"');
-  const sunday = Date.parse(Z('2026-10-18', 14)); assert.equal((await home([326], sunday)).stale, false, 'closed Sunday');
-  assert.equal((await home([536], sunday)).stale, true, 'Lexington opens every day: stale on a Sunday');
-}
-
-// ------------------------------------------------------------------ the day boundary in store time, across the DST change (Nov 1, 2026: 25 hours)
-{
-  await T.batch([wo(326, 400, { status: 14, open: 0, sold: Z('2026-11-01', 23, 30), value: 70, tax: 0 }), wo(326, 401, { status: 14, open: 0, sold: Z('2026-11-02', 0, 20), value: 9, tax: 0 }),
-    wo(326, 402, { status: 14, open: 0, sold: Z('2026-10-31', 23, 30), value: 7, tax: 0 })]);
-  const dst = Date.parse(Z('2026-11-02', 16)), h = await home([326], dst);
-  assert.deepEqual(h.days, ['2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02']);
-  assert.equal(h.sales.week[4], 7, '11:30 PM Oct 31 (EDT) is Oct 31'); assert.equal(h.sales.week[5], 70, '11:30 PM Nov 1 (EST, after the change) is Nov 1'); assert.equal(h.sales.week[6], 9, '12:20 AM Nov 2 is Nov 2');
-  assert.equal(h.today, '2026-11-02');
-}
-
-// ------------------------------------------------------------------ access: the admin site's /m and /api/m/home (developers only for now)
-const SITE = { DB: W, TR: T, LOCAL_TEST: '1', TRACKER_OWNERS: 'owner@x.com' };
-const person = (email, scope, stores, pages, details) => T.prepare('INSERT INTO people (email, scope, stores, pages, details) VALUES (?, ?, ?, ?, ?)').bind(email, scope, JSON.stringify(stores), JSON.stringify(pages), details).run();
-await person('mgr@x.com', 'stores', [326], ['wos', 'sales', 'metrics', 'data', 'retrace'], 1);
-await person('ol@x.com', 'all', [], ['wos', 'sales', 'metrics', 'data', 'usage', 'reports', 'auto', 'stores'], 1); // Owner role, but not a developer
-const call = async (as, path, env = SITE) => {
-  const u = new URL('http://localhost' + path); if (as) u.searchParams.set('as', as);
-  const r = await site.fetch(new Request(u), env, { waitUntil() {} });
-  const buf = new Uint8Array(await r.clone().arrayBuffer()); let j = null; try { j = JSON.parse(new TextDecoder().decode(buf)); } catch (_) {}
-  return { status: r.status, h: r.headers, j, text: new TextDecoder().decode(buf), buf };
-};
-const NOWQ = '&now=' + NOW;
-{
-  const ok = await call('owner@x.com', '/api/m/home?store=all' + NOWQ);
-  assert.equal(ok.status, 200); assert.equal(ok.j.scope, 'all'); assert.equal(ok.j.lanes.total, 16);
-  assert.match(ok.h.get('cache-control'), /private, max-age=60/, 'cacheable for a minute, by the browser only');
-  assert.equal((await call('owner@x.com', '/api/m/home?store=914' + NOWQ)).j.scope, 914);
-  assert.equal((await call('owner@x.com', '/api/m/home?store=777' + NOWQ)).status, 403, 'a store that is not on the list'); assert.equal((await call('owner@x.com', '/api/m/home?store=abc')).status, 400);
-  for (const who of ['ol@x.com', 'mgr@x.com', 'nobody@x.com', null]) {
-    for (const path of ['/api/m/home?store=all', '/m', '/m/', '/m/app.js', '/m/sw.js', '/m/manifest.webmanifest', '/m/icon-192.png']) {
-      const r = await call(who, path); assert.equal(r.status, 403, (who || 'local-test (not an owner)') + ' ' + path); assert.ok(!/ZZ|salesDays|"sales"/.test(r.text));
-    }
+await test('one store', async () => {
+  {
+    const h = await home([914]);
+    assert.equal(h.today, '2026-10-15'); assert.equal(h.days.length, 7); assert.equal(h.days[0], '2026-10-09'); assert.equal(h.days[6], '2026-10-15');
+    assert.equal(h.scope, 914);
+    assert.deepEqual(h.sales.week, [null, null, null, 70, 130, 200, 85], 'days with no data are null (a dash), never 0; the 11:30 PM sale is Oct 14');
+    assert.equal(h.sales.today, 85); assert.equal(h.sales.yesterday, 200);
+    near(h.splh.today, 8.5, 'sales per labor hour = sales ÷ hours'); assert.equal(h.splh.hours, 10);
+    assert.deepEqual(h.splh.week, [null, null, null, null, null, 10, 8.5], 'only days with sales and hours');
+    assert.deepEqual(h.splh.target, [160, 180]);
+    assert.deepEqual(h.lanes, { order: 2, start: 2, work: 4, wait: 4, rfp: 2, total: 14 });
+    assert.equal(h.rfp.total, 150); assert.equal(h.rfp.count, 2); assert.equal(h.rfp.oldestDays, 12, 'oldest Ready for pickup: Oct 3 10:00 to Oct 15 16:00 is 12 days');
+    assert.deepEqual(h.rfp.ages.map((a) => a.n), [1, 0, 1, 0, 0], 'ages: 1 day, 12 days');
+    assert.equal(h.cleaning.cln, 14); assert.equal(h.cleaning.am, 18); near(h.cleaning.rate, 0.78, 'cleaning rate = linked cleanings ÷ Asurion Mobility orders');
+    assert.deepEqual(h.cleaning.week.slice(0, 5), [null, null, null, null, null]); near(h.cleaning.week[5], 0.5, 'yesterday');
+    assert.equal(h.asOf, new Date(NOW - 5 * 60000).toISOString()); assert.equal(h.stale, false); assert.equal(h.behind, null); assert.equal(h.byStore, undefined);
+    assert.deepEqual(h.stores.map((s) => s.id), [914, 326, 536]);
   }
-  // signed out on a real host: Access's check comes first
-  const real = { TR: T, DB: W, TEAM_DOMAIN: 't.example', POLICY_AUD: 'aud', TRACKER_OWNERS: 'owner@x.com' };
-  for (const path of ['/api/m/home', '/m', '/m/sw.js', '/m/manifest.webmanifest']) { const r = await site.fetch(new Request('https://admin.example' + path), real, { waitUntil() {} }); assert.equal(r.status, 403, 'signed out ' + path); }
-  const post = await site.fetch(new Request('http://localhost/api/m/home?as=owner@x.com', { method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' }, body: '{}' }), SITE, { waitUntil() {} });
-  assert.equal(post.status, 403, 'read only');
-  // a manager scoped to one store reaches it only if a page ever opens it up: the gate and the route both limit stores
-  const { homeApi } = await import('../src/mobile.js');
-  const mgr = { owner: false, scope: 'stores', stores: [326], email: 'mgr@x.com' };
-  const asMgr = async (q) => homeApi(new Request('http://x/api/m/home?' + q), E, new URL('http://x/api/m/home?' + q), mgr, { now: NOW });
-  assert.equal((await asMgr('store=914')).status, 403); const own = await (await asMgr('store=all')).json(); assert.deepEqual(own.stores.map((s) => s.id), [326]); assert.equal(own.scope, 326);
-}
+});
 
-// ------------------------------------------------------------------ the shell: content types, policy, manifest, service worker, icons
-{
-  const html = await call('owner@x.com', '/m');
-  assert.equal(html.status, 200); assert.match(html.h.get('content-type'), /^text\/html/);
-  const csp = html.h.get('content-security-policy'); assert.match(csp, /script-src 'self'(;|$)/); assert.doesNotMatch(csp, /unsafe|https?:/, 'no inline script, no outside hosts');
-  assert.match(html.text, /rel="manifest" href="\/m\/manifest\.webmanifest" crossorigin="use-credentials"/, 'the manifest is fetched with the Access cookie');
-  assert.doesNotMatch(html.text, /<script>|onclick=|style=/); assert.equal((await call('owner@x.com', '/m/')).status, 200);
-  const man = await call('owner@x.com', '/m/manifest.webmanifest'); assert.match(man.h.get('content-type'), /^application\/manifest\+json/);
-  assert.equal(man.j.start_url, '/m'); assert.equal(man.j.scope, '/m'); assert.equal(man.j.display, 'standalone'); assert.equal(man.j.short_name, 'Linkpearl');
-  for (const ic of man.j.icons) { const r = await call('owner@x.com', ic.src); assert.equal(r.status, 200, ic.src); assert.equal(r.h.get('content-type'), ic.type); if (ic.type === 'image/png') assert.deepEqual([...r.buf.slice(1, 4)], [80, 78, 71], 'PNG bytes'); }
-  assert.ok(man.j.icons.some((i) => i.sizes === '192x192') && man.j.icons.some((i) => i.sizes === '512x512') && man.j.icons.some((i) => i.purpose === 'maskable'));
-  const sw = await call('owner@x.com', '/m/sw.js'); assert.match(sw.h.get('content-type'), /javascript/); assert.equal(sw.h.get('service-worker-allowed'), '/m'); assert.match(sw.text, /^const V = "/);
-  assert.match((await call('owner@x.com', '/m/app.js')).h.get('content-type'), /javascript/); assert.match((await call('owner@x.com', '/m/app.css')).h.get('content-type'), /^text\/css/);
-  assert.equal((await call('owner@x.com', '/m/nope')).status, 404);
-  // the worker caches nothing but the shell and Home answers, and only plain 200s
-  assert.doesNotMatch(sw.text.replace(/\/\*[\s\S]*?\*\//, ''), /\/api\/(?!m\/home)/); assert.match(sw.text, /plain\(r\)/);
-}
+await test('missing labor hours, missing cleaning data', async () => {
+  {
+    const h = await home([536]);
+    assert.equal(h.sales.today, 50); assert.equal(h.splh.today, null, 'no hours: a dash, not 0 or Infinity'); assert.equal(h.splh.hours, null);
+    assert.ok(h.splh.week.every((v) => v == null));
+    assert.equal(h.cleaning.rate, null); assert.equal(h.cleaning.cln, null);
+    assert.equal(h.rfp.total, 0); assert.equal(h.rfp.oldestDays, null); assert.deepEqual(h.lanes, { order: 0, start: 0, work: 0, wait: 0, rfp: 0, total: 0 });
+    const z = await home([326]); // orders uploaded as 0: no rate (not 0%, not NaN)
+    assert.equal(z.cleaning.rate, null); assert.equal(z.cleaning.am, null);
+    assert.doesNotMatch(JSON.stringify(h) + JSON.stringify(z), /Infinity|NaN/);
+  }
+});
 
-// ------------------------------------------------------------------ nothing private, and small
-{
-  const all = await call('owner@x.com', '/api/m/home?store=all' + NOWQ);
-  assert.doesNotMatch(all.text, /ZZ|customer|sealed|card|completed_by|by_name|v1\./i, 'no customer details, no staff names, nothing sealed');
-  assert.deepEqual(Object.keys(all.j).sort(), ['asOf', 'behind', 'byStore', 'cleaning', 'days', 'lanes', 'now', 'rfp', 'sales', 'scope', 'splh', 'stale', 'stores', 'today', 'tz', 'v'].sort());
-  assert.ok(all.text.length < 2500, 'phone-sized: ' + all.text.length + ' bytes');
-  for (const s of all.j.stores) assert.deepEqual(Object.keys(s).sort(), ['id', 'name']);
-}
-console.log('mobile: all passed');
+await test('all stores', async () => {
+  {
+    const h = await home([914, 326, 536]);
+    assert.equal(h.scope, 'all');
+    assert.equal(h.sales.today, 175, 'sales summed: 85 + 40 + 50'); assert.equal(h.sales.yesterday, 300, '200 + 100 (326 estimated)');
+    near(h.splh.today, 125 / 18, 'total sales of stores with hours ÷ their total hours (not an average of ratios, and 536 without hours is left out)'); assert.equal(h.splh.hours, 18);
+    assert.deepEqual(h.lanes, { order: 2, start: 2, work: 4, wait: 5, rfp: 3, total: 16 }, 'lanes summed, the unknown status 99 is Waiting');
+    assert.equal(h.rfp.total, 180); assert.equal(h.rfp.count, 3); assert.equal(h.rfp.oldestDays, 14);
+    assert.equal(h.rfp.ages.reduce((s, a) => s + a.n, 0), 3);
+    assert.equal(h.cleaning.cln, 14); assert.equal(h.cleaning.am, 18, 'combined');
+    // freshness is the oldest store's, naming the store that is behind
+    assert.equal(h.asOf, new Date(NOW - 200 * 60000).toISOString()); assert.equal(h.stale, true); assert.deepEqual(h.behind, { id: 536, name: 'Lexington' });
+    assert.deepEqual(h.byStore.map((s) => [s.id, s.sales, s.stale]), [[914, 85, false], [326, 40, true], [536, 50, true]]);
+    near(h.byStore[0].splh, 8.5, 'by store'); assert.equal(h.byStore[2].splh, null);
+  }
+});
+
+await test('staleness: more than 45 minutes during store hours only', async () => {
+  {
+    const at = (min) => home([326], NOW + min * 60000); // 326's last scan is 50 minutes before NOW
+    assert.equal((await at(-6)).stale, false, '44 minutes: fresh'); assert.equal((await at(-5)).stale, false, 'exactly 45: not yet');
+    assert.equal((await at(0)).stale, true, '50 minutes: stale');
+    const night = Date.parse(Z('2026-10-15', 20)); assert.equal((await home([326], night)).stale, false, 'after store hours the stopped scan is not "stale"');
+    const sunday = Date.parse(Z('2026-10-18', 14)); assert.equal((await home([326], sunday)).stale, false, 'closed Sunday');
+    assert.equal((await home([536], sunday)).stale, true, 'Lexington opens every day: stale on a Sunday');
+  }
+});
+
+await test('the day boundary in store time, across the DST change (Nov 1, 2026: 25 hours)', async () => {
+  {
+    await T.batch([wo(326, 400, { status: 14, open: 0, sold: Z('2026-11-01', 23, 30), value: 70, tax: 0 }), wo(326, 401, { status: 14, open: 0, sold: Z('2026-11-02', 0, 20), value: 9, tax: 0 }),
+      wo(326, 402, { status: 14, open: 0, sold: Z('2026-10-31', 23, 30), value: 7, tax: 0 })]);
+    const dst = Date.parse(Z('2026-11-02', 16)), h = await home([326], dst);
+    assert.deepEqual(h.days, ['2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02']);
+    assert.equal(h.sales.week[4], 7, '11:30 PM Oct 31 (EDT) is Oct 31'); assert.equal(h.sales.week[5], 70, '11:30 PM Nov 1 (EST, after the change) is Nov 1'); assert.equal(h.sales.week[6], 9, '12:20 AM Nov 2 is Nov 2');
+    assert.equal(h.today, '2026-11-02');
+  }
+});
+
+let call, NOWQ;
+await test("access: the admin site's /m and /api/m/home (developers only for now)", async () => {
+  const SITE = { DB: W, TR: T, LOCAL_TEST: '1', TRACKER_OWNERS: 'owner@x.com' };
+  const person = (email, scope, stores, pages, details) => T.prepare('INSERT INTO people (email, scope, stores, pages, details) VALUES (?, ?, ?, ?, ?)').bind(email, scope, JSON.stringify(stores), JSON.stringify(pages), details).run();
+  await person('mgr@x.com', 'stores', [326], ['wos', 'sales', 'metrics', 'data', 'retrace'], 1);
+  await person('ol@x.com', 'all', [], ['wos', 'sales', 'metrics', 'data', 'usage', 'reports', 'auto', 'stores'], 1); // Owner role, but not a developer
+  call = async (as, path, env = SITE) => {
+    const u = new URL('http://localhost' + path); if (as) u.searchParams.set('as', as);
+    const r = await site.fetch(new Request(u), env, { waitUntil() {} });
+    const buf = new Uint8Array(await r.clone().arrayBuffer()); let j = null; try { j = JSON.parse(new TextDecoder().decode(buf)); } catch (_) {}
+    return { status: r.status, h: r.headers, j, text: new TextDecoder().decode(buf), buf };
+  };
+  NOWQ = '&now=' + NOW;
+  {
+    const ok = await call('owner@x.com', '/api/m/home?store=all' + NOWQ);
+    assert.equal(ok.status, 200); assert.equal(ok.j.scope, 'all'); assert.equal(ok.j.lanes.total, 16);
+    assert.match(ok.h.get('cache-control'), /private, max-age=60/, 'cacheable for a minute, by the browser only');
+    assert.equal((await call('owner@x.com', '/api/m/home?store=914' + NOWQ)).j.scope, 914);
+    assert.equal((await call('owner@x.com', '/api/m/home?store=777' + NOWQ)).status, 403, 'a store that is not on the list'); assert.equal((await call('owner@x.com', '/api/m/home?store=abc')).status, 400);
+    for (const who of ['ol@x.com', 'mgr@x.com', 'nobody@x.com', null]) {
+      for (const path of ['/api/m/home?store=all', '/m', '/m/', '/m/app.js', '/m/sw.js', '/m/manifest.webmanifest', '/m/icon-192.png']) {
+        const r = await call(who, path); assert.equal(r.status, 403, (who || 'local-test (not an owner)') + ' ' + path); assert.ok(!/ZZ|salesDays|"sales"/.test(r.text));
+      }
+    }
+    // signed out on a real host: Access's check comes first
+    const real = { TR: T, DB: W, TEAM_DOMAIN: 't.example', POLICY_AUD: 'aud', TRACKER_OWNERS: 'owner@x.com' };
+    for (const path of ['/api/m/home', '/m', '/m/sw.js', '/m/manifest.webmanifest']) { const r = await site.fetch(new Request('https://admin.example' + path), real, { waitUntil() {} }); assert.equal(r.status, 403, 'signed out ' + path); }
+    const post = await site.fetch(new Request('http://localhost/api/m/home?as=owner@x.com', { method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' }, body: '{}' }), SITE, { waitUntil() {} });
+    assert.equal(post.status, 403, 'read only');
+    // a manager scoped to one store reaches it only if a page ever opens it up: the gate and the route both limit stores
+    const { homeApi } = await import('../src/mobile.js');
+    const mgr = { owner: false, scope: 'stores', stores: [326], email: 'mgr@x.com' };
+    const asMgr = async (q) => homeApi(new Request('http://x/api/m/home?' + q), E, new URL('http://x/api/m/home?' + q), mgr, { now: NOW });
+    assert.equal((await asMgr('store=914')).status, 403); const own = await (await asMgr('store=all')).json(); assert.deepEqual(own.stores.map((s) => s.id), [326]); assert.equal(own.scope, 326);
+  }
+});
+
+await test('the shell: content types, policy, manifest, service worker, icons', async () => {
+  {
+    const html = await call('owner@x.com', '/m');
+    assert.equal(html.status, 200); assert.match(html.h.get('content-type'), /^text\/html/);
+    const csp = html.h.get('content-security-policy'); assert.match(csp, /script-src 'self'(;|$)/); assert.doesNotMatch(csp, /unsafe|https?:/, 'no inline script, no outside hosts');
+    assert.match(html.text, /rel="manifest" href="\/m\/manifest\.webmanifest" crossorigin="use-credentials"/, 'the manifest is fetched with the Access cookie');
+    assert.doesNotMatch(html.text, /<script>|onclick=|style=/); assert.equal((await call('owner@x.com', '/m/')).status, 200);
+    const man = await call('owner@x.com', '/m/manifest.webmanifest'); assert.match(man.h.get('content-type'), /^application\/manifest\+json/);
+    assert.equal(man.j.start_url, '/m'); assert.equal(man.j.scope, '/m'); assert.equal(man.j.display, 'standalone'); assert.equal(man.j.short_name, 'Linkpearl');
+    for (const ic of man.j.icons) { const r = await call('owner@x.com', ic.src); assert.equal(r.status, 200, ic.src); assert.equal(r.h.get('content-type'), ic.type); if (ic.type === 'image/png') assert.deepEqual([...r.buf.slice(1, 4)], [80, 78, 71], 'PNG bytes'); }
+    assert.ok(man.j.icons.some((i) => i.sizes === '192x192') && man.j.icons.some((i) => i.sizes === '512x512') && man.j.icons.some((i) => i.purpose === 'maskable'));
+    const sw = await call('owner@x.com', '/m/sw.js'); assert.match(sw.h.get('content-type'), /javascript/); assert.equal(sw.h.get('service-worker-allowed'), '/m'); assert.match(sw.text, /^const V = "/);
+    assert.match((await call('owner@x.com', '/m/app.js')).h.get('content-type'), /javascript/); assert.match((await call('owner@x.com', '/m/app.css')).h.get('content-type'), /^text\/css/);
+    assert.equal((await call('owner@x.com', '/m/nope')).status, 404);
+    // the worker caches nothing but the shell and Home answers, and only plain 200s
+    assert.doesNotMatch(sw.text.replace(/\/\*[\s\S]*?\*\//, ''), /\/api\/(?!m\/home)/); assert.match(sw.text, /plain\(r\)/);
+  }
+});
+
+await test('nothing private, and small', async () => {
+  {
+    const all = await call('owner@x.com', '/api/m/home?store=all' + NOWQ);
+    assert.doesNotMatch(all.text, /ZZ|customer|sealed|card|completed_by|by_name|v1\./i, 'no customer details, no staff names, nothing sealed');
+    assert.deepEqual(Object.keys(all.j).sort(), ['asOf', 'behind', 'byStore', 'cleaning', 'days', 'lanes', 'now', 'rfp', 'sales', 'scope', 'splh', 'stale', 'stores', 'today', 'tz', 'v'].sort());
+    assert.ok(all.text.length < 2500, 'phone-sized: ' + all.text.length + ' bytes');
+    for (const s of all.j.stores) assert.deepEqual(Object.keys(s).sort(), ['id', 'name']);
+  }
+});
 await dispose();
