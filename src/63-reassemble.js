@@ -14,7 +14,7 @@
   and Garrett, Oct 13, 2026), matched on the Portal user's name or email.
   Opens from the avatar menu ("Price estimate") and a Price estimate button at the bottom left of the
   Estimates page (/price-check) and of check-in's Repair estimate step (above Back). (A Dashboard tile was
-  dropped, Garrett, Oct 13, 2026: "it doesn't need to exist".) Copy only: nothing is added to a cart.
+  dropped Oct 13, 2026: it doesn't need to exist.) Copy only: nothing is added to a cart.
 */
 AE.reassemble = (() => {
   const DEFAULTS = {

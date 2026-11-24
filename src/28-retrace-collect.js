@@ -103,7 +103,7 @@ AE.retrace = (() => {
   class Stop extends Error {}
   class LockLost extends Stop {}
   const check = () => { if (stopped()) throw new Stop('stopped'); };
-  const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const ymd = AE.ymd;
   const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d; };
 
   // A random id this browser makes for itself (no name in it): how many browsers collect for a store, on the admin Usage page.

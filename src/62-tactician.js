@@ -24,12 +24,12 @@
   Tactician's store-wide parts, outside the shard so Settings can use them:
     · General manager(s) of this location: a store setting on the tracker (GET/PUT …/settings/gm), picked by
       anyone with Store time sheet access (Portal's own manager gate for that page). Portal's roles aren't used:
-      Garrett, Oct 12, 2026: "Portal roles are often not set up properly". Store setup will set it too.
+      they are often not set up properly (Oct 12, 2026). Store setup will set it too.
     · Punches and sales for a date range, shared by the Store time sheet page and the Reports card.
 */
 AE.tactician = (() => {
   const { h } = AE;
-  const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const ymd = AE.ymd;
   const monday = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
   let access = null, settings = null, settingsAt = 0;
   async function canManage() {
@@ -460,7 +460,7 @@ AE.shard({
       remembered in this browser. Needs Store time sheet access and the work order tracker.
     */
     const RP = 'ae-splh', GM_KEY = 'ae_splh_gm', RANGE_KEY = 'ae_splh_range';
-    // Target ranges (Garrett, Oct 12, 2026): ~$160–180 per labor hour leaving out general managers, ~$145–165 counting them.
+    // Target ranges (Oct 12, 2026): ~$160–180 per labor hour leaving out general managers, ~$145–165 counting them.
     const TARGET = { withoutGm: [160, 180], withGm: [145, 165] };
     const RANGES = [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month'], ['90', 'Last 90 days']];
     const rangeDates = (r) => {
@@ -521,6 +521,7 @@ AE.shard({
     const money = (n) => (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     let range = GM_getValue(RANGE_KEY, '7'), dataFor = null, data = null, busy = null, err = null, shownFor = null, loadedAt = 0, fresh = false;
     const STALE_MS = 10 * 60000; // the card's numbers are refreshed when older than this (on the page or coming back to it)
+    const stale = () => !busy && Date.now() - loadedAt > STALE_MS && !AE.health.down(); // the timed reload waits while Portal is down
     async function loadSplh(fresh) {
       const [f, t] = rangeDates(range), from = T.ymd(f), to = T.ymd(t);
       const p = await AE.profile(), store = Number(p.storeId);
@@ -546,7 +547,7 @@ AE.shard({
     // Bar color: at/over the target's low end = good; within 10% below, or over it with the RFP total picked up = near; else miss.
     const grade = (r, lo) => (r.splh >= lo ? 'good' : r.splh >= lo * 0.9 || (r.ghost && r.ghost >= lo) ? 'near' : 'miss');
     // A day's details under the chart: sales, hours and who worked it (this store). Hovering a bar previews it; a click, a tap or the
-    // keyboard picks the day, and the pick stays (pickDay) until another one. (No overtime here: Garrett, Oct 12, 2026.)
+    // keyboard picks the day, and the pick stays (pickDay) until another one. (No overtime here, decided Oct 12, 2026.)
     let pickDay = null;
     function dayInfo(r, leaveOut) {
       const fmtD = new Date(r.day + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
@@ -654,7 +655,7 @@ AE.shard({
       AE.every(1000, () => {
         if (!/^\/reporting\/metrics/.test(location.pathname)) { shownFor = null; document.querySelectorAll('.ae-splh-scroll').forEach((x) => x.classList.remove('ae-splh-scroll')); return; }
         const reports = document.querySelector('.reports-card');
-        if (reports && (!document.getElementById(RP) || shownFor !== reports || (!busy && Date.now() - loadedAt > STALE_MS && !AE.health.down()))) { shownFor = reports; showSplh(); }
+        if (reports && (!document.getElementById(RP) || shownFor !== reports || stale())) { shownFor = reports; showSplh(); }
         const card = document.getElementById(RP); // Portal's Reports page clips anything taller than the window: let it scroll
         for (let x = card && card.parentElement; x; x = x.parentElement) {
           const oy = getComputedStyle(x).overflowY, over = x.scrollHeight > x.clientHeight + 1;
@@ -675,5 +676,6 @@ AE.shard({
       if (!lastPath) { lastPath = location.pathname; AE.profile().then((p) => { if (p && p.storeId) { home = Number(p.storeId); homeName = p.storeName || ''; sync(); } }).catch(() => {}); }
       sync();
     });
+    this._test = { stale }; // the client tests' way in (test-client/)
   },
 });

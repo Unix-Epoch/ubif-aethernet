@@ -154,7 +154,7 @@ AE.waymark = (() => {
   const EOD_HOUR = 19;                    // marks go on after end of day, 7 PM local
   const afterEod = () => AE.nowDate().getHours() >= EOD_HOUR; // AE.nowDate: the dev tools can shift it
   const pad = (n) => String(n).padStart(2, '0');
-  const isoDate = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); // store-local date
+  const isoDate = AE.ymd; // store-local date
   const parseDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
   const addDays = (iso, n) => { const d = parseDate(iso); d.setDate(d.getDate() + n); return isoDate(d); };
   const today = () => isoDate(AE.nowDate());

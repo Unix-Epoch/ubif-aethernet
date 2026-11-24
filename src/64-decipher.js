@@ -22,7 +22,7 @@
   wrong pick. The Worker (/v1/:store/tac) only ever gets the 8-digit TAC and the model: never an IMEI, serial or customer.
   Opens from the avatar menu, a Decipher button beside the IMEI box on check-in's Device step, and Master's Mend's scan to open
   (a scanned 15-digit number that passes the check digit; not on check-in itself, where a scan is data entry).
-  No lost status (Garrett, Oct 16, 2026).
+  No lost status (decided Oct 16, 2026).
 */
 AE.decipher = (() => {
   const digitsOf = (s) => String(s || '').replace(/\D/g, '');
@@ -469,7 +469,7 @@ AE.shard({
     D.open = open;
 
     // ------------------------------------------------------------ Use this device (check-in's Device step)
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const sleep = AE.sleep;
     const until = async (fn, ms = 5000) => { const t = Date.now(); for (;;) { const v = fn(); if (v) return v; if (Date.now() - t > ms) return null; await sleep(120); } };
     const modelInput = () => document.querySelector('input[data-testid="deviceSearch-TextInput"]');
     const imeiInput = () => [...document.querySelectorAll('input')].find((i) => /imei/i.test((i.name || '') + (i.id || '') + (i.getAttribute('data-testid') || '')) && i.getClientRects().length);
