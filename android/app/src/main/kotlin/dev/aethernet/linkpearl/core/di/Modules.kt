@@ -18,12 +18,11 @@ import dev.aethernet.linkpearl.feature.trends.TrendsModule
 import dev.aethernet.linkpearl.feature.workorders.WorkOrdersModule
 
 /**
- * The one list of modules, written once by the scaffold. Each module object lives in its owner's package and is the ONLY place that
- * owner registers services; install order below is the order of precedence (later providers replace earlier ones).
- *  - NavModule: default nav badge source (core/nav, scaffold-owned)
- *  - DataModule: ApiClient, Auth, DeviceIdentity, HomeRepository (agent A)
- *  - LockModule: AppLock (agent B)
- *  - HomeModule / OnboardingModule (agent A), WorkOrdersModule (B), RetraceModule, AlertsModule (C), SettingsModule (D)
+ * The one list of modules. Each module object lives in its feature's package and is the ONLY place that feature registers services;
+ * install order below is the order of precedence (later providers replace earlier ones).
+ *  - NavModule: default nav badge source (core/nav)
+ *  - DataModule: ApiClient, Auth, DeviceIdentity, HomeRepository
+ *  - LockModule: AppLock
  */
 val AllModules: List<FeatureModule> = listOf(
     NavModule, DataModule, LockModule,

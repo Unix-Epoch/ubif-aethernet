@@ -13,7 +13,7 @@ import dev.aethernet.linkpearl.core.nav.NavBadges
 import dev.aethernet.linkpearl.feature.update.UpdateController
 import kotlinx.coroutines.launch
 
-/** Owner: agent C. Alerts: the hub, the background check (WorkManager), notification channels, the nav badge. */
+/** Alerts: the hub, the background check (WorkManager), notification channels, the nav badge. */
 object AlertsModule : FeatureModule {
     override fun install(c: AppContainer) {
         val app = c.application

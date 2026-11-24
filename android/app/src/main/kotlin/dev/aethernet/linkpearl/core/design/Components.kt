@@ -66,7 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// Shared building blocks. core/design is scaffold-owned: feature agents use these and request additions in their report.
+// Shared building blocks: features use these and do not draw their own versions.
 // ---------------------------------------------------------------------------------------------------------------------------
 
 /**

@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Everything the feature agents will predictably need is declared here, once. Dial and text go through intents: no CALL/SMS. -->
+    <!-- Every permission the features need is declared here, once. Dial and text go through intents: no CALL/SMS. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

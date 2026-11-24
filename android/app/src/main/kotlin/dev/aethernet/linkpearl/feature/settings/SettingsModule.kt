@@ -8,7 +8,7 @@ import dev.aethernet.linkpearl.feature.update.UpdateModule
 import dev.aethernet.linkpearl.feature.widget.WidgetModule
 
 /**
- * Owner: agent D. Installs the app preferences (core/prefs) so every feature can read them, in-app updates (feature/update, shown in
+ * Installs the app preferences (core/prefs) so every feature can read them, in-app updates (feature/update, shown in
  * Settings' About) and the home-screen widgets (feature/widget; installed last so its Home hook wraps DataModule's repository).
  */
 object SettingsModule : FeatureModule {
