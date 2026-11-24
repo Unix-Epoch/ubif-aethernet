@@ -469,7 +469,7 @@ AE.shard({
     D.open = open;
 
     // ------------------------------------------------------------ Use this device (check-in's Device step)
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const sleep = AE.sleep;
     const until = async (fn, ms = 5000) => { const t = Date.now(); for (;;) { const v = fn(); if (v) return v; if (Date.now() - t > ms) return null; await sleep(120); } };
     const modelInput = () => document.querySelector('input[data-testid="deviceSearch-TextInput"]');
     const imeiInput = () => [...document.querySelectorAll('input')].find((i) => /imei/i.test((i.name || '') + (i.id || '') + (i.getAttribute('data-testid') || '')) && i.getClientRects().length);

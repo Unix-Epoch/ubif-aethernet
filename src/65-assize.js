@@ -187,7 +187,7 @@ AE.shard({
     function uploadDaily() {
       if (lastError || !result || !AE.tracker || !AE.tracker.configured() || Date.now() - dailyAt < 10 * 60 * 1000) return;
       dailyAt = Date.now();
-      const t = new Date(), day = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'), s = result.sum;
+      const t = new Date(), day = AE.ymd(t), s = result.sum;
       AE.profile().then((p) => p.storeId && AE.tracker.daily(p.storeId, day, { assize_fail: s.fail, assize_flag: s.flag, assize_note: s.note }, 'assize')).catch(() => {});
     }
     // The order on screen: its own detail, fresh within 2 minutes.

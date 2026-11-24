@@ -29,7 +29,7 @@
 */
 AE.tactician = (() => {
   const { h } = AE;
-  const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const ymd = AE.ymd;
   const monday = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
   let access = null, settings = null, settingsAt = 0;
   async function canManage() {

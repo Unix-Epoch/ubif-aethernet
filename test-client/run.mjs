@@ -124,6 +124,22 @@ await t('workerCall: the Worker\'s own error text, status and ApiError class; HT
   assert.deepEqual(JSON.parse(JSON.stringify(await AE.workerCall('GET', 'https://w.test/fine', {}))), { allowed: true });
 });
 
+await t('AE.ymd: a Date as the local YYYY-MM-DD, zero-padded; localDay and the shards\' day keys go through it', async () => {
+  const { AE, ctx } = load(['00-core.js', '27-tracker.js', '62-tactician.js']);
+  assert.equal(AE.ymd(new Date(2026, 0, 5, 23, 59)), '2026-01-05'); // local parts: late evening stays on its own day in any time zone
+  assert.equal(AE.ymd(new Date(2026, 10, 24, 0, 0)), '2026-11-24');
+  assert.equal(AE.ymd(new Date(999, 11, 31)), '999-12-31'); // the year is not padded (as every copy this replaced)
+  assert.equal(AE.localDay(), AE.ymd(new ctx.Date()));
+  assert.equal(AE.tactician.ymd, AE.ymd);
+});
+
+await t('AE.sleep: resolves after its pause, not before', async () => {
+  const env = load(['00-core.js'], { timers: 'fake' });
+  let done = false; env.AE.sleep(500).then(() => { done = true; });
+  await env.advance(499); assert.equal(done, false);
+  await env.advance(1); assert.equal(done, true);
+});
+
 // ================================================================== AE.shape
 await t('shape.obj / list: strict by default, { lenient } opts into "empty"', async () => {
   const { AE } = load(['00-core.js']);

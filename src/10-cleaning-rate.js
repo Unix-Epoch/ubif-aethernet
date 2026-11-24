@@ -302,7 +302,7 @@ AE.shard({
     // ------------------------------------------------------------ history (Reports page)
     const HIST_KEY = 'ae_rate_history', HIST_ID = 'sg-rate-history', DAY = 86400000;
     const dayStart = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
-    const keyOf = (d) => { const x = new Date(d); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
+    const keyOf = (d) => AE.ymd(new Date(d));
     const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
     const RANGES = [
       ['7', 'Last 7 days', () => [addDays(dayStart(new Date()), -6), dayStart(new Date())]],

@@ -304,7 +304,7 @@ AE.tracker = (() => {
     keeps about a week. The window runs into the next morning (the API's dates carry no time zone) and
     each sale is kept by its own local date. The customer (id, name) is sealed.
   */
-  const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const ymd = AE.ymd;
   async function salesDay(store, day, jwk) {
     const next = new Date(day + 'T12:00:00'); next.setDate(next.getDate() + 1);
     const j = await AE.api('GET', '/api/reporting/sales-history?sale_complete_start_date=' + day + 'T00:00:00.000&sale_complete_end_date=' + ymd(next) + 'T08:00:00.000');

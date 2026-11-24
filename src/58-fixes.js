@@ -350,7 +350,7 @@ AE.shard({
         // Appcues' newer containers (<appcues-experience-container>, shadow DOM) also hold buttons like Support
         // Ticket; only ones with a heading or a dialog are bulletins.
         const isBulletin = (box) => { const sc = scopeOf(box); return !!sc.querySelector('h1, h2, h3, h4, [role="dialog"]') && !box.closest('.sg'); };
-        const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+        const today = () => AE.ymd(new Date());
         const store = () => GM_getValue(KEY, {});
         const put = (k, v) => { const all = store(); if (v) all[k] = v; else delete all[k]; GM_setValue(KEY, all); };
         const onPage = (R) => R.pages.some((src) => { const x = re(src); return x && x.test(location.pathname); });
