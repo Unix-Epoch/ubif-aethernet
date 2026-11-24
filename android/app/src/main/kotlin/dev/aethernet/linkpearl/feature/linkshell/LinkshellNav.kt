@@ -35,6 +35,7 @@ import dev.aethernet.linkpearl.core.di.LocalAppContainer
 import dev.aethernet.linkpearl.core.nav.Routes
 import dev.aethernet.linkpearl.feature.pullbacks.PullbackCamera
 import dev.aethernet.linkpearl.feature.pullbacks.PullbackLink
+import dev.aethernet.linkpearl.feature.buybacks.BuybackLink
 import dev.aethernet.linkpearl.feature.pullbacks.QR_FORMATS
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -51,7 +52,7 @@ object LinkshellModule : FeatureModule {
         }
         c.provide<LinkshellRepository> { LinkshellRepository(c.get<ApiClient>()) }
         app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
-            override fun onActivityStarted(activity: Activity) { runCatching { c.get<PullbackLink>(); c.get<LinkshellClient>().wake() } }
+            override fun onActivityStarted(activity: Activity) { runCatching { c.get<PullbackLink>(); c.get<BuybackLink>(); c.get<LinkshellClient>().wake() } }
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
             override fun onActivityResumed(activity: Activity) {}
             override fun onActivityPaused(activity: Activity) {}
@@ -72,7 +73,7 @@ fun LinkshellRoute(navigate: (String) -> Unit) {
     val c = LocalAppContainer.current
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     val vm: LinkshellViewModel = viewModel(factory = viewModelFactory {
-        initializer { LinkshellViewModel(c.get<LinkshellClient>(), c.get<LinkshellRepository>(), runCatching { c.get<PullbackLink>() }.getOrNull()) }
+        initializer { LinkshellViewModel(c.get<LinkshellClient>(), c.get<LinkshellRepository>(), runCatching { c.get<PullbackLink>() }.getOrNull(), runCatching { c.get<BuybackLink>() }.getOrNull()) }
     })
     val ui by vm.state.collectAsStateWithLifecycle()
     // Linked: ask once for notifications, so a request from the PC can reach this phone with the app closed (feature/push).
@@ -88,7 +89,7 @@ fun LinkshellRoute(navigate: (String) -> Unit) {
         ui,
         LinkshellActions(
             onBack = { back?.onBackPressed() }, onCode = vm::onCode, onCancel = vm::cancel, onUnlink = vm::unlink,
-            onJoin = { if (vm.join()) navigate(Routes.PULLBACKS) },
+            onJoin = { vm.join()?.let(navigate) },
         ),
         storeName = { id -> stores.firstOrNull { it.id == id }?.name?.takeIf { it.isNotBlank() } },
         camera = { onCode -> PullbackCamera("", onCode, QR_FORMATS) },

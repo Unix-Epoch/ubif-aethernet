@@ -15,7 +15,7 @@ Aethernet is a Tampermonkey userscript of "shards" (features named after FFXIV a
 - `24-provoke.js` Provoke (`leadReplies`): lead replies
 - `27-tracker.js` WO tracker collection (not a shard)
 - `30-galaxy.js` Macrocosmos (`galaxy`): Galaxy Diagnostics exception
-- `40-print-labels.js` Quick Synthesis (`printLabels`); `45-buybacks.js` Bountiful Yield (`buybacks`)
+- `40-print-labels.js` Quick Synthesis (`printLabels`); `45-buybacks.js` Bountiful Yield (`buybacks`): add-all on buyback/RMA popouts, and Scan with phone over Linkshell (B- labels; `AE.buybacks.addAndScan`). Tests: `node test-client/buybacks.mjs`
 - `50-glamour.js` Glamour (`glamour`): appearance; `55-waymark.js` Waymark (`waymark`); `57-row-colors.js` Rainbow Drip (`rowColors`)
 - `58-fixes.js` Master's Mend (`fixes`): Portal fixes, bulletins
 - `59-spread.js` Spread (`spread`): Board (Kanban) view of the Work orders list, read-only (dev-only: `DEV_ONLY_FILES` in `build.py`, `AE_DEV` guards in `00-core.js`/`05-settings.js`); `sandbox/seed_board.py` seeds fake open work orders for it

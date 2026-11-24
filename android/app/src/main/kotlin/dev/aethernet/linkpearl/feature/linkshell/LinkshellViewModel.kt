@@ -2,6 +2,9 @@ package dev.aethernet.linkpearl.feature.linkshell
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.aethernet.linkpearl.feature.buybacks.BbRun
+import dev.aethernet.linkpearl.feature.buybacks.BuybackLink
+import dev.aethernet.linkpearl.core.nav.Routes
 import dev.aethernet.linkpearl.feature.pullbacks.PcRun
 import dev.aethernet.linkpearl.feature.pullbacks.PullbackLink
 import kotlinx.coroutines.Job
@@ -18,14 +21,15 @@ sealed interface LsUi {
     data class Scan(val busy: Boolean = false, val error: String? = null) : LsUi
     /** Scanned: the browser and the check code, until Link is pressed there. */
     data class Check(val pcName: String, val store: Int, val code: String) : LsUi
-    /** [peer]: the browser is connected. [offer]: a Pullbacks run it sent ("Scan with phone"). */
-    data class Linked(val pcName: String, val store: Int, val peer: Boolean, val seen: String?, val offer: PcRun?, val error: String? = null) : LsUi
+    /** [peer]: the browser is connected. [offer] / [buybacks]: a Pullbacks or buyback run it sent ("Scan with phone"). */
+    data class Linked(val pcName: String, val store: Int, val peer: Boolean, val seen: String?, val offer: PcRun?, val error: String? = null, val buybacks: BbRun? = null) : LsUi
 }
 
 class LinkshellViewModel(
     private val client: LinkshellClient,
     private val repo: LinkshellRepository,
     private val pullbacks: PullbackLink?,
+    private val buybacks: BuybackLink? = null,
     private val now: () -> Long = System::currentTimeMillis,
     private val pollMs: Long = 2_000L,
     private val pairMs: Long = 5 * 60_000L,
@@ -38,9 +42,9 @@ class LinkshellViewModel(
     init {
         client.wake()
         viewModelScope.launch {
-            combine(client.state, pullbacks?.offer ?: MutableStateFlow(null)) { s, offer -> s to offer }.collect { (s, offer) ->
+            combine(client.state, pullbacks?.offer ?: MutableStateFlow(null), buybacks?.offer ?: MutableStateFlow(null)) { s, offer, bb -> Triple(s, offer, bb) }.collect { (s, offer, bb) ->
                 val l = s.link
-                if (l != null) { waiting?.cancel(); _state.value = LsUi.Linked(l.pcName, l.store, s.peer, s.seen, offer, linkedError) }
+                if (l != null) { waiting?.cancel(); _state.value = LsUi.Linked(l.pcName, l.store, s.peer, s.seen, offer, linkedError, bb) }
                 else if (_state.value is LsUi.Linked) _state.value = LsUi.Scan()
             }
         }
@@ -88,10 +92,12 @@ class LinkshellViewModel(
         }
     }
 
-    /** Join the browser's Pullbacks run; the caller opens Pullbacks. */
-    fun join(): Boolean {
-        val offer = (_state.value as? LsUi.Linked)?.offer ?: return false
-        pullbacks?.join(offer) ?: return false
-        return true
+    /** Join the browser's run (buybacks first, else Pullbacks); returns the route to open, or null. */
+    fun join(): String? {
+        val l = _state.value as? LsUi.Linked ?: return null
+        l.buybacks?.let { bb -> buybacks?.join(bb) ?: return null; return Routes.BUYBACKS }
+        val offer = l.offer ?: return null
+        pullbacks?.join(offer) ?: return null
+        return Routes.PULLBACKS
     }
 }

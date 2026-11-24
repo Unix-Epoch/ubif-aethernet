@@ -20,6 +20,46 @@
   portal page meant the script never ran (removing + re-adding it forced a
   reinject). As a shard it runs portal-wide and gates on the path itself.
 */
+/*
+  Scan with phone (Linkshell): on a buyback order's "Add buyback parts" popout, the phone scans B- labels and the PC adds each one
+  in Portal with the two calls Portal's own scan makes (captured Nov 18, 2026, store 914; fixtures in test-client/buybacks.mjs):
+    POST /api/boh/buyback-order-lines/{order}              { buybackOrderNumber, serialNumbers: [label] }
+         → { BuybackOrderLines: [{ SerialId, DistroLabelId, … }], ErrorMessage, Success, DebugMessage }
+    POST /api/boh/buyback-order-lines/{order}/scan-status  { buybackOrderNumber, distroLabels: [DistroLabelId] }
+         → { ScanMultipleLabels: [{ ErrorMessage, Success, … }], ErrorMessage, Success, DebugMessage }
+  Portal makes no call for a label that isn't eligible, so neither does Aethernet: a label that isn't an enabled row of the popout
+  fails here with "Not eligible". Every answer short of Success: true is a failure, with Portal's ErrorMessage when it gives one.
+  Messages (Linkshell, sealed; src/67-linkshell.js):
+    PC → phone  buybacks.run     { run, order, store, part, parts, items: [[i, label, destination, state], …] }  state: pending | added | failed
+                buybacks.result  { run, label, i, state, message? }   i = -1 for a label that isn't in the list
+                buybacks.end     { run }
+    phone → PC  buybacks.scan    { run, label }
+                buybacks.join    { run }   the list again
+*/
+AE.buybacks = {
+  isLabel: (v) => /^B-\S+$/i.test(String(v || '').trim()),
+  // call(method, path, body) → { status, json }. → { state: 'added' | 'failed', message? }
+  async addAndScan(call, order, label) {
+    const fail = (message) => ({ state: 'failed', message });
+    const said = (j) => (j && typeof j.ErrorMessage === 'string' && j.ErrorMessage.trim()) || '';
+    const base = '/api/boh/buyback-order-lines/' + encodeURIComponent(order);
+    const a = await call('POST', base, { buybackOrderNumber: order, serialNumbers: [label] });
+    if (!a.status) return fail('No connection to Portal');
+    if (a.status < 200 || a.status >= 300) return fail(said(a.json) || 'Portal answered HTTP ' + a.status);
+    if (!a.json || a.json.Success !== true) return fail(said(a.json) || "Portal didn't add it");
+    const lines = Array.isArray(a.json.BuybackOrderLines) ? a.json.BuybackOrderLines : [];
+    const line = lines.find((l) => l && String(l.SerialId || '').toUpperCase() === label.toUpperCase());
+    const distro = line && typeof line.DistroLabelId === 'string' && line.DistroLabelId.trim();
+    if (!distro) return fail("Portal didn't return its distro label");
+    const b = await call('POST', base + '/scan-status', { buybackOrderNumber: order, distroLabels: [distro] });
+    if (!b.status) return fail('Added, but no connection to Portal to mark it scanned');
+    const each = b.json && Array.isArray(b.json.ScanMultipleLabels) ? b.json.ScanMultipleLabels : [];
+    const bad = each.find((x) => !x || x.Success !== true);
+    if (b.status < 200 || b.status >= 300 || !b.json || b.json.Success !== true || bad) return fail(said(bad) || said(b.json) || 'Added, but not marked scanned');
+    return { state: 'added' };
+  },
+};
+
 AE.shard({
   id: 'buybacks',
   name: 'Bountiful Yield',
@@ -67,6 +107,10 @@ AE.shard({
       #${TOOLBAR_ID} [data-group] { padding-left:7px; }
       #${TOOLBAR_ID} .status { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--aui-on-surface-soft,#5d5e61); }
       #${TOOLBAR_ID} .sg-spin { width:14px; height:14px; }
+      #${TOOLBAR_ID} .sg-tint { border-color:var(--aui-primary-soft,#faecff); background:var(--aui-primary-soft,#faecff); color:var(--aui-primary,#8223d2); }
+      #${TOOLBAR_ID} .chip { height:24px; padding:0 10px; border-radius:12px; font-size:12px; font-weight:700; display:inline-flex; align-items:center;
+        background:var(--aui-status-success-soft,#c5ffc8); color:var(--aui-status-success,#136d31); }
+      #${TOOLBAR_ID} .status b { color:var(--aui-on-surface,#1a1c1e); }
     `));
 
     const state = { running: false, cancel: false, status: '' };
@@ -163,9 +207,11 @@ AE.shard({
       const mk = (key) => h('button', { type: 'button', class: 'sg sg-btn ' + GROUPS[key].variant, 'data-group': key, onclick: () => addAll(key) });
       const bar = h('div', { id: TOOLBAR_ID, class: 'sg', 'data-mode': mode() });
       bar._groups = groupsFor(mode()).map(mk);
-      bar._stop = h('button', { type: 'button', class: 'sg sg-btn sg-danger', onclick: () => { state.cancel = true; setStatus('Stopping…'); } }, '■ Stop');
+      bar._stop = h('button', { type: 'button', class: 'sg sg-btn sg-danger', onclick: () => { if (phone.run) return phoneEnd(); state.cancel = true; setStatus('Stopping…'); } }, '■ Stop');
       bar._status = h('span', { class: 'status' });
-      bar.append(...bar._groups, bar._stop, bar._status);
+      bar._phone = h('button', { type: 'button', class: 'sg sg-btn sg-tint', onclick: phoneStart }, 'Scan with phone');
+      bar._chip = h('span', { class: 'chip' }, 'Phone');
+      bar.append(...bar._groups, bar._phone, bar._chip, bar._stop, bar._status);
       return bar;
     }
     function refreshToolbar() {
@@ -178,9 +224,15 @@ AE.shard({
         const n = table ? groupRows(table, btn.dataset.group).length : 0;
         setHtml(btn, label(btn.dataset.group, n));
         btn.disabled = state.running || n === 0;
+        btn.style.display = phone.run ? 'none' : '';
       }
-      bar._stop.style.display = state.running ? '' : 'none';
-      setHtml(bar._status, (state.running ? '<span class="sg-spin"></span>' : '') + AE.esc(state.status || ''));
+      const canPhone = mode() === 'buyback' && !!link() && !!orderNo();
+      bar._phone.style.display = canPhone && !phone.run ? '' : 'none';
+      bar._phone.disabled = state.running || !table || getRows(table).length === 0;
+      bar._chip.style.display = phone.run ? '' : 'none';
+      bar._stop.style.display = state.running || phone.run ? '' : 'none';
+      const ph = phone.run ? '<b>' + phone.added + ' / ' + phone.items.length + '</b>' + (phone.last ? ' · ' + AE.esc(phone.last) + ' added' : '') : '';
+      setHtml(bar._status, phone.run ? ph : (state.running ? '<span class="sg-spin"></span>' : '') + AE.esc(state.status || ''));
     }
     const setStatus = (t) => { state.status = t; refreshToolbar(); };
 
@@ -272,6 +324,79 @@ AE.shard({
         state.running = false; state.cancel = false;
         refreshToolbar();
       }
+    }
+
+    // ---------- Scan with phone (Linkshell; the messages are listed above AE.buybacks) ----------
+    const link = () => (AE.linkshell && AE.settings.crystals.linkshell !== false && AE.linkshell.linked() ? AE.linkshell : null);
+    const orderNo = () => (location.pathname.match(/^\/boh\/inventory\/buyback-order\/([^/?#]+)/) || [])[1] || null;
+    const phone = { run: null, order: null, store: '', items: [], added: 0, last: '' };
+    let chain = Promise.resolve();
+    async function call(method, path, body) {
+      const init = { method, credentials: 'include', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body) };
+      let res, text;
+      try { ({ res, text } = await AE.timedFetch(method, path, init, 20000)); }
+      catch (_) { return { status: 0 }; }
+      let json = null; try { json = text ? JSON.parse(text) : null; } catch (_) {}
+      if (res.status === 401) AE.signedOut();
+      return { status: res.status, json };
+    }
+    const RUN_PART = 40;
+    function sendRun(wake) {
+      const L = link();
+      if (!L || !phone.run) return;
+      const parts = Math.max(1, Math.ceil(phone.items.length / RUN_PART));
+      for (let p = 0; p < parts; p++) L.send('buybacks.run', { run: phone.run, order: phone.order, store: phone.store, part: p, parts, items: phone.items.slice(p * RUN_PART, (p + 1) * RUN_PART) }, { wake: wake && p === 0 });
+    }
+    function phoneStart() {
+      const table = getTable(getModal()), order = orderNo();
+      if (!table || !order || !link() || state.running || phone.run) return;
+      if (AE.status.blocked('buybacks')) return;
+      AE.track('buybacks:phone');
+      phone.run = [...crypto.getRandomValues(new Uint8Array(8))].map((x) => x.toString(16).padStart(2, '0')).join('');
+      phone.order = order; phone.added = 0; phone.last = '';
+      phone.store = String((link().linked() || {}).store || '');
+      phone.items = getRows(table).map((r, i) => [i, r.serial, r.dest, 'pending']);
+      sendRun(true); refreshToolbar();
+    }
+    function phoneEnd() {
+      if (!phone.run) return;
+      const L = link();
+      if (L) L.send('buybacks.end', { run: phone.run });
+      phone.run = null; refreshToolbar();
+    }
+    // Bounce the tabs so the list drops what was just added (read-only, as recover()).
+    async function refreshList() {
+      const modal = getModal();
+      const bb = modal && tabButtons(modal, /^buybacks\s*\(\d+\)$/i)[0], dmg = modal && tabButtons(modal, /^damaged\s*\(\d+\)$/i)[0];
+      if (!bb || !dmg) return;
+      try { dmg.click(); } catch (_) {}
+      await sleep(400);
+      try { bb.click(); } catch (_) {}
+    }
+    async function phoneScan(b) {
+      if (!phone.run || !b || b.run !== phone.run) return;
+      const raw = String(b.label || '').trim();
+      const i = phone.items.findIndex((x) => x[1].toUpperCase() === raw.toUpperCase());
+      const label = i >= 0 ? phone.items[i][1] : raw;
+      const tell = (st, message) => {
+        if (i >= 0) phone.items[i][3] = st;
+        const L = link();
+        if (L) L.send('buybacks.result', Object.assign({ run: phone.run, label, i, state: st }, message ? { message } : {}));
+        refreshToolbar();
+      };
+      if (!AE.buybacks.isLabel(label)) return tell('failed', 'Not a buyback label');
+      if (i >= 0 && phone.items[i][3] === 'added') return tell('added');
+      const modal = getModal(), table = modal && buybacksTabActive(modal) ? getTable(modal) : null;
+      if (!table || orderNo() !== phone.order) return tell('failed', "Add buyback parts isn't open on the PC");
+      if (!getRows(table).some((r) => r.serial.toUpperCase() === label.toUpperCase())) return tell('failed', 'Not eligible');
+      const r = await AE.buybacks.addAndScan(call, phone.order, label);
+      if (r.state === 'added') { phone.added++; phone.last = label; }
+      tell(r.state, r.message);
+      if (r.state === 'added') refreshList();
+    }
+    if (AE.linkshell) {
+      AE.linkshell.on('buybacks.scan', (b) => { chain = chain.then(() => phoneScan(b)).catch(() => {}); return chain; });
+      AE.linkshell.on('buybacks.join', (b) => { if (phone.run && b && b.run === phone.run) sendRun(); });
     }
 
     let tid = null;

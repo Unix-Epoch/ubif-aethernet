@@ -100,6 +100,13 @@ fun LinkshellScreen(
                             ProgressBar(run.done.toFloat() / run.total.coerceAtLeast(1), c.acc, Modifier.fillMaxWidth().padding(top = 10.dp))
                         }
                     }
+                    state.buybacks?.let { run ->
+                        LpHeroCard(shineKey = run.run) {
+                            Text("Buybacks", style = LpType.Label, color = c.soft)
+                            Text("${Fmt.count(run.added)} / ${Fmt.count(run.total)}", style = LpType.BigCompact, color = c.fg, modifier = Modifier.padding(top = 6.dp))
+                            ProgressBar(run.added.toFloat() / run.total.coerceAtLeast(1), c.acc, Modifier.fillMaxWidth().padding(top = 10.dp))
+                        }
+                    }
                     state.error?.let { Line(it) }
                 }
             }
@@ -110,7 +117,7 @@ fun LinkshellScreen(
                 is LsUi.Check -> OutlineButton("Cancel", null, actions.onCancel, Modifier.fillMaxWidth())
                 is LsUi.Linked -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlineButton("Unlink", null, actions.onUnlink, Modifier.weight(1f))
-                    if (state.offer != null) PillButton("Join", actions.onJoin, Modifier.weight(1f))
+                    if (state.offer != null || state.buybacks != null) PillButton("Join", actions.onJoin, Modifier.weight(1f))
                 }
             }
         }

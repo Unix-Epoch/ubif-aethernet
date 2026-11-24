@@ -1,5 +1,11 @@
 package dev.aethernet.linkpearl.feature.linkshell
 
+import dev.aethernet.linkpearl.feature.buybacks.BbScanState
+import dev.aethernet.linkpearl.feature.buybacks.BbUi
+import dev.aethernet.linkpearl.feature.buybacks.BuybackLink
+import dev.aethernet.linkpearl.feature.buybacks.BuybackViewModel
+import dev.aethernet.linkpearl.feature.buybacks.Buybacks
+
 import dev.aethernet.linkpearl.core.data.ApiClient
 import dev.aethernet.linkpearl.core.data.ApiError
 import dev.aethernet.linkpearl.core.data.ApiResult
@@ -252,5 +258,59 @@ class LinkshellTest {
         assertEquals("pullbacks.scan", f.s("kind"))
         assertEquals("""{"run":"r1","i":2,"serial":"S-2","override":false}""", LinkshellCrypto.open(phoneKey(), linkId, "phone", f.s("id"), "pullbacks.scan", f.s("iv"), f.s("ct")))
         assertEquals(PcRun("x", "", "", listOf(PcItem(0, "", "", "", PcState.Failed))).done, 1)
+    }
+
+    @Test fun buybackRun() = runTest {
+        val r = Rig(this, MemoryLinkshellStore(LinkshellData(link = link())))
+        val bb = BuybackLink(r.client)
+        r.client.wake(); runCurrent()
+        val ws = r.sockets.single(); ws.l.onOpen(); runCurrent()
+        ws.l.onMessage("""{"t":"hello","peer":true,"seen":null}"""); runCurrent()
+        ws.l.onMessage(fromPc("bb-run-0", "buybacks.run", """{"run":"b1","order":"0000000001","store":"900","part":0,"parts":1,"items":[[0,"B-100000-0000000001","Test Destination (TLC)","pending"],[1,"B-100000-0000000002","UROC","pending"]]}""")); runCurrent()
+        val run = bb.offer.value!!
+        assertEquals(2, run.total)
+        assertEquals("TLC", Buybacks.shortDestination(run.items[0].destination))
+        assertEquals("UROC", Buybacks.shortDestination(run.items[1].destination))
+        bb.join(run)
+        val vm = BuybackViewModel(bb); runCurrent()
+        var ui = vm.state.value as BbUi.Scanning
+        assertTrue(ui.pc)
+        assertEquals(2, ui.toScan.size)
+        // the camera ignores anything but a B- label; typed, it says so
+        ws.sent.clear()
+        vm.onCode("110318-0000002441"); runCurrent()
+        assertTrue(ws.frames().isEmpty())
+        vm.onCode("110318-0000002441", typed = true)
+        assertEquals("110318-0000002441", (vm.state.value as BbUi.Scanning).notLabel)
+        // a label goes once (the list's spelling), Sending until the browser answers
+        vm.onCode("b-100000-0000000001"); vm.onCode("B-100000-0000000001"); runCurrent()
+        val f = ws.frames().single()
+        assertEquals("buybacks.scan", f.s("kind"))
+        assertEquals("""{"run":"b1","label":"B-100000-0000000001"}""", LinkshellCrypto.open(phoneKey(), linkId, "phone", f.s("id"), "buybacks.scan", f.s("iv"), f.s("ct")))
+        ui = vm.state.value as BbUi.Scanning
+        assertEquals(BbScanState.Sending, ui.last!!.state)
+        assertEquals(1, ui.toScan.size)
+        // Portal's message on a failure; a failed label can be scanned again
+        ws.l.onMessage(fromPc("bb-res-1", "buybacks.result", """{"run":"b1","label":"B-100000-0000000001","i":0,"state":"failed","message":"Not eligible"}""")); runCurrent()
+        ui = vm.state.value as BbUi.Scanning
+        assertEquals(BbScanState.Failed, ui.last!!.state)
+        assertEquals("Not eligible", ui.last!!.message)
+        ws.sent.clear()
+        vm.onCode("B-100000-0000000001"); runCurrent()
+        assertEquals(1, ws.frames().size)
+        ws.l.onMessage(fromPc("bb-res-2", "buybacks.result", """{"run":"b1","label":"B-100000-0000000001","i":0,"state":"added"}""")); runCurrent()
+        ui = vm.state.value as BbUi.Scanning
+        assertEquals(BbScanState.Added, ui.last!!.state)
+        assertEquals(1, ui.run.added)
+        assertEquals(1, bb.offer.value!!.added)
+        // a label that isn't in the list still gets the browser's answer
+        ws.l.onMessage(fromPc("bb-res-3", "buybacks.result", """{"run":"b1","label":"B-999999-0000000009","i":-1,"state":"failed","message":"Not eligible"}""")); runCurrent()
+        assertEquals("B-999999-0000000009", (vm.state.value as BbUi.Scanning).last!!.label)
+        // stopped on the PC
+        ws.l.onMessage(fromPc("bb-end-1", "buybacks.end", """{"run":"b1"}""")); runCurrent()
+        assertNull(bb.offer.value)
+        assertEquals(BbUi.None(stopped = true), vm.state.value)
+        assertTrue(Buybacks.isLabel("B-660482-0000012671"))
+        assertTrue(!Buybacks.isLabel("I-0017390417"))
     }
 }

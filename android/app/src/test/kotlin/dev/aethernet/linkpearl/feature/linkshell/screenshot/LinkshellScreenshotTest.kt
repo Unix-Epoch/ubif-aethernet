@@ -9,6 +9,13 @@ import dev.aethernet.linkpearl.core.design.Lp
 import dev.aethernet.linkpearl.core.nav.LpNavScaffold
 import dev.aethernet.linkpearl.core.nav.TopLevel
 import dev.aethernet.linkpearl.feature.linkshell.LinkshellScreen
+import dev.aethernet.linkpearl.feature.buybacks.BbItem
+import dev.aethernet.linkpearl.feature.buybacks.BbRun
+import dev.aethernet.linkpearl.feature.buybacks.BbScan
+import dev.aethernet.linkpearl.feature.buybacks.BbScanState
+import dev.aethernet.linkpearl.feature.buybacks.BbState
+import dev.aethernet.linkpearl.feature.buybacks.BbUi
+import dev.aethernet.linkpearl.feature.buybacks.BuybackScreen
 import dev.aethernet.linkpearl.feature.linkshell.LsUi
 import dev.aethernet.linkpearl.feature.pullbacks.PbSession
 import dev.aethernet.linkpearl.feature.pullbacks.PbUi
@@ -24,7 +31,7 @@ import org.junit.runner.RunWith
 import org.robolectric.ParameterizedRobolectricTestRunner
 import org.robolectric.ParameterizedRobolectricTestRunner.Parameters
 
-enum class LsShot(val file: String) { Scan("scan"), Check("check"), Linked("linked"), Away("away"), PcScanning("pullbacks-pc"), PcOffline("pullbacks-pc-offline") }
+enum class LsShot(val file: String) { Scan("scan"), Check("check"), Linked("linked"), Away("away"), PcScanning("pullbacks-pc"), PcOffline("pullbacks-pc-offline"), BbLinked("buybacks-linked"), BbScanning("buybacks"), BbFailed("buybacks-failed") }
 
 /** Linkshell, and Pullbacks on a run joined from Aethernet, at phone size, dark and light. Fake data. Output `linkshell/<device>-<name>-<dark|light>.png`. */
 @RunWith(ParameterizedRobolectricTestRunner::class)
@@ -41,6 +48,14 @@ class LinkshellScreenshotTest(private val shot: LsShot, private val device: Devi
             val (d, sku) = parts[i % 3]
             PcItem(i, sku, d, "$sku-${(1000 + i).toString().padStart(10, '0')}", if (i < 109) PcState.Marked else if (i == 109) PcState.Already else PcState.Pending)
         })
+
+        private const val TLC = "Asurion Reverse Logistics (TLC)"
+        val bbRun = BbRun("b1", "0000000001", "999999", List(12) { i ->
+            BbItem(i, "B-${660400 + i}-${(12600 + i).toString().padStart(10, '0')}", if (i % 4 == 3) "UROC" else TLC, if (i < 3) BbState.Added else BbState.Pending)
+        })
+        val bbScans = listOf(BbScan(bbRun.items[3].label, bbRun.items[3].destination, BbScanState.Sending)) +
+            (2 downTo 0).map { BbScan(bbRun.items[it].label, bbRun.items[it].destination, BbScanState.Added) }
+        val bbFailed = listOf(BbScan("B-660390-0000012598", "", BbScanState.Failed, "Not eligible")) + bbScans.drop(1)
 
         fun pcSession(): PbSession {
             var s = PbSession.fromRun(run)
@@ -60,6 +75,9 @@ class LinkshellScreenshotTest(private val shot: LsShot, private val device: Devi
                     LsShot.Away -> LinkshellScreen(LsUi.Linked("Chrome · Mac", 999999, false, "2026-11-17T14:41:00-05:00", null), storeName = { "Sandbox" })
                     LsShot.PcScanning -> PullbackScreen(PbUi.Scanning(pcSession(), pc = true))
                     LsShot.PcOffline -> PullbackScreen(PbUi.Scanning(pcSession(), pc = false))
+                    LsShot.BbLinked -> LinkshellScreen(LsUi.Linked("Chrome · Mac", 999999, true, null, null, buybacks = bbRun.copy(items = bbRun.items.map { it.copy(state = BbState.Pending) })), storeName = { "Sandbox" })
+                    LsShot.BbScanning -> BuybackScreen(BbUi.Scanning(bbRun, bbScans, pc = true), camera = { Box(Modifier.fillMaxSize().background(Lp.colors.surf3)) })
+                    LsShot.BbFailed -> BuybackScreen(BbUi.Scanning(bbRun, bbFailed, pc = true), camera = { Box(Modifier.fillMaxSize().background(Lp.colors.surf3)) })
                 }
             }
         }
