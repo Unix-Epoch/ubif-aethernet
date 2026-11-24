@@ -172,6 +172,16 @@ a FileProvider (`cache/pullbacks/`). The phone has no Portal session, so nothing
 item in Portal. The run is kept in `files/pullbacks/` (the results file + where scanning was) and resumes from Start. The .xlsx reader/writer is our own
 (`PullbackList.kt`, java.util.zip + regex XML; PowerBI's `x:` prefixed sheets included). Screenshots in `screenshots/pullbacks`.
 
+## Morning check
+
+`feature/morningcheck`, route `morningcheck` (`linkpearl://morningcheck`), opened from the sunrise button in Work orders' header. Walks the store's open work
+orders one at a time over Linkshell (the browser's half is `src/68-morning-check.js`, which lists the `check.*` messages): pick the order (location, status, oldest),
+Start asks the linked PC (it shows Allow there; a host link starts by itself), then Looks right, Skip or Edit per work order. Edit changes the location, status,
+nickname or adds a note; the browser makes the Portal calls and answers per field, so a refused field shows Portal's own message. The statuses offered come from the
+browser (proven moves only, never past Work in progress) and Location only shows once the browser turns bin changes on. Scanning a work order label (Code 128 only)
+brings that order forward, marked Moved up; skipped ones are counted and can be checked at the end. `McSession` (MorningCheck.kt) is the pure walk;
+`MorningCheckLink` keeps the check in progress across leaving the screen. Screenshots in `screenshots/morningcheck`.
+
 ## Fold, hinge, posture
 
 `AdaptiveProvider` (core/nav) turns material3-adaptive's `WindowAdaptiveInfo` (which reads Jetpack WindowManager's `FoldingFeature`) into
