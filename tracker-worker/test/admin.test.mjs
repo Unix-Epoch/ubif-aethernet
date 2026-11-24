@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, rmSync } from 'node:fs';
 import { register } from 'node:module';
 import { getPlatformProxy } from 'wrangler';
+import { test } from 'node:test';
 
 // admin-worker imports a few files as text (wrangler [[rules]] type Text); give Node the same.
 register('data:text/javascript,' + encodeURIComponent(`
@@ -62,296 +63,335 @@ const call = async (as, method, path, body) => {
 };
 const denies = async () => (await T.prepare("SELECT * FROM access_log WHERE action = 'denied' ORDER BY id").all()).results;
 
-// --- the Access check is still first: no LOCAL_TEST, no token → 403 before any database work
-assert.equal((await site.fetch(new Request('http://localhost/api/usage'), { TR: T, DB: W })).status, 403, 'Access check still applies');
-assert.equal((await site.fetch(new Request('https://admin.example/api/usage?as=owner@x.com'), E)).status, 403, 'as= only on localhost');
+await test('the Access check is still first', async () => {
+  // --- the Access check is still first: no LOCAL_TEST, no token → 403 before any database work
+  assert.equal((await site.fetch(new Request('http://localhost/api/usage'), { TR: T, DB: W })).status, 403, 'Access check still applies');
+  assert.equal((await site.fetch(new Request('https://admin.example/api/usage?as=owner@x.com'), E)).status, 403, 'as= only on localhost');
+});
 
-// --- owner bypass: every page, every store, changes allowed
-for (const p of ['/api/usage', '/api/stores', '/api/feedback', '/api/auto-rules', '/api/store/326', '/api/tracker/wos', '/api/tracker/people', '/api/tracker/log']) assert.equal((await call('owner@x.com', 'GET', p)).status, 200, 'owner ' + p);
-assert.equal((await call('owner@x.com', 'GET', '/api/usage')).j.rows.length, 2);
-assert.equal((await call('owner@x.com', 'GET', '/api/stores')).j.waiting.length, 1);
-assert.equal((await call('owner@x.com', 'POST', '/api/auto-rules', { rule: 'callback', state: 'staged' })).status, 200, 'owner pushes rules');
-const ow = (await call('owner@x.com', 'GET', '/api/tracker/wos')).j.wos;
-assert.equal(ow.length, 3); assert.ok(ow.every((w) => w.card), 'owner gets sealed cards');
-const om = (await call('owner@x.com', 'GET', '/api/tracker/me')).j.access;
-assert.equal(om.owner, true); assert.ok(om.pages.includes('people') && om.pages.includes('metrics'));
+await test('owner bypass: every page, every store, changes allowed', async () => {
+  for (const p of ['/api/usage', '/api/stores', '/api/feedback', '/api/auto-rules', '/api/store/326', '/api/tracker/wos', '/api/tracker/people', '/api/tracker/log']) assert.equal((await call('owner@x.com', 'GET', p)).status, 200, 'owner ' + p);
+  assert.equal((await call('owner@x.com', 'GET', '/api/usage')).j.rows.length, 2);
+  assert.equal((await call('owner@x.com', 'GET', '/api/stores')).j.waiting.length, 1);
+  assert.equal((await call('owner@x.com', 'POST', '/api/auto-rules', { rule: 'callback', state: 'staged' })).status, 200, 'owner pushes rules');
+  const ow = (await call('owner@x.com', 'GET', '/api/tracker/wos')).j.wos;
+  assert.equal(ow.length, 3); assert.ok(ow.every((w) => w.card), 'owner gets sealed cards');
+  const om = (await call('owner@x.com', 'GET', '/api/tracker/me')).j.access;
+  assert.equal(om.owner, true); assert.ok(om.pages.includes('people') && om.pages.includes('metrics'));
+});
 
-// --- the Assize rules editor's engine, served to the page as modules (page 'rules'); the same code the Worker runs
-// The Assize rules editor's page script, the same way (and only with page 'rules').
-{
-  const r = await call('owner@x.com', 'GET', '/rules-ui.js');
-  assert.equal(r.status, 200); assert.match(r.text, /export async function draw\(/); assert.match(r.text, /from '\/rulegraph\.js'/);
-  assert.equal((await call('viewer@x.com', 'GET', '/rules-ui.js')).status, 403, 'no rules page: /rules-ui.js');
-  assert.match((await call('owner@x.com', 'GET', '/')).text, /import\('\/rules-ui\.js'\)/, 'page.js loads the editor');
-  assert.doesNotMatch((await call('owner@x.com', 'GET', '/')).text, /editor is coming/, 'the placeholder is gone');
-}
-for (const [path, name] of [['/rulegraph.js', 'run'], ['/assize-rules.js', 'makeRules']]) {
-  const r = await call('owner@x.com', 'GET', path);
-  assert.equal(r.status, 200, path);
-  const mod = await import('data:text/javascript,' + encodeURIComponent(r.text));
-  assert.equal(typeof mod[name], 'function', path + ' works as a browser module');
-  assert.equal((await call('viewer@x.com', 'GET', path)).status, 403, 'no rules page: ' + path);
-}
-assert.equal((await call('owner@x.com', 'GET', '/api/tracker/assize/rules')).status, 200);
-for (const [m, p, b] of [['GET', '/api/tracker/assize/rules'], ['PUT', '/api/tracker/assize/rules/no-bin/draft', { scope: 914, graph: {} }], ['GET', '/api/tracker/assize/orders?store=914'], ['GET', '/api/tracker/assize/stores']]) assert.equal((await call('mgr@x.com', m, p, b)).status, 403, 'manager without the rules page: ' + p);
-
-// --- store viewer: only their store's work orders, nothing sealed, nothing else
-const vw = await call('viewer@x.com', 'GET', '/api/tracker/wos');
-assert.equal(vw.status, 200); assert.deepEqual([...new Set(vw.j.wos.map((w) => w.store))], [914], 'All stores list cut to their stores');
-assert.ok(!/SEALED/.test(vw.text) && vw.j.wos.every((w) => !('card' in w)), 'no sealed card with details off');
-assert.ok(!/SEALED/.test((await call('viewer@x.com', 'GET', '/api/tracker/wos?detail=1')).text), 'detail=1 adds nothing sealed');
-const vo = await call('viewer@x.com', 'GET', '/api/tracker/wo/914/5001');
-assert.equal(vo.status, 200); assert.ok(!/SEALED/.test(vo.text) && !('card' in vo.j.wo) && !('sealed' in vo.j.snapshots[0]), 'one WO without sealed fields');
-assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/wos?store=326')).status, 403, 'other store refused');
-assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/wo/326/6001')).status, 403);
-const vs = (await call('viewer@x.com', 'GET', '/api/tracker/stores')).j.stores;
-assert.deepEqual(vs.map((s) => s.store), [914]);
-assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/store-keys')).status, 403);
-assert.equal((await call('viewer@x.com', 'PUT', '/api/tracker/me/keys', { keys: [{ kind: 'store', store: 914 }] })).status, 403, 'no key copies with details off');
-const vme = (await call('viewer@x.com', 'GET', '/api/tracker/me')).j;
-assert.deepEqual(vme.access.pages, ['wos']); assert.equal(vme.access.details, false); assert.equal(vme.access.owner, false);
-
-// --- forbidden page → 403 + a 'denied' row (one per person/route/hour)
-const before = (await denies()).length;
-const fu = await call('viewer@x.com', 'GET', '/api/usage');
-assert.equal(fu.status, 403); assert.equal(fu.j.page, 'usage');
-await call('viewer@x.com', 'GET', '/api/usage');
-let dn = await denies();
-assert.equal(dn.length, before + 1, 'denied logged once per hour');
-assert.equal(dn[dn.length - 1].email, 'viewer@x.com'); assert.match(dn[dn.length - 1].detail, /GET \/api\/usage · page usage not allowed/);
-for (const [m, p, b] of [['GET', '/api/tracker/sales/days?from=2026-10-16&to=2026-10-16'], ['GET', '/api/feedback'], ['GET', '/api/store/914'], ['GET', '/api/auto-rules'], ['POST', '/api/auto-rules', { rule: 'callback', state: 'live' }],
-  ['GET', '/api/stores'], ['POST', '/api/stores', { store: 555 }], ['POST', '/api/stores/914/remove', {}], ['GET', '/api/config'], ['GET', '/api/tracker/people'], ['GET', '/api/tracker/log'], ['GET', '/api/tracker/metrics'], ['GET', '/metrics-ui.js'], ['GET', '/api/next-version']]) {
-  assert.equal((await call('viewer@x.com', m, p, b)).status, 403, 'viewer ' + m + ' ' + p);
-}
-assert.equal((await W.prepare('SELECT COUNT(*) AS n FROM store_access').first()).n, 2, 'viewer changed no store access');
-assert.equal((await W.prepare("SELECT state FROM auto_rules WHERE rule = 'callback'").first()).state, 'staged', 'viewer pushed no rule');
-
-// --- unknown routes are refused (deny by default), for everyone but owners' real routes
-for (const p of ['/api/ping', '/api/tracker/whatever', '/api/whatever', '/api/tracker/agents-x']) assert.equal((await call('ol@x.com', 'GET', p)).status, 403, 'unknown ' + p);
-assert.equal((await call('owner@x.com', 'GET', '/api/whatever')).status, 403, 'unknown route even for an owner');
-assert.ok((await denies()).some((d) => /unknown route/.test(d.detail)));
-// not on the list at all: only /me answers (so the page can say who to ask)
-assert.equal((await call('nobody@x.com', 'GET', '/api/tracker/me')).j.access, null);
-for (const p of ['/api/usage', '/api/stores', '/api/tracker/wos', '/api/feedback']) assert.equal((await call('nobody@x.com', 'GET', p)).status, 403, 'not listed ' + p);
-
-// --- manager: their store's Store data, sales; All stores pages need explicit permission
-assert.equal((await call('mgr@x.com', 'GET', '/api/store/914')).status, 200);
-assert.equal((await call('mgr@x.com', 'GET', '/api/store/326')).status, 403, 'Store data for another store');
-const ms = (await call('mgr@x.com', 'GET', '/api/stores')).j;
-assert.deepEqual(ms.allowed.map((s) => s.store), [914], 'store picker cut to their stores'); assert.equal(ms.waiting.length, 0);
-for (const [m, p, b] of [['POST', '/api/stores', { store: 555 }], ['GET', '/api/feedback'], ['GET', '/api/auto-rules'], ['GET', '/api/usage']]) assert.equal((await call('mgr@x.com', m, p, b)).status, 403, 'manager ' + p);
-const md = (await call('mgr@x.com', 'GET', '/api/tracker/sales/days?from=2026-10-16&to=2026-10-16')).j.days;
-assert.deepEqual(md.map((d) => d.store), [914], 'sales cut to their stores');
-assert.ok(/SEALEDSALE"/.test((await call('mgr@x.com', 'GET', '/api/tracker/sales/day?store=914&day=2026-10-16')).text), 'details on: sealed card still sent');
-assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/sales/day?store=326&day=2026-10-16')).status, 403);
-// reports/usage person on 326: Reports is Aethernet-wide, Usage is cut to their store
-assert.equal((await call('rep@x.com', 'GET', '/api/feedback')).status, 200);
-assert.deepEqual((await call('rep@x.com', 'GET', '/api/usage')).j.rows.map((r) => r.store), [326]);
-// Owner: every page but People and Assize rules
-for (const p of ['/api/usage', '/api/stores', '/api/feedback', '/api/auto-rules', '/api/store/326', '/api/tracker/wos']) assert.equal((await call('ol@x.com', 'GET', p)).status, 200, 'owner ' + p);
-assert.equal((await call('ol@x.com', 'GET', '/api/tracker/assize/rules')).status, 403, 'Owner has no Assize rules page');
-assert.equal((await call('ol@x.com', 'GET', '/api/stores')).j.waiting.length, 1);
-
-// --- only owners change access
-assert.equal((await call('ol@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [914] })).status, 403, 'owner cannot add people');
-assert.equal((await call('ol@x.com', 'GET', '/api/tracker/people')).j.error, 'developers only');
-assert.equal((await call('ol@x.com', 'POST', '/api/tracker/people/viewer%40x.com/remove')).status, 403);
-assert.equal((await call('mgr@x.com', 'POST', '/api/tracker/people', { email: 'mgr@x.com', scope: 'all', pages: ['stores'] })).status, 403, 'no raising your own access');
-assert.equal((await call('ol@x.com', 'GET', '/api/tracker/agents')).status, 403);
-// new person: Store viewer by default
-assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'New@x.com', name: 'New Person', scope: 'stores', stores: [326] })).status, 200);
-const np = await accessOf(E, 'new@x.com');
-assert.deepEqual(np.pages, ['wos']); assert.equal(np.details, false); assert.deepEqual(np.stores, [326]);
-// change: pages + stores, logged as a diff; 'people' can't be granted; details off refuses key copies
-assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [326, 914], pages: ['wos', 'metrics', 'people', 'bogus'], details: false })).status, 200);
-assert.deepEqual((await accessOf(E, 'new@x.com')).pages, ['wos', 'metrics'], 'people / unknown pages dropped');
-const copy = { kind: 'store', store: 914, salt: 'c2FsdHNhbHRzYWx0', rounds: 200000, wrapped: 'p1.' + 'A'.repeat(200) };
-assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [914], details: false, keys: [copy] })).status, 400);
-const acc = (await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.log;
-assert.ok(acc.some((l) => l.action === 'access:add' && /new@x.com · store viewer · stores 326 · details off/.test(l.detail)), 'access:add');
-assert.ok(acc.some((l) => l.action === 'access:change' && /pages \+metrics · stores \+914/.test(l.detail)), 'access:change diff');
-assert.ok(acc.some((l) => l.action === 'denied'), 'denied rows in the access log');
-assert.ok(!(await call('owner@x.com', 'GET', '/api/tracker/log')).j.log.some((l) => l.action === 'denied' || l.action.startsWith('access:')), 'recent activity keeps views only');
-// details on with an invite, then off: copies deleted
-await T.prepare("INSERT INTO store_keys (store, public_jwk, wrapped_private) VALUES (914, '{}', 'x')").run();
-assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [914], pages: ['wos'], details: true, keys: [copy] })).status, 200);
-assert.equal((await T.prepare("SELECT COUNT(*) AS n FROM person_keys WHERE email = 'new@x.com'").first()).n, 1);
-assert.ok((await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.log.some((l) => l.action === 'access:keys' && /invite for 914/.test(l.detail)));
-assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [914], pages: ['wos'], details: false })).status, 200);
-assert.equal((await T.prepare("SELECT COUNT(*) AS n FROM person_keys WHERE email = 'new@x.com'").first()).n, 0, 'details off deletes copies');
-assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people/new%40x.com/remove')).status, 200);
-assert.equal(await accessOf(E, 'new@x.com'), null);
-assert.ok((await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.log.some((l) => l.action === 'access:remove'));
-
-// --- roles: the four presets as before (Owner-level is now Owner, same pages); Assize rules adds to any of them
-{
-  const { presetOf } = await import('../src/access.js');
-  const P8 = ['wos', 'sales', 'metrics', 'data', 'usage', 'reports', 'auto', 'stores'];
-  assert.equal(presetOf({ scope: 'all', details: true, pages: P8 }), 'owner', 'existing Owner-level people show as Owner, no change');
-  assert.equal(presetOf({ scope: 'all', details: true, pages: [...P8, 'rules'] }), 'owner + assize rules');
-  assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data', 'rules'] }), 'manager + assize rules');
-  assert.equal(presetOf({ scope: 'stores', details: false, pages: ['wos'] }), 'store viewer');
-  assert.equal(presetOf({ scope: 'stores', details: false, pages: ['rules'] }), 'custom');
-  assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'ol@x.com', scope: 'all', pages: [...P8, 'rules'], details: true })).status, 200);
-  assert.deepEqual((await accessOf(E, 'ol@x.com')).pages, [...P8, 'rules']);
-  assert.ok((await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.log.some((l) => l.action === 'access:change' && l.detail === 'ol@x.com · pages +rules · role owner → owner + assize rules'), 'access change log names the page and the role');
-  assert.equal((await call('ol@x.com', 'GET', '/api/tracker/assize/rules')).status, 200, 'now they have it');
-  assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'ol@x.com', scope: 'all', pages: P8, details: true })).status, 200);
-  assert.deepEqual((await call('owner@x.com', 'GET', '/api/tracker/people')).j.pages, [...P8, 'rules', 'retrace'], 'the People page lists Assize rules and Retrace');
-  // Retrace (Oct 23, 2026) joins the Manager and Owner roles; people given those roles before still show as them
-  assert.equal(presetOf({ scope: 'all', details: true, pages: [...P8, 'retrace'] }), 'owner');
-  assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data', 'retrace'] }), 'manager');
-  assert.equal(presetOf({ scope: 'stores', details: false, pages: ['wos', 'retrace'] }), 'custom');
-}
-
-// --- Retrace (page 'retrace', store-scoped): through the site's gate, like every tracker route
-await T.prepare("UPDATE people SET pages = ? WHERE email = 'mgr@x.com'").bind(JSON.stringify(['wos', 'sales', 'metrics', 'data', 'retrace'])).run();
-assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/item/914/180001')).status, 200, 'manager: their store');
-assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 403, 'manager: another store');
-assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/serials/914/180001')).status, 200, 'manager: serials, their store');
-assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/serials/326/180001')).status, 403, 'manager: serials, another store');
-assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/retrace/serials/914/180001')).status, 403, 'no Retrace page: serials');
-assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/label/326/180001-0000600001')).status, 403);
-assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/search?store=326&q=180001')).status, 403);
-assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/coverage')).status, 200);
-assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/retrace/coverage')).status, 403, 'no Retrace page');
-assert.equal((await call('ol@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 403, 'an Owner from before Retrace needs the page added');
-assert.equal((await call('owner@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 200, 'developers: everything');
-assert.equal((await call('mgr@x.com', 'POST', '/api/tracker/retrace/coverage')).status, 403, 'read only: unknown route');
-// coverage for one store (the page's 60 s poll): ?store= goes through the same gate, and only that store comes back
-{
-  const one = await call('mgr@x.com', 'GET', '/api/tracker/retrace/coverage?store=914');
-  assert.equal(one.status, 200); assert.ok(one.j.stores.every((x) => x.store === 914), 'only the asked store (a store with no rows yet has none)');
-  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/coverage?store=326')).status, 403, 'a store that is not theirs');
-  assert.deepEqual((await call('owner@x.com', 'GET', '/api/tracker/retrace/coverage?store=326')).j.stores.map((x) => x.store).filter((n) => n !== 326), [], 'developers: any one store');
-  // a malformed % in a path is a 400 through the gate too, not a 500
-  for (const p of ['item/914/%E0%A4%A', 'serials/914/%', 'label/914/%zz', 'po/914/100%']) assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/' + p)).status, 400, p);
-}
-// Coverage check (Verify coverage): page 'retrace', the store in the path; run and tick are the only POSTs
-{
-  const v = '/api/tracker/retrace/verify/';
-  assert.equal((await call('mgr@x.com', 'GET', v + '914')).status, 200, 'manager: their store');
-  assert.equal((await call('mgr@x.com', 'GET', v + '326')).status, 403, 'manager: another store');
-  assert.equal((await call('mgr@x.com', 'POST', v + '914/run', {})).status, 409, 'manager: run on their store passes the gate (no frozen baseline here)');
-  assert.equal((await call('mgr@x.com', 'POST', v + '326/run', {})).status, 403, 'manager: run on another store');
-  assert.equal((await call('mgr@x.com', 'POST', v + '326/tick', { label: '1-1', matches: true })).status, 403, 'manager: tick on another store');
-  assert.equal((await call('mgr@x.com', 'POST', v + '914/tick', { label: '180001-0000600001', matches: true })).status, 400, 'manager: tick on their store (not in a sample)');
-  for (const [m, p] of [['GET', '914'], ['POST', '914/run'], ['POST', '914/tick']]) assert.equal((await call('viewer@x.com', m, v + p, m === 'POST' ? {} : undefined)).status, 403, 'no Retrace page: ' + m + ' ' + p);
-  assert.equal((await call('ol@x.com', 'POST', v + '914/run', {})).status, 403, 'an Owner from before Retrace needs the page added');
-  assert.equal((await call('owner@x.com', 'GET', v + '326')).status, 200, 'developers: everything');
-  // collection queue: same gate, read only
-  const qu = '/api/tracker/retrace/queue/';
-  assert.equal((await call('mgr@x.com', 'GET', qu + '914')).status, 200, 'queue: manager, their store');
-  assert.equal((await call('mgr@x.com', 'GET', qu + '326')).status, 403, 'queue: manager, another store');
-  assert.equal((await call('viewer@x.com', 'GET', qu + '914')).status, 403, 'queue: no Retrace page');
-  assert.equal((await call('ol@x.com', 'GET', qu + '914')).status, 403, 'queue: an Owner from before Retrace needs the page added');
-  assert.equal((await call('mgr@x.com', 'POST', qu + '914', {})).status, 403, 'queue: read only');
-  assert.equal((await call('owner@x.com', 'GET', qu + '326')).status, 200, 'queue: developers: everything');
-  assert.equal((await call('mgr@x.com', 'GET', v + '914/run')).status, 403, 'run is POST only'); assert.equal((await call('mgr@x.com', 'POST', v + '914', {})).status, 403, 'the result is GET only');
-  assert.equal((await call('mgr@x.com', 'DELETE', v + '914')).status, 403, 'no other methods');
-  assert.ok((await T.prepare("SELECT COUNT(*) AS n FROM access_log WHERE action = 'denied' AND detail LIKE '%retrace/verify%'").first()).n >= 1, 'refusals logged');
-}
-// The Retrace page's script (page 'retrace'), its item list and its store picker
-{
-  const r = await call('mgr@x.com', 'GET', '/retrace-ui.js');
-  assert.equal(r.status, 200); assert.match(r.text, /export async function draw\(/);
-  assert.match(r.text, /group: 'all', range: 'all',/, 'the item page\'s "Moved in" range starts at Any time');
-  assert.match(r.text, /if \(S\.range !== 'all'\) p\.set\('days'/, 'the default stays out of the serials query');
-  assert.doesNotMatch(r.text, /range: '30'/); assert.match(r.text, /Verify coverage/); assert.match(r.text, /num\(x\.available\) \+ ' available'/, 'the item list shows what is available');
-  assert.equal((await call('viewer@x.com', 'GET', '/retrace-ui.js')).status, 403, 'no Retrace page: /retrace-ui.js');
-  // the strip's poll: the selected store only, every 60 s, visible tab only, not once the store is done, once more on a store switch; the first load still reads every store
-  assert.match(r.text, /ui\.api\('GET', '\/tracker\/retrace\/coverage\?store=' \+ store\)/, 'polls one store');
-  assert.match(r.text, /state === 'done'\)\) return;\s*refreshStrip\(\);\s*\}, 60000\)/, 'every 60 s, not when done');
-  assert.match(r.text, /document\.hidden \|\|/); assert.doesNotMatch(r.text, /\}, 30000\)/);
-  assert.match(r.text, /closeDrawer\(\); drawHealth\(\); refreshStrip\(\);/, 'refreshed once on a store switch');
-  assert.match(r.text, /ui\.api\('GET', '\/tracker\/retrace\/coverage'\)\.catch/, 'the first load fills the switcher with every store');
-  assert.match((await call('owner@x.com', 'GET', '/')).text, /import\('\/retrace-ui\.js'\)/, 'page.js loads the Retrace page');
-  // the Usage page reuses its load section across filter clicks: reloaded when the range changes or after a minute; a failed read isn't kept
+await test("the Assize rules editor's engine, served to the page as modules", async () => {
+  // --- the Assize rules editor's engine, served to the page as modules (page 'rules'); the same code the Worker runs
+  // The Assize rules editor's page script, the same way (and only with page 'rules').
   {
-    const page = (await call('owner@x.com', 'GET', '/')).text, m = page.match(/(async function loadUsageLoad\(\) \{[\s\S]*?\n\}\n)async function drawUsage/);
-    assert.ok(m, 'page.js has loadUsageLoad'); assert.match(page, /const loadP = loadUsageLoad\(\);/);
-    let calls = 0, fail = false, now = Date.now();
-    const realNow = Date.now; Date.now = () => now;
-    try {
-      const mk = new Function('api', 'let days = 30, usageLoadCache = null;\n' + m[1] + '\nreturn { load: loadUsageLoad, setDays: (d) => { days = d; } };');
-      const u = mk(async () => { calls++; if (fail) throw new Error('down'); return { n: calls }; });
-      assert.deepEqual(await u.load(), { n: 1 }); assert.deepEqual(await u.load(), { n: 1 }, 'a filter click: no reload'); assert.equal(calls, 1);
-      now += 59000; await u.load(); assert.equal(calls, 1, 'under a minute');
-      now += 2000; assert.deepEqual(await u.load(), { n: 2 }, 'after a minute');
-      u.setDays(90); await u.load(); assert.equal(calls, 3, 'a new range reloads');
-      fail = true; now += 61000; assert.deepEqual(await u.load(), { error: 'down' }); fail = false; assert.deepEqual(await u.load(), { n: 5 }, 'an error is not kept: the next draw tries again');
-    } finally { Date.now = realNow; }
+    const r = await call('owner@x.com', 'GET', '/rules-ui.js');
+    assert.equal(r.status, 200); assert.match(r.text, /export async function draw\(/); assert.match(r.text, /from '\/rulegraph\.js'/);
+    assert.equal((await call('viewer@x.com', 'GET', '/rules-ui.js')).status, 403, 'no rules page: /rules-ui.js');
+    // its other modules (admin-worker/src/rules-ui/) are /rules-ui.js?part=<name>: every part a file imports is served, behind the same page
+    const parts = new Set(), seen = new Set(), todo = [r.text];
+    while (todo.length) for (const [, p] of todo.pop().matchAll(/from '\/rules-ui\.js\?part=(\w+)'/g)) {
+      parts.add(p); if (seen.has(p)) continue; seen.add(p);
+      const m = await call('owner@x.com', 'GET', '/rules-ui.js?part=' + p);
+      assert.equal(m.status, 200, 'part ' + p); assert.match(m.text, /^export /m, 'part ' + p + ' is a module');
+      assert.equal((await call('viewer@x.com', 'GET', '/rules-ui.js?part=' + p)).status, 403, 'no rules page: part ' + p);
+      todo.push(m.text);
+    }
+    assert.deepEqual([...parts].sort(), ['canvas', 'compare', 'edit', 'side', 'state', 'style', 'words']);
+    assert.equal((await call('owner@x.com', 'GET', '/rules-ui.js?part=nope')).status, 404, 'unknown part');
+    // one esc for every page: all five characters, and no page keeps its own
+    const em = await call('viewer@x.com', 'GET', '/esc.js'); assert.equal(em.status, 200);
+    const { esc } = await import('data:text/javascript,' + encodeURIComponent(em.text));
+    assert.equal(esc(`<a href='x' title="y">&</a>`), '&lt;a href=&#39;x&#39; title=&quot;y&quot;&gt;&amp;&lt;/a&gt;'); assert.equal(esc(null), ''); assert.equal(esc(0), '0');
+    for (const p of ['/tracker-ui.js', '/metrics-ui.js', '/rules-ui.js?part=canvas']) {
+      const t = (await call('owner@x.com', 'GET', p)).text;
+      assert.match(t, /import \{ esc \} from '\/esc\.js'/, p + ' imports esc'); assert.doesNotMatch(t, /const esc\b/, p + ' has no esc of its own');
+    }
+    assert.match((await call('owner@x.com', 'GET', '/')).text, /import\('\/rules-ui\.js'\)/, 'page.js loads the editor');
+    assert.doesNotMatch((await call('owner@x.com', 'GET', '/')).text, /editor is coming/, 'the placeholder is gone');
   }
-  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/items?store=914')).status, 200);
-  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/items?store=326')).status, 403, 'items: another store');
-  await T.prepare("UPDATE people SET pages = ? WHERE email = 'rep@x.com'").bind(JSON.stringify(['reports', 'usage', 'retrace'])).run();
-  const rs = await call('rep@x.com', 'GET', '/api/tracker/stores');
-  assert.equal(rs.status, 200, 'Retrace alone reaches the store picker'); assert.deepEqual(rs.j.stores.map((s) => s.store), [326], 'cut to their stores');
-  await T.prepare("UPDATE people SET pages = ? WHERE email = 'rep@x.com'").bind(JSON.stringify(['reports', 'usage'])).run();
-}
+  for (const [path, name] of [['/rulegraph.js', 'run'], ['/assize-rules.js', 'makeRules']]) {
+    const r = await call('owner@x.com', 'GET', path);
+    assert.equal(r.status, 200, path);
+    const mod = await import('data:text/javascript,' + encodeURIComponent(r.text));
+    assert.equal(typeof mod[name], 'function', path + ' works as a browser module');
+    assert.equal((await call('viewer@x.com', 'GET', path)).status, 403, 'no rules page: ' + path);
+  }
+  assert.equal((await call('owner@x.com', 'GET', '/api/tracker/assize/rules')).status, 200);
+  for (const [m, p, b] of [['GET', '/api/tracker/assize/rules'], ['PUT', '/api/tracker/assize/rules/no-bin/draft', { scope: 914, graph: {} }], ['GET', '/api/tracker/assize/orders?store=914'], ['GET', '/api/tracker/assize/stores']]) assert.equal((await call('mgr@x.com', m, p, b)).status, 403, 'manager without the rules page: ' + p);
+});
 
-// --- Cloudflare and Portal load (src/usage.js): page 'usage'; all-stores access gets the totals, others only their stores' rows; its own reads aren't counted
-{
-  const U = '/api/tracker/usage-load';
-  assert.equal((await call('viewer@x.com', 'GET', U)).status, 403, 'no usage page');
-  assert.equal((await call('mgr@x.com', 'GET', U)).status, 403, 'Manager role has no usage page');
-  assert.equal((await call('nobody@x.com', 'GET', U)).status, 403, 'not on the list');
-  assert.equal((await call('ol@x.com', 'POST', U)).status, 403, 'read only');
-  const own = await call('owner@x.com', 'GET', U);
-  assert.equal(own.status, 200); assert.equal(own.j.scope, 'all'); assert.ok(own.j.global && own.j.global.days.length === 30);
-  assert.ok((await call('ol@x.com', 'GET', U)).j.global, 'Owner role with usage: totals');
-  const rep = await call('rep@x.com', 'GET', U);                   // stores [326], pages reports + usage
-  assert.equal(rep.status, 200); assert.equal(rep.j.global, null, 'store-limited: no worker-wide totals'); assert.equal(rep.j.scope, 'stores');
-  assert.ok(!/"requests"|rows_read|bytes/.test(rep.text), 'no totals anywhere in a store-limited answer');
-  assert.ok(rep.j.stores.every((x) => x.store === 326), 'only their stores');
-  assert.equal((await call('rep@x.com', 'GET', U + '?store=914')).status, 403, 'a store they cannot see');
-  // The admin site's own requests were counted by area (tracker D1 rows included); the usage-load reads were not
-  await call('owner@x.com', 'GET', '/api/tracker/retrace/coverage');
-  const area = async () => Object.fromEntries((await T.prepare('SELECT area, requests, rows_read FROM usage_load').all()).results.map((r) => [r.area, r]));
-  const a1 = await area();
-  assert.ok(a1.retrace_admin && a1.retrace_admin.requests >= 1, 'Retrace admin page counted'); assert.ok(a1.tracker.requests >= 1 && a1.other.requests >= 1);
-  assert.ok(a1.tracker.rows_read > 0, 'tracker routes read D1 rows');
-  await call('owner@x.com', 'GET', U); await call('ol@x.com', 'GET', U);
-  const a2 = await area();
-  assert.deepEqual(Object.fromEntries(Object.entries(a2).map(([k, v]) => [k, v.requests])), Object.fromEntries(Object.entries(a1).map(([k, v]) => [k, v.requests])), 'reading the usage numbers does not count');
-  await call('viewer@x.com', 'GET', '/api/tracker/sales/days');    // a refused request is still a request to the Worker
-  assert.equal((await area()).tracker.requests, a1.tracker.requests + 1);
-}
+await test("store viewer: only their store's work orders, nothing sealed, nothing else", async () => {
+  const vw = await call('viewer@x.com', 'GET', '/api/tracker/wos');
+  assert.equal(vw.status, 200); assert.deepEqual([...new Set(vw.j.wos.map((w) => w.store))], [914], 'All stores list cut to their stores');
+  assert.ok(!/SEALED/.test(vw.text) && vw.j.wos.every((w) => !('card' in w)), 'no sealed card with details off');
+  assert.ok(!/SEALED/.test((await call('viewer@x.com', 'GET', '/api/tracker/wos?detail=1')).text), 'detail=1 adds nothing sealed');
+  const vo = await call('viewer@x.com', 'GET', '/api/tracker/wo/914/5001');
+  assert.equal(vo.status, 200); assert.ok(!/SEALED/.test(vo.text) && !('card' in vo.j.wo) && !('sealed' in vo.j.snapshots[0]), 'one WO without sealed fields');
+  assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/wos?store=326')).status, 403, 'other store refused');
+  assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/wo/326/6001')).status, 403);
+  const vs = (await call('viewer@x.com', 'GET', '/api/tracker/stores')).j.stores;
+  assert.deepEqual(vs.map((s) => s.store), [914]);
+  assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/store-keys')).status, 403);
+  assert.equal((await call('viewer@x.com', 'PUT', '/api/tracker/me/keys', { keys: [{ kind: 'store', store: 914 }] })).status, 403, 'no key copies with details off');
+  const vme = (await call('viewer@x.com', 'GET', '/api/tracker/me')).j;
+  assert.deepEqual(vme.access.pages, ['wos']); assert.equal(vme.access.details, false); assert.equal(vme.access.owner, false);
+});
 
-// --- trackerAdmin gates on its own too (called directly, without the site's gate)
-const direct = async (email, path) => (await trackerAdmin(new Request('https://a.test/api/tracker' + path), E, new URL('https://a.test/api/tracker' + path), path.split('?')[0], email)).status;
-assert.equal(await direct('viewer@x.com', '/sales/days?from=2026-10-16&to=2026-10-16'), 403);
-assert.equal(await direct('viewer@x.com', '/nope'), 403);
-assert.equal(gate(null, 'GET', '/api/usage', '').status, 403, 'not listed'); assert.equal(gate(null, 'GET', '/api/tracker/me', ''), null, '/me answers anyone signed in');
+await test("forbidden page → 403 + a 'denied' row (one per person/route/hour)", async () => {
+  const before = (await denies()).length;
+  const fu = await call('viewer@x.com', 'GET', '/api/usage');
+  assert.equal(fu.status, 403); assert.equal(fu.j.page, 'usage');
+  await call('viewer@x.com', 'GET', '/api/usage');
+  let dn = await denies();
+  assert.equal(dn.length, before + 1, 'denied logged once per hour');
+  assert.equal(dn[dn.length - 1].email, 'viewer@x.com'); assert.match(dn[dn.length - 1].detail, /GET \/api\/usage · page usage not allowed/);
+  for (const [m, p, b] of [['GET', '/api/tracker/sales/days?from=2026-10-16&to=2026-10-16'], ['GET', '/api/feedback'], ['GET', '/api/store/914'], ['GET', '/api/auto-rules'], ['POST', '/api/auto-rules', { rule: 'callback', state: 'live' }],
+    ['GET', '/api/stores'], ['POST', '/api/stores', { store: 555 }], ['POST', '/api/stores/914/remove', {}], ['GET', '/api/config'], ['GET', '/api/tracker/people'], ['GET', '/api/tracker/log'], ['GET', '/api/tracker/metrics'], ['GET', '/metrics-ui.js'], ['GET', '/api/next-version']]) {
+    assert.equal((await call('viewer@x.com', m, p, b)).status, 403, 'viewer ' + m + ' ' + p);
+  }
+  assert.equal((await W.prepare('SELECT COUNT(*) AS n FROM store_access').first()).n, 2, 'viewer changed no store access');
+  assert.equal((await W.prepare("SELECT state FROM auto_rules WHERE rule = 'callback'").first()).state, 'staged', 'viewer pushed no rule');
+});
 
-// --- migration: everyone keeps what they could open before; owners unchanged; review flagged
-for (const s of ['DROP TABLE IF EXISTS people', 'DROP TABLE IF EXISTS person_keys', 'DROP TABLE IF EXISTS access_log',
-  "CREATE TABLE people (email TEXT PRIMARY KEY, name TEXT, scope TEXT NOT NULL CHECK (scope IN ('all', 'stores')), stores TEXT NOT NULL DEFAULT '[]', added_by TEXT, added_at TEXT, last_seen_at TEXT)",
-  "CREATE TABLE person_keys (email TEXT NOT NULL, kind TEXT NOT NULL, store INTEGER NOT NULL DEFAULT 0, salt TEXT NOT NULL, rounds INTEGER NOT NULL, wrapped TEXT NOT NULL, invite INTEGER NOT NULL DEFAULT 0, created_by TEXT, created_at TEXT, PRIMARY KEY (email, kind, store))",
-  'CREATE TABLE access_log (id INTEGER PRIMARY KEY, email TEXT, action TEXT, store INTEGER, wo INTEGER, detail TEXT, at TEXT)',
-  "INSERT INTO people (email, scope, stores) VALUES ('owner@x.com', 'all', '[]'), ('dm@x.com', 'all', '[]'), ('gm@x.com', 'stores', '[914]'), ('tech@x.com', 'stores', '[326]')",
-  "INSERT INTO person_keys (email, kind, store, salt, rounds, wrapped) VALUES ('owner@x.com', 'master', 0, 's', 1, 'w'), ('dm@x.com', 'master', 0, 's', 1, 'w'), ('gm@x.com', 'store', 914, 's', 1, 'w')"]) await W.prepare(s).run();
-for (const s of sql('migrations/2026-10-17-access.sql')) await W.prepare(s).run();
-const M = { TR: W, DB: W, TRACKER_OWNERS: 'owner@x.com' };
-// Before: every Access user reached every adminApi route; scope limited the tracker routes. All of it must still pass.
-const reach = [['GET', '/api/usage'], ['GET', '/api/stores'], ['POST', '/api/stores'], ['POST', '/api/stores/914/remove'], ['GET', '/api/config'], ['GET', '/api/feedback'], ['POST', '/api/feedback/1'], ['GET', '/api/next-version'],
-  ['GET', '/api/auto-rules'], ['POST', '/api/auto-rules'], ['GET', '/api/tracker/me'], ['GET', '/api/tracker/stores'], ['GET', '/api/tracker/wos'], ['GET', '/api/tracker/sales/days']];
-for (const email of ['owner@x.com', 'dm@x.com', 'gm@x.com', 'tech@x.com']) {
-  const who = await accessOf(M, email);
-  for (const [m, p] of reach) assert.equal(gate(who, m, p, ''), null, 'migrated ' + email + ' still reaches ' + m + ' ' + p);
-  const mine = email === 'gm@x.com' ? 914 : email === 'tech@x.com' ? 326 : null;
-  // Store data: their own stores (the one deliberate narrowing: store-scoped pages now follow their store list).
-  for (const st of mine ? [mine] : [914, 326]) assert.equal(gate(who, 'GET', '/api/store/' + st, ''), null, email + ' Store data ' + st);
-  if (mine) { assert.equal(gate(who, 'GET', '/api/tracker/wo/' + mine + '/1', ''), null); assert.ok(gate(who, 'GET', '/api/tracker/wos', '?store=' + (mine === 914 ? 326 : 914)), 'store scope kept'); }
-}
-assert.equal((await accessOf(M, 'gm@x.com')).details, true, 'key holders keep customer details');
-assert.equal((await accessOf(M, 'tech@x.com')).details, false, 'no copies, no details (they had nothing to open)');
-assert.equal((await accessOf(M, 'dm@x.com')).review, true);
-assert.equal((await accessOf(M, 'owner@x.com')).owner, true);
-assert.ok(gate(await accessOf(M, 'dm@x.com'), 'GET', '/api/tracker/people', ''), 'People editing is developers only now');
-assert.match((await W.prepare("SELECT detail FROM access_log WHERE action = 'access:migrate'").first()).detail, /^4 people kept/);
-for (const s of ['DROP TABLE people', 'DROP TABLE person_keys', 'DROP TABLE access_log']) await W.prepare(s).run();
+await test('unknown routes are refused', async () => {
+  // --- unknown routes are refused (deny by default), for everyone but owners' real routes
+  for (const p of ['/api/ping', '/api/tracker/whatever', '/api/whatever', '/api/tracker/agents-x']) assert.equal((await call('ol@x.com', 'GET', p)).status, 403, 'unknown ' + p);
+  assert.equal((await call('owner@x.com', 'GET', '/api/whatever')).status, 403, 'unknown route even for an owner');
+  assert.ok((await denies()).some((d) => /unknown route/.test(d.detail)));
+  // not on the list at all: only /me answers (so the page can say who to ask)
+  assert.equal((await call('nobody@x.com', 'GET', '/api/tracker/me')).j.access, null);
+  for (const p of ['/api/usage', '/api/stores', '/api/tracker/wos', '/api/feedback']) assert.equal((await call('nobody@x.com', 'GET', p)).status, 403, 'not listed ' + p);
+});
+
+await test("manager: their store's Store data, sales", async () => {
+  // --- manager: their store's Store data, sales; All stores pages need explicit permission
+  assert.equal((await call('mgr@x.com', 'GET', '/api/store/914')).status, 200);
+  assert.equal((await call('mgr@x.com', 'GET', '/api/store/326')).status, 403, 'Store data for another store');
+  const ms = (await call('mgr@x.com', 'GET', '/api/stores')).j;
+  assert.deepEqual(ms.allowed.map((s) => s.store), [914], 'store picker cut to their stores'); assert.equal(ms.waiting.length, 0);
+  for (const [m, p, b] of [['POST', '/api/stores', { store: 555 }], ['GET', '/api/feedback'], ['GET', '/api/auto-rules'], ['GET', '/api/usage']]) assert.equal((await call('mgr@x.com', m, p, b)).status, 403, 'manager ' + p);
+  const md = (await call('mgr@x.com', 'GET', '/api/tracker/sales/days?from=2026-10-16&to=2026-10-16')).j.days;
+  assert.deepEqual(md.map((d) => d.store), [914], 'sales cut to their stores');
+  assert.ok(/SEALEDSALE"/.test((await call('mgr@x.com', 'GET', '/api/tracker/sales/day?store=914&day=2026-10-16')).text), 'details on: sealed card still sent');
+  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/sales/day?store=326&day=2026-10-16')).status, 403);
+  // reports/usage person on 326: Reports is Aethernet-wide, Usage is cut to their store
+  assert.equal((await call('rep@x.com', 'GET', '/api/feedback')).status, 200);
+  assert.deepEqual((await call('rep@x.com', 'GET', '/api/usage')).j.rows.map((r) => r.store), [326]);
+  // Owner: every page but People and Assize rules
+  for (const p of ['/api/usage', '/api/stores', '/api/feedback', '/api/auto-rules', '/api/store/326', '/api/tracker/wos']) assert.equal((await call('ol@x.com', 'GET', p)).status, 200, 'owner ' + p);
+  assert.equal((await call('ol@x.com', 'GET', '/api/tracker/assize/rules')).status, 403, 'Owner has no Assize rules page');
+  assert.equal((await call('ol@x.com', 'GET', '/api/stores')).j.waiting.length, 1);
+});
+
+await test('only owners change access', async () => {
+  assert.equal((await call('ol@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [914] })).status, 403, 'owner cannot add people');
+  assert.equal((await call('ol@x.com', 'GET', '/api/tracker/people')).j.error, 'developers only');
+  assert.equal((await call('ol@x.com', 'POST', '/api/tracker/people/viewer%40x.com/remove')).status, 403);
+  assert.equal((await call('mgr@x.com', 'POST', '/api/tracker/people', { email: 'mgr@x.com', scope: 'all', pages: ['stores'] })).status, 403, 'no raising your own access');
+  assert.equal((await call('ol@x.com', 'GET', '/api/tracker/agents')).status, 403);
+  // new person: Store viewer by default
+  assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'New@x.com', name: 'New Person', scope: 'stores', stores: [326] })).status, 200);
+  const np = await accessOf(E, 'new@x.com');
+  assert.deepEqual(np.pages, ['wos']); assert.equal(np.details, false); assert.deepEqual(np.stores, [326]);
+  // change: pages + stores, logged as a diff; 'people' can't be granted; details off refuses key copies
+  assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [326, 914], pages: ['wos', 'metrics', 'people', 'bogus'], details: false })).status, 200);
+  assert.deepEqual((await accessOf(E, 'new@x.com')).pages, ['wos', 'metrics'], 'people / unknown pages dropped');
+  const copy = { kind: 'store', store: 914, salt: 'c2FsdHNhbHRzYWx0', rounds: 200000, wrapped: 'p1.' + 'A'.repeat(200) };
+  assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [914], details: false, keys: [copy] })).status, 400);
+  const acc = (await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.log;
+  assert.ok(acc.some((l) => l.action === 'access:add' && /new@x.com · store viewer · stores 326 · details off/.test(l.detail)), 'access:add');
+  assert.ok(acc.some((l) => l.action === 'access:change' && /pages \+metrics · stores \+914/.test(l.detail)), 'access:change diff');
+  assert.ok(acc.some((l) => l.action === 'denied'), 'denied rows in the access log');
+  assert.ok(!(await call('owner@x.com', 'GET', '/api/tracker/log')).j.log.some((l) => l.action === 'denied' || l.action.startsWith('access:')), 'recent activity keeps views only');
+  // details on with an invite, then off: copies deleted
+  await T.prepare("INSERT INTO store_keys (store, public_jwk, wrapped_private) VALUES (914, '{}', 'x')").run();
+  assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [914], pages: ['wos'], details: true, keys: [copy] })).status, 200);
+  assert.equal((await T.prepare("SELECT COUNT(*) AS n FROM person_keys WHERE email = 'new@x.com'").first()).n, 1);
+  assert.ok((await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.log.some((l) => l.action === 'access:keys' && /invite for 914/.test(l.detail)));
+  assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'new@x.com', scope: 'stores', stores: [914], pages: ['wos'], details: false })).status, 200);
+  assert.equal((await T.prepare("SELECT COUNT(*) AS n FROM person_keys WHERE email = 'new@x.com'").first()).n, 0, 'details off deletes copies');
+  assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people/new%40x.com/remove')).status, 200);
+  assert.equal(await accessOf(E, 'new@x.com'), null);
+  assert.ok((await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.log.some((l) => l.action === 'access:remove'));
+});
+
+await test('roles: the four presets as before', async () => {
+  // --- roles: the four presets as before (Owner-level is now Owner, same pages); Assize rules adds to any of them
+  {
+    const { presetOf } = await import('../src/access.js');
+    const P8 = ['wos', 'sales', 'metrics', 'data', 'usage', 'reports', 'auto', 'stores'];
+    assert.equal(presetOf({ scope: 'all', details: true, pages: P8 }), 'owner', 'existing Owner-level people show as Owner, no change');
+    assert.equal(presetOf({ scope: 'all', details: true, pages: [...P8, 'rules'] }), 'owner + assize rules');
+    assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data', 'rules'] }), 'manager + assize rules');
+    assert.equal(presetOf({ scope: 'stores', details: false, pages: ['wos'] }), 'store viewer');
+    assert.equal(presetOf({ scope: 'stores', details: false, pages: ['rules'] }), 'custom');
+    assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'ol@x.com', scope: 'all', pages: [...P8, 'rules'], details: true })).status, 200);
+    assert.deepEqual((await accessOf(E, 'ol@x.com')).pages, [...P8, 'rules']);
+    assert.ok((await call('owner@x.com', 'GET', '/api/tracker/log?kind=access')).j.log.some((l) => l.action === 'access:change' && l.detail === 'ol@x.com · pages +rules · role owner → owner + assize rules'), 'access change log names the page and the role');
+    assert.equal((await call('ol@x.com', 'GET', '/api/tracker/assize/rules')).status, 200, 'now they have it');
+    assert.equal((await call('owner@x.com', 'POST', '/api/tracker/people', { email: 'ol@x.com', scope: 'all', pages: P8, details: true })).status, 200);
+    assert.deepEqual((await call('owner@x.com', 'GET', '/api/tracker/people')).j.pages, [...P8, 'rules', 'retrace'], 'the People page lists Assize rules and Retrace');
+    // Retrace (Oct 23, 2026) joins the Manager and Owner roles; people given those roles before still show as them
+    assert.equal(presetOf({ scope: 'all', details: true, pages: [...P8, 'retrace'] }), 'owner');
+    assert.equal(presetOf({ scope: 'stores', details: true, pages: ['wos', 'sales', 'metrics', 'data', 'retrace'] }), 'manager');
+    assert.equal(presetOf({ scope: 'stores', details: false, pages: ['wos', 'retrace'] }), 'custom');
+  }
+});
+
+await test("Retrace (page 'retrace', store-scoped)", async () => {
+  // --- Retrace (page 'retrace', store-scoped): through the site's gate, like every tracker route
+  await T.prepare("UPDATE people SET pages = ? WHERE email = 'mgr@x.com'").bind(JSON.stringify(['wos', 'sales', 'metrics', 'data', 'retrace'])).run();
+  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/item/914/180001')).status, 200, 'manager: their store');
+  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 403, 'manager: another store');
+  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/serials/914/180001')).status, 200, 'manager: serials, their store');
+  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/serials/326/180001')).status, 403, 'manager: serials, another store');
+  assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/retrace/serials/914/180001')).status, 403, 'no Retrace page: serials');
+  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/label/326/180001-0000600001')).status, 403);
+  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/search?store=326&q=180001')).status, 403);
+  assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/coverage')).status, 200);
+  assert.equal((await call('viewer@x.com', 'GET', '/api/tracker/retrace/coverage')).status, 403, 'no Retrace page');
+  assert.equal((await call('ol@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 403, 'an Owner from before Retrace needs the page added');
+  assert.equal((await call('owner@x.com', 'GET', '/api/tracker/retrace/item/326/180001')).status, 200, 'developers: everything');
+  assert.equal((await call('mgr@x.com', 'POST', '/api/tracker/retrace/coverage')).status, 403, 'read only: unknown route');
+  // coverage for one store (the page's 60 s poll): ?store= goes through the same gate, and only that store comes back
+  {
+    const one = await call('mgr@x.com', 'GET', '/api/tracker/retrace/coverage?store=914');
+    assert.equal(one.status, 200); assert.ok(one.j.stores.every((x) => x.store === 914), 'only the asked store (a store with no rows yet has none)');
+    assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/coverage?store=326')).status, 403, 'a store that is not theirs');
+    assert.deepEqual((await call('owner@x.com', 'GET', '/api/tracker/retrace/coverage?store=326')).j.stores.map((x) => x.store).filter((n) => n !== 326), [], 'developers: any one store');
+    // a malformed % in a path is a 400 through the gate too, not a 500
+    for (const p of ['item/914/%E0%A4%A', 'serials/914/%', 'label/914/%zz', 'po/914/100%']) assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/' + p)).status, 400, p);
+  }
+  // Coverage check (Verify coverage): page 'retrace', the store in the path; run and tick are the only POSTs
+  {
+    const v = '/api/tracker/retrace/verify/';
+    assert.equal((await call('mgr@x.com', 'GET', v + '914')).status, 200, 'manager: their store');
+    assert.equal((await call('mgr@x.com', 'GET', v + '326')).status, 403, 'manager: another store');
+    assert.equal((await call('mgr@x.com', 'POST', v + '914/run', {})).status, 409, 'manager: run on their store passes the gate (no frozen baseline here)');
+    assert.equal((await call('mgr@x.com', 'POST', v + '326/run', {})).status, 403, 'manager: run on another store');
+    assert.equal((await call('mgr@x.com', 'POST', v + '326/tick', { label: '1-1', matches: true })).status, 403, 'manager: tick on another store');
+    assert.equal((await call('mgr@x.com', 'POST', v + '914/tick', { label: '180001-0000600001', matches: true })).status, 400, 'manager: tick on their store (not in a sample)');
+    for (const [m, p] of [['GET', '914'], ['POST', '914/run'], ['POST', '914/tick']]) assert.equal((await call('viewer@x.com', m, v + p, m === 'POST' ? {} : undefined)).status, 403, 'no Retrace page: ' + m + ' ' + p);
+    assert.equal((await call('ol@x.com', 'POST', v + '914/run', {})).status, 403, 'an Owner from before Retrace needs the page added');
+    assert.equal((await call('owner@x.com', 'GET', v + '326')).status, 200, 'developers: everything');
+    // collection queue: same gate, read only
+    const qu = '/api/tracker/retrace/queue/';
+    assert.equal((await call('mgr@x.com', 'GET', qu + '914')).status, 200, 'queue: manager, their store');
+    assert.equal((await call('mgr@x.com', 'GET', qu + '326')).status, 403, 'queue: manager, another store');
+    assert.equal((await call('viewer@x.com', 'GET', qu + '914')).status, 403, 'queue: no Retrace page');
+    assert.equal((await call('ol@x.com', 'GET', qu + '914')).status, 403, 'queue: an Owner from before Retrace needs the page added');
+    assert.equal((await call('mgr@x.com', 'POST', qu + '914', {})).status, 403, 'queue: read only');
+    assert.equal((await call('owner@x.com', 'GET', qu + '326')).status, 200, 'queue: developers: everything');
+    assert.equal((await call('mgr@x.com', 'GET', v + '914/run')).status, 403, 'run is POST only'); assert.equal((await call('mgr@x.com', 'POST', v + '914', {})).status, 403, 'the result is GET only');
+    assert.equal((await call('mgr@x.com', 'DELETE', v + '914')).status, 403, 'no other methods');
+    assert.ok((await T.prepare("SELECT COUNT(*) AS n FROM access_log WHERE action = 'denied' AND detail LIKE '%retrace/verify%'").first()).n >= 1, 'refusals logged');
+  }
+  // The Retrace page's script (page 'retrace'), its item list and its store picker
+  {
+    const r = await call('mgr@x.com', 'GET', '/retrace-ui.js');
+    assert.equal(r.status, 200); assert.match(r.text, /export async function draw\(/);
+    assert.match(r.text, /group: 'all', range: 'all',/, 'the item page\'s "Moved in" range starts at Any time');
+    assert.match(r.text, /if \(S\.range !== 'all'\) p\.set\('days'/, 'the default stays out of the serials query');
+    assert.doesNotMatch(r.text, /range: '30'/); assert.match(r.text, /Verify coverage/); assert.match(r.text, /num\(x\.available\) \+ ' available'/, 'the item list shows what is available');
+    assert.equal((await call('viewer@x.com', 'GET', '/retrace-ui.js')).status, 403, 'no Retrace page: /retrace-ui.js');
+    // the strip's poll: the selected store only, every 60 s, visible tab only, not once the store is done, once more on a store switch; the first load still reads every store
+    assert.match(r.text, /ui\.api\('GET', '\/tracker\/retrace\/coverage\?store=' \+ store\)/, 'polls one store');
+    assert.match(r.text, /state === 'done'\)\) return;\s*refreshStrip\(\);\s*\}, 60000\)/, 'every 60 s, not when done');
+    assert.match(r.text, /document\.hidden \|\|/); assert.doesNotMatch(r.text, /\}, 30000\)/);
+    assert.match(r.text, /closeDrawer\(\); drawHealth\(\); refreshStrip\(\);/, 'refreshed once on a store switch');
+    assert.match(r.text, /ui\.api\('GET', '\/tracker\/retrace\/coverage'\)\.catch/, 'the first load fills the switcher with every store');
+    assert.match((await call('owner@x.com', 'GET', '/')).text, /import\('\/retrace-ui\.js'\)/, 'page.js loads the Retrace page');
+    // the Usage page reuses its load section across filter clicks: reloaded when the range changes or after a minute; a failed read isn't kept
+    {
+      const page = (await call('owner@x.com', 'GET', '/')).text, m = page.match(/(async function loadUsageLoad\(\) \{[\s\S]*?\n\}\n)async function drawUsage/);
+      assert.ok(m, 'page.js has loadUsageLoad'); assert.match(page, /const loadP = loadUsageLoad\(\);/);
+      let calls = 0, fail = false, now = Date.now();
+      const realNow = Date.now; Date.now = () => now;
+      try {
+        const mk = new Function('api', 'let days = 30, usageLoadCache = null;\n' + m[1] + '\nreturn { load: loadUsageLoad, setDays: (d) => { days = d; } };');
+        const u = mk(async () => { calls++; if (fail) throw new Error('down'); return { n: calls }; });
+        assert.deepEqual(await u.load(), { n: 1 }); assert.deepEqual(await u.load(), { n: 1 }, 'a filter click: no reload'); assert.equal(calls, 1);
+        now += 59000; await u.load(); assert.equal(calls, 1, 'under a minute');
+        now += 2000; assert.deepEqual(await u.load(), { n: 2 }, 'after a minute');
+        u.setDays(90); await u.load(); assert.equal(calls, 3, 'a new range reloads');
+        fail = true; now += 61000; assert.deepEqual(await u.load(), { error: 'down' }); fail = false; assert.deepEqual(await u.load(), { n: 5 }, 'an error is not kept: the next draw tries again');
+      } finally { Date.now = realNow; }
+    }
+    assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/items?store=914')).status, 200);
+    assert.equal((await call('mgr@x.com', 'GET', '/api/tracker/retrace/items?store=326')).status, 403, 'items: another store');
+    await T.prepare("UPDATE people SET pages = ? WHERE email = 'rep@x.com'").bind(JSON.stringify(['reports', 'usage', 'retrace'])).run();
+    const rs = await call('rep@x.com', 'GET', '/api/tracker/stores');
+    assert.equal(rs.status, 200, 'Retrace alone reaches the store picker'); assert.deepEqual(rs.j.stores.map((s) => s.store), [326], 'cut to their stores');
+    await T.prepare("UPDATE people SET pages = ? WHERE email = 'rep@x.com'").bind(JSON.stringify(['reports', 'usage'])).run();
+  }
+});
+
+await test('Cloudflare and Portal load', async () => {
+  // --- Cloudflare and Portal load (src/usage.js): page 'usage'; all-stores access gets the totals, others only their stores' rows; its own reads aren't counted
+  {
+    const U = '/api/tracker/usage-load';
+    assert.equal((await call('viewer@x.com', 'GET', U)).status, 403, 'no usage page');
+    assert.equal((await call('mgr@x.com', 'GET', U)).status, 403, 'Manager role has no usage page');
+    assert.equal((await call('nobody@x.com', 'GET', U)).status, 403, 'not on the list');
+    assert.equal((await call('ol@x.com', 'POST', U)).status, 403, 'read only');
+    const own = await call('owner@x.com', 'GET', U);
+    assert.equal(own.status, 200); assert.equal(own.j.scope, 'all'); assert.ok(own.j.global && own.j.global.days.length === 30);
+    assert.ok((await call('ol@x.com', 'GET', U)).j.global, 'Owner role with usage: totals');
+    const rep = await call('rep@x.com', 'GET', U);                   // stores [326], pages reports + usage
+    assert.equal(rep.status, 200); assert.equal(rep.j.global, null, 'store-limited: no worker-wide totals'); assert.equal(rep.j.scope, 'stores');
+    assert.ok(!/"requests"|rows_read|bytes/.test(rep.text), 'no totals anywhere in a store-limited answer');
+    assert.ok(rep.j.stores.every((x) => x.store === 326), 'only their stores');
+    assert.equal((await call('rep@x.com', 'GET', U + '?store=914')).status, 403, 'a store they cannot see');
+    // The admin site's own requests were counted by area (tracker D1 rows included); the usage-load reads were not
+    await call('owner@x.com', 'GET', '/api/tracker/retrace/coverage');
+    const area = async () => Object.fromEntries((await T.prepare('SELECT area, requests, rows_read FROM usage_load').all()).results.map((r) => [r.area, r]));
+    const a1 = await area();
+    assert.ok(a1.retrace_admin && a1.retrace_admin.requests >= 1, 'Retrace admin page counted'); assert.ok(a1.tracker.requests >= 1 && a1.other.requests >= 1);
+    assert.ok(a1.tracker.rows_read > 0, 'tracker routes read D1 rows');
+    await call('owner@x.com', 'GET', U); await call('ol@x.com', 'GET', U);
+    const a2 = await area();
+    assert.deepEqual(Object.fromEntries(Object.entries(a2).map(([k, v]) => [k, v.requests])), Object.fromEntries(Object.entries(a1).map(([k, v]) => [k, v.requests])), 'reading the usage numbers does not count');
+    await call('viewer@x.com', 'GET', '/api/tracker/sales/days');    // a refused request is still a request to the Worker
+    assert.equal((await area()).tracker.requests, a1.tracker.requests + 1);
+  }
+});
+
+await test("trackerAdmin gates on its own too (called directly, without the site's gate)", async () => {
+  const direct = async (email, path) => (await trackerAdmin(new Request('https://a.test/api/tracker' + path), E, new URL('https://a.test/api/tracker' + path), path.split('?')[0], email)).status;
+  assert.equal(await direct('viewer@x.com', '/sales/days?from=2026-10-16&to=2026-10-16'), 403);
+  assert.equal(await direct('viewer@x.com', '/nope'), 403);
+  assert.equal(gate(null, 'GET', '/api/usage', '').status, 403, 'not listed'); assert.equal(gate(null, 'GET', '/api/tracker/me', ''), null, '/me answers anyone signed in');
+});
+
+await test('migration: everyone keeps what they could open before', async () => {
+  // --- migration: everyone keeps what they could open before; owners unchanged; review flagged
+  for (const s of ['DROP TABLE IF EXISTS people', 'DROP TABLE IF EXISTS person_keys', 'DROP TABLE IF EXISTS access_log',
+    "CREATE TABLE people (email TEXT PRIMARY KEY, name TEXT, scope TEXT NOT NULL CHECK (scope IN ('all', 'stores')), stores TEXT NOT NULL DEFAULT '[]', added_by TEXT, added_at TEXT, last_seen_at TEXT)",
+    "CREATE TABLE person_keys (email TEXT NOT NULL, kind TEXT NOT NULL, store INTEGER NOT NULL DEFAULT 0, salt TEXT NOT NULL, rounds INTEGER NOT NULL, wrapped TEXT NOT NULL, invite INTEGER NOT NULL DEFAULT 0, created_by TEXT, created_at TEXT, PRIMARY KEY (email, kind, store))",
+    'CREATE TABLE access_log (id INTEGER PRIMARY KEY, email TEXT, action TEXT, store INTEGER, wo INTEGER, detail TEXT, at TEXT)',
+    "INSERT INTO people (email, scope, stores) VALUES ('owner@x.com', 'all', '[]'), ('dm@x.com', 'all', '[]'), ('gm@x.com', 'stores', '[914]'), ('tech@x.com', 'stores', '[326]')",
+    "INSERT INTO person_keys (email, kind, store, salt, rounds, wrapped) VALUES ('owner@x.com', 'master', 0, 's', 1, 'w'), ('dm@x.com', 'master', 0, 's', 1, 'w'), ('gm@x.com', 'store', 914, 's', 1, 'w')"]) await W.prepare(s).run();
+  for (const s of sql('migrations/2026-10-17-access.sql')) await W.prepare(s).run();
+  const M = { TR: W, DB: W, TRACKER_OWNERS: 'owner@x.com' };
+  // Before: every Access user reached every adminApi route; scope limited the tracker routes. All of it must still pass.
+  const reach = [['GET', '/api/usage'], ['GET', '/api/stores'], ['POST', '/api/stores'], ['POST', '/api/stores/914/remove'], ['GET', '/api/config'], ['GET', '/api/feedback'], ['POST', '/api/feedback/1'], ['GET', '/api/next-version'],
+    ['GET', '/api/auto-rules'], ['POST', '/api/auto-rules'], ['GET', '/api/tracker/me'], ['GET', '/api/tracker/stores'], ['GET', '/api/tracker/wos'], ['GET', '/api/tracker/sales/days']];
+  for (const email of ['owner@x.com', 'dm@x.com', 'gm@x.com', 'tech@x.com']) {
+    const who = await accessOf(M, email);
+    for (const [m, p] of reach) assert.equal(gate(who, m, p, ''), null, 'migrated ' + email + ' still reaches ' + m + ' ' + p);
+    const mine = email === 'gm@x.com' ? 914 : email === 'tech@x.com' ? 326 : null;
+    // Store data: their own stores (the one deliberate narrowing: store-scoped pages now follow their store list).
+    for (const st of mine ? [mine] : [914, 326]) assert.equal(gate(who, 'GET', '/api/store/' + st, ''), null, email + ' Store data ' + st);
+    if (mine) { assert.equal(gate(who, 'GET', '/api/tracker/wo/' + mine + '/1', ''), null); assert.ok(gate(who, 'GET', '/api/tracker/wos', '?store=' + (mine === 914 ? 326 : 914)), 'store scope kept'); }
+  }
+  assert.equal((await accessOf(M, 'gm@x.com')).details, true, 'key holders keep customer details');
+  assert.equal((await accessOf(M, 'tech@x.com')).details, false, 'no copies, no details (they had nothing to open)');
+  assert.equal((await accessOf(M, 'dm@x.com')).review, true);
+  assert.equal((await accessOf(M, 'owner@x.com')).owner, true);
+  assert.ok(gate(await accessOf(M, 'dm@x.com'), 'GET', '/api/tracker/people', ''), 'People editing is developers only now');
+  assert.match((await W.prepare("SELECT detail FROM access_log WHERE action = 'access:migrate'").first()).detail, /^4 people kept/);
+  for (const s of ['DROP TABLE people', 'DROP TABLE person_keys', 'DROP TABLE access_log']) await W.prepare(s).run();
+});
 
 await dispose();
 rmSync('.wrangler-test-admin', { recursive: true, force: true });
-console.log('admin access: all passed');

@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { setup, C, worker } from './mobile-helpers.mjs';
+import { test } from 'node:test';
 import { LinkshellRoom, checkCode, LS, linkshellTrim } from '../src/linkshell.js';
 
 const T = await setup('.wrangler-test-linkshell');
@@ -42,6 +43,7 @@ const pcKey = await C.newKeyPair(), phKey = await C.newKeyPair();
 const store = (path, body) => T.call('POST', '/v1/914/linkshell/' + path, body);
 const connect = (link, protos) => worker.fetch(new Request('https://t.test/v1/linkshell/connect?link=' + link, { headers: { upgrade: 'websocket', 'sec-websocket-protocol': protos } }), T.E, {});
 
+await test('linkshell', async () => {
 try {
   const phone = await T.registerPhone('Galaxy Z Fold 8 Ultra');
   await T.approve(phone, [914]);
@@ -172,10 +174,12 @@ try {
   await T.env.TR.prepare('UPDATE linkshell_links SET used_at = ? WHERE id = ?').bind(new Date(Date.now() - 31 * 86400000).toISOString(), left[1].id).run();
   assert.equal(await linkshellTrim(T.E), 1);
   assert.equal((await T.authed(phone, '/v1/agents/m/linkshell/links')).j.links.length, 0);
-  console.log('linkshell routes: all passed');
 } finally {
   await T.dispose();
 }
+});
+
+await test('the relay', async () => {
 
 // ------------------------------------------------------------------ the relay
 {
@@ -237,5 +241,5 @@ try {
   const res = await room.fetch(new Request('https://linkshell/close', { method: 'POST' }));
   assert.equal(await res.text(), 'ok');
   assert.equal(pc2.closedWith, 4001); assert.equal(ph2.closedWith, 4001);
-  console.log('linkshell relay: all passed');
 }
+});

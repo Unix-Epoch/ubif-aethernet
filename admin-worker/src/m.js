@@ -4,10 +4,14 @@
     /m/app.js /m/app.css /m/manifest.webmanifest /m/sw.js (Service-Worker-Allowed: /m) /m/icon.svg /m/icon-192.png /m/icon-512.png /m/icon-maskable-512.png
   Data: GET /api/m/home (tracker-worker/src/mobile.js).
 */
-import APP_JS from './m-app.js' with { type: 'text' };
+import APP_SRC from './m-app.js' with { type: 'text' };
+import ESC_SRC from './esc.js' with { type: 'text' };
 import APP_CSS from './m-app.css' with { type: 'text' };
 import SW_JS from './m-sw.js' with { type: 'text' };
 import { SVG, PNG } from './m-icons.js';
+
+// m-app.js is a plain script and can't import: the shared esc goes in as text (its `export` dropped).
+const APP_JS = APP_SRC.replace('/* __ESC__ */', () => ESC_SRC.match(/^export (const esc = .*;)$/m)[1]);
 
 // A short hash of the shell's files: the service worker's cache name, so any change installs a new worker and drops the old cache.
 const hash = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
