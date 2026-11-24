@@ -103,6 +103,7 @@ import { woSoldRoute, woPartsView } from './retrace-wo-parts.js';
 import { verifyRun, verifyAsk, verifyView, verifyTick, QUEUE_REASON, QUEUE_SINCE } from './retrace-verify.js';
 import { normalize, labelSnapshot, cleanLabel, KINDS, woMovements, woNames, hash53, isoAt, poState, mergePo, poSig, poEvents, poMovements, ignoredItem, IGNORED_ITEMS } from './retrace.js';
 import { nowCols, rowNow, nowCountsStmt, nowCountsRows, nowCounts, availRes } from './retrace-now.js';
+import { sweepRefresh, vendorNeed, sourcesView, itemSource, setSources, effective, SOURCES, IN_SCOPE } from './retrace-source.js';
 
 export const NEED_MAX = 60;
 const NEED_CAP = 200, COUNT_CAP = 300, SHORT_CAP = 300, CLAIM_MIN = 10, WATCH_MAX = 50;
@@ -592,10 +593,10 @@ export async function retraceStore(req, env, url, store, path, H) {
     for (const l of dead) snaps.delete(l);
     const diffMoves = [];
     if (snaps.size) {
-      const known = new Map((await T.prepare(`SELECT label, item, product, serial_status, consignment, wh_type, wh_id, cost, po, wo, sales_order, arrival, oem_serial, imei, serial_modified, last_seen, last_history_at
+      const known = new Map((await T.prepare(`SELECT label, item, product, serial_status, consignment, wh_type, wh_id, cost, po, wo, sales_order, arrival, oem_serial, imei, serial_modified, vendor, last_seen, last_history_at
           FROM inv_labels WHERE store = ? AND label IN (SELECT value FROM json_each(?))`).bind(store, JSON.stringify([...snaps.keys()])).all()).results.map((r) => [r.label, r]));
       const COLS = [['item', 'item'], ['product', 'product'], ['serial_status', 'status'], ['consignment', 'consignment'], ['wh_type', 'location'], ['wh_id', 'warehouse'], ['cost', 'cost'],
-        ['po', 'po'], ['wo', 'wo'], ['sales_order', 'sales_order'], ['arrival', 'arrival'], ['oem_serial', 'oem_serial'], ['imei', 'imei'], ['serial_modified', 'modified']];
+        ['po', 'po'], ['wo', 'wo'], ['sales_order', 'sales_order'], ['arrival', 'arrival'], ['oem_serial', 'oem_serial'], ['imei', 'imei'], ['serial_modified', 'modified'], ['vendor', 'vendor']];
       for (const [label, s] of snaps) {
         const k = known.get(label);
         const before = k && { label, item: k.item, status: k.serial_status, location: k.wh_type, consignment: k.consignment };
@@ -796,7 +797,13 @@ export async function retraceStore(req, env, url, store, path, H) {
     let soNeed = [];
     try { await soLink(T, store, at); } catch (_) {} // first: the tracker already knows most of the links, soNeed lists what is left
     try { soNeed = await soNeedList(T, store, at, soWant, Array.isArray(b.soNone) ? b.soNone : []); } catch (_) {}
-    return H.json({ need, more, changedItems, added, rejected, skipped, written, prunedLabels, named: nameW.length, unnamed, countNeed, missedItems, shortItems, soNeed, pos: poOut });
+    // Item sources (retrace-source.js): the rules again at most every 10 minutes (and the store's pause, with its one push), and the
+    // in-scope items whose labels carry no vendor yet (vendorNeed: how many, default none), for the browser to read their label lists.
+    const vendorWant = Math.min(Math.max(Number.isInteger(b.vendorNeed) ? b.vendorNeed : 0, 0), 300);
+    await sweepRefresh(T, env, store, at);
+    let vendorItems = [];
+    try { vendorItems = await vendorNeed(T, store, vendorWant); } catch (_) {}
+    return H.json({ need, more, changedItems, added, rejected, skipped, written, prunedLabels, named: nameW.length, unnamed, countNeed, missedItems, shortItems, soNeed, vendorItems, pos: poOut });
   }
   return H.fail(404, 'not found');
 }
@@ -856,7 +863,8 @@ async function soNeedList(T, store, at, want, none) {
   GET /retrace/item/:store/:item?from&to&kinds&user&limit&offset   → { store, item, info: { name, category, qty, last_seen,
         changed_at } | null, counts: [{ serial_status, wh_type, consignment, now, group, n }], labels: [{ label, serial_status, wh_type,
         consignment, wo, po, last_seen, last_history_at, need_history }], movements: [...], total,
-        by_kind: [{ kind, n }], users: [{ user, n }], first_at, all_total, sold90 }
+        by_kind: [{ kind, n }], users: [{ user, n }], first_at, all_total, sold90, source } · source: retrace-source.js itemSource for a Mobility /
+        Reportable Consumables item ({ source, basis, manual, manual_by, auto, conflict, evidence }), else null
         from / to: YYYY-MM-DD (UTC days) or ISO; kinds: comma list of KINDS; user: who made the movement; newest first;
         limit ≤ 1000 (200). by_kind: the date range and user without the kinds filter (the page's filter chips); users:
         the date range and kinds without the user filter (its person picker); first_at / all_total: every movement of the
@@ -869,7 +877,12 @@ async function soNeedList(T, store, at, want, none) {
         now / group = where it stands (retrace-now.js: Portal's status on the label, else the latest STATUS-BEARING movement, which wins when newer than the label's last snapshot; a consignment change never hides a sale). groups: how many
         serials are in each group (days applied, group not); group: in|wo|out|q|bad; days: only serials whose last movement is that
         recent (1-3650); newest last movement first; limit ≤ 500 (200). loose: the item's movements with no label (days applied), 50 newest.
-  GET /retrace/items?store=&limit=&offset=   → { items: [{ item, name, category, qty, on_hand, available, moves, last_at }], total }
+  GET /retrace/items?store=&limit=&offset=   → { items: [{ item, name, category, qty, on_hand, available, moves, last_at, source }], total }
+        source (retrace-source.js): distro | ms | other | unset | conflict for Mobility / Reportable Consumables items, else null.
+  GET  /retrace/sources/:store?source=  → retrace-source.js sourcesView: { store, counts, total, pause: { paused, unmarked, paused_at }, items }
+        source: all | distro | ms | other | unset | conflict | unmarked (unset and conflict).
+  POST /retrace/sources/:store/set { items: [item], source: distro|ms|other|null, view? }  → { changed, stores: [{ store, unmarked, paused }] } + the view again.
+        Marks items by hand for every store (an item number has one source); null hands them back to the rules.
         items with movements at the store, most recent movement first; name from inv_items, else a label's product;
         on_hand: inv_items qty summed over the store's warehouses (null when the item lookup hasn't seen it);
         available: the page's Available tile (lookup quantity over non-quarantine warehouses, else the available labels; null with neither); limit ≤ 500 (100).
@@ -966,6 +979,25 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     }
     return H.json(await verifyView(T, store), 200, false);
   }
+  // Item sources (retrace-source.js): GET the store's in-scope items with their source; POST /set marks items by hand (source null = back to the rules).
+  const srm = path.match(/^\/retrace\/sources\/(\d{1,6})(\/set)?$/);
+  if (srm) {
+    const store = Number(srm[1]), set = !!srm[2];
+    if (req.method !== (set ? 'POST' : 'GET')) return H.fail(404, 'not found', false);
+    if (!canSee(store)) return H.fail(403, 'not your store', false);
+    if (!set) {
+      const f = q.get('source') || 'all';
+      if (!['all', 'unmarked', 'unset', 'conflict', ...SOURCES].includes(f)) return H.fail(400, 'source: all, distro, ms, other, unset, conflict, unmarked', false);
+      return H.json(await sourcesView(T, store, f, { limit: Math.min(H.int(q.get('limit')) || 500, 2000), offset: H.int(q.get('offset')) || 0 }), 200, false);
+    }
+    const b = await H.readJson(req, 40000);
+    const items = Array.isArray(b.items) ? b.items.map((x) => H.clean(x == null ? '' : String(x), 40)).filter(Boolean) : [];
+    if (!items.length || items.length > 1000) return H.fail(400, 'items: 1 to 1000 item numbers', false);
+    if (!(b.source === null || SOURCES.includes(b.source))) return H.fail(400, 'source: distro, ms, other or null', false);
+    const r = await setSources(T, env, items, b.source, email || null, new Date().toISOString());
+    await H.log(env, email, 'retrace:source', store, null, (b.source || 'reset') + ' ' + items.slice(0, 20).join(',') + (items.length > 20 ? ' +' + (items.length - 20) : ''));
+    return H.json(Object.assign(r, await sourcesView(T, store, H.clean(b.view, 20) || 'all')), 200, false);
+  }
   if (req.method !== 'GET') return H.fail(404, 'not found', false);
 
   // One work order's parts and labels (retrace-wo-parts.js woPartsView): a work order view, so page 'wos' too (the gate checked 'retrace').
@@ -1024,7 +1056,10 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
     // counts: the labels by Portal's raw status AND by where they stand now (retrace-now.js); the page's tiles use now / group
     const cmap = new Map();
     for (const c of nowCountsRows(counts.results)) { const k = [c.serial_status, c.wh_type, c.consignment, c.now].join('\u0001'); const x = cmap.get(k); if (x) x.n += c.n; else cmap.set(k, { serial_status: c.serial_status, wh_type: c.wh_type, consignment: c.consignment, now: c.now, group: c.group, n: c.n }); }
-    return H.json({ store, item, info: i && Object.assign(i, { qty: parse(i.qty) }), counts: [...cmap.values()].sort((a, b) => b.n - a.n), labels: labels.results, movements: moves.results, total: total.results[0].n,
+    // its source (retrace-source.js) when the item is one that has one (Mobility, Reportable Consumables); null before the migration
+    let source = null;
+    if (i && IN_SCOPE.test(i.category || '')) try { source = await itemSource(T, item); } catch (_) {}
+    return H.json({ store, item, source, info: i && Object.assign(i, { qty: parse(i.qty) }), counts: [...cmap.values()].sort((a, b) => b.n - a.n), labels: labels.results, movements: moves.results, total: total.results[0].n,
       by_kind: byKind.results, users: users.results, first_at: a.first_at || null, all_total: a.n || 0, sold90: a.sold90 || 0 }, 200, false);
   }
 
@@ -1114,8 +1149,15 @@ export async function retraceAdmin(req, env, url, path, me, email, H) {
       // available: what the item page's Available tile shows: Portal's stock-lookup quantity (non-quarantine warehouses), else the available labels; null with neither
       const whs = qty && typeof qty === 'object' ? Object.entries(qty).filter(([, w]) => w && typeof w === 'object') : [];
       const available = whs.length ? whs.filter(([id]) => !/q$/i.test(id)).reduce((n, [, w]) => n + (typeof w.available === 'number' ? w.available : 0), 0) : r.label_n ? labelAv.get(r.item) || 0 : null;
-      return { item: r.item, name: r.name || r.product || null, category: r.category || null, qty, on_hand: onHand, available, moves: r.moves, last_at: r.last_at };
+      return { item: r.item, name: r.name || r.product || null, category: r.category || null, qty, on_hand: onHand, available, moves: r.moves, last_at: r.last_at,
+        source: IN_SCOPE.test(r.category || '') ? 'unset' : null };
     });
+    // sources (retrace-source.js) of the in-scope ones; left 'unset' before the migration
+    const scoped = items.filter((x) => x.source);
+    if (scoped.length) try {
+      const src = new Map((await T.prepare('SELECT item, manual, auto, conflict FROM inv_item_source WHERE item IN (SELECT value FROM json_each(?))').bind(JSON.stringify(scoped.map((x) => x.item))).all()).results.map((r) => [r.item, r]));
+      for (const x of scoped) x.source = effective(src.get(x.item));
+    } catch (_) {}
     return H.json({ items, total: total.results[0].n }, 200, false);
   }
 

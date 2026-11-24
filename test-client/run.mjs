@@ -890,6 +890,12 @@ await t('Retrace sweep (frozen baseline): the last sweep SENDS shortNeed and eve
   assert.ok(last.cursors && last.cursors.rma, 'cursors go up');
   assert.equal(r.shortQueued, 1); assert.deepEqual(env.todo(), ['190002'], 'the short item is queued for a label read');
 });
+await t('Retrace sweep: vendorNeed goes up; the Worker\'s vendorItems are queued for a label read once per 12 hours', async () => {
+  const env = retraceEnv(ok(LABELS), { todo: [], sweep: (b) => (b.vendorNeed > 0 ? { vendorItems: ['190002', '200003'] } : {}), gm: { ['ae_retrace_vendor_' + STORE]: { 200003: Date.now() } } });
+  const r = await env.AE.retrace.run();
+  assert.equal(env.sweeps().at(-1).vendorNeed, 150);
+  assert.equal(r.vendorQueued, 1); assert.deepEqual(env.todo(), ['190002'], 'the item read within 12 hours waits');
+});
 await t('Retrace sweep (counting): countNeed, poTotal and labelTotals go up on the last sweep; shortNeed 0', async () => {
   const env = retraceEnv(ok(LABELS), { todo: [], baseline: { frozen: false, posKnown: false }, countAnswer: ok(LABELS), gm: { ['ae_retrace_count_' + STORE]: ['180002'] } });
   await env.AE.retrace.run();

@@ -29,8 +29,29 @@ data class PushPing(val link: String, val kind: String, val id: String) {
     }
 }
 
+/**
+ * Ordering paused at a store (tracker-worker/src/retrace-source.js pushPause): some of its items have no Distro / MS / Other source yet.
+ * Sent once per pause, to every phone with the store.
+ */
+data class OrderingPing(val id: String, val store: Int, val count: Int) {
+    companion object {
+        private val MID = Regex("^[A-Za-z0-9_-]{8,40}$")
+        private val NUM = Regex("^\\d{1,6}$")
+        fun parse(data: Map<String, String>): OrderingPing? {
+            if (data["t"] != "retrace" || data["kind"] != "source.paused") return null
+            val id = data["id"]?.takeIf { MID.matches(it) } ?: return null
+            val store = data["store"]?.takeIf { NUM.matches(it) }?.toInt() ?: return null
+            val n = data["n"]?.takeIf { NUM.matches(it) }?.toInt() ?: return null
+            return OrderingPing(id, store, n)
+        }
+    }
+}
+
 /** What the phone shows for a ping: the same words in the notification and the in-app banner. [route] opens on tap. */
-data class PushNote(val id: String, val title: String, val text: String, val route: String)
+data class PushNote(val id: String, val title: String, val text: String, val route: String, val channel: String = PushModule.CHANNEL)
+
+fun noteFor(ping: OrderingPing): PushNote =
+    PushNote(ping.id, "Ordering paused", "${ping.store} · ${ping.count} ${if (ping.count == 1) "item" else "items"} not marked", Routes.RETRACE, PushModule.ORDERING)
 
 fun noteFor(ping: PushPing, pcName: String): PushNote = when (ping.kind) {
     "pullbacks.run" -> PushNote(ping.id, "Pullbacks ready to scan", pcName, Routes.LINKSHELL)
@@ -77,6 +98,13 @@ class PushCenter(
     /** A data message from FCM. Returns what was shown, if anything. */
     @Synchronized
     fun onPing(data: Map<String, String>): PushNote? {
+        OrderingPing.parse(data)?.let { o ->
+            if (o.id in seen) return null
+            seen.addLast(o.id); while (seen.size > 50) seen.removeFirst()
+            val note = noteFor(o)
+            if (foreground) _banners.tryEmit(note) else notifier.show(note)
+            return note
+        }
         val ping = PushPing.parse(data) ?: return null
         val l = link()?.takeIf { it.linkId == ping.link } ?: return null
         if (ping.id in seen) return null
