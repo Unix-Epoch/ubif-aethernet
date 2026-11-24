@@ -13,7 +13,7 @@
     wifioff: '<path d="M2 9a15 15 0 0 1 5-3M22 9a15 15 0 0 0-6-3.5M5 13a10 10 0 0 1 3-2M19 13a10 10 0 0 0-4-2.6M9 17a5 5 0 0 1 6 0"/><path d="M3 3l18 18"/>',
   };
   const ic = (n, s = 24, cls = '') => `<svg class="ic ${cls}" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`;
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  /* __ESC__ */ // const esc: the admin site's one definition (src/esc.js), written in by m.js
   const num = (n) => Number(n).toLocaleString('en-US');
   const money = (v) => (v == null ? '—' : '$' + num(Math.round(v)));
   const kfmt = (v) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(Math.round(v)));

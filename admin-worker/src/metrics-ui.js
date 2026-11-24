@@ -2,6 +2,7 @@
 // One request (/api/tracker/metrics) returns every panel's numbers per store; this file sums for "All stores",
 // splits by store on request, and draws the charts as inline SVG (no chart library; the page's CSP stays tight).
 // Range, store and view live in the URL hash (#metrics?store=326&range=30&split=1&cmp=1) so links can be shared.
+import { esc } from '/esc.js';
 
 const CSS = `
 .mx{--grid:#efeef2;--axis:#cfcdd4;--hd:#faf9fb;--muted:#7c7b80;--all:#8223d2;--s914:#2a78d6;--s326:#eb6834;--s536:#1baf7a;--s1276:#eda100;--ghost:#a3a2a8;
@@ -63,7 +64,6 @@ const FMT = {
   pct: (v) => v == null ? '—' : Math.round(v * 100) + '%', days: (v) => v == null ? '—' : v.toFixed(1) + ' d', hours: (v) => v == null ? '—' : (Math.round(v * 10) / 10).toLocaleString('en-US') + ' h',
 };
 const axisFmt = (fmt) => fmt === 'money' || fmt === 'money2' ? FMT.moneyS : fmt === 'pct' ? FMT.pct : fmt === 'days' ? (v) => v.toFixed(0) + 'd' : fmt === 'hours' ? (v) => Math.round(v) + 'h' : FMT.int;
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const D = (day) => new Date(day + 'T12:00:00Z');
 const fmtD = (day) => D(day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 const fmtLong = (day) => D(day).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });

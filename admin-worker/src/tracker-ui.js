@@ -2,6 +2,7 @@
 // Served at /tracker-ui.js and loaded by page.js when one of those tabs opens. Keys are
 // unlocked and customer data is opened only here, in the browser; the server never sees either.
 import * as C from '/crypto.js';
+import { esc } from '/esc.js';
 
 const CSS = '.unlocked{padding:3px 10px;border-radius:999px;background:var(--ps);color:var(--p);font-weight:700;font-size:12px;cursor:pointer}'
   + '.srch{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.srch .qq{flex:1;min-width:280px;height:42px;font-size:15px;border-radius:999px;padding:0 18px}'
@@ -141,7 +142,6 @@ const stClass = (r) => (r.status_id === 13 ? (r.service_outcome && r.service_out
 // RFP split by Portal's outcome: "Ready for pickup · Complete" / "· Incomplete" (Declined, No issue found shown as is).
 const statusText = (r) => (r.status_name || statusName(r.status_id)) + (r.status_id === 13 && r.service_outcome ? ' · ' + (r.service_outcome === 'Completed' ? 'Complete' : r.service_outcome) : '');
 const fmtPhone = (p) => (p && p.length === 10 ? '(' + p.slice(0, 3) + ') ' + p.slice(3, 6) + '-' + p.slice(6) : p);
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function excerpt(text, q) {
   const i = text.toLowerCase().indexOf(q.toLowerCase());
   if (i < 0) return null;

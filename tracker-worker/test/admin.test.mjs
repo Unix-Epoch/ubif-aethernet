@@ -87,6 +87,25 @@ await test("the Assize rules editor's engine, served to the page as modules", as
     const r = await call('owner@x.com', 'GET', '/rules-ui.js');
     assert.equal(r.status, 200); assert.match(r.text, /export async function draw\(/); assert.match(r.text, /from '\/rulegraph\.js'/);
     assert.equal((await call('viewer@x.com', 'GET', '/rules-ui.js')).status, 403, 'no rules page: /rules-ui.js');
+    // its other modules (admin-worker/src/rules-ui/) are /rules-ui.js?part=<name>: every part a file imports is served, behind the same page
+    const parts = new Set(), seen = new Set(), todo = [r.text];
+    while (todo.length) for (const [, p] of todo.pop().matchAll(/from '\/rules-ui\.js\?part=(\w+)'/g)) {
+      parts.add(p); if (seen.has(p)) continue; seen.add(p);
+      const m = await call('owner@x.com', 'GET', '/rules-ui.js?part=' + p);
+      assert.equal(m.status, 200, 'part ' + p); assert.match(m.text, /^export /m, 'part ' + p + ' is a module');
+      assert.equal((await call('viewer@x.com', 'GET', '/rules-ui.js?part=' + p)).status, 403, 'no rules page: part ' + p);
+      todo.push(m.text);
+    }
+    assert.deepEqual([...parts].sort(), ['canvas', 'compare', 'edit', 'side', 'state', 'style', 'words']);
+    assert.equal((await call('owner@x.com', 'GET', '/rules-ui.js?part=nope')).status, 404, 'unknown part');
+    // one esc for every page: all five characters, and no page keeps its own
+    const em = await call('viewer@x.com', 'GET', '/esc.js'); assert.equal(em.status, 200);
+    const { esc } = await import('data:text/javascript,' + encodeURIComponent(em.text));
+    assert.equal(esc(`<a href='x' title="y">&</a>`), '&lt;a href=&#39;x&#39; title=&quot;y&quot;&gt;&amp;&lt;/a&gt;'); assert.equal(esc(null), ''); assert.equal(esc(0), '0');
+    for (const p of ['/tracker-ui.js', '/metrics-ui.js', '/rules-ui.js?part=canvas']) {
+      const t = (await call('owner@x.com', 'GET', p)).text;
+      assert.match(t, /import \{ esc \} from '\/esc\.js'/, p + ' imports esc'); assert.doesNotMatch(t, /const esc\b/, p + ' has no esc of its own');
+    }
     assert.match((await call('owner@x.com', 'GET', '/')).text, /import\('\/rules-ui\.js'\)/, 'page.js loads the editor');
     assert.doesNotMatch((await call('owner@x.com', 'GET', '/')).text, /editor is coming/, 'the placeholder is gone');
   }

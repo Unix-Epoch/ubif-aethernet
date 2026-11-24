@@ -6,6 +6,12 @@ import { NODE_TYPES, validate, compile, run } from '../src/rulegraph.js';
 import { makeRules, trimDetail, fromSnapshot } from '../src/assize-rules.js';
 import { test } from 'node:test';
 
+// The rules editor's source: rules-ui.js and its modules (admin-worker/src/rules-ui/), as one text.
+const editorSource = async () => {
+  const { readFileSync, readdirSync } = await import('node:fs'), dir = new URL('../../admin-worker/src/', import.meta.url);
+  return [new URL('rules-ui.js', dir), ...readdirSync(new URL('rules-ui/', dir)).map((f) => new URL('rules-ui/' + f, dir))].map((u) => readFileSync(u, 'utf8')).join('\n');
+};
+
 const R = makeRules({ RG });
 const NOW = Date.parse('2026-10-22T18:00:00Z'), H = 3600000;
 const iso = (hoursAgo) => new Date(NOW - hoursAgo * H).toISOString();
@@ -166,7 +172,7 @@ await test("the editor's palette is built from NODE_TYPES by cat", async () => {
   {
     const NEW = ['lastNote', 'firstNote', 'filterNotes', 'noteAuthors', 'lastUser', 'createdBy', 'statusSetBy', 'personIs', 'samePerson', 'personName', 'isUnassigned', 'hoursSince', 'orderDates'];
     for (const t of NEW) { const d = NODE_TYPES[t]; assert.ok(d && d.title && d.desc && ['people', 'num', 'fact'].includes(d.cat), t); }
-    const ui = (await import('node:fs')).readFileSync(new URL('../../admin-worker/src/rules-ui.js', import.meta.url), 'utf8');
+    const ui = await editorSource();
     assert.ok(ui.includes("people: ['People and notes'") && ui.includes("'num', 'people', 'logic'") && ui.includes('--c-people:'));
     for (const t of ['lastNote', 'firstNote', 'lastUser', 'createdBy', 'statusSetBy']) assert.ok(NODE_TYPES[t].notes, t + ' declares notes');
   }
@@ -308,7 +314,7 @@ await test('the prefab nodes', async () => {
     // every new node: in the library, with a category the editor knows
     const PREFAB = ['program', 'lastActivity', 'relatedOrder', 'add', 'max', 'min', 'above', 'below', 'chooseNum', 'textIs', 'statusTag', 'checklistField', 'plural', 'now', 'timeOfDay', 'dayTime', 'daysBetween', 'elapsed',
       'storeHours', 'formatTime', 'dateInText', 'findNote', 'orPerson', 'namedPerson', 'cartTotal', 'repairKind', 'priceSheet'];
-    const ui = (await import('node:fs')).readFileSync(new URL('../../admin-worker/src/rules-ui.js', import.meta.url), 'utf8');
+    const ui = await editorSource();
     for (const t of PREFAB) { const d = NODE_TYPES[t]; assert.ok(d && d.title && d.desc, t); assert.ok(ui.includes("'" + d.cat + "'") || ui.includes(d.cat + ': ['), t + ': editor knows ' + d.cat); }
     assert.ok(ui.includes("time: ['Time and store hours'") && ui.includes('--c-time:'));
     assert.ok(NODE_TYPES.findNote && !NODE_TYPES.findNote.notes, 'Find note reads notes it is given (wired), so it has no notes flag of its own');

@@ -188,7 +188,9 @@ await test('the shell: content types, policy, manifest, service worker, icons', 
     for (const ic of man.j.icons) { const r = await call('owner@x.com', ic.src); assert.equal(r.status, 200, ic.src); assert.equal(r.h.get('content-type'), ic.type); if (ic.type === 'image/png') assert.deepEqual([...r.buf.slice(1, 4)], [80, 78, 71], 'PNG bytes'); }
     assert.ok(man.j.icons.some((i) => i.sizes === '192x192') && man.j.icons.some((i) => i.sizes === '512x512') && man.j.icons.some((i) => i.purpose === 'maskable'));
     const sw = await call('owner@x.com', '/m/sw.js'); assert.match(sw.h.get('content-type'), /javascript/); assert.equal(sw.h.get('service-worker-allowed'), '/m'); assert.match(sw.text, /^const V = "/);
-    assert.match((await call('owner@x.com', '/m/app.js')).h.get('content-type'), /javascript/); assert.match((await call('owner@x.com', '/m/app.css')).h.get('content-type'), /^text\/css/);
+    const app = await call('owner@x.com', '/m/app.js');
+    assert.match(app.h.get('content-type'), /javascript/); assert.doesNotMatch(app.text, /__ESC__/); assert.match(app.text, /const esc = .*&#39;/, "the admin site's esc is written in");
+    new Function(app.text); // still one valid plain script assert.match((await call('owner@x.com', '/m/app.css')).h.get('content-type'), /^text\/css/);
     assert.equal((await call('owner@x.com', '/m/nope')).status, 404);
     // the worker caches nothing but the shell and Home answers, and only plain 200s
     assert.doesNotMatch(sw.text.replace(/\/\*[\s\S]*?\*\//, ''), /\/api\/(?!m\/home)/); assert.match(sw.text, /plain\(r\)/);
