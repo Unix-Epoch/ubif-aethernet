@@ -19,6 +19,7 @@
             - part lines (a label serial, not B-…, sku not an ignored item) → inv_wo_parts (the WO's set replaced), the label's WO link
               (inv_labels.wo: a label sold on several WOs keeps the latest sale), sales order → WO (inv_so_wo, source 'salesorder'),
               and one 'used' movement on ref_type 'wo' per label unless the WO's cart already gave it one (the cart diff, the same sale);
+              a line with a negative quantity (the label returned on this WO) is kept in inv_wo_parts only: no WO link, no movement;
             - no part lines: 'empty' (done, nothing to link);
             - failed (the read failed, or the answer is not a sales order for this cart): tried again later; after TRIES_MAX failures 'gave_up',
               so the backfill always ends. A WO this store's tracker doesn't hold is rejected.
@@ -102,6 +103,9 @@ export async function woSoldRoute(req, T, store, path, H) {
       for (const x of parts) {
         stmts.push(T.prepare(`INSERT OR REPLACE INTO inv_wo_parts (store, wo, line, label, item, sku, name, quantity, price, serial_status, line_type, sales_order, sold_at, recorded_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(store, wo, x.line, x.label, x.item, x.sku, x.name, x.quantity, x.price, x.serial_status, x.line_type, so, soldAt, at));
+        // a negative-quantity line is the label coming back on this WO (a defective part pulled and replaced, a refunded part): not a use,
+        // so it neither moves the label's WO link nor adds a 'used' movement (live at 914: 616885-0000141297, qty -1 on WO 500513380)
+        if (x.quantity != null && x.quantity < 0) continue;
         // the label's WO: this one, unless the label is on record on another WO after this sale (sold there later, or a cart / parts movement
         // there since: the backfill runs oldest first, and a WO seen sold just now, or reserved now, may already have linked it)
         stmts.push(T.prepare(`INSERT INTO inv_labels (store, label, item, wo, sales_order, first_seen, last_seen, need_history, queued_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 2, ?6)

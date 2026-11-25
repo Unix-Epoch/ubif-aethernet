@@ -1611,6 +1611,18 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.deepEqual([lb.wo, lb.sales_order], ['700001', 'FSO000700001'], 'the later sale keeps the label');
   assert.equal((await T.prepare("SELECT wo FROM inv_labels WHERE store = 567 AND label = '180001-0000600002'").first()).wo, '700002');
   assert.equal(await count("SELECT COUNT(*) AS n FROM inv_movements WHERE store = 567 AND label = '180001-0000600002'"), 1, 'the cart diff\'s used row is the only one');
+  // a LATER WO returns that label (qty -1: the defective part pulled and replaced, live at 914 Nov 2026): kept as the WO's line, but no
+  // second 'used' movement and the label keeps the WO it was used on; the replacement on the same order is used as usual
+  await wo(700008, '2026-10-22T15:00:00.000Z', '567-888').run();
+  const back = order({ cartId: '567-888', salesId: 'FSO000700008', salesDate: '2026-10-22T15:00:00Z' });
+  back.salesLines[1] = Object.assign({}, back.salesLines[1], { serial: '180001-0000600009', serialStatus: 'Sold' });
+  back.salesLines.push(Object.assign({}, back.salesLines[1], { lineId: 'L-6', lineNumber: 6, serial: '180001-0000600001', serialStatus: 'Defective', quantity: -1, price: 0, grossAmount: 0 }));
+  r = await post([{ wo: '700008', cart_id: '567-888', order: back }]);
+  assert.deepEqual([r.j.done, r.j.labels], [1, 2], JSON.stringify(r.j));
+  assert.deepEqual((await T.prepare("SELECT line, quantity FROM inv_wo_parts WHERE store = 567 AND wo = '700008' ORDER BY line").all()).results.map((x) => [x.line, x.quantity]), [['L-2', 1], ['L-6', -1]]);
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_movements WHERE store = 567 AND label = '180001-0000600001' AND ref_id = '700008'"), 0, 'the return is not a second use');
+  assert.equal((await T.prepare("SELECT wo FROM inv_labels WHERE store = 567 AND label = '180001-0000600001'").first()).wo, '700001', 'the label keeps the WO it was used on');
+  assert.equal(await count("SELECT COUNT(*) AS n FROM inv_movements WHERE store = 567 AND label = '180001-0000600009' AND kind = 'used' AND ref_id = '700008'"), 1, 'the replacement is used');
   // no part lines: 'empty', done
   r = await post([{ wo: '700005', cart_id: '567-555', order: order({ cartId: '567-555', salesId: 'FSO000700005', salesLines: [FX.salesLines[0]] }) }]);
   assert.equal(r.j.empty, 1);
