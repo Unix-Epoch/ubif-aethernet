@@ -16,3 +16,4 @@ sheets/*.log
 worker/import/*.sql
 sandbox/shots/
 tracker-worker/.wrangler-linkpearl-local/
+.dev-link-key

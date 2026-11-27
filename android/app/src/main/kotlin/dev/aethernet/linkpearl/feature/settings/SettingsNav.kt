@@ -28,7 +28,7 @@ import dev.aethernet.linkpearl.feature.update.UpdateController
 import dev.aethernet.linkpearl.core.nav.Routes
 import kotlinx.coroutines.launch
 
-const val ADMIN_SITE = "https://aethernet-admin.ubifaethernet.workers.dev/"
+const val ADMIN_SITE = "https://admin.aethersp.here/"
 
 /**
  * Settings' destinations (agent D). [navigate] opens another route by its string (e.g. `alerts/settings`); the shell passes

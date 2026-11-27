@@ -106,10 +106,14 @@ TRACKER_API = "https://aethernet-tracker.ubifaethernet.workers.dev"
 # The dev channel: everything that differs from the public build.
 DEV = {
     "gist_id": "9ac1e1dbc80caa3dff04afb5b89e90c3",  # secret Gist, account Unix-Epoch
+    # links-worker/ serves the Gist's files at aethersp.here/oracle/dev/<key>/ (install, updates, status.json). The key is
+    # private: env AE_DEV_LINK_KEY, else the untracked .dev-link-key; the Worker's DEV_KEY secret holds the same value.
+    "links_base": "https://aethersp.here/oracle/dev",
+    "link_key_file": ".dev-link-key",
     "name": "Aethernet (dev)",
     "namespace": "garrett.ubif.dev",   # a separate script to Tampermonkey: own install + storage
     "waymark_api": "https://aethernet-waymark-dev.ubifaethernet.workers.dev",
-    "tracker_api": "https://aethernet-tracker.ubifaethernet.workers.dev",
+    "tracker_api": "https://tracker.aethersp.here",
     "dist": "dist-dev",
     "status_file": "status-dev.json",
     "counter": "dev-build.txt",       # last dev build number
@@ -134,7 +138,7 @@ CHANNEL = "public"  # set to "dev" / "demo" by --dev / --demo before building
 ESBUILD = ["npx", "--yes", "esbuild@0.28.2"]
 
 def channel_raw() -> str:
-    return gist_raw(DEV["gist_id"]) if CHANNEL == "dev" else gist_raw(DEMO["gist_id"]) if CHANNEL == "demo" else GIST_RAW
+    return dev_raw() if CHANNEL == "dev" else gist_raw(DEMO["gist_id"]) if CHANNEL == "demo" else GIST_RAW
 
 
 # Dev builds only: the SharePoint download test in the dev tools (Provoke's sheets, off this Mac).
@@ -193,6 +197,17 @@ def header(version: str) -> str:
   source. Questions or permission requests: contact the author.
 */
 """
+
+
+def dev_raw() -> str:
+    """The dev channel's base URL: the private aethersp.here link when a key is set up, else the dev Gist."""
+    key = os.environ.get("AE_DEV_LINK_KEY", "").strip()
+    if not key:
+        f = Path(__file__).resolve().parent / DEV["link_key_file"]
+        key = f.read_text().strip() if f.exists() else ""
+    if key and not re.fullmatch(r"[A-Za-z0-9_-]{24,}", key):
+        sys.exit(f"The dev link key must be 24+ letters, digits, - or _ (check AE_DEV_LINK_KEY / {DEV['link_key_file']}).")
+    return f"{DEV['links_base']}/{key}" if key else gist_raw(DEV["gist_id"])
 
 
 def gist_raw(gist_id: str) -> str:
@@ -869,7 +884,7 @@ def dev_release(root: Path, status_base: str | None = None) -> None:
     files = gist_files(DEV["gist_id"])
     for name in (FILENAME, META_FILENAME, READABLE_FILENAME):
         gist_put(out.parent / name, files, DEV["gist_id"])
-    print(f"Published dev v{version}. Dev install link:\n  {gist_raw(DEV['gist_id'])}/{FILENAME}")
+    print(f"Published dev v{version}. Dev install link:\n  {dev_raw()}/{FILENAME}")
     status = load_dev_status(root)
     status["latest"] = {"version": version, "date": now_utc()}
     status["incident"] = load_status(root).get("incident")  # same notice as the public channel

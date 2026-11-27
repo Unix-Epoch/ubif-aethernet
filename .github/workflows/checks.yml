@@ -43,6 +43,7 @@ jobs:
         with: { python-version: '3.12' }
       - run: python3 -m unittest test-build/test_build.py
       - run: node worker/test/worker.test.mjs
+      - run: node links-worker/test/links.test.mjs
 
   tracker:
     name: Tracker Worker tests
