@@ -1,0 +1,14 @@
+# Aethernet install and update links on aethersp.here: serves each channel's files from its secret Gist.
+#   /aen/install → /aen/aethernet.user.js   /aen/early → /aen/early/aethernet.user.js   /oracle/dev/<key> → /oracle/dev/<key>/aethernet.user.js
+# Each channel serves aethernet.user.js, aethernet.meta.js, aethernet.readable.js and status.json.
+# Set once (kept out of this public repo): `npx wrangler secret put EARLY_GIST` and `npx wrangler secret put DEV_KEY`
+# (DEV_KEY is the same value as the untracked .dev-link-key that build.py reads).
+name = "aethernet-links"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+routes = [{ pattern = "aethersp.here", custom_domain = true }]
+
+[vars]
+PUBLIC_GIST = "0cf4560c4f26d8ff9091a10068fd3464"
+DEV_GIST = "9ac1e1dbc80caa3dff04afb5b89e90c3"

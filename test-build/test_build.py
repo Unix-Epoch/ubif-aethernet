@@ -334,6 +334,27 @@ class DevVersion(Base):
         self.assertEqual((self.root / "dev-build.txt").read_text(), "144\n")
 
 
+class DevLinks(unittest.TestCase):
+    """The dev channel's install/update base: the private aethersp.here link when a key is set, else the dev Gist."""
+    def setUp(self):
+        patch = mock.patch.dict(build.DEV, link_key_file=".no-such-dev-link-key")
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_key_from_env(self):
+        with mock.patch.dict(os.environ, {"AE_DEV_LINK_KEY": "a" * 32}):
+            self.assertEqual(build.dev_raw(), "https://aethersp.here/oracle/dev/" + "a" * 32)
+
+    def test_no_key_falls_back_to_gist(self):
+        with mock.patch.dict(os.environ, {"AE_DEV_LINK_KEY": ""}):
+            self.assertEqual(build.dev_raw(), build.gist_raw(build.DEV["gist_id"]))
+
+    def test_bad_key_stops(self):
+        for bad in ("short", "x" * 30 + "/..", "x" * 30 + " y"):
+            with mock.patch.dict(os.environ, {"AE_DEV_LINK_KEY": bad}), self.assertRaises(SystemExit):
+                build.dev_raw()
+
+
 class NoRealCalls(unittest.TestCase):
     def test_guards_installed(self):
         self.assertIs(build.subprocess.run, fake_run)

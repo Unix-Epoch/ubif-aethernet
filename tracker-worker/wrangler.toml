@@ -1,8 +1,10 @@
-# Aethernet work order tracker → aethernet-tracker.ubifaethernet.workers.dev
+# Aethernet work order tracker → tracker.aethersp.here (and aethernet-tracker.ubifaethernet.workers.dev, kept for older Aethernet and Linkpearl builds)
 # Stores' browsers send work orders here; the admin site (admin-worker/) reads them behind Cloudflare Access.
 name = "aethernet-tracker"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
+workers_dev = true
+routes = [{ pattern = "tracker.aethersp.here", custom_domain = true }]
 
 # The tracker's own database (created Oct 12, 2026; tables from schema.sql).
 [[d1_databases]]

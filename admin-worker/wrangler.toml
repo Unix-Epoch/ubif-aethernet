@@ -1,9 +1,11 @@
-# Aethernet admin site: aethernet-admin.ubifaethernet.workers.dev, behind Cloudflare Access.
+# Aethernet admin site: admin.aethersp.here (and aethernet-admin.ubifaethernet.workers.dev), behind Cloudflare Access.
+# Both hostnames must be in the same Access application, so POLICY_AUD below covers both.
 # Same database as the Waymark Worker; the admin routes are shared (worker/src/index.js adminApi).
 name = "aethernet-admin"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
+routes = [{ pattern = "admin.aethersp.here", custom_domain = true }]
 
 [[d1_databases]]
 binding = "DB"

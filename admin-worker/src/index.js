@@ -1,5 +1,5 @@
 /*
-  Aethernet admin site. Served at aethernet-admin.<account>.workers.dev
+  Aethernet admin site. Served at admin.aethersp.here (and aethernet-admin.<account>.workers.dev)
   with Cloudflare Access in front of the whole hostname; the Waymark Worker that stores
   use is separate and untouched.
 

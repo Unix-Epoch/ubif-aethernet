@@ -1,6 +1,9 @@
+# Waymark API → api.aethersp.here (and aethernet-waymark.ubifaethernet.workers.dev, kept for older Aethernet builds)
 name = "aethernet-waymark"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
+workers_dev = true
+routes = [{ pattern = "api.aethersp.here", custom_domain = true }]
 
 [[d1_databases]]
 binding = "DB"
@@ -28,6 +31,9 @@ simple = { limit = 120, period = 60 }
 # one over the same WOs' nicknames. No cron (the public Worker cleans up).
 [env.dev]
 name = "aethernet-waymark-dev"
+# routes is inherited by environments: without this, a dev deploy would try to take api.aethersp.here.
+routes = []
+workers_dev = true
 
 [[env.dev.d1_databases]]
 binding = "DB"
