@@ -128,6 +128,77 @@ AE.shard({
       return text.replace(/\$\s?price\b/gi, () => money(Array.isArray(price) ? price[Math.min(i++, price.length - 1)] : price));
     };
 
+    /*
+      Certainty: how sure Provoke is that pick()'s message is the right one, 0-100. Every lead starts at 100 and
+      loses points for each thing that could make the text wrong; only 100 ("sure") can be batch sent.
+      100 needs: a "Reply ready" program (Asurion Mobility), a device that is plainly Apple (iPhone/iPad) or plainly
+      Samsung/Google (the message is chosen by it), a sheet message with nothing left to fill in, no price picked
+      for the tech, no call needed, the customer only once in the list, and the arrival not contacted.
+      Sending checks the rest again per lead (send(): can be texted, nobody texted them since the arrival came in).
+    */
+    const APPLE = /\b(iphone|ipad)\b/i, SAMSUNG_GOOGLE = /\b(samsung|galaxy|google|pixel)\b/i;
+    const BLANK = /\$\s?price\b|_{3,}|\[[^\]]*\]|<[^>]*>|\{[^}]*\}/i; // a slot the sheet expects someone to fill
+    function certainty(a, leads, prices, twice) {
+      const p = pick(a, leads, prices), prog = programOf(a), why = [];
+      let score = 100;
+      const off = (n, w) => { score -= n; if (!why.includes(w)) why.push(w); };
+      if (!p.item || !p.item.texts || !p.item.texts[0]) return { score: 0, sure: false, p, why: ['No message'] };
+      if (!p.ready) off(BY_PROGRAM[prog] ? 30 : 60, 'Program');
+      if (prog === MOBILITY && APPLE.test(deviceOf(a)) === SAMSUNG_GOOGLE.test(deviceOf(a))) off(40, 'Device');
+      if (p.price != null) off(25, 'Price');
+      if (BLANK.test(fill(p.item.texts[0], p.price))) off(50, 'Blank in message');
+      if (p.call) off(20, 'Needs a call');
+      if (twice) off(40, 'Same customer twice');
+      if (leads && leads.unplaced && leads.unplaced.length) off(10, 'Lead sheet');
+      if (contacted(a)) off(100, 'Contacted');
+      if (!a.customer || !a.customer.customerId) off(100, 'No customer');
+      score = Math.max(0, score);
+      return { score, sure: score === 100, p, why, text: fill(p.item.texts[0], p.price) };
+    }
+    // Customers with more than one arrival in the list: one text each at most, so none of them are sure.
+    const twiceOf = (arrivals) => {
+      const n = new Map();
+      for (const a of arrivals) { const c = a.customer && a.customer.customerId; if (c) n.set(c, (n.get(c) || 0) + 1); }
+      return (a) => (n.get(a.customer && a.customer.customerId) || 0) > 1;
+    };
+
+    /*
+      Batch send: one lead at a time. Each arrival is read again first and must still be sure, then send() texts it
+      and marks it contacted. onRow(id, state, result) with state sending | sent | skipped | half | failed | stopped.
+      A lead texted but not marked contacted (half) stops the batch, and so do two failures in a row; ctl.stop()
+      stops after the lead in flight. ctl.gap: the pause between texts (ms).
+    */
+    async function batch(ids, leads, prices, twice, onRow, ctl = {}) {
+      const gap = ctl.gap == null ? 1500 : ctl.gap, out = [];
+      let fails = 0;
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        if (ctl.stopped) { out.push({ id, state: 'stopped' }); onRow(id, 'stopped', out[out.length - 1]); continue; }
+        onRow(id, 'sending');
+        let r;
+        try {
+          const a = AE.unwrap(await AE.api('GET', '/api/arrivals/' + id));
+          const c = a && certainty(a, leads, prices, twice && twice(a));
+          if (!c || !c.sure) r = { state: 'skipped', why: c && c.why.includes('Contacted') ? 'Already contacted' : 'Changed' };
+          else {
+            const s = await send(a, [c.text], c.p.item.title);
+            if (s.blocked) r = { state: 'skipped', why: "Can't be texted" };
+            else if (s.already) r = { state: 'skipped', why: 'Already texted by ' + ([s.already.senderGivenName, s.already.senderFamilyName].filter(Boolean).join(' ') || 'someone') };
+            else { r = { state: 'sent', title: c.p.item.title }; AE.track('leadReplies:batchSend'); }
+          }
+          fails = 0;
+        } catch (e) {
+          r = { state: e && e.sent ? 'half' : 'failed', error: e };
+          if (r.state === 'half') ctl.stopped = true;
+          else if (++fails >= 2) ctl.stopped = true;
+        }
+        out.push(Object.assign({ id }, r));
+        onRow(id, r.state, r);
+        if (r.state === 'sent' && gap && i < ids.length - 1 && !ctl.stopped) await new Promise((ok) => setTimeout(ok, gap));
+      }
+      return out;
+    }
+
     // ------------------------------------------------------------ sending
     const report = (what, e) => ' If you keep seeing this, ' + AE.bugLink('report a bug', { where: 'Provoke', error: what + ': ' + ((e && e.message) || e) }) + '!';
     async function send(a, texts, title) {
@@ -458,6 +529,6 @@ AE.shard({
       const b = document.getElementById(BOX_ID);
       if (!b || !b.isConnected) box();
     });
-    AE.leadReplies = { pick, pricesFor, screenPrices, byStatus, render };
+    AE.leadReplies = { pick, pricesFor, screenPrices, byStatus, render, certainty, twiceOf, batch };
   },
 });

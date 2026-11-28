@@ -44,6 +44,9 @@ const M = [
   ['macrocosmos: no work-order check', '30-galaxy.js', "AE.shape.workorder(json, 'Macrocosmos work order ' + woId)", '((json && json.workorder) || {})'],
   ['decipher: old work-order fallback', '64-decipher.js', "fromWo(AE.shape.workorder(j, 'Decipher work order ' + woId))", 'fromWo((j && j.workorder) || AE.unwrap(j))'],
   ['provoke: shape-checks the failed read again', '24-provoke.js', "catch (_) { j = undefined; } // a failed call", "catch (_) { j = null; } // a failed call"],
+  ['provoke: batch sends a lead that is not sure', '24-provoke.js', "if (!c || !c.sure) r = { state: 'skipped'", "if (!c) r = { state: 'skipped'"],
+  ['provoke: an unclear device is sure', '24-provoke.js', "if (prog === MOBILITY && APPLE.test(deviceOf(a)) === SAMSUNG_GOOGLE.test(deviceOf(a))) off(40, 'Device');", ""],
+  ['provoke: batch keeps going after a half-done lead', '24-provoke.js', "if (r.state === 'half') ctl.stopped = true;", ""],
   ['provoke: no backoff after a failed read', '24-provoke.js', "statusMiss.set(woId, { n: m.n + 1, next: Date.now() + Math.min(STATUS_RETRY_MS * 2 ** m.n, STATUS_RETRY_MAX) });", "statusMiss.set(woId, { n: m.n + 1, next: Date.now() });"],
   // ---- Retrace
   ['retrace: shortNeed dropped from the sweep', '28-retrace-collect.js', ", shortNeed: baseline.frozen ? SHORT_ASK : 0, soNeed: SO_ASK }));", ', soNeed: SO_ASK }));'],

@@ -1408,6 +1408,89 @@ await t('Provoke: the arrival box draws (a Mobility lead, with the sheet edit da
   const a = { arrivalId: 50, program: { programId: 5062 }, customer: { firstName: 'Avery', lastName: 'Stone' }, customerDevice: { deviceName: 'iPhone 15' } };
   assert.ok(env.AE.leadReplies.render(a, leads, null), 'render returned the box');
 });
+// Provoke certainty and batch send. SYNTHETIC arrivals and sheet (made up, shaped like what pick() and send() read).
+const provokeLeads = { items: [
+  { group: 'ASURION', title: 'iPhone', texts: ['Hi! We got your iPhone claim.'] },
+  { group: 'ASURION', title: 'Samsung and Google', texts: ['Hi! We got your Samsung or Google claim.'] },
+  { group: 'OOP', title: 'First OOP Message (unclear / multiple)', texts: ['Hi! What can we fix for you?'] },
+  { group: 'PARTNER', title: 'Verizon', texts: ['Hi! We got your Verizon claim.'] },
+] };
+const lead = (id, device, extra = {}) => Object.assign({ arrivalId: id, program: { programId: 5062 }, createdAt: '2026-11-27T14:00:00Z',
+  customer: { customerId: 900 + id, givenName: 'Test' }, customerDevice: { deviceName: device }, arrivalStatus: { arrivalStatusId: 20 }, arrivalAttributes: [] }, extra);
+const provokeEnv = async (routes = []) => {
+  const env = load(['00-core.js', '23-price-sheet.js', '24-provoke.js'], { pathname: '/' });
+  await env.AE.shards.find((x) => x.id === 'leadReplies').run();
+  env.AE.portal = (op, args) => (op === 'select' && args.key === 'storeTwilioPhoneNumber' ? { found: true, value: '7575550100' } : null);
+  env.setFetch(router([['GET', /^\/api\/auth\/user$/, ok(USER)], ...routes]));
+  return env;
+};
+await t('Provoke: certainty is 100 only for a Mobility lead with a plainly Apple or Samsung/Google device', async () => {
+  const { certainty } = (await provokeEnv()).AE.leadReplies;
+  for (const d of ['iPhone 15 Pro', 'iPad Air (5th gen)', 'Galaxy S24', 'Pixel 8', 'Samsung Galaxy A15']) {
+    const c = certainty(lead(1, d), provokeLeads, null);
+    assert.equal(c.score, 100, d); assert.equal(c.sure, true, d);
+  }
+  assert.equal(certainty(lead(1, 'iPhone 15'), provokeLeads, null).p.item.title, 'iPhone');
+  for (const d of ['Apple Watch S9', 'Moto G', '', 'iPhone case for Galaxy']) {
+    const c = certainty(lead(1, d), provokeLeads, null);
+    assert.equal(c.sure, false, d); assert.ok(c.why.includes('Device'), d);
+  }
+});
+await t('Provoke: certainty drops for other programs, blanks, a second arrival, contacted, and no message', async () => {
+  const { certainty, twiceOf } = (await provokeEnv()).AE.leadReplies;
+  const ver = certainty(lead(1, 'iPhone 15', { program: { programId: 8379 } }), provokeLeads, null);
+  assert.equal(ver.score, 70); assert.deepEqual(Array.from(ver.why), ['Program']);
+  const oow = certainty(lead(1, 'Xbox Series X', { program: { programId: 20001 } }), provokeLeads, null);
+  assert.equal(oow.sure, false); assert.ok(oow.why.includes('Needs a call'));
+  const blank = { items: [{ title: 'iPhone', texts: ['Hi [NAME], we got your claim.'] }] };
+  assert.ok(certainty(lead(1, 'iPhone 15'), blank, null).why.includes('Blank in message'));
+  const list = [lead(1, 'iPhone 15'), lead(2, 'Pixel 8', { customer: { customerId: 901 } }), lead(3, 'Pixel 8')];
+  const twice = twiceOf(list);
+  assert.equal(certainty(list[0], provokeLeads, null, twice(list[0])).sure, false);
+  assert.equal(certainty(list[2], provokeLeads, null, twice(list[2])).sure, true);
+  const done = lead(1, 'iPhone 15', { arrivalAttributes: [{ arrivalAttributeTypeId: 53, value: 'x' }] });
+  assert.equal(certainty(done, provokeLeads, null).score, 0);
+  assert.equal(certainty(lead(1, 'iPhone 15'), { items: [] }, null).why[0], 'No message');
+  assert.ok(certainty(lead(1, 'iPhone 15'), Object.assign({ unplaced: ['x'] }, provokeLeads), null).why.includes('Lead sheet'));
+});
+await t('Provoke: batch send texts and marks each sure lead, skips ones already texted or changed, and never texts an unsure one', async () => {
+  const arrivals = { 11: lead(11, 'iPhone 15'), 12: lead(12, 'Galaxy S24'), 13: lead(13, 'Apple Watch S9'),
+    14: lead(14, 'Pixel 8', { arrivalAttributes: [{ arrivalAttributeTypeId: 53, value: 'x' }] }) };
+  const env = await provokeEnv([
+    ['GET', /^\/api\/arrivals\/(\d+)$/, (b, path) => ok(arrivals[path.match(/(\d+)$/)[1]])],
+    ['GET', /^\/api\/customer\/recent-jobs\//, ok({ customer: { contactPhoneNumber: '(757) 555-0199', canSms: true }, allowSMSForArrival: true })],
+    ['GET', /^\/api\/messages\/v1\/customers\/912/, ok({ messages: [{ direction: 'OUTBOUND', contactDate: '2026-11-27T15:00:00Z', senderGivenName: 'Dana' }] })],
+    ['GET', /^\/api\/messages\/v1\/customers\//, ok({ messages: [] })],
+    ['POST', /^\/api\/messages\/v1\/send$/, ok({})], ['POST', /^\/api\/note$/, ok({})], ['PUT', /^\/api\/arrivals\/\d+$/, ok({})],
+  ]);
+  const seen = [];
+  const out = await env.AE.leadReplies.batch([11, 12, 13, 14], provokeLeads, null, null, (id, st) => seen.push(id + ':' + st), { gap: 0 });
+  assert.deepEqual(Array.from(out, (r) => r.state), ['sent', 'skipped', 'skipped', 'skipped']);
+  assert.equal(out[1].why, 'Already texted by Dana'); assert.equal(out[2].why, 'Changed'); assert.equal(out[3].why, 'Already contacted');
+  const sent = env.requests(/^\/api\/messages\/v1\/send$/, 'POST');
+  assert.equal(sent.length, 1); assert.equal(sent[0].body.message, 'Hi! We got your iPhone claim.'); assert.equal(sent[0].body.customerId, 911);
+  assert.equal(env.requests(/^\/api\/note$/, 'POST').length, 1);
+  const put = env.requests(/^\/api\/arrivals\/11$/, 'PUT');
+  assert.equal(put.length, 1); assert.equal(put[0].body.contacted, true);
+  assert.ok(seen.includes('11:sending') && seen.includes('11:sent'));
+});
+await t('Provoke: batch send stops when a lead is texted but not marked contacted, and after two failures in a row', async () => {
+  const arrivals = { 21: lead(21, 'iPhone 15'), 22: lead(22, 'iPhone 15'), 23: lead(23, 'iPhone 15') };
+  const base = [['GET', /^\/api\/arrivals\/(\d+)$/, (b, path) => ok(arrivals[path.match(/(\d+)$/)[1]])],
+    ['GET', /^\/api\/customer\/recent-jobs\//, ok({ customer: { contactPhoneNumber: '7575550199' } })],
+    ['GET', /^\/api\/messages\/v1\/customers\//, ok({ messages: [] })], ['POST', /^\/api\/messages\/v1\/send$/, ok({})]];
+  let env = await provokeEnv([...base, ['POST', /^\/api\/note$/, { status: 500, body: 'x' }]]);
+  let out = await env.AE.leadReplies.batch([21, 22, 23], provokeLeads, null, null, () => {}, { gap: 0 });
+  assert.deepEqual(Array.from(out, (r) => r.state), ['half', 'stopped', 'stopped']);
+  assert.equal(env.requests(/^\/api\/messages\/v1\/send$/, 'POST').length, 1, 'one text, then stop');
+  env = await provokeEnv([['GET', /^\/api\/arrivals\/\d+$/, { status: 500, body: 'x' }]]);
+  out = await env.AE.leadReplies.batch([21, 22, 23], provokeLeads, null, null, () => {}, { gap: 0 });
+  assert.deepEqual(Array.from(out, (r) => r.state), ['failed', 'failed', 'stopped']);
+  const ctl = { gap: 0 };
+  env = await provokeEnv([...base, ['POST', /^\/api\/note$/, ok({})], ['PUT', /^\/api\/arrivals\/\d+$/, ok({})]]);
+  out = await env.AE.leadReplies.batch([21, 22, 23], provokeLeads, null, null, (id, st) => { if (id === 21 && st === 'sent') ctl.stopped = true; }, ctl);
+  assert.deepEqual(Array.from(out, (r) => r.state), ['sent', 'stopped', 'stopped']);
+});
 await t('Provoke: a failed work order read still places the row (no status order) and is retried with a backoff, not every second', async () => {
   for (const status of [404, 504]) {
     const env = load(['00-core.js'], { fetch: router([['GET', /^\/api\/workorder\/123$/, { status, body: 'x' }]]) });
