@@ -37,6 +37,15 @@
     (cleanings have to be created within 15 minutes of their work order). If
     the arrival can't be read, the button works as usual.
 
+  - Template (Check-In Guide Basics, Nov 27, 2026): a Template button under
+    the check-in's Notes box (Additional details) opens a large form with the
+    guide's questions: device and color, what we're doing, who's paying /
+    quote, what the customer understands (diag fee, high risk policy, data
+    loss, water damage policy, other), what works and what doesn't (or "All
+    functions are good"), and the why. Fill writes one line per answer, in
+    that order, into the Notes box (under anything already there). Cancel
+    keeps the answers for this page.
+
   Before Nov 17, 2026 Return saved whole check-ins in plain text (paused Nov
   11 after the audit). The Worker's old /checkins routes still answer 410.
 */
@@ -47,6 +56,7 @@ AE.shard({
   run() {
     const { h } = AE;
     const BTN_ID = 'ae-return-label', BOX_ID = 'ae-return-notes', PANEL_ID = 'ae-return-panel', FORM_ID = 'ae-return-form';
+    const TPL_ID = 'ae-return-template', TPL_BTN = 'ae-return-template-btn'; // the check-in notes template
     const TITLE = 'Aethernet - Return'; // the label's top line
     const CODE_RE = /^AER(\d{1,12})(?:K(\d{16}))?$/i;
     const CHECK_IN = /^check-?in$/i; // the arrival drawer's button that starts the check-in
@@ -73,18 +83,22 @@ AE.shard({
       #${BTN_ID} { order:-1; margin-right:auto; align-self:center; overflow:hidden; background:#1a1c1e; }
       #${BTN_ID} .sg-aicon { border-radius:50%; display:block; width:100%; height:100%; }
       *:has(> #sg-autoclose-btn) > #${BTN_ID} { margin-right:12px; } /* Swiftcast's button sits next to it and takes the free space */
-      #${FORM_ID} .sg-confirm { width:min(560px, 100%); max-height:calc(100vh - 32px); overflow:auto; }
-      #${FORM_ID} .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-      #${FORM_ID} .f { display:flex; flex-direction:column; gap:4px; min-width:0; } #${FORM_ID} .f.long { grid-column:1/-1; }
-      #${FORM_ID} label { font-size:13px; color:var(--aui-on-surface-variant, #5d5e61); }
-      #${FORM_ID} .lh { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-      #${FORM_ID} .none { display:flex; align-items:center; gap:4px; cursor:pointer; }
-      #${FORM_ID} .none input { width:16px; height:16px; margin:0; accent-color:var(--aui-primary, #c41230); }
-      #${FORM_ID} input:disabled, #${FORM_ID} textarea:disabled { opacity:.45; }
-      #${FORM_ID} input:not([type=checkbox]), #${FORM_ID} textarea { border:1px solid var(--aui-outline, #8b8b8f); border-radius:8px; padding:12px; font:inherit;
+      :is(#${FORM_ID},#${TPL_ID}) .sg-confirm { width:min(560px, 100%); max-height:calc(100vh - 32px); overflow:auto; }
+      :is(#${FORM_ID},#${TPL_ID}) .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+      :is(#${FORM_ID},#${TPL_ID}) .f { display:flex; flex-direction:column; gap:4px; min-width:0; } :is(#${FORM_ID},#${TPL_ID}) .f.long { grid-column:1/-1; }
+      :is(#${FORM_ID},#${TPL_ID}) label { font-size:13px; color:var(--aui-on-surface-variant, #5d5e61); }
+      :is(#${FORM_ID},#${TPL_ID}) .lh { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+      :is(#${FORM_ID},#${TPL_ID}) .none { display:flex; align-items:center; gap:4px; cursor:pointer; }
+      :is(#${FORM_ID},#${TPL_ID}) .none input { width:16px; height:16px; margin:0; accent-color:var(--aui-primary, #c41230); }
+      :is(#${FORM_ID},#${TPL_ID}) input:disabled, :is(#${FORM_ID},#${TPL_ID}) textarea:disabled { opacity:.45; }
+      :is(#${FORM_ID},#${TPL_ID}) input:not([type=checkbox]), :is(#${FORM_ID},#${TPL_ID}) textarea { border:1px solid var(--aui-outline, #8b8b8f); border-radius:8px; padding:12px; font:inherit;
         background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); }
-      #${FORM_ID} textarea { min-height:72px; resize:vertical; }
-      #${FORM_ID} .sg-actions { margin-top:20px; }
+      :is(#${FORM_ID},#${TPL_ID}) textarea { min-height:72px; resize:vertical; }
+      :is(#${FORM_ID},#${TPL_ID}) .sg-actions { margin-top:20px; }
+      #${TPL_ID} .sg-confirm { width:min(760px, 100%); } #${TPL_ID} .grid { grid-template-columns:1fr; }
+      #${TPL_ID} .chips { display:flex; flex-wrap:wrap; gap:8px 16px; }
+      #${TPL_ID} :is(input:not([type=checkbox]), textarea) { width:100%; box-sizing:border-box; } #${TPL_ID} textarea { min-height:96px; } #${TPL_ID} textarea.why { min-height:160px; }
+      #${TPL_BTN} { margin-top:8px; }
       .ae-return-notes { font-size:14px; line-height:1.45; }
       .ae-return-notes .hd { display:flex; align-items:center; gap:10px; cursor:pointer; user-select:none; }
       .ae-return-notes .hd b { flex:1; }
@@ -465,6 +479,101 @@ AE.shard({
       return filled;
     }
 
+    // ------------------------------------------------------------ check-in notes template
+    // A Template button under the check-in's Notes box (Additional details) asks the Check-In Guide's questions in a large
+    // form, then writes the answers into that box in the guide's order, one line each: device and color, what we're doing,
+    // who's paying (or the quote), the customer's warnings, what works and what doesn't, then the why.
+    const NOTES_MAX = 2000; // Portal's maxCharCount on that box
+    const WARNINGS = ['Diag fee', 'High risk policy', 'Data loss', 'Water damage policy'];
+    const TPL_FIELDS = [
+      { k: 'device', label: 'Device and color', max: 150 },
+      { k: 'doing', label: 'What are we doing?', max: 150 },
+      { k: 'paying', label: "Who's paying / quote", max: 150 },
+      { k: 'warnings', label: 'Customer understands', max: 200, chips: true },
+      { k: 'tests', label: "What works, what doesn't?", max: 600, area: true, allGood: true },
+      { k: 'why', label: 'The why', max: 1200, area: true },
+    ];
+    let tplDraft = null; // this page's unfinished answers: { values, warned, allGood }
+    const notesBox = () => {
+      const t = document.querySelector('[data-testid="additional-details-note"]');
+      const el = t && (t.tagName === 'TEXTAREA' ? t : t.querySelector('textarea'));
+      return el && el.offsetParent && !el.disabled && !el.readOnly ? el : null;
+    };
+    // The answers as the note: one line per answered question, in order.
+    function formatNote(values, warned, allGood) {
+      const one = (v) => v.trim().replace(/\s*\n\s*/g, ' ');
+      const warn = [...warned.map((w) => w.toLowerCase()), ...(values.warnings.trim() ? [one(values.warnings)] : [])]; // "Other" stays as typed
+      const lines = [one(values.device), one(values.doing), one(values.paying),
+        warn.length ? 'Customer understands ' + warn.join(', ') : '',
+        allGood ? 'All functions are good' : values.tests.trim(), values.why.trim()];
+      return lines.filter(Boolean).join('\n');
+    }
+    function templateForm() {
+      if (document.getElementById(TPL_ID)) return;
+      const d = tplDraft || { values: {}, warned: [], allGood: false };
+      const inputs = {}, warnBoxes = {};
+      let allGood = null;
+      const field = (f) => {
+        const el = f.area ? h('textarea', { id: 'ae-tpl-' + f.k, maxlength: f.max, class: f.k === 'why' ? 'why' : null })
+          : h('input', { id: 'ae-tpl-' + f.k, maxlength: f.max, autocomplete: 'off', placeholder: f.chips ? 'Other' : null, 'aria-label': f.chips ? 'Other' : null });
+        el.value = d.values[f.k] || '';
+        inputs[f.k] = el;
+        const name = h('label', { for: 'ae-tpl-' + f.k }, f.label);
+        if (f.chips) {
+          const chips = h('div', { class: 'chips' }, WARNINGS.map((w) => {
+            const b = h('input', { type: 'checkbox' });
+            b.checked = d.warned.includes(w);
+            warnBoxes[w] = b;
+            return h('label', { class: 'none' }, b, w);
+          }));
+          return h('div', { class: 'f' }, name, chips, el);
+        }
+        if (f.allGood) {
+          allGood = h('input', { type: 'checkbox', onchange: () => { el.disabled = allGood.checked; } });
+          allGood.checked = el.disabled = !!d.allGood;
+          return h('div', { class: 'f' }, h('div', { class: 'lh' }, name, h('label', { class: 'none' }, allGood, 'All functions are good')), el);
+        }
+        return h('div', { class: 'f' }, name, el);
+      };
+      const read = () => ({ values: Object.fromEntries(TPL_FIELDS.map((f) => [f.k, inputs[f.k].value])),
+        warned: WARNINGS.filter((w) => warnBoxes[w].checked), allGood: allGood.checked });
+      const close = () => { scrim.remove(); document.removeEventListener('keydown', onKey, true); };
+      const cancel = () => { tplDraft = read(); close(); };
+      const fillBtn = h('button', { type: 'button', class: 'sg-btn sg-lg sg-primary', onclick: () => {
+        const r = read(), note = formatNote(r.values, r.warned, r.allGood);
+        const box = notesBox();
+        if (!box) { AE.toast('Return', 'The Notes box is gone.', 'err', 6000); return; }
+        if (!note) { close(); return; }
+        const text = box.value.trim() ? box.value.replace(/\s+$/, '') + '\n\n' + note : note;
+        if (text.length > NOTES_MAX) { AE.toast('Return', 'Too long for Notes by ' + (text.length - NOTES_MAX) + ' characters.', 'err', 8000); return; }
+        setValue(box, text);
+        tplDraft = null;
+        close();
+        AE.track('checkinDrafts:template');
+      } }, 'Fill');
+      const card = h('div', { class: 'sg sg-card sg-confirm', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Check-in notes' },
+        h('h2', { class: 'ae-head', style: 'display:flex;align-items:center;gap:10px' }, h('span', { html: AE.actionIcon('checkinDrafts', 28), style: 'line-height:0;flex:none' }), 'Check-in notes'),
+        h('div', { class: 'grid' }, TPL_FIELDS.map(field)),
+        h('div', { class: 'sg-actions' }, h('button', { type: 'button', class: 'sg-btn sg-lg', onclick: cancel }, 'Cancel'), fillBtn));
+      const scrim = h('div', { id: TPL_ID, class: 'sg sg-confirm-scrim' }, card);
+      const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); cancel(); } };
+      AE.confirm.css && AE.confirm.css();
+      document.addEventListener('keydown', onKey, true);
+      document.body.append(scrim);
+      inputs.device.focus();
+    }
+    // The button, right under the Notes box's field (the nearest wrapper that holds its label too).
+    function drawTemplateButton() {
+      const old = document.getElementById(TPL_BTN);
+      const box = location.pathname === '/check-in' ? notesBox() : null;
+      if (!box) { old?.remove(); return; }
+      let field = box;
+      for (let p = box.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) { field = p; if (p.querySelector('label')) break; }
+      if (old && old.isConnected && old.previousElementSibling === field) return;
+      old?.remove();
+      field.after(h('button', { id: TPL_BTN, type: 'button', class: 'sg sg-btn', onclick: templateForm }, 'Template'));
+    }
+
     // ------------------------------------------------------------ finished: the work order left Initial check-in
     let sweeping = null;
     const sweep = () => (sweeping = sweeping || sweepNow().finally(() => { sweeping = null; }));
@@ -599,6 +708,7 @@ AE.shard({
     AE.onDom(() => {
       const p = location.pathname, on = /^\/check-in\/arrivals\/\d+\/?$/.test(p), b = document.getElementById(BTN_ID);
       if (on ? !b || !b.isConnected || !document.getElementById(BOX_ID) : !!b || (p !== '/check-in' && document.getElementById(PANEL_ID))) tick();
+      if (p === '/check-in' || document.getElementById(TPL_BTN)) drawTemplateButton();
     });
     // Finished check-ins: their notes are removed (only labels this browser knows, and only once one has a work order).
     AE.every(60000, () => { if (Object.values(keys()).some((k) => k.woId) && !(AE.health && AE.health.down && AE.health.down())) sweep(); }, { background: true });
