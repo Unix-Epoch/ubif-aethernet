@@ -287,7 +287,7 @@
       }, { write: true })),
       row(mcBin, btn('Set location', async () => {
         const r = await mcNow();
-        await mcRun('Set ' + r.wo + '\'s location', ['"' + r.bin + '" → "' + mcBin.value + '"', 'GUESS: PUT workorder/' + r.wo + ' with workorderBin.'], () => mc.setBin(r.wo, mcBin.value));
+        await mcRun('Set ' + r.wo + '\'s location', ['"' + r.bin + '" → "' + mcBin.value + '"', 'POST workorder/attribute with workorderBin (recorded), then read back.'], () => mc.setBin(r.wo, mcBin.value));
       }, { write: true })),
       row(mcNick, btn('Set nickname', async () => {
         const r = await mcNow();

@@ -11,6 +11,7 @@ import dev.aethernet.linkpearl.core.nav.TopLevel
 import dev.aethernet.linkpearl.feature.morningcheck.McAfter
 import dev.aethernet.linkpearl.feature.morningcheck.McChange
 import dev.aethernet.linkpearl.feature.morningcheck.McList
+import dev.aethernet.linkpearl.feature.morningcheck.McNotes
 import dev.aethernet.linkpearl.feature.morningcheck.McOrder
 import dev.aethernet.linkpearl.feature.morningcheck.McResult
 import dev.aethernet.linkpearl.feature.morningcheck.McRow
@@ -22,11 +23,13 @@ import dev.aethernet.linkpearl.testing.Device
 import dev.aethernet.linkpearl.testing.shoot
 import org.junit.Rule
 import org.junit.Test
+import dev.aethernet.linkpearl.feature.workorders.Note
+import dev.aethernet.linkpearl.feature.workorders.NoteKind
 import org.junit.runner.RunWith
 import org.robolectric.ParameterizedRobolectricTestRunner
 import org.robolectric.ParameterizedRobolectricTestRunner.Parameters
 
-enum class McShot(val file: String) { Start("start"), Check("check"), MovedUp("moved-up"), Camera("camera"), Edit("edit"), Saved("saved"), Failed("failed"), Done("done") }
+enum class McShot(val file: String) { Start("start"), Check("check"), MovedUp("moved-up"), Camera("camera"), Edit("edit"), Saved("saved"), Failed("failed"), Done("done"), Incomplete("incomplete") }
 
 /** Morning check at phone size, dark and light. Fake data. Output `morningcheck/<device>-<name>-<dark|light>.png`. */
 @RunWith(ParameterizedRobolectricTestRunner::class)
@@ -62,6 +65,20 @@ class MorningCheckScreenshotTest(private val shot: McShot, private val device: D
             val s = walk(3) // still in A1, at Ready for work
             return s.sending("c2", McChange(status = 9)).result(McResult("r1", "c2", s.current!!.row.wo, false, listOf("status" to "Error while fetching service bench details."), null))
         }
+        /** The current order is Ready for pickup but Incomplete, with its notes. */
+        fun incomplete(): McSession {
+            val s = walk(11)
+            val i = s.idx!!
+            val row = s.items[i].row.copy(statusId = 13, outcome = "Incomplete", device = "Galaxy S22", issue = "Charging port", program = "Asurion")
+            val notes = listOf(
+                Note("Port replaced, still not charging. Board issue, customer declined board repair.", "2026-11-23T21:12:00Z", NoteKind.Manual, null, "Sam T."),
+                Note("Sam Tech marked the device as \"Ready for pickup.\" - Incomplete", "2026-11-23T21:13:00Z", NoteKind.Automatic, null, "Sam T."),
+                Note("Sam Tech completed quality check.", "2026-11-23T21:05:00Z", NoteKind.Automatic, null, "Sam T."),
+                Note("Called, left voicemail about board.", "2026-11-23T19:40:00Z", NoteKind.Manual, null, "Ana R."),
+            )
+            return s.copy(items = s.items.toMutableList().also { it[i] = it[i].copy(row = row) })
+                .withNotes(McNotes(row.wo, 4, dev.aethernet.linkpearl.feature.workorders.Unsealed.sortNewestFirst(notes)))
+        }
         fun done(): McSession {
             var s = saved().advance()
             while (!s.complete) s = if (s.idx == 20) s.skip() else s.looksRight()
@@ -82,6 +99,7 @@ class MorningCheckScreenshotTest(private val shot: McShot, private val device: D
                     McShot.Saved -> MorningCheckScreen(McUi.Checking(saved(), "Chrome · Mac", true))
                     McShot.Failed -> MorningCheckScreen(McUi.Checking(failed(), "Chrome · Mac", true))
                     McShot.Done -> MorningCheckScreen(McUi.Checking(done(), "Chrome · Mac", true))
+                    McShot.Incomplete -> MorningCheckScreen(McUi.Checking(incomplete(), "Chrome · Mac", true))
                 }
             }
         }

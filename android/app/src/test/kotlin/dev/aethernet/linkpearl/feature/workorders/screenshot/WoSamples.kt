@@ -26,9 +26,9 @@ object WoSamples {
     val stores = listOf(StoreRef(999999, "Sandbox"), StoreRef(326, "Lynnhaven"))
 
     private fun row(wo: Long, device: String, program: String, status: String, lane: String, minutes: Long, store: Int = 999999, cart: Double? = null,
-                    issues: List<String>? = null, attention: String? = null) =
+                    issues: List<String>? = null, attention: String? = null, outcome: String? = null) =
         WoRow(store = store, wo = wo, device = device, program = program, status = status, lane = lane, statusSince = ago(minutes), cartValue = cart,
-            createdAt = ago(minutes + 3000), bin = "C7", issues = issues, attention = attention)
+            createdAt = ago(minutes + 3000), bin = "C7", issues = issues, attention = attention, outcome = outcome)
 
     val rows = listOf(
         row(700000014, "Galaxy S24", "Out Of Warranty", "Repair in progress", "work", 5 * 1440L, cart = 289.99, issues = listOf("Screen")),
@@ -36,10 +36,11 @@ object WoSamples {
         row(700000001, "Galaxy S23 Ultra", "Retail", "Need to order", "order", 2 * 1440L + 120, issues = listOf("Screen", "Back glass")),
         row(700000007, "iPhone 14", "Asurion", "Ready for work", "start", 2 * 1440L + 1320, store = 326, issues = listOf("Charging port")),
         row(700000016, "iPhone 15 Pro", "Retail", "Ready for pickup", "rfp", 1440L + 360),
+        row(700000019, "Galaxy S22", "Asurion", "Ready for pickup", "rfp", 2 * 1440L + 60, issues = listOf("Charging port"), outcome = "Incomplete"),
     )
     val names = mapOf(
         WoKey(999999, 700000014) to "Riley Price", WoKey(999999, 700000003) to "Casey Hayes", WoKey(999999, 700000001) to "Morgan Brooks",
-        WoKey(326, 700000007) to "Casey Reyes", WoKey(999999, 700000016) to "Jordan Ellis",
+        WoKey(326, 700000007) to "Casey Reyes", WoKey(999999, 700000016) to "Jordan Ellis", WoKey(999999, 700000019) to "Sam Ortiz",
     )
     val lanes = WoLanes(order = 2, start = 3, work = 6, wait = 5, rfp = 4, total = 20)
 

@@ -180,7 +180,9 @@ Start asks the linked PC (it shows Allow there; a host link starts by itself), t
 nickname or adds a note; the browser makes the Portal calls and answers per field, so a refused field shows Portal's own message. The statuses offered come from the
 browser (proven moves only, never past Work in progress) and Location only shows once the browser turns bin changes on. Scanning a work order label (Code 128 only)
 brings that order forward, marked Moved up; skipped ones are counted and can be checked at the end. `McSession` (MorningCheck.kt) is the pure walk;
-`MorningCheckLink` keeps the check in progress across leaving the screen. Screenshots in `screenshots/morningcheck`.
+`MorningCheckLink` keeps the check in progress across leaving the screen. Each work order's notes are asked of the browser when it comes up
+(`check.notes`, the newest 20, newest two shown then All N notes). A Ready for pickup order whose service outcome is Incomplete shows a red
+Incomplete chip here and in Work orders (`isIncomplete`, `Tone.Bad`). Screenshots in `screenshots/morningcheck`.
 
 ## Fold, hinge, posture
 
@@ -195,7 +197,7 @@ the fold's own width when larger; it measures its offset in the window so the ra
 
 All in `core/design` and `core/nav`; screens use these instead of their own surfaces.
 
-- **Colours** (`Color.kt`): the old tokens plus `cardTop/cardBottom` (card gradient), `edge` (top-edge light), `shadow`, `heroA/B/C` and `glowWarm/Cool/Teal` (hero card), `peach` (top of the highlighted bar, end of chart lines), `washA/B` (page), `navGlass`, `navPillA/B`, `glass`. Dark and light both defined.
+- **Colours** (`Color.kt`): the old tokens plus `cardTop/cardBottom` (card gradient), `edge` (top-edge light), `shadow`, `heroA/B/C` and `glowWarm/Cool/Teal` (hero card), `peach` (top of the highlighted bar, end of chart lines), `washA/B` (page), `navGlass`, `navPillA/B`, `glass`, `bad/badBg` (red, `Tone.Bad`: Incomplete). Dark and light both defined.
 - **Type** (`Type.kt`): Space Grotesk (`LpDisplay`, bundled in `res/font`, SIL OFL in `android/third-party-SpaceGrotesk-OFL.txt`) for figures and screen titles: `LpType.Hero` (56), `Big`, `Value`, `ValueMedium`, `Screen` (screen titles), `Title`, `Number` (work order numbers). Body text stays Roboto.
 - **Surfaces**: `LpCard` (gradient, top edge, shadow; `onClick` adds a press scale), `Modifier.lpSurface(shape)` for custom cards, `LpHeroCard(shineKey = …)` (one per screen: drifting glows, a light sweep when `shineKey` changes), `Modifier.glass()` (search, store pill, filters), `Modifier.pageWash` (drawn by the scaffold), `StoreAvatar` + `storeColor(index)` (index in the approved store list), `Pearl`.
 - **Figures**: `RollingFigure(text, style = LpType.Hero)` rolls each digit into place (from 0 when first shown, from the old digit on a refresh), "$"/"%" small and soft, fits its width; `BigValue` uses it.

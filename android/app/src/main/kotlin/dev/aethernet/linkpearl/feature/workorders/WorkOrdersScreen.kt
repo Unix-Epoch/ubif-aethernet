@@ -299,7 +299,7 @@ fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showS
     val c = Lp.colors
     val shape = LpShapes.Card
     val old = WoAging.isOld(row, nowMs)
-    val stripe = if (old) c.warn else laneTone(row.lane).fg()
+    val stripe = if (old) c.warn else if (isIncomplete(row.lane, row.outcome)) c.bad else laneTone(row.lane).fg()
     val interaction = remember { MutableInteractionSource() }
     Column(
         Modifier.fillMaxWidth().pressScale(interaction).sharedCard("wo-${row.key.id}").lpSurface(shape)
@@ -328,7 +328,7 @@ fun WoRowCard(row: WoRow, state: WoListUi, nowMs: Long, selected: Boolean, showS
         Text(sub, style = LpType.Row, color = c.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatusChip(row.status, row.lane)
+                StatusChip(row.status, row.lane, outcome = row.outcome)
                 if (row.urgent) LpChip("Urgent", tone = Tone.Warn, icon = LpIcons.Warning)
             }
             if (state.showStore || showStoreAlways) {

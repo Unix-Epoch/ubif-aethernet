@@ -10,8 +10,14 @@ function make(wo, store = 914, link = null) {
   const AE = {
     api: async (method, path, body) => {
       calls.push({ method, path, body: body && JSON.parse(JSON.stringify(body)) });
+      if (method === 'GET' && /demographic\/customer-data$/.test(path)) return { customerId: 77 };
+      if (method === 'GET' && path.startsWith('/api/note?')) return state.notes || { notes: [], total: 0 };
       if (method === 'GET') return { workorder: JSON.parse(JSON.stringify(state.wo)) };
-      if (method === 'PUT' && /^\/api\/workorder\/\d+$/.test(path)) { if (body.workorderStatusId) state.wo.workorderStatusId = body.workorderStatusId; state.wo.updatedAt = 'later'; }
+      if (method === 'PUT' && /^\/api\/workorder\/\d+$/.test(path)) {
+        if (body.workorderStatusId) state.wo.workorderStatusId = body.workorderStatusId;
+        state.wo.updatedAt = 'later';
+      }
+      if (method === 'POST' && path === '/api/workorder/attribute' && state.keepsBin && body.workorderBin != null) state.wo.WorkorderBinDeviceLocation = { WorkorderBin: { name: body.workorderBin } };
       if (method === 'PATCH') state.wo.workorderStatusId = body.workorderStatusId;
       return {};
     },
@@ -33,8 +39,9 @@ function make(wo, store = 914, link = null) {
   vm.runInContext(fs.readFileSync(new URL('../src/68-morning-check.js', import.meta.url), 'utf8'), ctx);
   return { mc: AE.morningCheck, calls, events, state, sent, handlers };
 }
-const WO = { workorderId: 1, workorderStatusId: 8, storeId: 914, customerId: 55, updatedAt: 'u1',
-  CustomerDevice: { customerDeviceId: 9, customerId: 55, passcode: 'x', serial: 's', imei: 'i', deviceCatalogId: 3, name: 'Blue case' },
+// Portal's real shape (test-client/fixtures/wo-template.json): the customer is only on CustomerDevice, as a string.
+const WO = { workorderId: 1, workorderStatusId: 8, storeId: 914, updatedAt: 'u1',
+  CustomerDevice: { customerDeviceId: 9, customerId: '55', passcode: 'x', serial: 's', imei: 'i', deviceCatalogId: 3, name: 'Blue case' },
   WorkorderBinDeviceLocation: { WorkorderBin: { name: 'B2' } } };
 let n = 0;
 const t = async (name, fn) => { await fn(); n++; console.log('ok  ', name); };
@@ -52,11 +59,24 @@ await t('8 → 9: PATCH status and the start note (proven)', async () => {
 });
 await t('a move nobody recorded: the PUT back, no note, sendComms false', async () => {
   const { mc, calls } = make(Object.assign({}, WO, { workorderStatusId: 10 }));
-  assert.equal(mc.statusPlan(10, 7).proven, false);
-  await mc.setStatus(1, 7);
+  assert.equal(mc.statusPlan(10, 3).proven, false);
+  await mc.setStatus(1, 3);
   const w = calls.filter((c) => c.method !== 'GET');
-  assert.equal(w.length, 1); assert.equal(w[0].method, 'PUT'); assert.equal(w[0].body.workorderStatusId, 7); assert.equal(w[0].body.sendComms, false);
+  assert.equal(w.length, 1); assert.equal(w[0].method, 'PUT'); assert.equal(w[0].body.workorderStatusId, 3); assert.equal(w[0].body.sendComms, false);
   assert.equal(w[0].body.markCurrentStepCompleted, false); assert.equal('workorderId' in w[0].body, false);
+});
+await t('Portal\'s status menu (recorded): → Ready for Diag, Awaiting callback, Ready for work is the PATCH, then the typed note, then Portal\'s note', async () => {
+  for (const [from, to, tag, name] of [[8, 24, 'ready_for_diag', 'Ready for Diag'], [24, 7, 'awaiting_callback', 'Awaiting callback'], [7, 8, 'ready_for_work', 'Ready for work'], [10, 8, 'ready_for_work', 'Ready for work']]) {
+    const { mc, calls } = make(Object.assign({}, WO, { workorderStatusId: from }));
+    assert.equal(mc.statusPlan(from, to).proven, true);
+    await mc.setStatus(1, to, { note: 'On the shelf' });
+    const w = calls.filter((c) => c.method !== 'GET');
+    assert.deepEqual(w.map((c) => c.method + ' ' + c.path), ['PATCH /api/workorder/1/status', 'POST /api/note', 'POST /api/note']);
+    assert.deepEqual(w[0].body, { workorderStatusId: to });
+    assert.deepEqual(w[1].body, { noteText: 'On the shelf', customerId: '55', workorderId: 1, noteTag: tag, noteType: 2 });
+    assert.deepEqual(w[2].body, { noteText: 'Sam Tech changed the WO status to ' + name, customerId: '55', workorderId: 1, noteTag: tag, noteType: 1 });
+  }
+  assert.equal(make(WO).mc.statusPlan(12, 8).proven, false); // past WIP stays in Portal
 });
 await t('12 → 13: attribute call first, then the PUT and its note', async () => {
   const { mc, calls } = make(Object.assign({}, WO, { workorderStatusId: 12 }));
@@ -82,7 +102,7 @@ await t('nickname: the device record back with only the name changed', async () 
   await mc.setNickname(1, 'Red case');
   const c = calls.find((x) => x.method === 'PUT');
   assert.equal(c.path, '/api/customer-devices/9');
-  assert.deepEqual(JSON.parse(JSON.stringify(c.body)), { customerDeviceId: 9, customerId: 55, passcode: 'x', serial: 's', imei: 'i', deviceCatalogId: 3, name: 'Red case' });
+  assert.deepEqual(JSON.parse(JSON.stringify(c.body)), { customerDeviceId: 9, customerId: '55', passcode: 'x', serial: 's', imei: 'i', deviceCatalogId: 3, name: 'Red case' });
   assert.deepEqual(JSON.parse(JSON.stringify(events[0])), ['wo-changed', { woId: '1', why: 'nickname' }]);
 });
 await t('note: a hand-typed note (type 2) tagged with the status; empty refused', async () => {
@@ -92,29 +112,70 @@ await t('note: a hand-typed note (type 2) tagged with the status; empty refused'
   assert.deepEqual(c.body, { noteText: 'On the bench', customerId: '55', workorderId: 1, noteTag: 'ready_for_work', noteType: 2 });
   await assert.rejects(mc.addNote(1, '  '), /Empty note/);
 });
+await t('note: the customer comes from the device record; without one, from the demographic call', async () => {
+  const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/wo-template.json', import.meta.url), 'utf8')).workorder.workorder;
+  assert.equal(fixture.customerId, undefined); // why: Portal's detail has no top-level customerId
+  const { mc, calls } = make(Object.assign({}, WO, { CustomerDevice: Object.assign({}, WO.CustomerDevice, { customerId: null }) }));
+  await mc.addNote(1, 'Hi');
+  assert.equal(calls.find((x) => x.path === '/api/note').body.customerId, '77');
+});
+await t('location (recorded): the attribute call with the status unchanged, then read back; refused if Portal kept the old one', async () => {
+  const a = make(Object.assign({}, WO, { workorderStatusId: 3 })); a.state.keepsBin = true;
+  assert.equal((await a.mc.setBin(1, ' c12 ')).bin, 'c12');
+  const w = a.calls.filter((c) => c.method !== 'GET');
+  assert.deepEqual(w, [{ method: 'POST', path: '/api/workorder/attribute', body: { workorderId: 1, workorderStatusId: 3, WorkorderAttribute: [], workorderBin: 'c12' } }]);
+  await assert.rejects(a.mc.setBin(1, '  '), /Empty location/);
+  const b = make(WO);
+  await assert.rejects(b.mc.setBin(1, 'A1'), /didn't take/);
+});
 await t('the phone may only move up to Work in progress', async () => {
   const { mc } = make(WO);
   assert.equal(mc.PHONE_STATUSES.some((s) => [11, 12, 13].includes(s)), false);
   assert.equal(mc.PHONE_STATUSES.includes(10), true);
 });
 await t('Linkshell: a host link lists open work orders with the moves the phone may make', async () => {
-  const rows = [{ workorderId: 1, workorderStatusId: 8, locationBin: 'B2', customerDevice: { name: 'Blue case' }, deviceCatalog: { name: 'iPhone 14' }, deviceIssues: [{ name: 'Screen' }], customer: { fullName: 'Riley Price' }, programName: 'Retail', updatedAt: 'u1' }];
+  const rows = [{ workorderId: 1, workorderStatusId: 8, locationBin: 'B2', serviceOutcome: 'Incomplete', customerDevice: { name: 'Blue case' }, deviceCatalog: { name: 'iPhone 14' }, deviceIssues: [{ name: 'Screen' }], customer: { fullName: 'Riley Price' }, programName: 'Retail', updatedAt: 'u1' }];
   const { sent, handlers } = make(WO, 914, { host: true, phoneName: 'Pixel', rows });
   await handlers['check.start']({ run: 'r1' });
   const [kind, b] = sent[0];
-  assert.equal(kind, 'check.list'); assert.equal(b.parts, 1); assert.equal(b.bins, false);
-  assert.deepEqual(b.rows[0], ['1', 8, 'B2', 'Blue case', 'iPhone 14', 'Screen', 'Riley Price', 'Retail', 'u1']);
-  assert.deepEqual(b.statuses.find((x) => x[0] === 8)[2], [9]);
+  assert.equal(kind, 'check.list'); assert.equal(b.parts, 1); assert.equal(b.bins, true);
+  assert.deepEqual(b.rows[0], ['1', 8, 'B2', 'Blue case', 'iPhone 14', 'Screen', 'Riley Price', 'Retail', 'u1', 'Incomplete']);
+  assert.deepEqual(b.statuses.find((x) => x[0] === 8)[2], [24, 9, 7]);
   assert.deepEqual(b.statuses.find((x) => x[0] === 12)[2], []);
 });
-await t('Linkshell: changes run in order; a guessed bin and a Portal-only move are refused, the rest saved', async () => {
+await t('Linkshell: changes run in order; a bin Portal did not keep and a Portal-only move fail, the rest saved', async () => {
   const { sent, handlers, calls } = make(Object.assign({}, WO, { workorderStatusId: 10 }), 914, { host: true, rows: [] });
   await handlers['check.start']({ run: 'r1' });
   await handlers['check.set']({ run: 'r1', cid: 'c1', wo: '1', updatedAt: 'u1', nickname: 'Red', note: 'Hi', bin: 'A1', status: 13 });
   const r = sent.find((x) => x[0] === 'check.result')[1];
   assert.equal(r.ok, false);
   assert.deepEqual(r.failed.map((f) => f[0]), ['bin', 'status']);
-  assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => c.method + ' ' + c.path), ['PUT /api/customer-devices/9', 'POST /api/note']);
+  assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => c.method + ' ' + c.path), ['PUT /api/customer-devices/9', 'POST /api/note', 'POST /api/workorder/attribute']);
+});
+await t('Linkshell: a note with a status menu move goes between the move and Portal\'s note', async () => {
+  const { sent, handlers, calls } = make(Object.assign({}, WO, { workorderStatusId: 24 }), 914, { host: true, rows: [] });
+  await handlers['check.start']({ run: 'r1' });
+  await handlers['check.set']({ run: 'r1', cid: 'c1', wo: '1', updatedAt: 'u1', note: 'Called, no answer', status: 7 });
+  assert.equal(sent.find((x) => x[0] === 'check.result')[1].ok, true);
+  const w = calls.filter((c) => c.method !== 'GET');
+  assert.deepEqual(w.map((c) => c.method + ' ' + c.path + (c.body.noteType ? ' ' + c.body.noteType : '')), ['PATCH /api/workorder/1/status', 'POST /api/note 2', 'POST /api/note 1']);
+  assert.equal(w[1].body.noteTag, 'awaiting_callback');
+});
+await t('Linkshell: notes for one work order, newest Portal gives, only while a check runs', async () => {
+  const { sent, handlers, calls, state } = make(WO, 914, { host: true, rows: [] });
+  state.notes = { total: 3, notes: [
+    { noteText: ' Called, left voicemail ', createdAt: 't2', noteType: 2, UserDatum: { givenName: 'Ana', familyName: 'Ruiz' } },
+    { noteText: 'Sam Tech started work.', createdAt: 't1', noteType: 1, UserDatum: { givenName: 'Sam' } },
+    { noteText: '   ', createdAt: 't0', noteType: 2 }] };
+  await handlers['check.notes']({ run: 'r1', wo: '1' });
+  assert.equal(sent.length, 0); // no check running: nothing read or sent
+  await handlers['check.start']({ run: 'r1' });
+  await handlers['check.notes']({ run: 'r1', wo: '1' });
+  assert.equal(calls.filter((c) => c.path.startsWith('/api/note?')).map((c) => c.path).join(), '/api/note?workorderId=1&offset=0&limit=20');
+  const n = sent.filter((x) => x[0] === 'check.notes').pop()[1];
+  assert.deepEqual(n, { run: 'r1', wo: '1', total: 3, notes: [['Called, left voicemail', 't2', 2, 'Ana R.'], ['Sam Tech started work.', 't1', 1, 'Sam']] });
+  await handlers['check.notes']({ run: 'r1', wo: '1; DROP' });
+  assert.equal(sent.filter((x) => x[0] === 'check.notes').length, 1);
 });
 await t('Linkshell: stale order or no check running: nothing written', async () => {
   const { sent, handlers, calls } = make(WO, 914, { host: true, rows: [] });

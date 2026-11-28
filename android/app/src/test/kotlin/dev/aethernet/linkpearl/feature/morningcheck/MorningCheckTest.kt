@@ -2,6 +2,7 @@ package dev.aethernet.linkpearl.feature.morningcheck
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import dev.aethernet.linkpearl.feature.workorders.NoteKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -92,5 +93,19 @@ class MorningCheckTest {
         val r = MorningCheckLink.parseResult(Json.parseToJsonElement("""{"run":"r","cid":"c","wo":"1","ok":false,"row":["1",8,"B2","Blue","u"],"failed":[["bin","Not available yet"]]}""").jsonObject)!!
         assertEquals("bin" to "Not available yet", r.failed.single()); assertEquals("B2", r.after?.bin)
         assertNull(MorningCheckLink.parseResult(Json.parseToJsonElement("""{"run":"r"}""").jsonObject))
+        assertEquals("", rows[0].outcome) // a browser that predates outcomes
+        val rfp = MorningCheckLink.parseRows(Json.parseToJsonElement("""[["700002",13,"RFP 1","","Galaxy S22","Port","Sam","Asurion","u","Incomplete"]]"""))
+        assertEquals("Incomplete", rfp.single().outcome)
+    }
+
+    @Test fun notesComeNewestFirstWithTheirKindAndAuthor() {
+        val n = MorningCheckLink.parseNotes(Json.parseToJsonElement(
+            """{"run":"r","wo":"700002","total":5,"notes":[["Older","2026-11-23T10:00:00Z",2,"Ana R."],["Newer","2026-11-23T12:00:00Z",1,""],["  ","x",2,""]]}""").jsonObject)!!
+        assertEquals(listOf("Newer", "Older"), n.notes.map { it.text })
+        assertEquals(NoteKind.Automatic, n.notes[0].kind); assertNull(n.notes[0].author); assertEquals("Ana R.", n.notes[1].author)
+        assertEquals(5, n.total)
+        assertNull(MorningCheckLink.parseNotes(Json.parseToJsonElement("""{"run":"r","wo":"x"}""").jsonObject))
+        val s = McSession("r", emptyList(), null).withNotes(n)
+        assertEquals(n, s.notes["700002"]); assertNull(s.dropNotes("700002").notes["700002"])
     }
 }

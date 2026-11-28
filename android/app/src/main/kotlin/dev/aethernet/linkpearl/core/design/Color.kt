@@ -37,6 +37,9 @@ data class LpColors(
     val infoBg: Color,
     val lilacBg: Color,
     val tealBg: Color,
+    /** Red: Incomplete. */
+    val bad: Color,
+    val badBg: Color,
     /** Inactive bar fill and the highlighted (today) bar fill in charts. */
     val bar: Color,
     val barHi: Color,
@@ -81,6 +84,7 @@ val DarkLpColors = LpColors(
     acc = Color(0xFFCD6771), onAcc = Color(0xFF0C0E11), accSoft = Color(0xFF4D284E), onAccSoft = Color(0xFFDE9CA3), accText = Color(0xFFDC959C),
     good = Color(0xFF86D9A3), warn = Color(0xFFF0C36B), info = Color(0xFF9BBCFF), lilac = Color(0xFFC1ADFF), teal = Color(0xFF7FD8D3),
     goodBg = Color(0xFF393C5A), warnBg = Color(0xFF4A3851), infoBg = Color(0xFF3C3769), lilacBg = Color(0xFF423569), tealBg = Color(0xFF383C62),
+    bad = Color(0xFFFF8A80), badBg = Color(0xFF552238),
     bar = Color(0xFF40355B), barHi = Color(0xFFCD6771), shade = Color(0x99000000), navBg = Color(0xFF140B31),
     cardTop = Color(0xFF2E2253), cardBottom = Color(0xFF281C49), edge = Color(0x14FFFFFF), shadow = Color(0x8C050014),
     heroA = Color(0xFF3C2468), heroB = Color(0xFF2B1D52), heroC = Color(0xFF4A2552),
@@ -97,6 +101,7 @@ val LightLpColors = LpColors(
     acc = Color(0xFF8223D2), onAcc = Color(0xFFFFFFFF), accSoft = Color(0xFFF0E5FA), onAccSoft = Color(0xFF541788), accText = Color(0xFF8223D2),
     good = Color(0xFF16703D), warn = Color(0xFF8A5800), info = Color(0xFF1D5BBF), lilac = Color(0xFF6A3CC2), teal = Color(0xFF00716B),
     goodBg = Color(0xFFE8F1EC), warnBg = Color(0xFFF3EEE6), infoBg = Color(0xFFE8EFF9), lilacBg = Color(0xFFF0ECF9), tealBg = Color(0xFFE6F1F0),
+    bad = Color(0xFFB3261E), badBg = Color(0xFFFBEAE9),
     bar = Color(0xFFD9D4DE), barHi = Color(0xFF8223D2), shade = Color(0x66000000), navBg = Color(0xFFFFFFFF),
     cardTop = Color(0xFFFFFFFF), cardBottom = Color(0xFFFCFBFE), edge = Color(0xFFFFFFFF), shadow = Color(0x262A1452),
     heroA = Color(0xFFF1E6FD), heroB = Color(0xFFFFFFFF), heroC = Color(0xFFFCE9EC),

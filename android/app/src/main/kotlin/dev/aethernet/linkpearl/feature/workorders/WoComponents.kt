@@ -95,11 +95,15 @@ fun laneTone(lane: String?): Tone = when (Lane.of(lane)) {
     null -> Tone.Neutral
 }
 
-/** Status in words with the lane's colour dot. */
+/** Ready for pickup with Portal's service outcome Incomplete: told apart from a finished one. */
+fun isIncomplete(lane: String?, outcome: String?): Boolean = Lane.of(lane) == Lane.Rfp && outcome.equals("Incomplete", true)
+
+/** Status in words with the lane's colour dot; an Incomplete one is red and says so. */
 @Composable
-fun StatusChip(status: String?, lane: String?, modifier: Modifier = Modifier) {
-    val tone = laneTone(lane)
-    val text = status ?: Lane.of(lane)?.label ?: "Unknown status"
+fun StatusChip(status: String?, lane: String?, modifier: Modifier = Modifier, outcome: String? = null) {
+    val incomplete = isIncomplete(lane, outcome)
+    val tone = if (incomplete) Tone.Bad else laneTone(lane)
+    val text = if (incomplete) "Incomplete" else status ?: Lane.of(lane)?.label ?: "Unknown status"
     Row(
         modifier.background(tone.bg(), LpShapes.Pill).padding(start = 10.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),

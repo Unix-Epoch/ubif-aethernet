@@ -28,6 +28,7 @@ class MorningCheckViewModel(private val link: MorningCheckLink, private val newI
     val state: StateFlow<McUi> = _state.asStateFlow()
     private var order = McOrder.Location
     private var waitingRun: String? = null
+    private val asked = mutableSetOf<String>()
 
     private val pc get() = link.state.value.link?.pcName.orEmpty()
     private val online get() = link.state.value.peer
@@ -51,7 +52,12 @@ class MorningCheckViewModel(private val link: MorningCheckLink, private val newI
                 if (l != null && l.run == waitingRun) { waitingRun = null; show(McSession.of(l, order)) }
             }
         }
-        viewModelScope.launch { link.results.collect { r -> link.saved?.takeIf { it.run == r.run }?.let { show(it.result(r)) } } }
+        viewModelScope.launch {
+            link.results.collect { r ->
+                link.saved?.takeIf { it.run == r.run }?.let { s -> asked -= r.wo; show(s.result(r).dropNotes(r.wo)) } // a saved change can add notes
+            }
+        }
+        viewModelScope.launch { link.notes.collect { (run, n) -> link.saved?.takeIf { it.run == run }?.let { show(it.withNotes(n)) } } }
         viewModelScope.launch {
             link.ended.collect { (run, reason) ->
                 if (run == waitingRun || run == link.saved?.run) { waitingRun = null; link.saved = null; _state.value = McUi.Ended(pc, reason) }
@@ -63,6 +69,7 @@ class MorningCheckViewModel(private val link: MorningCheckLink, private val newI
         val before = link.saved
         link.saved = s
         _state.value = McUi.Checking(s, pc, online)
+        s.current?.row?.wo?.let { wo -> if (wo !in s.notes && asked.add(wo)) link.askNotes(s.run, wo) }
         if (before == null || before.done != s.done || before.total != s.total) link.progress(s.run, s.done, s.total)
     }
     private fun edit(f: (McSession) -> McSession) { link.saved?.let { show(f(it)) } }
@@ -74,7 +81,7 @@ class MorningCheckViewModel(private val link: MorningCheckLink, private val newI
         link.start(run)
         _state.value = McUi.Waiting(pc, online)
     }
-    fun again() { link.saved = null; _state.value = McUi.Start(pc, online, order) }
+    fun again() { asked.clear(); link.saved = null; _state.value = McUi.Start(pc, online, order) }
     fun looksRight() = edit { it.looksRight() }
     fun skip() = edit { it.skip() }
     fun next() = edit { it.advance() }
@@ -96,5 +103,5 @@ class MorningCheckViewModel(private val link: MorningCheckLink, private val newI
         if ("wo" in f || f.isEmpty()) return save(c)
         save(McChange(status = c.status.takeIf { "status" in f }, bin = c.bin.takeIf { "bin" in f }, nickname = c.nickname.takeIf { "nickname" in f }, note = c.note.takeIf { "note" in f }))
     }
-    fun finish() { link.saved?.let { link.end(it.run) }; link.saved = null; _state.value = McUi.Start(pc, online, order) }
+    fun finish() { asked.clear(); link.saved?.let { link.end(it.run) }; link.saved = null; _state.value = McUi.Start(pc, online, order) }
 }

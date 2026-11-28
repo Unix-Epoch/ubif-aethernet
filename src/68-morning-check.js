@@ -5,12 +5,18 @@
   Which Portal calls are proven (captured from Portal's own UI) and which are still guesses:
     nickname  PUT /api/customer-devices/{id}, the device record back unchanged apart from name   proven (Waymark)
     note      POST /api/note { noteText, customerId, workorderId, noteTag, noteType: 2 }           proven (Recitation, Provoke)
+              customerId: the order's CustomerDevice.customerId (the detail has none at the top), else
+              GET /api/v1/workorder/{id}/demographic/customer-data (Recitation)
     status    8 → 9: PATCH /api/workorder/{id}/status { workorderStatusId }                         proven (Swiftcast)
               9 → 10 → 11 → 12: PUT /api/workorder/{id} (the order back, + workorderStatusId,
               markCurrentStepCompleted), then the step's note                                       proven (Swiftcast)
               12 → 13: POST /api/workorder/attribute (service_outcome, workorderBin), then the PUT  proven (Swiftcast)
+              → 24, 7 or 8 from any status up to WIP (Portal's status menu): PATCH /status, then the typed
+              note if any (type 2, the new status's tag), then "{name} changed the WO status to {Status}"
+              (type 1, same tag)                                                                   proven (recorded Nov 24: → 24, 24 → 7, 7 → 8)
               any other move                                                                       GUESS: same PUT, no note
-    bin       GUESS: the PUT with workorderBin (the name Portal's attribute call uses)
+    bin       POST /api/workorder/attribute { workorderId, workorderStatusId (unchanged), WorkorderAttribute: [],
+              workorderBin }, then the order is read again and must show the new bin                proven (recorded Nov 24)
   Guesses are dev-only test buttons until the dev recorder (dev tools → Portal request recorder) has Portal's real call.
   Customer texts: every status call sends sendComms: false.
 */
@@ -24,6 +30,9 @@ AE.morningCheck = (() => {
     8: 'ready_for_work', 9: 'diagnostics', 10: 'work_in_progress', 11: 'quality_check', 12: 'repair_summary', 13: 'ready_for_pickup', 24: 'ready_for_diag' };
   // Moves Linkpearl may make: up to Work in progress. Past it stays in Portal until those calls are recorded.
   const PHONE_STATUSES = [8, 24, 9, 10, 2, 3, 4, 5, 6, 7];
+  // Moves recorded through Portal's status menu (see top), and the status names its note uses.
+  const MENU_TO = [24, 7, 8];
+  const NOTE_NAME = { 24: 'Ready for Diag' };
 
   const raw = async (woId) => AE.shape.workorder(await api('GET', '/api/workorder/' + woId), 'Morning check work order ' + woId);
   const binOf = (wo) => { const b = wo.WorkorderBinDeviceLocation && wo.WorkorderBinDeviceLocation.WorkorderBin; return (b && b.name) || ''; };
@@ -38,8 +47,15 @@ AE.morningCheck = (() => {
   // The order to PUT back: Portal's own answer, never one built from a malformed answer.
   const putBody = (wo, extra) => { const b = Object.assign({}, wo, extra); delete b.workorderId; return b; };
   // noteType 1: Portal's automatic step notes (Swiftcast); 2: a note typed by hand (Recitation, Provoke).
+  async function customerOf(wo, woId) {
+    const id = wo.CustomerDevice && wo.CustomerDevice.customerId;
+    if (id != null && id !== '') return String(id);
+    const c = await api('GET', '/api/v1/workorder/' + woId + '/demographic/customer-data');
+    if (c && c.customerId != null && c.customerId !== '') return String(c.customerId);
+    throw new Error('No customer on this work order');
+  }
   async function note(wo, woId, tag, text, type) {
-    return api('POST', '/api/note', { noteText: text, customerId: String(wo.customerId), workorderId: Number(woId), noteTag: tag || null, noteType: type || 1 });
+    return api('POST', '/api/note', { noteText: text, customerId: await customerOf(wo, woId), workorderId: Number(woId), noteTag: tag || null, noteType: type || 1 });
   }
   const sameStore = async (wo) => { const p = await AE.profile(); if (wo.storeId != null && p && Number(wo.storeId) !== Number(p.storeId)) throw new Error('Another store\'s work order'); return p; };
 
@@ -49,9 +65,11 @@ AE.morningCheck = (() => {
   */
   function statusPlan(from, to, opts = {}) {
     const m = opts.method || 'auto';
-    const proven = (from === 8 && to === 9) || (from >= 9 && from <= 12 && to === from + 1);
-    const kind = m === 'patch' || (m === 'auto' && from === 8 && to === 9) ? 'patch' : 'put';
-    return { from, to, kind, proven: proven && !(kind === 'patch' && to !== 9) && !(kind === 'put' && from === 8 && to === 9), rfp: to === 13 };
+    const walk = (from === 8 && to === 9) || (from >= 9 && from <= 12 && to === from + 1);
+    const menu = from !== to && MENU_TO.includes(to) && PHONE_STATUSES.includes(from);
+    const kind = m === 'patch' || (m === 'auto' && ((from === 8 && to === 9) || menu)) ? 'patch' : 'put';
+    const proven = kind === 'patch' ? (from === 8 && to === 9) || menu : walk && !(from === 8 && to === 9);
+    return { from, to, kind, proven, menu: menu && kind === 'patch', rfp: to === 13 };
   }
   async function setStatus(woId, to, opts = {}) {
     to = Number(to);
@@ -71,6 +89,13 @@ AE.morningCheck = (() => {
     if (plan.kind === 'patch') await api('PATCH', '/api/workorder/' + woId + '/status', { workorderStatusId: to });
     else await api('PUT', '/api/workorder/' + woId, putBody(wo, Object.assign({ workorderStatusId: to, markCurrentStepCompleted: to > from, sendComms: false }, from === 9 && to === 10 ? { completedWorkorderStatusId: 9, note: '' } : {})));
     const tech = (p && p.name) || 'Aethernet';
+    if (plan.menu) {
+      // Portal's order: the move, the typed note, then its own note.
+      if (opts.note) { try { await note(wo, woId, TAG[to], opts.note, 2); opts.noted = true; } catch (e) { e.field = 'note'; changed(woId, 'status'); throw e; } }
+      await note(wo, woId, TAG[to], tech + ' changed the WO status to ' + (NOTE_NAME[to] || STATUS[to]));
+      changed(woId, 'status');
+      return read(woId);
+    }
     // The step notes Portal's UI posts, where they are known (Swiftcast's walk).
     const STEP_NOTE = { 9: tech + ' started work.', 10: tech + '  completed diagnostics.', 11: tech + ' completed work.', 12: tech + ' completed quality check.',
       13: tech + ' marked the device as "Ready for pickup." - Completed' };
@@ -79,14 +104,18 @@ AE.morningCheck = (() => {
     return read(woId);
   }
 
-  // GUESS (see top): the order PUT back with the new bin.
+  // Recorded (see top): Portal's location field sends the attribute call with no attributes.
   async function setBin(woId, bin, opts = {}) {
     const wo = await raw(woId);
     await sameStore(wo);
     if (opts.updatedAt && wo.updatedAt && opts.updatedAt !== wo.updatedAt) throw Object.assign(new Error('Changed in Portal since'), { stale: true });
-    await api('PUT', '/api/workorder/' + woId, putBody(wo, { workorderBin: String(bin || ''), sendComms: false }));
+    const to = String(bin || '').trim();
+    if (!to) throw new Error('Empty location');
+    await api('POST', '/api/workorder/attribute', { workorderId: Number(woId), workorderStatusId: wo.workorderStatusId, WorkorderAttribute: [], workorderBin: to });
     changed(woId, 'bin');
-    return read(woId);
+    const after = await read(woId);
+    if (after.bin.trim().toLowerCase() !== to.toLowerCase()) throw new Error('Portal didn\'t take the new location');
+    return after;
   }
 
   // Proven (Waymark): the device record back unchanged apart from name.
@@ -128,10 +157,13 @@ AE.morningCheck = (() => {
 
     phone → PC  check.start   { run }                                       ask for a check (run: the phone's id for it)
     PC → phone  check.list    { run, part, parts, store, statuses, rows }  the open work orders, in parts
-                  rows: [[wo, statusId, bin, nickname, device, issue, customer, program, updatedAt], …]
+                  rows: [[wo, statusId, bin, nickname, device, issue, customer, program, updatedAt, outcome], …]
+                  outcome: Portal's service outcome (list row serviceOutcome), e.g. "Incomplete" on a Ready for pickup order
                   statuses: [[id, name, [ids it can move to from the phone]], …]; bins: false while bin changes are still guesses
     phone → PC  check.set     { run, cid, wo, updatedAt, status?, bin?, nickname?, note? }   one work order's changes
     PC → phone  check.result  { run, cid, wo, ok, row, failed: [[field, message], …] }        what Portal took, and the order after
+    phone → PC  check.notes   { run, wo }                                   one work order's notes
+    PC → phone  check.notes   { run, wo, total, notes: [[text, createdAt, noteType, author], …], error? }   the newest NOTES_MAX
     phone → PC  check.progress { run, done, total }                         the panel's count
     either      check.end     { run, reason? }                              finished, stopped, or declined on the PC
   Changes run in a fixed order (nickname, note, bin, status) and each is reported on its own; the first write is refused when the
@@ -141,7 +173,7 @@ AE.morningCheck.link = (() => {
   if (typeof AE.linkshell === 'undefined' || !AE_ON_PORTAL) return null;
   const L = AE.linkshell, MC = AE.morningCheck;
   const PART = 15;
-  const LIVE = { bin: false }; // bin changes: on once Portal's call is recorded
+  const LIVE = { bin: true }; // bin changes: the recorded call (see top)
   let run = null; // { id, total, done, changed, log: [] , panel }
 
   // The moves the phone may make from each status: proven calls only, and never past Work in progress.
@@ -149,7 +181,20 @@ AE.morningCheck.link = (() => {
 
   const rowOf = (r) => [String(r.workorderId), r.workorderStatusId, r.locationBin || '', (r.customerDevice && r.customerDevice.name) || '',
     (r.deviceCatalog && r.deviceCatalog.name) || '', (r.deviceIssues || []).map((x) => (x && (x.name || x.issueName)) || x).filter((x) => typeof x === 'string').join(', '),
-    AE.data.nameOf(r) || '', r.programName || '', r.updatedAt || ''];
+    AE.data.nameOf(r) || '', r.programName || '', r.updatedAt || '', r.serviceOutcome || ''];
+
+  // A work order's newest notes, as the tracker reads them (GET /api/note, 27-tracker.js notesOf). Author: "Given F.".
+  const NOTES_MAX = 20;
+  const authorOf = (n) => {
+    const u = (n && n.UserDatum) || {}, g = String(u.givenName || '').trim(), f = String(u.familyName || '').trim();
+    return g && f ? g + ' ' + f[0] + '.' : g || f;
+  };
+  async function notesOf(wo) {
+    const p = await AE.api('GET', '/api/note?workorderId=' + wo + '&offset=0&limit=' + NOTES_MAX);
+    const rows = (p && Array.isArray(p.notes) ? p.notes : []).filter((n) => n && typeof n.noteText === 'string' && n.noteText.trim());
+    return { total: p && Number.isInteger(p.total) ? p.total : rows.length,
+      notes: rows.slice(0, NOTES_MAX).map((n) => [n.noteText.trim().slice(0, 2000), n.createdAt || '', Number(n.noteType) || 0, authorOf(n)]) };
+  }
 
   async function sendList(id) {
     const store = (await AE.profile()).storeId;
@@ -167,15 +212,20 @@ AE.morningCheck.link = (() => {
     try { before = await MC.read(wo); } catch (e) { return { failed: [['wo', (e && e.message) || String(e)]], row: null }; }
     if (b.updatedAt && before.updatedAt && b.updatedAt !== before.updatedAt) failed.push(['wo', 'Changed in Portal since']);
     else {
-      const step = async (field, fn) => { try { await fn(); } catch (e) { failed.push([field, (e && (e.portalMessage || e.message)) || String(e)]); } };
+      const step = async (field, fn) => { try { await fn(); } catch (e) { failed.push([(e && e.field) || field, (e && (e.portalMessage || e.message)) || String(e)]); } };
       if (typeof b.nickname === 'string') await step('nickname', () => MC.setNickname(wo, b.nickname.slice(0, 60)));
-      if (typeof b.note === 'string' && b.note.trim()) await step('note', () => MC.addNote(wo, b.note.slice(0, 2000)));
+      const typed = typeof b.note === 'string' && b.note.trim() ? b.note.trim().slice(0, 2000) : '';
+      const withMove = typed && b.status != null && MC.statusPlan(before.statusId, Number(b.status)).menu;
+      if (typed && !withMove) await step('note', () => MC.addNote(wo, typed));
       if (typeof b.bin === 'string') await step('bin', () => { if (!LIVE.bin) throw new Error('Not available yet'); return MC.setBin(wo, b.bin.slice(0, 40)); });
+      const o = withMove ? { note: typed } : {};
       if (b.status != null) await step('status', async () => {
         const now = await MC.read(wo);
         if (!movesFrom(now.statusId).includes(Number(b.status))) throw new Error('Change this status in Portal');
-        return MC.setStatus(wo, Number(b.status));
+        return MC.setStatus(wo, Number(b.status), o);
       });
+      // The move didn't happen: the note still goes on its own.
+      if (withMove && !o.noted && !failed.some((f) => f[0] === 'note')) await step('note', () => MC.addNote(wo, typed));
     }
     let row = null;
     try { const r = await MC.read(wo); row = [r.wo, r.statusId, r.bin, r.nickname, r.updatedAt]; } catch (_) {}
@@ -256,8 +306,14 @@ AE.morningCheck.link = (() => {
     L.send('check.result', { run: run.id, cid: b.cid, wo: String(b.wo), ok: !failed.length, row, failed });
     draw();
   });
+  L.on('check.notes', async (b) => {
+    const wo = String((b && b.wo) || '');
+    if (!run || b.run !== run.id || !/^\d{1,12}$/.test(wo)) return;
+    try { L.send('check.notes', Object.assign({ run: run.id, wo }, await notesOf(wo))); }
+    catch (e) { L.send('check.notes', { run: run.id, wo, total: 0, notes: [], error: (e && (e.portalMessage || e.message)) || String(e) }); }
+  });
   L.on('check.progress', (b) => { if (run && b && b.run === run.id) { run.done = Math.max(0, Number(b.done) || 0); run.total = Number(b.total) || run.total; draw(); } });
   L.on('check.end', (b) => { if (run && b && b.run === run.id) { run = null; close(); } });
 
-  return { _test: { apply, movesFrom, rowOf, LIVE }, state: () => run };
+  return { _test: { apply, movesFrom, rowOf, notesOf, LIVE }, state: () => run };
 })();
