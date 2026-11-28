@@ -382,7 +382,7 @@ AE.shard({
     // dialog lists them all, but only sure ones (100) can be ticked. Counted once per visit and after each batch.
     const BATCH_ID = 'ae-provoke-batch';
     document.head.append(h('style', null, `
-      #${BATCH_ID} { margin-left:auto; padding-left:7px; }
+      #${BATCH_ID} { margin-left:auto; padding-left:7px; flex:none; align-self:center; } /* the last item of Portal's chip row: no row of its own */
       .ae-pb { width:min(820px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:20px 22px; font-size:14px; line-height:1.4; }
       .ae-pb h2 { display:flex; align-items:center; gap:10px; margin:0 0 14px; font-size:19px; font-weight:700; }
       .ae-pb table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -441,9 +441,30 @@ AE.shard({
       return { rows, leads: leads.data, prices: prices && prices.data, twice, raw: { leads, prices } };
     }
 
+    /*
+      The Arrivals page's own chip row. Portal also draws a chip row inside the search bar's dropdown when it's expanded,
+      and that one can come first in the page: so the row taken is the one nearest the arrivals list (the deepest
+      ancestor of the list that holds it). Outside a chip row's DOM order nothing about Portal's markup is assumed.
+    */
+    function pageChips() {
+      const boxes = [...document.querySelectorAll('[data-aui="chips.manual-selection"]')];
+      const list = document.querySelector('[data-testid="arrivals-container"]');
+      if (!boxes.length || !list) return null;
+      let best = null, bestDepth = -1, bestBelow = 0;
+      for (const box of boxes) {
+        let up = list, depth = 0;
+        for (let n = list; n; n = n.parentElement) depth++;
+        while (up && !up.contains(box)) { up = up.parentElement; depth--; }
+        if (!up) continue;
+        let below = 0; // how far the row sits under that ancestor: on a tie the shallower one is the page's, a dropdown's is nested deeper
+        for (let n = box; n && n !== up; n = n.parentElement) below++;
+        if (depth > bestDepth || (depth === bestDepth && below < bestBelow)) { best = box; bestDepth = depth; bestBelow = below; }
+      }
+      return best;
+    }
     let batchState = null, batchLoading = false, batchVisit = null; // batchVisit: the page visit the count belongs to
     async function batchButton() {
-      const chips = document.querySelector('[data-aui="chips.manual-selection"]');
+      const chips = pageChips();
       let b = document.getElementById(BATCH_ID);
       if (!onArrivals() || !chips) { b?.remove(); batchVisit = null; batchState = null; return; }
       if (batchVisit !== location.href && !batchLoading) {
@@ -455,7 +476,7 @@ AE.shard({
       const n = rows.filter((r) => r.sure).length;
       if (!b) b = h('button', { type: 'button', id: BATCH_ID, class: 'sg-btn sg-primary', onclick: () => openBatch(batchState) });
       b.innerHTML = AE.actionIcon('leadReplies', 20) + 'Batch send (' + n + ')';
-      if (b.previousElementSibling !== chips) chips.after(b);
+      if (b.parentElement !== chips || b.nextElementSibling) chips.append(b);
     }
 
     function openBatch(st) {
