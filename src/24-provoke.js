@@ -368,6 +368,144 @@ AE.shard({
       return root;
     }
 
+    // ------------------------------------------------------------ batch send (Arrivals page)
+    // "Batch send (N)" beside Portal's chips: every not-contacted arrival in Portal's current day/filters, scored; the
+    // dialog lists them all, but only sure ones (100) can be ticked. Counted once per visit and after each batch.
+    const BATCH_ID = 'ae-provoke-batch';
+    document.head.append(h('style', null, `
+      #${BATCH_ID} { margin-left:auto; padding-left:7px; }
+      .ae-pb { width:min(820px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:20px 22px; font-size:14px; line-height:1.4; }
+      .ae-pb h2 { display:flex; align-items:center; gap:10px; margin:0 0 14px; font-size:19px; font-weight:700; }
+      .ae-pb table { width:100%; border-collapse:collapse; font-size:13px; }
+      .ae-pb th { text-align:left; font-weight:600; padding:9px 10px; color:var(--aui-on-surface-variant, #5d5e61); border-bottom:1px solid var(--aui-outline, #c6c6ca); }
+      .ae-pb td { padding:9px 10px; border-bottom:1px solid var(--aui-neutral-soft, #f1f0f4); vertical-align:middle; }
+      .ae-pb tr.dim td { color:var(--aui-on-surface-variant, #5d5e61); }
+      .ae-pb .why { font-size:12px; color:var(--aui-on-surface-variant, #5d5e61); }
+      .ae-pb .sc { display:inline-block; min-width:42px; text-align:center; font-weight:700; font-size:12px; padding:2px 8px; border-radius:10000px;
+        background:var(--aui-neutral-soft, #f1f0f4); color:var(--aui-on-surface-variant, #5d5e61); }
+      .ae-pb .sc.s100 { background:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); }
+      .ae-pb .sc.mid { background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
+      .ae-pb input[type=checkbox] { width:16px; height:16px; accent-color:var(--aui-primary, #8223d2); margin:0; }
+      .ae-pb .msgs { margin-top:14px; display:grid; gap:8px; }
+      .ae-pb .q { padding:8px 12px; border-left:3px solid var(--aui-primary, #8223d2); border-radius:0 8px 8px 0; background:var(--aui-neutral-soft, #f1f0f4); font-size:13px; white-space:pre-wrap; }
+      .ae-pb .q b { display:block; margin-bottom:2px; }
+      .ae-pb .ft { display:flex; align-items:center; gap:10px; margin-top:16px; }
+      .ae-pb .ft .sp { flex:1; }
+      .ae-pb .st { font-weight:600; font-size:13px; }
+      .ae-pb .st.sent { color:var(--aui-status-success, #136d31); }
+      .ae-pb .st.half, .ae-pb .st.failed { color:var(--aui-status-error, #b91a24); }
+      .ae-pb .st.skipped, .ae-pb .st.stopped { color:var(--aui-on-surface-variant, #5d5e61); }
+    `));
+    const onArrivals = () => /^\/check-in\/arrivals\/?$/.test(location.pathname);
+    const nameOf = (a) => { const c = a.customer || {}; return (c.fullName || [c.givenName || c.firstName, c.familyName || c.lastName].filter(Boolean).join(' ')).trim() || 'Customer'; };
+    async function notContacted() {
+      const q = AE.portal('query', { endpoint: 'getUpcomingArrivals', list: 'data', field: 'arrivalId' }) || {};
+      const base = Object.assign({}, q.args); delete base.page; delete base.pageSize;
+      const all = [];
+      for (let page = 1; page <= 20; page++) {
+        const u = new URLSearchParams();
+        for (const [k, v] of Object.entries(Object.assign({}, base, { page, pageSize: 100 }))) if (v !== undefined && v !== null && v !== '') u.set(k, v);
+        const j = await AE.api('GET', '/api/arrivals/upcoming-arrivals?' + u);
+        const data = (j && j.data) || [];
+        all.push(...data);
+        if (!data.length || all.length >= ((j && j.rowCount) || 0)) break;
+      }
+      return all.filter((a) => !contacted(a) && !NO_BOX.includes(programOf(a)));
+    }
+    // The scored list: each arrival read in full (the list's rows aren't proven to carry the program and device).
+    async function scored() {
+      const [leads, prices] = await Promise.all([sheet('leads'), sheet('prices')]);
+      if (!leads || !leads.data) return null;
+      const list = await notContacted();
+      const full = [];
+      for (const r of list.slice(0, 60)) { const a = AE.unwrap(await AE.api('GET', '/api/arrivals/' + r.arrivalId).catch(() => null)); if (a && a.arrivalId) full.push(a); }
+      const twice = twiceOf(full);
+      const rows = full.map((a) => Object.assign({ a }, certainty(a, leads.data, prices && prices.data, twice(a))))
+        .filter((r) => r.score > 0).sort((x, y) => y.score - x.score);
+      return { rows, leads: leads.data, prices: prices && prices.data, twice };
+    }
+
+    let batchState = null, batchLoading = false, batchVisit = null; // batchVisit: the page visit the count belongs to
+    async function batchButton() {
+      const chips = document.querySelector('[data-aui="chips.manual-selection"]');
+      let b = document.getElementById(BATCH_ID);
+      if (!onArrivals() || !chips) { b?.remove(); batchVisit = null; batchState = null; return; }
+      if (batchVisit !== location.href && !batchLoading) {
+        batchVisit = location.href; batchLoading = true;
+        try { batchState = await scored(); } catch (_) { batchState = null; } finally { batchLoading = false; }
+      }
+      const rows = batchState && batchState.rows;
+      if (!rows || !rows.length) { b?.remove(); return; }
+      const n = rows.filter((r) => r.sure).length;
+      if (!b) b = h('button', { type: 'button', id: BATCH_ID, class: 'sg-btn sg-primary', onclick: () => openBatch(batchState) });
+      b.innerHTML = AE.actionIcon('leadReplies', 20) + 'Batch send (' + n + ')';
+      if (b.previousElementSibling !== chips) chips.after(b);
+    }
+
+    function openBatch(st) {
+      AE.confirm.css();
+      const ticks = new Map(), ctl = { gap: 1500 };
+      const sure = st.rows.filter((r) => r.sure);
+      const msgs = h('div', { class: 'msgs' });
+      const go = h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: run });
+      const all = h('input', { type: 'checkbox', checked: !!sure.length, disabled: !sure.length, onchange: () => { for (const [, c] of ticks) c.checked = all.checked; paint(); } });
+      const body = h('tbody', null, st.rows.map((r) => {
+        const c = h('input', { type: 'checkbox', checked: r.sure, disabled: !r.sure, onchange: paint });
+        if (r.sure) ticks.set(r, c);
+        return h('tr', { class: r.sure ? '' : 'dim' }, h('td', null, c), h('td', null, nameOf(r.a)), h('td', null, deviceOf(r.a)),
+          h('td', null, r.p.item.title, r.why.length ? h('div', { class: 'why' }, r.why.join(' · ')) : null),
+          h('td', { style: 'text-align:center' }, h('span', { class: 'sc' + (r.sure ? ' s100' : r.score >= 50 ? ' mid' : '') }, String(r.score))));
+      }));
+      const picked = () => sure.filter((r) => ticks.get(r).checked);
+      function paint() {
+        const p = picked(), by = new Map();
+        for (const r of p) { const k = r.text; by.set(k, { title: r.p.item.title, n: ((by.get(k) || {}).n || 0) + 1 }); }
+        msgs.replaceChildren(...[...by].map(([text, m]) => h('div', { class: 'q' }, h('b', null, m.title + ' · ' + m.n), text)));
+        go.textContent = 'Send ' + p.length + ' and mark contacted';
+        go.disabled = !p.length;
+        all.checked = !!p.length && p.length === sure.length;
+      }
+      const cancel = h('button', { type: 'button', class: 'sg-btn', onclick: () => close() }, 'Cancel');
+      const table = h('table', null, h('thead', null, h('tr', null, h('th', { style: 'width:30px' }, all), h('th', null, 'Customer'), h('th', null, 'Device'),
+        h('th', null, 'Message'), h('th', { style: 'text-align:center' }, 'Sure'))), body);
+      const card = h('div', { class: 'sg sg-card ae-pb', role: 'dialog', 'aria-modal': 'true' },
+        h('h2', { class: 'ae-head' }, h('span', { html: AE.actionIcon('leadReplies', 28), style: 'line-height:0;flex:none' }), 'Provoke - Batch send'),
+        table, msgs, h('div', { class: 'ft' }, h('span', { class: 'sp' }), cancel, go));
+      let busy = false;
+      const scrim = h('div', { class: 'sg sg-confirm-scrim', onclick: (e) => { if (e.target === scrim && !busy) close(); } }, card);
+      const onKey = (e) => { if (e.key === 'Escape' && !busy) { e.stopPropagation(); close(); } };
+      function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
+      document.addEventListener('keydown', onKey, true);
+      document.body.append(scrim);
+      paint();
+
+      async function run() {
+        const p = picked();
+        if (!p.length) return;
+        busy = true;
+        const cells = new Map();
+        const stop = h('button', { type: 'button', class: 'sg-btn', onclick: () => { ctl.stopped = true; stop.disabled = true; } }, 'Stop');
+        table.replaceChildren(h('thead', null, h('tr', null, h('th', null, 'Customer'), h('th', null, 'Device'), h('th', null, 'Message'), h('th', null, ''))),
+          h('tbody', null, p.map((r) => { const s = h('td'); cells.set(r.a.arrivalId, s);
+            return h('tr', null, h('td', null, nameOf(r.a)), h('td', null, deviceOf(r.a)), h('td', null, r.p.item.title), s); })));
+        msgs.remove();
+        card.querySelector('.ft').replaceChildren(h('span', { class: 'sp' }), stop);
+        const label = { sent: '✓ Sent', stopped: 'Stopped', half: 'Texted, not marked contacted', failed: "Couldn't send" };
+        const out = await batch(p.map((r) => r.a.arrivalId), st.leads, st.prices, st.twice, (id, state, r) => {
+          const s = cells.get(id);
+          if (!s) return;
+          if (state === 'sending') { s.innerHTML = '<span class="sg-spin"></span>'; return; }
+          s.replaceChildren(h('span', { class: 'st ' + state }, state === 'skipped' ? r.why : label[state]));
+          if (r && r.error) s.insertAdjacentHTML('beforeend', '<div class="why">' + report('Batch send for arrival ' + id, r.error).trim() + '</div>');
+        }, ctl);
+        busy = false;
+        const n = out.filter((r) => r.state === 'sent').length;
+        if (n) AE.portal('refresh', { tags: ['Arrivals'] });
+        card.querySelector('.ft').replaceChildren(h('span', { class: 'sp' }), h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: () => close() }, 'Close'));
+        batchVisit = null; // count again
+      }
+    }
+
     // ------------------------------------------------------------ WO chat panel
     // On a WO page, a row of lead-sheet texts in Portal's Customer Chat panel, in place of
     // Portal's own quick replies (hidden while it's there; Garrett, Oct 12, 2026). A click
@@ -523,12 +661,13 @@ AE.shard({
 
     AE.every(1000, box);
     AE.every(1000, chat);
+    AE.every(1000, batchButton);
     AE.onDom(() => { // the drawer's column, the frame it appears (2.23); box() keeps its own "decided" state
       if (woIdNow()) chat(); else if (document.getElementById(CHAT_ID)) unplace();
       if (!arrivalId()) { document.getElementById(BOX_ID)?.remove(); return; }
       const b = document.getElementById(BOX_ID);
       if (!b || !b.isConnected) box();
     });
-    AE.leadReplies = { pick, pricesFor, screenPrices, byStatus, render, certainty, twiceOf, batch };
+    AE.leadReplies = { pick, pricesFor, screenPrices, byStatus, render, certainty, twiceOf, batch, openBatch };
   },
 });
