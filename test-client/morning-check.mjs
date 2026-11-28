@@ -11,6 +11,7 @@ function make(wo, store = 914, link = null) {
     api: async (method, path, body) => {
       calls.push({ method, path, body: body && JSON.parse(JSON.stringify(body)) });
       if (method === 'GET' && /demographic\/customer-data$/.test(path)) return { customerId: 77 };
+      if (method === 'GET' && path.startsWith('/api/note?')) return state.notes || { notes: [], total: 0 };
       if (method === 'GET') return { workorder: JSON.parse(JSON.stringify(state.wo)) };
       if (method === 'PUT' && /^\/api\/workorder\/\d+$/.test(path)) {
         if (body.workorderStatusId) state.wo.workorderStatusId = body.workorderStatusId;
@@ -133,12 +134,12 @@ await t('the phone may only move up to Work in progress', async () => {
   assert.equal(mc.PHONE_STATUSES.includes(10), true);
 });
 await t('Linkshell: a host link lists open work orders with the moves the phone may make', async () => {
-  const rows = [{ workorderId: 1, workorderStatusId: 8, locationBin: 'B2', customerDevice: { name: 'Blue case' }, deviceCatalog: { name: 'iPhone 14' }, deviceIssues: [{ name: 'Screen' }], customer: { fullName: 'Riley Price' }, programName: 'Retail', updatedAt: 'u1' }];
+  const rows = [{ workorderId: 1, workorderStatusId: 8, locationBin: 'B2', serviceOutcome: 'Incomplete', customerDevice: { name: 'Blue case' }, deviceCatalog: { name: 'iPhone 14' }, deviceIssues: [{ name: 'Screen' }], customer: { fullName: 'Riley Price' }, programName: 'Retail', updatedAt: 'u1' }];
   const { sent, handlers } = make(WO, 914, { host: true, phoneName: 'Pixel', rows });
   await handlers['check.start']({ run: 'r1' });
   const [kind, b] = sent[0];
   assert.equal(kind, 'check.list'); assert.equal(b.parts, 1); assert.equal(b.bins, true);
-  assert.deepEqual(b.rows[0], ['1', 8, 'B2', 'Blue case', 'iPhone 14', 'Screen', 'Riley Price', 'Retail', 'u1']);
+  assert.deepEqual(b.rows[0], ['1', 8, 'B2', 'Blue case', 'iPhone 14', 'Screen', 'Riley Price', 'Retail', 'u1', 'Incomplete']);
   assert.deepEqual(b.statuses.find((x) => x[0] === 8)[2], [24, 9, 7]);
   assert.deepEqual(b.statuses.find((x) => x[0] === 12)[2], []);
 });
@@ -159,6 +160,22 @@ await t('Linkshell: a note with a status menu move goes between the move and Por
   const w = calls.filter((c) => c.method !== 'GET');
   assert.deepEqual(w.map((c) => c.method + ' ' + c.path + (c.body.noteType ? ' ' + c.body.noteType : '')), ['PATCH /api/workorder/1/status', 'POST /api/note 2', 'POST /api/note 1']);
   assert.equal(w[1].body.noteTag, 'awaiting_callback');
+});
+await t('Linkshell: notes for one work order, newest Portal gives, only while a check runs', async () => {
+  const { sent, handlers, calls, state } = make(WO, 914, { host: true, rows: [] });
+  state.notes = { total: 3, notes: [
+    { noteText: ' Called, left voicemail ', createdAt: 't2', noteType: 2, UserDatum: { givenName: 'Ana', familyName: 'Ruiz' } },
+    { noteText: 'Sam Tech started work.', createdAt: 't1', noteType: 1, UserDatum: { givenName: 'Sam' } },
+    { noteText: '   ', createdAt: 't0', noteType: 2 }] };
+  await handlers['check.notes']({ run: 'r1', wo: '1' });
+  assert.equal(sent.length, 0); // no check running: nothing read or sent
+  await handlers['check.start']({ run: 'r1' });
+  await handlers['check.notes']({ run: 'r1', wo: '1' });
+  assert.equal(calls.filter((c) => c.path.startsWith('/api/note?')).map((c) => c.path).join(), '/api/note?workorderId=1&offset=0&limit=20');
+  const n = sent.filter((x) => x[0] === 'check.notes').pop()[1];
+  assert.deepEqual(n, { run: 'r1', wo: '1', total: 3, notes: [['Called, left voicemail', 't2', 2, 'Ana R.'], ['Sam Tech started work.', 't1', 1, 'Sam']] });
+  await handlers['check.notes']({ run: 'r1', wo: '1; DROP' });
+  assert.equal(sent.filter((x) => x[0] === 'check.notes').length, 1);
 });
 await t('Linkshell: stale order or no check running: nothing written', async () => {
   const { sent, handlers, calls } = make(WO, 914, { host: true, rows: [] });

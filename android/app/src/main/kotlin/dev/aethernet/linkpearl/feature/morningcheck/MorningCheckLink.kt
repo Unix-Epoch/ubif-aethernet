@@ -2,6 +2,9 @@ package dev.aethernet.linkpearl.feature.morningcheck
 
 import dev.aethernet.linkpearl.feature.linkshell.LinkshellClient
 import dev.aethernet.linkpearl.feature.linkshell.LsMessage
+import dev.aethernet.linkpearl.feature.workorders.Note
+import dev.aethernet.linkpearl.feature.workorders.NoteKind
+import dev.aethernet.linkpearl.feature.workorders.Unsealed
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -22,7 +25,12 @@ import kotlinx.serialization.json.put
 data class McRow(
     val wo: String, val statusId: Int, val bin: String, val nickname: String,
     val device: String, val issue: String, val customer: String, val program: String, val updatedAt: String,
+    /** Portal's service outcome ("Incomplete" on a Ready for pickup order that wasn't finished), blank when none. */
+    val outcome: String = "",
 )
+
+/** One work order's notes from the browser, newest first. [total]: Portal's count (more than [notes] when only the newest came). */
+data class McNotes(val wo: String, val total: Int, val notes: List<Note>, val failed: Boolean = false)
 
 /** A Portal status: its name, and the statuses the phone may move it to (the browser decides: proven calls only). */
 data class McStatus(val id: Int, val name: String, val moves: List<Int>)
@@ -51,6 +59,9 @@ class MorningCheckLink(private val ls: LinkshellClient) {
     private val _ended = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 8)
     /** (run, reason): "declined", "stopped", "failed". */
     val ended: SharedFlow<Pair<String, String>> = _ended.asSharedFlow()
+    private val _notes = MutableSharedFlow<Pair<String, McNotes>>(extraBufferCapacity = 16)
+    /** (run, notes) as the browser answers [askNotes]. */
+    val notes: SharedFlow<Pair<String, McNotes>> = _notes.asSharedFlow()
     val state get() = ls.state
     /** The check in progress, kept here so leaving the screen doesn't lose it. */
     var saved: McSession? = null
@@ -61,6 +72,7 @@ class MorningCheckLink(private val ls: LinkshellClient) {
     init {
         ls.on("check.list", ::onList)
         ls.on("check.result") { m -> parseResult(m.body)?.let { _results.tryEmit(it) } }
+        ls.on("check.notes") { m -> parseNotes(m.body)?.let { _notes.tryEmit(m.body.str("run") to it) } }
         ls.on("check.end") { m -> _ended.tryEmit(m.body.str("run") to m.body.str("reason").ifEmpty { "stopped" }) }
     }
 
@@ -88,6 +100,7 @@ class MorningCheckLink(private val ls: LinkshellClient) {
         c.nickname?.let { put("nickname", it) }
         c.note?.takeIf { it.isNotBlank() }?.let { put("note", it.trim()) }
     })
+    fun askNotes(run: String, wo: String) = ls.send("check.notes", buildJsonObject { put("run", run); put("wo", wo) })
     fun progress(run: String, done: Int, total: Int) = ls.send("check.progress", buildJsonObject { put("run", run); put("done", done); put("total", total) })
     fun end(run: String) { ls.send("check.end", buildJsonObject { put("run", run) }); if (_list.value?.run == run) _list.value = null }
     fun wake() = ls.wake()
@@ -102,7 +115,7 @@ class MorningCheckLink(private val ls: LinkshellClient) {
             val r = row as? JsonArray ?: return@mapNotNull null
             val wo = r.getOrNull(0).s().takeIf { it.matches(Regex("""\d{1,12}""")) } ?: return@mapNotNull null
             McRow(wo, r.getOrNull(1).i() ?: return@mapNotNull null, r.getOrNull(2).s(), r.getOrNull(3).s(), r.getOrNull(4).s(), r.getOrNull(5).s(),
-                r.getOrNull(6).s(), r.getOrNull(7).s(), r.getOrNull(8).s())
+                r.getOrNull(6).s(), r.getOrNull(7).s(), r.getOrNull(8).s(), r.getOrNull(9).s())
         }
 
         fun parseStatuses(e: JsonElement?): Map<Int, McStatus> = (e as? JsonArray).orEmpty().mapNotNull { row ->
@@ -110,6 +123,17 @@ class MorningCheckLink(private val ls: LinkshellClient) {
             val id = r.getOrNull(0).i() ?: return@mapNotNull null
             McStatus(id, r.getOrNull(1).s(), (r.getOrNull(2) as? JsonArray).orEmpty().mapNotNull { it.i() })
         }.associateBy { it.id }
+
+        fun parseNotes(b: JsonObject): McNotes? {
+            val wo = b.str("wo").takeIf { it.matches(Regex("""\d{1,12}""")) } ?: return null
+            val list = (b["notes"] as? JsonArray).orEmpty().mapNotNull { e ->
+                val r = e as? JsonArray ?: return@mapNotNull null
+                val text = r.getOrNull(0).s().trim().ifEmpty { return@mapNotNull null }
+                val kind = when (r.getOrNull(2).i()) { 1 -> NoteKind.Automatic; 2 -> NoteKind.Manual; else -> NoteKind.Unknown }
+                Note(text, r.getOrNull(1).s().ifEmpty { null }, kind, null, r.getOrNull(3).s().ifEmpty { null })
+            }
+            return McNotes(wo, maxOf(b.int("total") ?: list.size, list.size), Unsealed.sortNewestFirst(list), b["error"] != null)
+        }
 
         fun parseResult(b: JsonObject): McResult? {
             val after = (b["row"] as? JsonArray)?.let { r -> r.getOrNull(1).i()?.let { McAfter(it, r.getOrNull(2).s(), r.getOrNull(3).s(), r.getOrNull(4).s()) } }

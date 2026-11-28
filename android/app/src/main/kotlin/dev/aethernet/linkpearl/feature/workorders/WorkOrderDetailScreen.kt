@@ -194,7 +194,7 @@ private fun HeaderCard(state: WoDetailUi, d: WoDetailResponse, nowMs: Long, acti
             if (!w.open) LpChip("Closed", tone = Tone.Neutral, icon = LpIcons.Check)
         }
         Spacer(Modifier.height(10.dp))
-        StatusChip(w.status, w.lane)
+        StatusChip(w.status, w.lane, outcome = w.outcome)
         if (w.tags.isNotEmpty() || editable) {
             Spacer(Modifier.height(10.dp))
             TagRow(w.tags, trailing = if (editable) ({ DashedChip("Tag", LpIcons.Plus, actions.onOpenTags, description = "Edit tags") }) else null)

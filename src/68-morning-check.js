@@ -157,10 +157,13 @@ AE.morningCheck = (() => {
 
     phone → PC  check.start   { run }                                       ask for a check (run: the phone's id for it)
     PC → phone  check.list    { run, part, parts, store, statuses, rows }  the open work orders, in parts
-                  rows: [[wo, statusId, bin, nickname, device, issue, customer, program, updatedAt], …]
+                  rows: [[wo, statusId, bin, nickname, device, issue, customer, program, updatedAt, outcome], …]
+                  outcome: Portal's service outcome (list row serviceOutcome), e.g. "Incomplete" on a Ready for pickup order
                   statuses: [[id, name, [ids it can move to from the phone]], …]; bins: false while bin changes are still guesses
     phone → PC  check.set     { run, cid, wo, updatedAt, status?, bin?, nickname?, note? }   one work order's changes
     PC → phone  check.result  { run, cid, wo, ok, row, failed: [[field, message], …] }        what Portal took, and the order after
+    phone → PC  check.notes   { run, wo }                                   one work order's notes
+    PC → phone  check.notes   { run, wo, total, notes: [[text, createdAt, noteType, author], …], error? }   the newest NOTES_MAX
     phone → PC  check.progress { run, done, total }                         the panel's count
     either      check.end     { run, reason? }                              finished, stopped, or declined on the PC
   Changes run in a fixed order (nickname, note, bin, status) and each is reported on its own; the first write is refused when the
@@ -178,7 +181,20 @@ AE.morningCheck.link = (() => {
 
   const rowOf = (r) => [String(r.workorderId), r.workorderStatusId, r.locationBin || '', (r.customerDevice && r.customerDevice.name) || '',
     (r.deviceCatalog && r.deviceCatalog.name) || '', (r.deviceIssues || []).map((x) => (x && (x.name || x.issueName)) || x).filter((x) => typeof x === 'string').join(', '),
-    AE.data.nameOf(r) || '', r.programName || '', r.updatedAt || ''];
+    AE.data.nameOf(r) || '', r.programName || '', r.updatedAt || '', r.serviceOutcome || ''];
+
+  // A work order's newest notes, as the tracker reads them (GET /api/note, 27-tracker.js notesOf). Author: "Given F.".
+  const NOTES_MAX = 20;
+  const authorOf = (n) => {
+    const u = (n && n.UserDatum) || {}, g = String(u.givenName || '').trim(), f = String(u.familyName || '').trim();
+    return g && f ? g + ' ' + f[0] + '.' : g || f;
+  };
+  async function notesOf(wo) {
+    const p = await AE.api('GET', '/api/note?workorderId=' + wo + '&offset=0&limit=' + NOTES_MAX);
+    const rows = (p && Array.isArray(p.notes) ? p.notes : []).filter((n) => n && typeof n.noteText === 'string' && n.noteText.trim());
+    return { total: p && Number.isInteger(p.total) ? p.total : rows.length,
+      notes: rows.slice(0, NOTES_MAX).map((n) => [n.noteText.trim().slice(0, 2000), n.createdAt || '', Number(n.noteType) || 0, authorOf(n)]) };
+  }
 
   async function sendList(id) {
     const store = (await AE.profile()).storeId;
@@ -290,8 +306,14 @@ AE.morningCheck.link = (() => {
     L.send('check.result', { run: run.id, cid: b.cid, wo: String(b.wo), ok: !failed.length, row, failed });
     draw();
   });
+  L.on('check.notes', async (b) => {
+    const wo = String((b && b.wo) || '');
+    if (!run || b.run !== run.id || !/^\d{1,12}$/.test(wo)) return;
+    try { L.send('check.notes', Object.assign({ run: run.id, wo }, await notesOf(wo))); }
+    catch (e) { L.send('check.notes', { run: run.id, wo, total: 0, notes: [], error: (e && (e.portalMessage || e.message)) || String(e) }); }
+  });
   L.on('check.progress', (b) => { if (run && b && b.run === run.id) { run.done = Math.max(0, Number(b.done) || 0); run.total = Number(b.total) || run.total; draw(); } });
   L.on('check.end', (b) => { if (run && b && b.run === run.id) { run = null; close(); } });
 
-  return { _test: { apply, movesFrom, rowOf, LIVE }, state: () => run };
+  return { _test: { apply, movesFrom, rowOf, notesOf, LIVE }, state: () => run };
 })();

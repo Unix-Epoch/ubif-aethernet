@@ -60,6 +60,10 @@ import dev.aethernet.linkpearl.core.design.rememberHaptics
 import dev.aethernet.linkpearl.core.nav.LocalNavInset
 import dev.aethernet.linkpearl.feature.workorders.OutlineButton
 import dev.aethernet.linkpearl.feature.workorders.StatusChip
+import dev.aethernet.linkpearl.feature.workorders.LocalWoClock
+import dev.aethernet.linkpearl.feature.workorders.NoteKind
+import dev.aethernet.linkpearl.feature.workorders.WoFmt
+import dev.aethernet.linkpearl.core.design.LpIcon
 
 data class McActions(
     val onBack: () -> Unit = {},
@@ -221,8 +225,9 @@ private fun OrderCard(s: McSession, it: McItem) {
                 Text(r.bin.ifBlank { "None" }, style = LpType.ValueMedium, color = if (r.bin.isBlank()) c.soft else c.accText)
             }
         }
-        Field("Status") { StatusChip(s.statusName(r.statusId), laneOf(r.statusId)) }
+        Field("Status") { StatusChip(s.statusName(r.statusId), laneOf(r.statusId), outcome = r.outcome) }
         Field("Nickname") { Text(r.nickname.ifBlank { "None" }, style = LpType.Body, color = if (r.nickname.isBlank()) c.soft else c.fg) }
+        s.notes[r.wo]?.takeIf { n -> n.notes.isNotEmpty() }?.let { NotesPart(it) }
         when {
             it.sending != null -> Message("Saving", null)
             it.mark == McMark.Failed -> it.failed.forEach { (f, m) -> Message(failTitle(f), m, bad = true) }
@@ -230,6 +235,33 @@ private fun OrderCard(s: McSession, it: McItem) {
         }
     }
 }
+
+/** The order's notes, newest first: the newest [SHOWN], then all of them. */
+@Composable
+private fun NotesPart(n: McNotes) {
+    val c = Lp.colors
+    val zone = LocalWoClock.current.zone
+    var all by remember(n.wo) { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Notes", style = LpType.Label, color = c.soft, modifier = Modifier.weight(1f))
+        Text(Fmt.count(n.total), style = LpType.Label, color = c.soft)
+    }
+    (if (all) n.notes else n.notes.take(SHOWN)).forEach { note ->
+        Box(Modifier.fillMaxWidth().padding(vertical = 10.dp).height(1.dp).background(c.line))
+        val auto = note.kind == NoteKind.Automatic
+        Text(note.text, style = LpType.Body, color = if (auto) c.soft else c.fg)
+        Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (auto) LpIcon(LpIcons.Auto, null, size = 16.dp, tint = c.soft)
+            Text(listOfNotNull(if (auto) "Auto" else null, note.author, WoFmt.shortDayTime(note.createdAt, zone)).joinToString(Fmt.DOT),
+                style = LpType.Small, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+    if (!all && n.notes.size > SHOWN) {
+        Text("All ${Fmt.count(n.total)} notes", style = LpType.BodyStrong, color = c.accText,
+            modifier = Modifier.padding(top = 8.dp).clip(LpShapes.Pill).clickable { all = true }.padding(vertical = 8.dp))
+    }
+}
+private const val SHOWN = 2
 
 private fun failTitle(field: String) = when (field) {
     "status" -> "Status not changed"

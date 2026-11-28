@@ -124,13 +124,13 @@ fun StatBlock(label: String, value: String, modifier: Modifier = Modifier, suppo
     }
 }
 
-enum class Tone { Neutral, Good, Warn, Info, Lilac, Teal, Accent }
+enum class Tone { Neutral, Good, Warn, Info, Lilac, Teal, Accent, Bad }
 
 @Composable
-fun Tone.fg(): Color = with(Lp.colors) { when (this@fg) { Tone.Neutral -> soft; Tone.Good -> good; Tone.Warn -> warn; Tone.Info -> info; Tone.Lilac -> lilac; Tone.Teal -> teal; Tone.Accent -> onAccSoft } }
+fun Tone.fg(): Color = with(Lp.colors) { when (this@fg) { Tone.Neutral -> soft; Tone.Good -> good; Tone.Warn -> warn; Tone.Info -> info; Tone.Lilac -> lilac; Tone.Teal -> teal; Tone.Accent -> onAccSoft; Tone.Bad -> bad } }
 
 @Composable
-fun Tone.bg(): Color = with(Lp.colors) { when (this@bg) { Tone.Neutral -> surf3; Tone.Good -> goodBg; Tone.Warn -> warnBg; Tone.Info -> infoBg; Tone.Lilac -> lilacBg; Tone.Teal -> tealBg; Tone.Accent -> accSoft } }
+fun Tone.bg(): Color = with(Lp.colors) { when (this@bg) { Tone.Neutral -> surf3; Tone.Good -> goodBg; Tone.Warn -> warnBg; Tone.Info -> infoBg; Tone.Lilac -> lilacBg; Tone.Teal -> tealBg; Tone.Accent -> accSoft; Tone.Bad -> badBg } }
 
 /** A tag/chip: words plus (optionally) an icon, on a tinted background. Never colour alone. */
 @Composable

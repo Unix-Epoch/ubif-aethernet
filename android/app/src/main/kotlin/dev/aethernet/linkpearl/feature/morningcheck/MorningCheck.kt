@@ -35,12 +35,16 @@ data class McSession(
     val statuses: Map<Int, McStatus> = emptyMap(),
     val bins: Boolean = false,
     val note: McNote? = null,
+    /** Notes per work order as the browser sent them; a work order missing here hasn't been asked yet (or is being asked). */
+    val notes: Map<String, McNotes> = emptyMap(),
 ) {
     val current get() = idx?.let { items.getOrNull(it) }
     val total get() = items.size
     val done get() = items.count { it.mark != McMark.Pending && it.mark != McMark.Skipped }
     val complete get() = idx == null
     fun count(m: McMark) = items.count { it.mark == m }
+    fun withNotes(n: McNotes) = copy(notes = notes + (n.wo to n))
+    fun dropNotes(wo: String) = copy(notes = notes - wo)
     fun statusName(id: Int) = statuses[id]?.name?.takeIf { it.isNotBlank() } ?: "Status $id"
 
     private fun put(i: Int, f: (McItem) -> McItem) = copy(items = items.toMutableList().also { it[i] = f(it[i]) }, note = null)
