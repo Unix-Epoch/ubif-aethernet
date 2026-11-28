@@ -1424,6 +1424,11 @@ const provokeEnv = async (routes = []) => {
   env.setFetch(router([['GET', /^\/api\/auth\/user$/, ok(USER)], ...routes]));
   return env;
 };
+await t('Provoke: the review box draws (Batch send review mode, an unsure lead)', async () => {
+  const env = await provokeEnv();
+  const left = env.AE.h('button', null, 'Open arrival'), before = env.AE.h('button', null, 'Skip');
+  assert.ok(env.AE.leadReplies.render(lead(1, 'Apple Watch S9'), { data: provokeLeads }, null, { review: true, sendLabel: 'Send and next', left, before, onDone: () => {} }));
+});
 await t('Provoke: certainty is 100 only for a Mobility lead with a plainly Apple or Samsung/Google device', async () => {
   const { certainty } = (await provokeEnv()).AE.leadReplies;
   for (const d of ['iPhone 15 Pro', 'iPad Air (5th gen)', 'Galaxy S24', 'Pixel 8', 'Samsung Galaxy A15']) {
