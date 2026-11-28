@@ -42,7 +42,7 @@
     guide's questions: device and color, what we're doing, who's paying /
     quote, what the customer understands (diag fee, high risk policy, data
     loss, water damage policy, other), what works and what doesn't (or "All
-    functions are good"), and the why. Fill writes one line per answer, in
+    functions are good"), and any observations. Fill writes one line per answer, in
     that order, into the Notes box (under anything already there). Cancel
     keeps the answers for this page.
 
@@ -98,7 +98,13 @@ AE.shard({
       #${TPL_ID} .sg-confirm { width:min(760px, 100%); } #${TPL_ID} .grid { grid-template-columns:1fr; }
       #${TPL_ID} .chips { display:flex; flex-wrap:wrap; gap:8px 16px; }
       #${TPL_ID} :is(input:not([type=checkbox]), textarea) { width:100%; box-sizing:border-box; } #${TPL_ID} textarea { min-height:96px; } #${TPL_ID} textarea.why { min-height:160px; }
-      #${TPL_BTN} { margin-top:8px; }
+      /* A tab hanging off the Notes box's lower right edge, joined to its border. */
+      .ae-tpl-tab { display:flex; justify-content:flex-end; margin-top:-1px; }
+      #${TPL_BTN} { display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px 0 6px; margin:0 12px 0 0; cursor:pointer;
+        border:1px solid var(--aui-outline, #8b8b8f); border-top:none; border-radius:0 0 10px 10px;
+        background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font:600 13px/1 inherit; }
+      #${TPL_BTN}:hover { background:var(--aui-neutral-soft, #f1f0f4); }
+      #${TPL_BTN} .sg-aicon { width:22px; height:22px; border-radius:50%; display:block; }
       .ae-return-notes { font-size:14px; line-height:1.45; }
       .ae-return-notes .hd { display:flex; align-items:center; gap:10px; cursor:pointer; user-select:none; }
       .ae-return-notes .hd b { flex:1; }
@@ -482,7 +488,7 @@ AE.shard({
     // ------------------------------------------------------------ check-in notes template
     // A Template button under the check-in's Notes box (Additional details) asks the Check-In Guide's questions in a large
     // form, then writes the answers into that box in the guide's order, one line each: device and color, what we're doing,
-    // who's paying (or the quote), the customer's warnings, what works and what doesn't, then the why.
+    // who's paying (or the quote), the customer's warnings, what works and what doesn't, then any observations.
     const NOTES_MAX = 2000; // Portal's maxCharCount on that box
     const WARNINGS = ['Diag fee', 'High risk policy', 'Data loss', 'Water damage policy'];
     const TPL_FIELDS = [
@@ -491,7 +497,7 @@ AE.shard({
       { k: 'paying', label: "Who's paying / quote", max: 150 },
       { k: 'warnings', label: 'Customer understands', max: 200, chips: true },
       { k: 'tests', label: "What works, what doesn't?", max: 600, area: true, allGood: true },
-      { k: 'why', label: 'The why', max: 1200, area: true },
+      { k: 'why', label: 'Any observations?', max: 1200, area: true },
     ];
     let tplDraft = null; // this page's unfinished answers: { values, warned, allGood }
     const notesBox = () => {
@@ -562,16 +568,20 @@ AE.shard({
       document.body.append(scrim);
       inputs.device.focus();
     }
-    // The button, right under the Notes box's field (the nearest wrapper that holds its label too).
+    // The button: a tab on the Notes box's lower right edge (under the element that draws the box's border).
     function drawTemplateButton() {
       const old = document.getElementById(TPL_BTN);
       const box = location.pathname === '/check-in' ? notesBox() : null;
-      if (!box) { old?.remove(); return; }
-      let field = box;
-      for (let p = box.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) { field = p; if (p.querySelector('label')) break; }
-      if (old && old.isConnected && old.previousElementSibling === field) return;
-      old?.remove();
-      field.after(h('button', { id: TPL_BTN, type: 'button', class: 'sg sg-btn', onclick: templateForm }, 'Template'));
+      if (!box) { old?.closest('.ae-tpl-tab')?.remove(); return; }
+      let edge = box;
+      for (let p = box, i = 0; p && i < 4; p = p.parentElement, i++) {
+        if (p.querySelector('label') && p !== box) break;
+        if (parseFloat(getComputedStyle(p).borderBottomWidth) > 0) { edge = p; break; }
+      }
+      const tab = old && old.closest('.ae-tpl-tab');
+      if (tab && tab.isConnected && tab.previousElementSibling === edge) return;
+      tab?.remove();
+      edge.after(h('div', { class: 'sg ae-tpl-tab' }, h('button', { id: TPL_BTN, type: 'button', onclick: templateForm, html: AE.actionIcon('checkinDrafts', 22) }, 'Template')));
     }
 
     // ------------------------------------------------------------ finished: the work order left Initial check-in
