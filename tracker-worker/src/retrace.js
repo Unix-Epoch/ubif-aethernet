@@ -263,6 +263,9 @@ export function labelSnapshot(r) {
   set('oem_serial', ['oem_serial', 'OEMSerialNumber', 'oemSerialNumber'], s(60));
   set('imei', ['imei', 'IMEI'], s(30));
   set('modified', ['modified', 'SerialModified'], isoAt);   // store-products: when Portal last changed the label (re-read its history after)
+  // Vendor: the account the label was bought from (label details, captured live at 914 Nov 24, 2026: "1" on a Distro part, "6920" on a
+  // MobileSentrix part; store-products rows carry the same key). Decides the item's source (retrace-source.js).
+  set('vendor', ['vendor', 'Vendor'], s(40));
   return out;
 }
 

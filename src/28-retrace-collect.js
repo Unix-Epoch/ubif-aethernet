@@ -78,6 +78,8 @@ AE.retrace = (() => {
   // fail: consecutive failed reads per item, kept in the todo until FAIL_MAX, then back to the short list.
   // park: items given up after FAIL_MAX failed reads, { item: when }; back in the todo after PARK_MS (a later pass, maybe a better Portal day).
   const SHORT_KEY = (s) => 'ae_retrace_short2_' + s, FAIL_KEY = (s) => 'ae_retrace_fail_' + s, SHORT_ASK = 300, SHORT_RETRY_MS = 2 * 3600000, FAIL_MAX = 5;
+  // The vendor catch-up (Nov 24, 2026): items whose stored labels have no Vendor yet (tracker-worker/src/retrace-source.js vendorNeed); each read once per VENDOR_RETRY_MS.
+  const VENDOR_KEY = (s) => 'ae_retrace_vendor_' + s, VENDOR_ASK = 150, VENDOR_RETRY_MS = 12 * 3600000;
   const PARK_KEY = (s) => 'ae_retrace_park_' + s, PARK_MS = 6 * 3600000;
   // Per-record failures of the deterministic-order lists (item counts 'count:<item>', PO reads 'po:<po>'): { key: { n, at } }. After
   // RFAIL_MAX failures in a row a record rests RFAIL_REST_MS (skipped, noted), then gets one try at a time; a success clears it.
@@ -198,7 +200,7 @@ AE.retrace = (() => {
   */
   async function sweep(store, by, body) {
     const n = Math.max(1, ...Object.keys(LIMIT).map((k) => Math.ceil(((body[k] || []).length) / LIMIT[k])));
-    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, named: 0, unnamed: [], countNeed: [], missedItems: [], shortItems: [], soNeed: [], pos: { need: [], events: 0, received: 0, written: 0 } };
+    const out = { changedItems: [], need: [], more: false, added: 0, written: 0, rejected: 0, skipped: 0, named: 0, unnamed: [], countNeed: [], missedItems: [], shortItems: [], vendorItems: [], soNeed: [], pos: { need: [], events: 0, received: 0, written: 0 } };
     for (let i = 0; i < n; i++) {
       const last = i === n - 1, part = { by };
       for (const k of Object.keys(LIMIT)) { const s = (body[k] || []).slice(i * LIMIT[k], (i + 1) * LIMIT[k]); if (s.length) part[k] = s; }
@@ -209,7 +211,7 @@ AE.retrace = (() => {
       out.missedItems.push(...(j.missedItems || [])); // handed out once, on whichever call
       for (const k of ['added', 'written', 'rejected', 'skipped', 'named']) out[k] += j[k] || 0;
       if (j.pos) for (const k of ['events', 'received', 'written']) out.pos[k] += j.pos[k] || 0;
-      if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; out.unnamed = j.unnamed || []; out.countNeed = j.countNeed || []; out.shortItems = j.shortItems || []; out.soNeed = Array.isArray(j.soNeed) ? j.soNeed : []; }
+      if (last) { out.need = j.need || []; out.more = !!j.more; out.pos.need = (j.pos && j.pos.need) || []; out.unnamed = j.unnamed || []; out.countNeed = j.countNeed || []; out.shortItems = j.shortItems || []; out.vendorItems = Array.isArray(j.vendorItems) ? j.vendorItems : []; out.soNeed = Array.isArray(j.soNeed) ? j.soNeed : []; }
     }
     return out;
   }
@@ -462,7 +464,7 @@ AE.retrace = (() => {
     const t0 = Date.now();
     counts = { portal: 0, worker: 0 }; downRun = 0;
     let passStore = null; // set once the store is known: the pass's own counts go to the Worker when it ends
-    const result = { at: new Date().toISOString(), seconds: 0, calls: counts, watched: 0, lookup: null, items: 0, changedItems: 0, itemsRead: 0, itemsWaiting: 0, itemsFailed: 0, itemsParked: 0, itemsUnparked: 0, shortQueued: 0, shortSkippedTried: 0, portalTrouble: false, labels: 0, docs: 0,
+    const result = { at: new Date().toISOString(), seconds: 0, calls: counts, watched: 0, lookup: null, items: 0, changedItems: 0, itemsRead: 0, itemsWaiting: 0, itemsFailed: 0, itemsParked: 0, itemsUnparked: 0, shortQueued: 0, shortSkippedTried: 0, vendorQueued: 0, portalTrouble: false, labels: 0, docs: 0,
       movements: 0, counted: 0, pos: 0, poDetails: 0, histories: 0, historyRows: 0, details: 0, detailsDeferred: 0, soNeed: 0, soRead: 0, soNone: 0, added: 0, names: 0, named: 0, unnamed: 0, namesRead: 0, resting: [], backlogMore: false, errors: [] };
     const note = (where, e) => {
       if (result.errors.length < 8) result.errors.push(where + ': ' + ((e && e.message) || e));
@@ -569,7 +571,7 @@ AE.retrace = (() => {
       if (trouble.on) result.portalTrouble = true;
       acc.touched = [...new Set(acc.touched.filter(Boolean))];
       Object.assign(result, { labels: acc.labels.length, docs: acc.docs.length, movements: acc.movements.length, pos: acc.pos.length, names: acc.names.length });
-      const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK, countNeed: baseline.frozen ? 0 : COUNT_BUDGET, shortNeed: baseline.frozen ? SHORT_ASK : 0, soNeed: SO_ASK }));
+      const sw = await sweep(store, by, Object.assign({}, acc, { need: NEED, poNeed: PO_BUDGET, nameNeed: NAME_ASK, countNeed: baseline.frozen ? 0 : COUNT_BUDGET, shortNeed: baseline.frozen ? SHORT_ASK : 0, soNeed: SO_ASK, vendorNeed: VENDOR_ASK }));
       if (baseline.frozen) GM_setValue(COUNT_KEY(store), []);
       else { for (const i of sw.countNeed) if (!count.has(i)) count.add(i); count.save(); }
       // The labels are delivered: the items read leave the todo, and (short list) are locked out for SHORT_RETRY_MS. Only a read that succeeded locks.
@@ -584,6 +586,12 @@ AE.retrace = (() => {
       result.shortSkippedTried = shortAll.length - shortFresh.length;
       for (const i of shortFresh.slice(0, ITEM_BUDGET)) { todo.add(i); result.shortQueued++; }
       shortTried.save((k, t) => nowMs - t < SHORT_RETRY_MS);
+      // Items whose labels carry no vendor yet: their label lists once more (the rows have Vendor), like a changed item, each once per VENDOR_RETRY_MS
+      // (a list whose rows have no Vendor stays on the Worker's list; this keeps it from being read every pass).
+      const vendorTried = gmMap(VENDOR_KEY(store));
+      const vendorFresh = (sw.vendorItems || []).map(String).filter((x) => !isQo(x) && !todo.has(x) && !park.has(x) && !(nowMs - (vendorTried.get(x) || 0) < VENDOR_RETRY_MS));
+      for (const i of vendorFresh.slice(0, ITEM_BUDGET)) { todo.add(i); vendorTried.set(i, nowMs); result.vendorQueued++; }
+      vendorTried.save((k, t) => nowMs - t < VENDOR_RETRY_MS);
       saveQueues();
       result.itemsWaiting = todo.size;
       result.added += sw.added; result.backlogMore = sw.more; result.named += sw.named; result.unnamed = sw.unnamed.length;

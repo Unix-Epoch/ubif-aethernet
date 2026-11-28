@@ -241,6 +241,7 @@ CREATE TABLE IF NOT EXISTS inv_labels (
   need_history INTEGER NOT NULL DEFAULT 0,  -- 0 no · 1 backfill (never read) · 2 touched by a sweep / the watcher / a WO · 3 changed
   claimed_until TEXT,                  -- a browser is reading its history until then (others skip it)
   queued_at TEXT,                      -- last time a sweep / movement queued it (a read claimed before this doesn't clear need_history)
+  vendor TEXT,                         -- Portal's Vendor on the label: "1" Distro, "6920" MobileSentrix (migrations/2026-11-24-retrace-source.sql)
   PRIMARY KEY (store, label)
 );
 CREATE INDEX IF NOT EXISTS inv_labels_need ON inv_labels (store, need_history, last_seen);
@@ -472,3 +473,21 @@ CREATE INDEX IF NOT EXISTS linkshell_links_store ON linkshell_links (store);
 
 -- Push (src/push.js, migration 2026-11-17-push.sql): one FCM token per phone, so Linkshell can wake it.
 CREATE TABLE IF NOT EXISTS push_tokens (agent_id TEXT PRIMARY KEY, platform TEXT NOT NULL, token TEXT NOT NULL, updated_at TEXT NOT NULL);
+
+-- Retrace item source (migration 2026-11-24-retrace-source.sql, src/retrace-source.js).
+-- One row per item number, shared by every store (an item number only ever comes from one source).
+-- manual: set by hand on the admin site, wins over the rules. auto: what the rules decided (NULL = they couldn't); conflict: the evidence disagrees.
+CREATE TABLE IF NOT EXISTS inv_item_source (
+  item TEXT PRIMARY KEY,
+  manual TEXT, manual_by TEXT, manual_at TEXT,      -- distro | ms | other
+  auto TEXT, auto_basis TEXT,                       -- distro | ms | other · vendor | po | name
+  conflict INTEGER NOT NULL DEFAULT 0,
+  evidence TEXT,                                    -- JSON { vendors: [{ vendor, n }], pos: [{ id, distro, vendor }], ms }
+  auto_at TEXT
+);
+-- Per store: ordering is paused while any in-scope item has no source (or a conflict). pushed_at: the Linkpearl push for this pause went out.
+CREATE TABLE IF NOT EXISTS inv_source_pause (
+  store INTEGER PRIMARY KEY,
+  unmarked INTEGER NOT NULL DEFAULT 0,
+  paused_at TEXT, pushed_at TEXT, checked_at TEXT
+);

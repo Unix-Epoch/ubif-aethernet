@@ -697,7 +697,8 @@ function accessDiff(before, after) {
                                  totals for all-stores access only, store rows limited to their stores; not counted itself)
   GET  /retrace/…                Retrace: item movements, label timeline, POs (page and list), search, coverage; the collection queue
                                  (GET /retrace/queue/:store); the coverage check
-                                 (GET /retrace/verify/:store, POST …/run and …/tick: its only writes) (page 'retrace';
+                                 (GET /retrace/verify/:store, POST …/run and …/tick); item sources (GET /retrace/sources/:store,
+                                 POST …/set: Distro / MS / Other by hand) (page 'retrace';
                                  src/retrace-api.js has the routes)
   Developers only (People; TRACKER_OWNERS, `owner` in the API):
   GET  /people                   everyone + their key copies' kinds, pages, details, review; owners: the developers

@@ -53,29 +53,31 @@ AE.shard({
     };
     const BY_PROGRAM = { 20004: 'mobility', 8849: T.home, 20005: T.home, 8379: T.verizon, 8367: /^servify/i, 8850: /^amazon buyout/i, 7384: /^element/i };
 
+    const BOXES = `:is(#${BOX_ID}, #${BOX_ID}-review)`; // the arrival drawer's box, and the same box in Batch send's review
     document.head.append(h('style', null, `
-      #${BOX_ID} { margin:20px 0 0; padding:14px; border:1.5px solid var(--aui-primary, #8223d2); border-radius:12px; font-size:14px; line-height:1.4; }
-      #${BOX_ID}.need { border-style:dashed; }
-      #${BOX_ID} .hd { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
-      #${BOX_ID} .hd .txt { flex:1; }
-      #${BOX_ID} .pill { font-size:12px; font-weight:600; padding:2px 10px; border-radius:10000px; background:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); }
-      #${BOX_ID}.need .pill { background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
-      #${BOX_ID} select, #${BOX_ID} textarea { width:100%; box-sizing:border-box; font:inherit; color:inherit; background:var(--aui-surface, #fff);
+      ${BOXES} { margin:20px 0 0; padding:14px; border:1.5px solid var(--aui-primary, #8223d2); border-radius:12px; font-size:14px; line-height:1.4; }
+      ${BOXES}.need { border-style:dashed; }
+      ${BOXES} .hd { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
+      ${BOXES} .hd .txt { flex:1; }
+      ${BOXES} .pill { font-size:12px; font-weight:600; padding:2px 10px; border-radius:10000px; background:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); }
+      ${BOXES}.need .pill { background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
+      ${BOXES} select, ${BOXES} textarea { width:100%; box-sizing:border-box; font:inherit; color:inherit; background:var(--aui-surface, #fff);
         border:1px solid var(--aui-outline, #c6c6ca); border-radius:8px; padding:7px 9px; }
-      #${BOX_ID} textarea { min-height:96px; resize:vertical; margin-top:8px; }
-      #${BOX_ID} .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; align-items:center; }
-      #${BOX_ID} .chip { font:inherit; font-size:13px; padding:3px 10px; border-radius:10000px; cursor:pointer;
+      ${BOXES} textarea { min-height:96px; resize:vertical; margin-top:8px; }
+      ${BOXES} .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; align-items:center; }
+      ${BOXES} .chip { font:inherit; font-size:13px; padding:3px 10px; border-radius:10000px; cursor:pointer;
         border:1px solid var(--aui-outline, #c6c6ca); background:transparent; color:inherit; }
-      #${BOX_ID} .chip.on { border-color:var(--aui-primary, #8223d2); background:var(--aui-primary-soft, #f3e8fc); }
-      #${BOX_ID} .ft { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px; }
-      #${BOX_ID} .ft .sp { flex:1; }
-      #${BOX_ID} label.chk { display:flex; gap:6px; align-items:center; font-size:13px; margin-top:8px; }
-      #${BOX_ID} .call { margin:0 0 10px; padding:8px 10px; border-radius:8px; background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); font-size:13px; }
-      #${BOX_ID} .quote { margin:6px 0 0; padding:6px 10px; border-left:3px solid var(--aui-outline, #c6c6ca); border-radius:0 8px 8px 0;
+      ${BOXES} .chip.on { border-color:var(--aui-primary, #8223d2); background:var(--aui-primary-soft, #f3e8fc); }
+      ${BOXES} .ft { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+      ${BOXES} .ft .sp { flex:1; }
+      ${BOXES} label.chk { display:flex; gap:6px; align-items:center; font-size:13px; margin-top:8px; }
+      ${BOXES} .call { margin:0 0 10px; padding:8px 10px; border-radius:8px; background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); font-size:13px; }
+      ${BOXES} .quote { margin:6px 0 0; padding:6px 10px; border-left:3px solid var(--aui-outline, #c6c6ca); border-radius:0 8px 8px 0;
         background:var(--aui-neutral-soft, #f1f0f4); font-size:13px; white-space:pre-wrap; }
-      #${BOX_ID} .quote.off { opacity:.45; }
-      #${BOX_ID} .reset { font:inherit; font-size:13px; font-weight:600; margin-top:6px; padding:0; border:0; background:none; cursor:pointer; color:var(--aui-primary, #8223d2); text-decoration:underline; }
-      #${BOX_ID} .ft .half { display:flex; gap:10px; align-items:center; flex-wrap:wrap; color:var(--aui-status-error, #b91a24); font-weight:600; }
+      ${BOXES} .quote.off { opacity:.45; }
+      ${BOXES} .reset { font:inherit; font-size:13px; font-weight:600; margin-top:6px; padding:0; border:0; background:none; cursor:pointer; color:var(--aui-primary, #8223d2); text-decoration:underline; }
+      ${BOXES} .ft .half { display:flex; gap:10px; align-items:center; flex-wrap:wrap; color:var(--aui-status-error, #b91a24); font-weight:600; }
+      #${BOX_ID}-review { margin:0; padding:0; border:0; }
     `));
 
     // ------------------------------------------------------------ sheets
@@ -127,6 +129,77 @@ AE.shard({
       let i = 0;
       return text.replace(/\$\s?price\b/gi, () => money(Array.isArray(price) ? price[Math.min(i++, price.length - 1)] : price));
     };
+
+    /*
+      Certainty: how sure Provoke is that pick()'s message is the right one, 0-100. Every lead starts at 100 and
+      loses points for each thing that could make the text wrong; only 100 ("sure") can be batch sent.
+      100 needs: a "Reply ready" program (Asurion Mobility), a device that is plainly Apple (iPhone/iPad) or plainly
+      Samsung/Google (the message is chosen by it), a sheet message with nothing left to fill in, no price picked
+      for the tech, no call needed, the customer only once in the list, and the arrival not contacted.
+      Sending checks the rest again per lead (send(): can be texted, nobody texted them since the arrival came in).
+    */
+    const APPLE = /\b(iphone|ipad)\b/i, SAMSUNG_GOOGLE = /\b(samsung|galaxy|google|pixel)\b/i;
+    const BLANK = /\$\s?price\b|_{3,}|\[[^\]]*\]|<[^>]*>|\{[^}]*\}/i; // a slot the sheet expects someone to fill
+    function certainty(a, leads, prices, twice) {
+      const p = pick(a, leads, prices), prog = programOf(a), why = [];
+      let score = 100;
+      const off = (n, w) => { score -= n; if (!why.includes(w)) why.push(w); };
+      if (!p.item || !p.item.texts || !p.item.texts[0]) return { score: 0, sure: false, p, why: ['No message'] };
+      if (!p.ready) off(BY_PROGRAM[prog] ? 30 : 60, 'Program');
+      if (prog === MOBILITY && APPLE.test(deviceOf(a)) === SAMSUNG_GOOGLE.test(deviceOf(a))) off(40, 'Device');
+      if (p.price != null) off(25, 'Price');
+      if (BLANK.test(fill(p.item.texts[0], p.price))) off(50, 'Blank in message');
+      if (p.call) off(20, 'Needs a call');
+      if (twice) off(40, 'Same customer twice');
+      if (leads && leads.unplaced && leads.unplaced.length) off(10, 'Lead sheet');
+      if (contacted(a)) off(100, 'Contacted');
+      if (!a.customer || !a.customer.customerId) off(100, 'No customer');
+      score = Math.max(0, score);
+      return { score, sure: score === 100, p, why, text: fill(p.item.texts[0], p.price) };
+    }
+    // Customers with more than one arrival in the list: one text each at most, so none of them are sure.
+    const twiceOf = (arrivals) => {
+      const n = new Map();
+      for (const a of arrivals) { const c = a.customer && a.customer.customerId; if (c) n.set(c, (n.get(c) || 0) + 1); }
+      return (a) => (n.get(a.customer && a.customer.customerId) || 0) > 1;
+    };
+
+    /*
+      Batch send: one lead at a time. Each arrival is read again first and must still be sure, then send() texts it
+      and marks it contacted. onRow(id, state, result) with state sending | sent | skipped | half | failed | stopped.
+      A lead texted but not marked contacted (half) stops the batch, and so do two failures in a row; ctl.stop()
+      stops after the lead in flight. ctl.gap: the pause between texts (ms).
+    */
+    async function batch(ids, leads, prices, twice, onRow, ctl = {}) {
+      const gap = ctl.gap == null ? 1500 : ctl.gap, out = [];
+      let fails = 0;
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        if (ctl.stopped) { out.push({ id, state: 'stopped' }); onRow(id, 'stopped', out[out.length - 1]); continue; }
+        onRow(id, 'sending');
+        let r;
+        try {
+          const a = AE.unwrap(await AE.api('GET', '/api/arrivals/' + id));
+          const c = a && certainty(a, leads, prices, twice && twice(a));
+          if (!c || !c.sure) r = { state: 'skipped', why: c && c.why.includes('Contacted') ? 'Already contacted' : 'Changed' };
+          else {
+            const s = await send(a, [c.text], c.p.item.title);
+            if (s.blocked) r = { state: 'skipped', why: "Can't be texted" };
+            else if (s.already) r = { state: 'skipped', why: 'Already texted by ' + ([s.already.senderGivenName, s.already.senderFamilyName].filter(Boolean).join(' ') || 'someone') };
+            else { r = { state: 'sent', title: c.p.item.title }; AE.track('leadReplies:batchSend'); }
+          }
+          fails = 0;
+        } catch (e) {
+          r = { state: e && e.sent ? 'half' : 'failed', error: e };
+          if (r.state === 'half') ctl.stopped = true;
+          else if (++fails >= 2) ctl.stopped = true;
+        }
+        out.push(Object.assign({ id }, r));
+        onRow(id, r.state, r);
+        if (r.state === 'sent' && gap && i < ids.length - 1 && !ctl.stopped) await new Promise((ok) => setTimeout(ok, gap));
+      }
+      return out;
+    }
 
     // ------------------------------------------------------------ sending
     const report = (what, e) => ' If you keep seeing this, ' + AE.bugLink('report a bug', { where: 'Provoke', error: what + ': ' + ((e && e.message) || e) }) + '!';
@@ -194,7 +267,8 @@ AE.shard({
 
     // " (edited Oct 6)": when the sheet file itself last changed (the sync only pushes changed files).
     const sheetEdited = (sh) => { const m = sh && sh.data && (sh.data.modified || sh.syncedAt); return m ? ' (edited ' + new Date(m).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ')' : ''; };
-    function render(a, leads, prices) {
+    // opt (Batch send's review): { review: true, sendLabel, left, before, onDone }: no header or sheet line, its own id, onDone() after a send.
+    function render(a, leads, prices, opt = {}) {
       const items = leads.data.items || [];
       const p = pick(a, leads.data, prices && prices.data);
       let price = p.price;
@@ -239,7 +313,8 @@ AE.shard({
       const quote = p.second ? h('div', { class: 'quote' }, p.second.texts[0]) : null;
       const second = p.second ? h('input', { type: 'checkbox', checked: true, onchange: () => quote.classList.toggle('off', !second.checked) }) : null;
       const msg = h('span', { class: 'sg-soft' });
-      const btn = h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: go, html: AE.actionIcon('leadReplies', 18) + 'Send and mark contacted' });
+      const btn = h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: go, html: opt.review ? '' : AE.actionIcon('leadReplies', 18) + 'Send and mark contacted' });
+      if (opt.review) btn.textContent = opt.sendLabel;
       async function go() {
         btn.disabled = true; msg.textContent = 'Sending…';
         try {
@@ -252,6 +327,7 @@ AE.shard({
           }
           AE.track('leadReplies:send' + (p.ready ? 'Ready' : ''));
           root.remove();
+          if (opt.onDone) { opt.onDone('sent'); if (p.call) AE.toast('Provoke', 'Remember to call ' + (a.customer.givenName || a.customer.fullName || 'the customer') + ' too.', 'ok', 15000); return; }
           AE.toast('Provoke', 'Texted ' + (a.customer.givenName || a.customer.fullName || 'the customer') + ' and marked the arrival contacted.' + (p.call ? ' Remember to call them too.' : ''), 'ok', p.call ? 15000 : undefined);
         } catch (err) {
           if (err.sent) { half(err); return; } // texted: Send stays off, only the missing step is offered
@@ -270,6 +346,7 @@ AE.shard({
             await finish(a, done, title);
             AE.track('leadReplies:markContacted');
             root.remove();
+            if (opt.onDone) { opt.onDone('sent'); return; }
             AE.toast('Provoke', 'Marked the arrival contacted.', 'ok');
           } catch (e2) {
             fix.disabled = false;
@@ -282,19 +359,191 @@ AE.shard({
         locked = true; btn.disabled = true;
       }
       const texts = () => [ta.value.trim()].concat(second && second.checked ? [p.second.texts[0]] : []);
-      const root = h('div', { id: BOX_ID, class: 'sg sg-card' + (p.ready ? '' : ' need'), 'data-id': String(a.arrivalId) },
-        h('div', { class: 'hd ae-head' }, h('span', { style: 'line-height:0', html: AE.actionIcon('leadReplies', 26) }),
+      const root = h('div', { id: opt.review ? BOX_ID + '-review' : BOX_ID, class: opt.review ? 'sg' : 'sg sg-card' + (p.ready ? '' : ' need'), 'data-id': String(a.arrivalId) },
+        opt.review ? null : h('div', { class: 'hd ae-head' }, h('span', { style: 'line-height:0', html: AE.actionIcon('leadReplies', 26) }),
           h('div', { class: 'txt' }, h('b', null, 'Provoke - Reply')),
           h('span', { class: 'pill' }, p.ready ? 'Reply ready' : 'Needs a reply')),
         p.call ? h('div', { class: 'call' }, h('b', null, 'Call this customer too.'), ' ' + (programOf(a) === 6494 ? 'Samsung In-Warranty' : 'Out-of-warranty') + ' leads need a call as well as a text.') : null,
         sel, chips, ta,
         reset,
         second ? h('label', { class: 'chk' }, second, h('span', null, 'Also send the price match message')) : null, quote,
-        h('div', { class: 'ft' }, msg, h('span', { class: 'sp' }), btn),
-        h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' }, 'From the lead sheet' + sheetEdited(leads) +
+        h('div', { class: 'ft' }, opt.left || null, msg, h('span', { class: 'sp' }), opt.before || null, btn),
+        opt.review ? null : h('div', { class: 'sg-soft', style: 'font-size:12px;margin-top:6px' }, 'From the lead sheet' + sheetEdited(leads) +
           (p.prices && p.prices.length ? ' and Price sheet' + sheetEdited(prices) : '') + '.'));
       setText();
       return root;
+    }
+
+    // ------------------------------------------------------------ batch send (Arrivals page)
+    // "Batch send (N)" beside Portal's chips: every not-contacted arrival in Portal's current day/filters, scored; the
+    // dialog lists them all, but only sure ones (100) can be ticked. Counted once per visit and after each batch.
+    const BATCH_ID = 'ae-provoke-batch';
+    document.head.append(h('style', null, `
+      #${BATCH_ID} { margin-left:auto; padding-left:7px; }
+      .ae-pb { width:min(820px, 100%); max-height:calc(100vh - 32px); overflow:auto; padding:20px 22px; font-size:14px; line-height:1.4; }
+      .ae-pb h2 { display:flex; align-items:center; gap:10px; margin:0 0 14px; font-size:19px; font-weight:700; }
+      .ae-pb table { width:100%; border-collapse:collapse; font-size:13px; }
+      .ae-pb th { text-align:left; font-weight:600; padding:9px 10px; color:var(--aui-on-surface-variant, #5d5e61); border-bottom:1px solid var(--aui-outline, #c6c6ca); }
+      .ae-pb td { padding:9px 10px; border-bottom:1px solid var(--aui-neutral-soft, #f1f0f4); vertical-align:middle; }
+      .ae-pb tr.dim td { color:var(--aui-on-surface-variant, #5d5e61); }
+      .ae-pb .why { font-size:12px; color:var(--aui-on-surface-variant, #5d5e61); }
+      .ae-pb .sc { display:inline-block; min-width:42px; text-align:center; font-weight:700; font-size:12px; padding:2px 8px; border-radius:10000px;
+        background:var(--aui-neutral-soft, #f1f0f4); color:var(--aui-on-surface-variant, #5d5e61); }
+      .ae-pb .sc.s100 { background:var(--aui-primary, #8223d2); color:var(--aui-on-primary, #fff); }
+      .ae-pb .sc.mid { background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
+      .ae-pb input[type=checkbox] { width:16px; height:16px; accent-color:var(--aui-primary, #8223d2); margin:0; }
+      .ae-pb .msgs { margin-top:14px; display:grid; gap:8px; }
+      .ae-pb .q { padding:8px 12px; border-left:3px solid var(--aui-primary, #8223d2); border-radius:0 8px 8px 0; background:var(--aui-neutral-soft, #f1f0f4); font-size:13px; white-space:pre-wrap; }
+      .ae-pb .q b { display:block; margin-bottom:2px; }
+      .ae-pb .ft { display:flex; align-items:center; gap:10px; margin-top:16px; }
+      .ae-pb .ft .sp { flex:1; }
+      .ae-pb .st { font-weight:600; font-size:13px; }
+      .ae-pb .st.sent { color:var(--aui-status-success, #136d31); }
+      .ae-pb .st.half, .ae-pb .st.failed { color:var(--aui-status-error, #b91a24); }
+      .ae-pb .st.skipped, .ae-pb .st.stopped { color:var(--aui-on-surface-variant, #5d5e61); }
+      .ae-pb h2 .n { margin-left:auto; font-size:13px; font-weight:600; color:var(--aui-on-surface-variant, #5d5e61); }
+      .ae-pb .bar { height:4px; border-radius:4px; background:var(--aui-neutral-soft, #f1f0f4); margin:-4px 0 14px; overflow:hidden; }
+      .ae-pb .bar i { display:block; height:100%; background:var(--aui-primary, #8223d2); }
+      .ae-pb .who { display:grid; grid-template-columns:auto 1fr; gap:4px 16px; margin-bottom:12px; }
+      .ae-pb .who span { color:var(--aui-on-surface-variant, #5d5e61); }
+      .ae-pb .tags { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+      .ae-pb .tag { font-size:12px; font-weight:600; padding:2px 10px; border-radius:10000px; background:var(--aui-status-warning-soft, #fff0c0); color:var(--aui-status-on-warning-soft, #3a3000); }
+    `));
+    const onArrivals = () => /^\/check-in\/arrivals\/?$/.test(location.pathname);
+    const nameOf = (a) => { const c = a.customer || {}; return (c.fullName || [c.givenName || c.firstName, c.familyName || c.lastName].filter(Boolean).join(' ')).trim() || 'Customer'; };
+    async function notContacted() {
+      const q = AE.portal('query', { endpoint: 'getUpcomingArrivals', list: 'data', field: 'arrivalId' }) || {};
+      const base = Object.assign({}, q.args); delete base.page; delete base.pageSize;
+      const all = [];
+      for (let page = 1; page <= 20; page++) {
+        const u = new URLSearchParams();
+        for (const [k, v] of Object.entries(Object.assign({}, base, { page, pageSize: 100 }))) if (v !== undefined && v !== null && v !== '') u.set(k, v);
+        const j = await AE.api('GET', '/api/arrivals/upcoming-arrivals?' + u);
+        const data = (j && j.data) || [];
+        all.push(...data);
+        if (!data.length || all.length >= ((j && j.rowCount) || 0)) break;
+      }
+      return all.filter((a) => !contacted(a) && !NO_BOX.includes(programOf(a)));
+    }
+    // The scored list: each arrival read in full (the list's rows aren't proven to carry the program and device).
+    async function scored() {
+      const [leads, prices] = await Promise.all([sheet('leads'), sheet('prices')]);
+      if (!leads || !leads.data) return null;
+      const list = await notContacted();
+      const full = [];
+      for (const r of list.slice(0, 60)) { const a = AE.unwrap(await AE.api('GET', '/api/arrivals/' + r.arrivalId).catch(() => null)); if (a && a.arrivalId) full.push(a); }
+      const twice = twiceOf(full);
+      const rows = full.map((a) => Object.assign({ a }, certainty(a, leads.data, prices && prices.data, twice(a))))
+        .filter((r) => r.score > 0).sort((x, y) => y.score - x.score);
+      return { rows, leads: leads.data, prices: prices && prices.data, twice, raw: { leads, prices } };
+    }
+
+    let batchState = null, batchLoading = false, batchVisit = null; // batchVisit: the page visit the count belongs to
+    async function batchButton() {
+      const chips = document.querySelector('[data-aui="chips.manual-selection"]');
+      let b = document.getElementById(BATCH_ID);
+      if (!onArrivals() || !chips) { b?.remove(); batchVisit = null; batchState = null; return; }
+      if (batchVisit !== location.href && !batchLoading) {
+        batchVisit = location.href; batchLoading = true;
+        try { batchState = await scored(); } catch (_) { batchState = null; } finally { batchLoading = false; }
+      }
+      const rows = batchState && batchState.rows;
+      if (!rows || !rows.length) { b?.remove(); return; }
+      const n = rows.filter((r) => r.sure).length;
+      if (!b) b = h('button', { type: 'button', id: BATCH_ID, class: 'sg-btn sg-primary', onclick: () => openBatch(batchState) });
+      b.innerHTML = AE.actionIcon('leadReplies', 20) + 'Batch send (' + n + ')';
+      if (b.previousElementSibling !== chips) chips.after(b);
+    }
+
+    function openBatch(st) {
+      AE.confirm.css();
+      const ticks = new Map(), ctl = { gap: 1500 };
+      const sure = st.rows.filter((r) => r.sure), unsure = st.rows.filter((r) => !r.sure);
+      const reviewBtn = (primary) => unsure.length ? h('button', { type: 'button', class: 'sg-btn' + (primary ? ' sg-primary' : ''), onclick: () => review(0) }, 'Review ' + unsure.length) : null;
+      const msgs = h('div', { class: 'msgs' });
+      const go = h('button', { type: 'button', class: 'sg-btn sg-primary', onclick: run });
+      const all = h('input', { type: 'checkbox', checked: !!sure.length, disabled: !sure.length, onchange: () => { for (const [, c] of ticks) c.checked = all.checked; paint(); } });
+      const body = h('tbody', null, st.rows.map((r) => {
+        const c = h('input', { type: 'checkbox', checked: r.sure, disabled: !r.sure, onchange: paint });
+        if (r.sure) ticks.set(r, c);
+        return h('tr', { class: r.sure ? '' : 'dim' }, h('td', null, c), h('td', null, nameOf(r.a)), h('td', null, deviceOf(r.a)),
+          h('td', null, r.p.item.title, r.why.length ? h('div', { class: 'why' }, r.why.join(' · ')) : null),
+          h('td', { style: 'text-align:center' }, h('span', { class: 'sc' + (r.sure ? ' s100' : r.score >= 50 ? ' mid' : '') }, String(r.score))));
+      }));
+      const picked = () => sure.filter((r) => ticks.get(r).checked);
+      function paint() {
+        const p = picked(), by = new Map();
+        for (const r of p) { const k = r.text; by.set(k, { title: r.p.item.title, n: ((by.get(k) || {}).n || 0) + 1 }); }
+        msgs.replaceChildren(...[...by].map(([text, m]) => h('div', { class: 'q' }, h('b', null, m.title + ' · ' + m.n), text)));
+        go.textContent = 'Send ' + p.length + ' and mark contacted';
+        go.disabled = !p.length;
+        all.checked = !!p.length && p.length === sure.length;
+      }
+      const cancel = h('button', { type: 'button', class: 'sg-btn', onclick: () => close() }, 'Cancel');
+      const table = h('table', null, h('thead', null, h('tr', null, h('th', { style: 'width:30px' }, all), h('th', null, 'Customer'), h('th', null, 'Device'),
+        h('th', null, 'Message'), h('th', { style: 'text-align:center' }, 'Sure'))), body);
+      const card = h('div', { class: 'sg sg-card ae-pb', role: 'dialog', 'aria-modal': 'true' },
+        h('h2', { class: 'ae-head' }, h('span', { html: AE.actionIcon('leadReplies', 28), style: 'line-height:0;flex:none' }), 'Provoke - Batch send'),
+        table, msgs, h('div', { class: 'ft' }, h('span', { class: 'sp' }), cancel, reviewBtn(false), go));
+      let busy = false;
+      const scrim = h('div', { class: 'sg sg-confirm-scrim', onclick: (e) => { if (e.target === scrim && !busy) close(); } }, card);
+      const onKey = (e) => { if (e.key === 'Escape' && !busy) { e.stopPropagation(); close(); } };
+      function close() { scrim.remove(); document.removeEventListener('keydown', onKey, true); }
+      document.addEventListener('keydown', onKey, true);
+      document.body.append(scrim);
+      paint();
+
+      async function run() {
+        const p = picked();
+        if (!p.length) return;
+        busy = true;
+        const cells = new Map();
+        const stop = h('button', { type: 'button', class: 'sg-btn', onclick: () => { ctl.stopped = true; stop.disabled = true; } }, 'Stop');
+        table.replaceChildren(h('thead', null, h('tr', null, h('th', null, 'Customer'), h('th', null, 'Device'), h('th', null, 'Message'), h('th', null, ''))),
+          h('tbody', null, p.map((r) => { const s = h('td'); cells.set(r.a.arrivalId, s);
+            return h('tr', null, h('td', null, nameOf(r.a)), h('td', null, deviceOf(r.a)), h('td', null, r.p.item.title), s); })));
+        msgs.remove();
+        card.querySelector('.ft').replaceChildren(h('span', { class: 'sp' }), stop);
+        const label = { sent: '✓ Sent', stopped: 'Stopped', half: 'Texted, not marked contacted', failed: "Couldn't send" };
+        const out = await batch(p.map((r) => r.a.arrivalId), st.leads, st.prices, st.twice, (id, state, r) => {
+          const s = cells.get(id);
+          if (!s) return;
+          if (state === 'sending') { s.innerHTML = '<span class="sg-spin"></span>'; return; }
+          s.replaceChildren(h('span', { class: 'st ' + state }, state === 'skipped' ? r.why : label[state]));
+          if (r && r.error) s.insertAdjacentHTML('beforeend', '<div class="why">' + report('Batch send for arrival ' + id, r.error).trim() + '</div>');
+        }, ctl);
+        busy = false;
+        const n = out.filter((r) => r.state === 'sent').length;
+        if (n) AE.portal('refresh', { tags: ['Arrivals'] });
+        card.querySelector('.ft').replaceChildren(h('span', { class: 'sp' }), h('button', { type: 'button', class: unsure.length ? 'sg-btn' : 'sg-btn sg-primary', onclick: () => close() }, 'Close'), reviewBtn(true));
+        batchVisit = null; // count again
+      }
+
+      // Review: the leads that aren't sure, one at a time, each in the arrival drawer's own box (message picked and
+      // editable, price chips, call warning). Each is read again first; one contacted meanwhile is passed over.
+      async function review(i) {
+        busy = false;
+        if (i >= unsure.length) { close(); return; }
+        const r = unsure[i], last = i === unsure.length - 1;
+        const head = h('h2', { class: 'ae-head' }, h('span', { html: AE.actionIcon('leadReplies', 28), style: 'line-height:0;flex:none' }), 'Provoke - Review',
+          h('span', { class: 'n' }, (i + 1) + ' of ' + unsure.length));
+        const bar = h('div', { class: 'bar' }, h('i', { style: 'width:' + Math.round((i + 1) / unsure.length * 100) + '%' }));
+        card.replaceChildren(head, bar, h('span', { class: 'sg-spin' }));
+        let a = null;
+        try { a = AE.unwrap(await AE.api('GET', '/api/arrivals/' + r.a.arrivalId)); } catch (_) { a = null; }
+        if (!scrim.isConnected) return;
+        if (!a || !a.arrivalId || contacted(a)) { review(i + 1); return; }
+        const prog = a.program && (a.program.name || a.program.programName);
+        const who = h('div', { class: 'who' }, h('span', null, 'Customer'), h('b', null, nameOf(a)), h('span', null, 'Device'), h('b', null, deviceOf(a) || '—'),
+          prog ? h('span', null, 'Program') : null, prog ? h('b', null, prog) : null);
+        const why = r.why.filter((w) => w !== 'Needs a call'); // the box's own call notice says it
+        const tags = why.length ? h('div', { class: 'tags' }, why.map((w) => h('span', { class: 'tag' }, w))) : null;
+        const open = h('button', { type: 'button', class: 'sg-btn', onclick: () => window.open('/check-in/arrivals/' + a.arrivalId, '_blank') }, 'Open arrival');
+        const skip = h('button', { type: 'button', class: 'sg-btn', onclick: () => review(i + 1) }, 'Skip');
+        const box = render(a, st.raw.leads, st.raw.prices, { review: true, sendLabel: last ? 'Send and finish' : 'Send and next', left: open, before: skip,
+          onDone: () => { batchVisit = null; AE.track('leadReplies:reviewSend'); review(i + 1); } });
+        card.replaceChildren(head, bar, who, tags, box);
+      }
     }
 
     // ------------------------------------------------------------ WO chat panel
@@ -452,12 +701,13 @@ AE.shard({
 
     AE.every(1000, box);
     AE.every(1000, chat);
+    AE.every(1000, batchButton);
     AE.onDom(() => { // the drawer's column, the frame it appears (2.23); box() keeps its own "decided" state
       if (woIdNow()) chat(); else if (document.getElementById(CHAT_ID)) unplace();
       if (!arrivalId()) { document.getElementById(BOX_ID)?.remove(); return; }
       const b = document.getElementById(BOX_ID);
       if (!b || !b.isConnected) box();
     });
-    AE.leadReplies = { pick, pricesFor, screenPrices, byStatus, render };
+    AE.leadReplies = { pick, pricesFor, screenPrices, byStatus, render, certainty, twiceOf, batch, openBatch };
   },
 });
