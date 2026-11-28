@@ -1849,8 +1849,10 @@ await t('Tactician punches: a wrong-shaped answer throws (counted) and is not ca
 await t('Tactician: the daily upload needs Store time sheet access; without it (or if the check fails) nothing is read or sent', async () => {
   const run = async (access) => {
     const sent = [];
+    const noon = new Date(); noon.setHours(12, 0, 0, 0); // an open punch from an hour ago stays on today's date (at 00:30 it would be yesterday's)
     const env = load(['00-core.js', '62-tactician.js'], { fetch: router([['GET', /^\/api\/auth\/user$/, ok(USER)], ['GET', /^\/api\/store-time-sheet\/access$/, access],
-      ['GET', /^\/api\/store-time-sheet\?/, ok({ rows: [PUNCH({ timeIn: new Date(Date.now() - 3600000).toISOString(), timeOut: null })] })]]) });
+      ['GET', /^\/api\/store-time-sheet\?/, ok({ rows: [PUNCH({ timeIn: new Date(noon.getTime() - 3600000).toISOString(), timeOut: null })] })]]) });
+    env.clock.now = noon.getTime();
     env.AE.tracker = { configured: () => false, daily: async (...a) => { sent.push(a); } };
     await env.AE.tactician.uploadDaily();
     return { sent, sheet: env.requests(/^\/api\/store-time-sheet\?/).length };
