@@ -7,7 +7,12 @@ name = "aethernet-links"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
-routes = [{ pattern = "aethersp.here", custom_domain = true }]
+# Path routes, not a custom domain: the bare domain keeps its own DNS record (it must be Proxied, orange cloud),
+# and only these paths reach this Worker.
+routes = [
+  { pattern = "aethersp.here/aen/*", zone_name = "aethersp.here" },
+  { pattern = "aethersp.here/oracle/*", zone_name = "aethersp.here" },
+]
 
 [vars]
 PUBLIC_GIST = "0cf4560c4f26d8ff9091a10068fd3464"
