@@ -99,7 +99,7 @@ AE.shard({
       #${TPL_ID} .chips { display:flex; flex-wrap:wrap; gap:8px 16px; }
       #${TPL_ID} :is(input:not([type=checkbox]), textarea) { width:100%; box-sizing:border-box; } #${TPL_ID} textarea { min-height:96px; } #${TPL_ID} textarea.why { min-height:160px; }
       /* A tab hanging off the Notes box's lower right edge, joined to its border. */
-      .ae-tpl-tab { display:flex; justify-content:flex-end; margin-top:-1px; }
+      .ae-tpl-tab { display:flex; justify-content:flex-end; max-width:100%; box-sizing:border-box; margin-top:-1px; }
       #${TPL_BTN} { display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px 0 6px; margin:0 12px 0 0; cursor:pointer;
         border:1px solid var(--aui-outline, #8b8b8f); border-top:none; border-radius:0 0 10px 10px;
         background:var(--aui-surface, #fff); color:var(--aui-on-surface, #1a1c1e); font:600 13px/1 inherit; }
@@ -568,20 +568,39 @@ AE.shard({
       document.body.append(scrim);
       inputs.device.focus();
     }
-    // The button: a tab on the Notes box's lower right edge (under the element that draws the box's border).
+    // The button: a tab on the Notes box's lower right edge. It goes right after the box itself: the outermost wrapper of the
+    // textarea that holds neither the field's label nor its helper text / counter (those sit outside the box). Inserting it
+    // next to the textarea instead would put it inside the box's border.
+    function boxOf(box) {
+      // First choice: the outermost element under the label's wrapper that draws a border (or holds the fieldset that does).
+      const drawn = (el) => { const c = getComputedStyle(el); return ['Top', 'Bottom'].every((k) => parseFloat(c['border' + k + 'Width']) > 0 && c['border' + k + 'Style'] !== 'none')
+        || [...el.children].some((x) => x.tagName === 'FIELDSET'); };
+      let bordered = null;
+      for (let p = box, i = 0; p && p !== document.body && i < 5; p = p.parentElement, i++) {
+        if (p !== box && [...p.querySelectorAll('label')].some((l) => !l.contains(box))) break;
+        if (drawn(p)) bordered = p;
+      }
+      if (bordered) return bordered;
+      let edge = box;
+      for (let p = box.parentElement, i = 0; p && p !== document.body && i < 5; p = p.parentElement, i++) {
+        const others = [...p.querySelectorAll('label, legend, p, small, [class*="helper" i], [class*="count" i], [class*="hint" i]')]
+          .filter((x) => !x.contains(box) && !x.closest('fieldset') && x.offsetParent && x.textContent.trim());
+        if (others.length) break;
+        edge = p;
+      }
+      return edge;
+    }
     function drawTemplateButton() {
       const old = document.getElementById(TPL_BTN);
       const box = location.pathname === '/check-in' ? notesBox() : null;
       if (!box) { old?.closest('.ae-tpl-tab')?.remove(); return; }
-      let edge = box;
-      for (let p = box, i = 0; p && i < 4; p = p.parentElement, i++) {
-        if (p.querySelector('label') && p !== box) break;
-        if (parseFloat(getComputedStyle(p).borderBottomWidth) > 0) { edge = p; break; }
-      }
+      const edge = boxOf(box);
+      const width = edge.offsetWidth + 'px'; // as wide as the box, so the tab lines up with its right edge
       const tab = old && old.closest('.ae-tpl-tab');
-      if (tab && tab.isConnected && tab.previousElementSibling === edge) return;
+      if (tab && tab.isConnected && tab.previousElementSibling === edge) { if (tab.style.width !== width) tab.style.width = width; return; }
       tab?.remove();
-      edge.after(h('div', { class: 'sg ae-tpl-tab' }, h('button', { id: TPL_BTN, type: 'button', onclick: templateForm, html: AE.actionIcon('checkinDrafts', 22) }, 'Template')));
+      edge.after(h('div', { class: 'sg ae-tpl-tab', style: 'width:' + width },
+        h('button', { id: TPL_BTN, type: 'button', onclick: templateForm, html: AE.actionIcon('checkinDrafts', 22) }, 'Template')));
     }
 
     // ------------------------------------------------------------ finished: the work order left Initial check-in
@@ -679,6 +698,22 @@ AE.shard({
       passing = true;
       try { btn.click(); } finally { passing = false; }
     }
+    // The check-in itself, when it started somewhere other than the drawer's button (the Arrivals list, Home, a link): ask on
+    // arrival at /check-in, before a work order exists. A "No" that needs a ticket leaves the check-in for the arrival's drawer.
+    async function gateCheckin(id) {
+      if (asking || cleared.has(id)) return;
+      let w = null;
+      try { const r = AE.portal('select', { slice: 'checkInSlice', key: 'workorder', fresh: false }); w = r && r.found ? r.value : null; } catch (_) { /* not yet */ }
+      if (w && Number(w.workorderId) > 0) { cleared.add(id); return; } // already past the point where cleanings matter
+      asking = true;
+      let go = true, a = null;
+      try {
+        try { a = await arrival(id); } catch (_) { /* can't tell: the check-in goes on as usual */ }
+        go = !(a && isMobility(a)) || await ask(a);
+      } finally { asking = false; }
+      cleared.add(id);
+      if (!go && location.pathname === '/check-in') goTo('/check-in/arrivals/' + id);
+    }
     // Capture on window: before Portal's own handlers (React listens at its root).
     window.addEventListener('click', (e) => {
       if (passing) return;
@@ -694,7 +729,7 @@ AE.shard({
     function tick() {
       const m = location.pathname.match(/^\/check-in\/arrivals\/(\d+)\/?$/);
       const existing = document.getElementById(BTN_ID);
-      if (location.pathname === '/check-in') { const cid = checkinArrival(); if (cid) { watchWo(cid); drawPanel(cid); } else document.getElementById(PANEL_ID)?.remove(); }
+      if (location.pathname === '/check-in') { const cid = checkinArrival(); if (cid) { gateCheckin(cid); watchWo(cid); drawPanel(cid); } else document.getElementById(PANEL_ID)?.remove(); }
       else document.getElementById(PANEL_ID)?.remove();
       if (!m) { existing?.remove(); document.getElementById(BOX_ID)?.remove(); return; }
       const id = Number(m[1]);
