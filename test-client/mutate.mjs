@@ -47,6 +47,7 @@ const M = [
   ['provoke: batch sends a lead that is not sure', '24-provoke.js', "if (!c || !c.sure) r = { state: 'skipped'", "if (!c) r = { state: 'skipped'"],
   ['provoke: an unclear device is sure', '24-provoke.js', "if (prog === MOBILITY && APPLE.test(deviceOf(a)) === SAMSUNG_GOOGLE.test(deviceOf(a))) off(40, 'Device');", ""],
   ['provoke: batch keeps going after a half-done lead', '24-provoke.js', "if (r.state === 'half') ctl.stopped = true;", ""],
+  ['provoke: a Confirmed or missed arrival can be sure', '24-provoke.js', "if (!awaiting(a)) off(100, 'Status');", ""],
   ['provoke: no backoff after a failed read', '24-provoke.js', "statusMiss.set(woId, { n: m.n + 1, next: Date.now() + Math.min(STATUS_RETRY_MS * 2 ** m.n, STATUS_RETRY_MAX) });", "statusMiss.set(woId, { n: m.n + 1, next: Date.now() });"],
   // ---- Retrace
   ['retrace: shortNeed dropped from the sweep', '28-retrace-collect.js', ", shortNeed: baseline.frozen ? SHORT_ASK : 0, soNeed: SO_ASK }));", ', soNeed: SO_ASK }));'],

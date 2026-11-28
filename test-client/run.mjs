@@ -1458,6 +1458,18 @@ await t('Provoke: certainty drops for other programs, blanks, a second arrival, 
   assert.equal(certainty(lead(1, 'iPhone 15'), { items: [] }, null).why[0], 'No message');
   assert.ok(certainty(lead(1, 'iPhone 15'), Object.assign({ unplaced: ['x'] }, provokeLeads), null).why.includes('Lead sheet'));
 });
+await t('Provoke: only Not confirmed arrivals that are not missed can be sure; Confirmed or missed ones score 0 and are skipped at send', async () => {
+  const { certainty } = (await provokeEnv()).AE.leadReplies;
+  assert.equal(certainty(lead(1, 'iPhone 15'), provokeLeads, null).sure, true);
+  for (const extra of [{ arrivalStatus: { arrivalStatusId: 21 } }, { isMissed: true }, { arrivalStatus: null }]) {
+    const c = certainty(lead(1, 'iPhone 15', extra), provokeLeads, null);
+    assert.equal(c.score, 0, JSON.stringify(extra)); assert.ok(c.why.includes('Status'));
+  }
+  const env = await provokeEnv([['GET', /^\/api\/arrivals\/31$/, ok(lead(31, 'iPhone 15', { arrivalStatus: { arrivalStatusId: 21 } }))]]);
+  const out = await env.AE.leadReplies.batch([31], provokeLeads, null, null, () => {}, { gap: 0 });
+  assert.equal(out[0].state, 'skipped'); assert.equal(out[0].why, 'No longer Not confirmed');
+  assert.equal(env.requests(/^\/api\/messages\/v1\/send$/, 'POST').length, 0);
+});
 await t('Provoke: batch send texts and marks each sure lead, skips ones already texted or changed, and never texts an unsure one', async () => {
   const arrivals = { 11: lead(11, 'iPhone 15'), 12: lead(12, 'Galaxy S24'), 13: lead(13, 'Apple Watch S9'),
     14: lead(14, 'Pixel 8', { arrivalAttributes: [{ arrivalAttributeTypeId: 53, value: 'x' }] }) };

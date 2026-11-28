@@ -33,7 +33,9 @@ AE.shard({
   run() {
     const { h } = AE;
     const BOX_ID = 'ae-provoke';
-    const APPOINTMENT = 1, CONTACTED = 53;
+    const APPOINTMENT = 1, CONTACTED = 53, NOT_CONFIRMED = 20; // NOT_CONFIRMED: Portal's ArrivalStatusEnum.NotConfirmed
+    // Batch send only takes arrivals still Not confirmed and not missed (Confirmed and missed appointments are left alone).
+    const awaiting = (a) => Number(a.arrivalStatus && a.arrivalStatus.arrivalStatusId) === NOT_CONFIRMED && a.isMissed !== true;
     // Which message each program gets (Garrett, Oct 6, 2026: M1-M23).
     const NO_BOX = [11759, 9470, 11009, 9901, 10303,  // cleanings
       12532, 8857, 9258, 8088, 11289];                 // not repair leads: in-store pickup, retail, remote tech, screen protector
@@ -153,6 +155,7 @@ AE.shard({
       if (twice) off(40, 'Same customer twice');
       if (leads && leads.unplaced && leads.unplaced.length) off(10, 'Lead sheet');
       if (contacted(a)) off(100, 'Contacted');
+      if (!awaiting(a)) off(100, 'Status');
       if (!a.customer || !a.customer.customerId) off(100, 'No customer');
       score = Math.max(0, score);
       return { score, sure: score === 100, p, why, text: fill(p.item.texts[0], p.price) };
@@ -181,7 +184,7 @@ AE.shard({
         try {
           const a = AE.unwrap(await AE.api('GET', '/api/arrivals/' + id));
           const c = a && certainty(a, leads, prices, twice && twice(a));
-          if (!c || !c.sure) r = { state: 'skipped', why: c && c.why.includes('Contacted') ? 'Already contacted' : 'Changed' };
+          if (!c || !c.sure) r = { state: 'skipped', why: c && c.why.includes('Contacted') ? 'Already contacted' : c && c.why.includes('Status') ? 'No longer Not confirmed' : 'Changed' };
           else {
             const s = await send(a, [c.text], c.p.item.title);
             if (s.blocked) r = { state: 'skipped', why: "Can't be texted" };
@@ -423,7 +426,7 @@ AE.shard({
         all.push(...data);
         if (!data.length || all.length >= ((j && j.rowCount) || 0)) break;
       }
-      return all.filter((a) => !contacted(a) && !NO_BOX.includes(programOf(a)));
+      return all.filter((a) => !contacted(a) && awaiting(a) && !NO_BOX.includes(programOf(a)));
     }
     // The scored list: each arrival read in full (the list's rows aren't proven to carry the program and device).
     async function scored() {
@@ -532,7 +535,7 @@ AE.shard({
         let a = null;
         try { a = AE.unwrap(await AE.api('GET', '/api/arrivals/' + r.a.arrivalId)); } catch (_) { a = null; }
         if (!scrim.isConnected) return;
-        if (!a || !a.arrivalId || contacted(a)) { review(i + 1); return; }
+        if (!a || !a.arrivalId || contacted(a) || !awaiting(a)) { review(i + 1); return; }
         const prog = a.program && (a.program.name || a.program.programName);
         const who = h('div', { class: 'who' }, h('span', null, 'Customer'), h('b', null, nameOf(a)), h('span', null, 'Device'), h('b', null, deviceOf(a) || '—'),
           prog ? h('span', null, 'Program') : null, prog ? h('b', null, prog) : null);
